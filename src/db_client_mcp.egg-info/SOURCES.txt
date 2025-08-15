@@ -1,9 +1,0 @@
-pyproject.toml
-src/db_client_mcp/__init__.py
-src/db_client_mcp/db_client_mcp.py
-src/db_client_mcp.egg-info/PKG-INFO
-src/db_client_mcp.egg-info/SOURCES.txt
-src/db_client_mcp.egg-info/dependency_links.txt
-src/db_client_mcp.egg-info/entry_points.txt
-src/db_client_mcp.egg-info/requires.txt
-src/db_client_mcp.egg-info/top_level.txt
