@@ -2,6 +2,7 @@
 
 import os
 import json
+import logging
 import pandas as pd
 import yaml
 import toml
@@ -16,6 +17,18 @@ from fastmcp import FastMCP
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.sql import quoted_name
 from typing import Literal, Optional, Dict, Any, List
+
+# Set up logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create console handler if none exists
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
 # Create the MCP server instance
 mcp = FastMCP("localdata-mcp")
@@ -259,11 +272,15 @@ class DatabaseManager:
             db_type: The type of the database ("sqlite", "postgresql", "mysql", "csv", "json", "yaml", "toml").
             conn_string: The connection string or file path for the database.
         """
+        logger.info(f"Attempting to connect to database '{name}' of type '{db_type}'")
+        
         if name in self.connections:
+            logger.warning(f"Database '{name}' is already connected")
             return f"Error: A database with the name '{name}' is already connected."
         
         # Check connection limit
         if not self.connection_semaphore.acquire(blocking=False):
+            logger.warning(f"Connection limit reached for database '{name}'")
             return f"Error: Maximum number of concurrent connections (10) reached. Please disconnect a database first."
         
         try:
@@ -274,10 +291,12 @@ class DatabaseManager:
                 self.query_history[name] = []
                 self.connection_count += 1
             
+            logger.info(f"Successfully connected to database '{name}'. Total connections: {self.connection_count}")
             return f"Successfully connected to database '{name}'."
         except Exception as e:
             # Release semaphore on failure
             self.connection_semaphore.release()
+            logger.error(f"Failed to connect to database '{name}': {e}")
             return f"Failed to connect to database '{name}': {e}"
 
     @mcp.tool
@@ -288,6 +307,7 @@ class DatabaseManager:
         Args:
             name: The name of the database connection to close.
         """
+        logger.info(f"Attempting to disconnect from database '{name}'")
         try:
             conn = self._get_connection(name)
             conn.dispose()
@@ -300,10 +320,13 @@ class DatabaseManager:
             # Release semaphore slot
             self.connection_semaphore.release()
             
+            logger.info(f"Successfully disconnected from database '{name}'. Total connections: {self.connection_count}")
             return f"Successfully disconnected from database '{name}'."
         except ValueError as e:
+            logger.error(f"Database '{name}' not found for disconnection: {e}")
             return str(e)
         except Exception as e:
+            logger.error(f"Error disconnecting from database '{name}': {e}")
             return f"An error occurred while disconnecting: {e}"
 
     @mcp.tool
