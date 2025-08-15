@@ -1,2 +1,0 @@
-[console_scripts]
-localdata-mcp = localdata_mcp.localdata_mcp:main

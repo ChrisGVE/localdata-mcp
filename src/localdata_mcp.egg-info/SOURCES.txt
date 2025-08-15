@@ -1,9 +1,0 @@
-pyproject.toml
-src/localdata_mcp/__init__.py
-src/localdata_mcp/localdata_mcp.py
-src/localdata_mcp.egg-info/PKG-INFO
-src/localdata_mcp.egg-info/SOURCES.txt
-src/localdata_mcp.egg-info/dependency_links.txt
-src/localdata_mcp.egg-info/entry_points.txt
-src/localdata_mcp.egg-info/requires.txt
-src/localdata_mcp.egg-info/top_level.txt
