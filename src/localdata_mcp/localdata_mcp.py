@@ -1,17 +1,4 @@
-# localdata-mcp.py
-
-# /// script
-# dependencies = [
-#     "fastmcp",
-#     "pandas",
-#     "sqlalchemy",
-#     "psycopg2-binary",
-#     "mysql-connector-python",
-#     "pymongo",
-#     "pyyaml",
-#     "toml"
-# ]
-# ///
+"""LocalData MCP - Database connection and query management."""
 
 import os
 import json
