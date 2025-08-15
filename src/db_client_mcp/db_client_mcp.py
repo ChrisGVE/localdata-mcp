@@ -352,18 +352,72 @@ class DatabaseManager:
     def execute_query_json(self, name: str, query: str) -> str:
         """
         Execute a SQL query and return results as JSON.
+        For results with >100 rows, returns first 10 rows + metadata + buffering info.
 
         Args:
             name: The name of the database connection.
             query: The SQL query to execute.
         """
         try:
+            # Clean up expired buffers
+            self._cleanup_expired_buffers()
+            
             engine = self._get_connection(name)
             df = pd.read_sql_query(query, engine)
             self.query_history[name].append(query)
+            
             if df.empty:
                 return json.dumps([])
-            return df.to_json(orient="records")
+            
+            # Check row count for large result handling
+            if len(df) > 100:
+                # Store full result in buffer
+                query_id = self._generate_query_id(name, query)
+                
+                # Check if this is a file-based connection to track modifications
+                source_file_path = None
+                source_file_mtime = None
+                connection = self.connections[name]
+                if hasattr(connection, 'url') and connection.url.database and connection.url.database != ':memory:':
+                    # This might be a file-based database, but for CSV connections we need to track the original file
+                    # For now, we'll leave this as None - more complex file tracking would need connection metadata
+                    pass
+                
+                buffer = QueryBuffer(
+                    query_id=query_id,
+                    db_name=name,
+                    query=query,
+                    results=df,
+                    timestamp=time.time(),
+                    source_file_path=source_file_path,
+                    source_file_mtime=source_file_mtime
+                )
+                
+                with self.query_buffer_lock:
+                    self.query_buffers[query_id] = buffer
+                
+                # Return first 10 rows with metadata
+                first_10 = df.head(10)
+                
+                response = {
+                    "metadata": {
+                        "total_rows": len(df),
+                        "showing_rows": f"1-{min(10, len(df))}",
+                        "query_id": query_id,
+                        "file_modified_since_buffer": False  # Will be updated when we implement file tracking
+                    },
+                    "data": json.loads(first_10.to_json(orient="records")),
+                    "next_options": {
+                        "get_next_100": f"get_query_chunk(query_id='{query_id}', start_row=11, chunk_size=100)",
+                        "get_all_remaining": f"get_query_chunk(query_id='{query_id}', start_row=11, chunk_size='all')"
+                    }
+                }
+                
+                return json.dumps(response, indent=2)
+            else:
+                # Return all results for small result sets
+                return df.to_json(orient="records")
+                
         except Exception as e:
             return f"An error occurred while executing the query: {e}"
 
@@ -416,7 +470,8 @@ class DatabaseManager:
             for table_name in inspector.get_table_names():
                 table_info = self._get_table_metadata(inspector, table_name)
                 with engine.connect() as conn:
-                    result = conn.execute(f"SELECT COUNT(*) FROM {table_name}")
+                    safe_table_name = self._safe_table_identifier(table_name)
+                    result = conn.execute(text(f"SELECT COUNT(*) FROM {safe_table_name}"))
                     row_count = result.scalar()
                 table_info["size"] = row_count
                 db_info["tables"].append(table_info)
@@ -462,7 +517,8 @@ class DatabaseManager:
 
             table_info = self._get_table_metadata(inspector, table_name)
             with engine.connect() as conn:
-                result = conn.execute(f"SELECT COUNT(*) FROM {table_name}")
+                safe_table_name = self._safe_table_identifier(table_name)
+                result = conn.execute(text(f"SELECT COUNT(*) FROM {safe_table_name}"))
                 row_count = result.scalar()
             table_info["size"] = row_count
 
@@ -482,8 +538,10 @@ class DatabaseManager:
         """
         try:
             engine = self._get_connection(name)
-            query = f"SELECT * FROM {table_name} LIMIT {limit}"
-            df = pd.read_sql_query(query, engine)
+            safe_table_name = self._safe_table_identifier(table_name)
+            # Use parameterized query for LIMIT
+            query = text(f"SELECT * FROM {safe_table_name} LIMIT :limit")
+            df = pd.read_sql_query(query, engine, params={"limit": limit})
             if df.empty:
                 return f"Table '{table_name}' is empty."
             return df.to_markdown()
@@ -502,8 +560,10 @@ class DatabaseManager:
         """
         try:
             engine = self._get_connection(name)
-            query = f"SELECT * FROM {table_name} LIMIT {limit}"
-            df = pd.read_sql_query(query, engine)
+            safe_table_name = self._safe_table_identifier(table_name)
+            # Use parameterized query for LIMIT
+            query = text(f"SELECT * FROM {safe_table_name} LIMIT :limit")
+            df = pd.read_sql_query(query, engine, params={"limit": limit})
             if df.empty:
                 return json.dumps([])
             return df.to_json(orient="records")
@@ -538,6 +598,157 @@ class DatabaseManager:
             return json.dumps(parsed_data, indent=2)
         except Exception as e:
             return f"An error occurred while reading the file: {e}"
+
+    @mcp.tool
+    def get_query_chunk(self, query_id: str, start_row: int, chunk_size: str) -> str:
+        """
+        Retrieve a chunk of rows from a buffered query result.
+
+        Args:
+            query_id: The ID of the buffered query result.
+            start_row: The starting row number (1-based indexing).
+            chunk_size: Number of rows to retrieve, or 'all' for all remaining rows.
+        """
+        try:
+            # Clean up expired buffers
+            self._cleanup_expired_buffers()
+            
+            with self.query_buffer_lock:
+                if query_id not in self.query_buffers:
+                    return f"Error: Query buffer '{query_id}' not found. It may have expired or been cleared."
+                
+                buffer = self.query_buffers[query_id]
+            
+            df = buffer.results
+            total_rows = len(df)
+            
+            # Validate start_row (1-based indexing)
+            if start_row < 1 or start_row > total_rows:
+                return f"Error: start_row must be between 1 and {total_rows}."
+            
+            # Convert to 0-based indexing for pandas
+            start_idx = start_row - 1
+            
+            # Handle chunk_size
+            if chunk_size == 'all':
+                end_idx = total_rows
+                chunk_df = df.iloc[start_idx:]
+            else:
+                try:
+                    chunk_size_int = int(chunk_size)
+                    if chunk_size_int <= 0:
+                        return "Error: chunk_size must be a positive integer or 'all'."
+                    end_idx = min(start_idx + chunk_size_int, total_rows)
+                    chunk_df = df.iloc[start_idx:end_idx]
+                except ValueError:
+                    return "Error: chunk_size must be a positive integer or 'all'."
+            
+            if chunk_df.empty:
+                return json.dumps([])
+            
+            # Build response
+            showing_end = start_idx + len(chunk_df)
+            response = {
+                "metadata": {
+                    "query_id": query_id,
+                    "total_rows": total_rows,
+                    "showing_rows": f"{start_row}-{showing_end}",
+                    "chunk_size": len(chunk_df),
+                    "buffer_timestamp": buffer.timestamp,
+                    "file_modified_since_buffer": self._check_file_modified(buffer)
+                },
+                "data": json.loads(chunk_df.to_json(orient="records"))
+            }
+            
+            # Add next options if more rows available
+            if showing_end < total_rows:
+                next_start = showing_end + 1
+                response["next_options"] = {
+                    "get_next_100": f"get_query_chunk(query_id='{query_id}', start_row={next_start}, chunk_size=100)",
+                    "get_all_remaining": f"get_query_chunk(query_id='{query_id}', start_row={next_start}, chunk_size='all')"
+                }
+            
+            return json.dumps(response, indent=2)
+            
+        except Exception as e:
+            return f"An error occurred while retrieving query chunk: {e}"
+
+    @mcp.tool
+    def get_buffered_query_info(self, query_id: str) -> str:
+        """
+        Get information about a buffered query result.
+
+        Args:
+            query_id: The ID of the buffered query result.
+        """
+        try:
+            # Clean up expired buffers
+            self._cleanup_expired_buffers()
+            
+            with self.query_buffer_lock:
+                if query_id not in self.query_buffers:
+                    return f"Error: Query buffer '{query_id}' not found. It may have expired or been cleared."
+                
+                buffer = self.query_buffers[query_id]
+            
+            info = {
+                "query_id": query_id,
+                "db_name": buffer.db_name,
+                "query": buffer.query,
+                "total_rows": len(buffer.results),
+                "buffer_created": buffer.timestamp,
+                "buffer_age_seconds": time.time() - buffer.timestamp,
+                "expires_in_seconds": max(0, self.buffer_cleanup_interval - (time.time() - buffer.timestamp)),
+                "source_file_path": buffer.source_file_path,
+                "file_modified_since_buffer": self._check_file_modified(buffer)
+            }
+            
+            return json.dumps(info, indent=2)
+            
+        except Exception as e:
+            return f"An error occurred while retrieving query buffer info: {e}"
+
+    @mcp.tool  
+    def clear_query_buffer(self, query_id: str) -> str:
+        """
+        Clear a specific query buffer.
+
+        Args:
+            query_id: The ID of the buffered query result to clear.
+        """
+        try:
+            with self.query_buffer_lock:
+                if query_id not in self.query_buffers:
+                    return f"Error: Query buffer '{query_id}' not found."
+                
+                del self.query_buffers[query_id]
+            
+            return f"Successfully cleared query buffer '{query_id}'."
+            
+        except Exception as e:
+            return f"An error occurred while clearing query buffer: {e}"
+    
+    def _check_file_modified(self, buffer: QueryBuffer) -> bool:
+        """Check if the source file has been modified since buffer creation."""
+        if not buffer.source_file_path or not buffer.source_file_mtime:
+            return False
+        
+        try:
+            current_mtime = os.path.getmtime(buffer.source_file_path)
+            return current_mtime > buffer.source_file_mtime
+        except OSError:
+            # File might not exist anymore
+            return True
+    
+    def _safe_table_identifier(self, table_name: str) -> str:
+        """Create a safe SQL identifier for table names to prevent injection."""
+        # Validate table name contains only safe characters
+        import re
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table_name):
+            raise ValueError(f"Invalid table name '{table_name}'. Table names must start with a letter or underscore and contain only alphanumeric characters and underscores.")
+        
+        # Use SQLAlchemy's quoted_name for safe identifier quoting
+        return str(quoted_name(table_name, quote=True))
 
 def main(): 
     manager = DatabaseManager()
