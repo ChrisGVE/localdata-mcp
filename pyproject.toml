@@ -1,0 +1,26 @@
+[project]
+name = "db-client-mcp"
+version = "0.1.0"
+description = "A dynamic MCP server for local databases and CSV files."
+authors = [{ name = "Christian C. Berclaz" }]
+requires-python = ">=3.8"
+dependencies = [
+  "fastmcp",
+  "pandas",
+  "sqlalchemy",
+  "psycopg2-binary",
+  "mysql-connector-python",
+  "pymongo",
+  "pyyaml",
+  "toml",
+]
+
+[project.scripts]
+db-client-mcp = "db_client_mcp.db_client_mcp:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
