@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Documentation
+    url: https://github.com/ChrisGVE/localdata-mcp#readme
+    about: Check the comprehensive README for usage examples and documentation
+  - name: 💬 Community Discussion
+    url: https://github.com/ChrisGVE/localdata-mcp/discussions
+    about: Ask questions and discuss ideas with the community
+  - name: 🔒 Private Security Report
+    url: mailto:christian@berclaz.org?subject=LocalData%20MCP%20Security%20Issue
+    about: Report critical security vulnerabilities privately via email
+  - name: 🌟 MCP Community
+    url: https://modelcontextprotocol.io/
+    about: Learn more about the Model Context Protocol ecosystem
