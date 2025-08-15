@@ -43,7 +43,7 @@ pip install localdata-mcp
 uv tool install localdata-mcp
 
 # Development installation
-git clone https://github.com/your-username/localdata-mcp.git
+git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
 pip install -e .
 ```
@@ -265,7 +265,7 @@ Contributions welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md
 
 ### Development Setup
 ```bash
-git clone https://github.com/your-username/localdata-mcp.git
+git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -279,15 +279,15 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🔗 Links
 
-- **GitHub**: [localdata-mcp](https://github.com/your-username/localdata-mcp)
+- **GitHub**: [localdata-mcp](https://github.com/ChrisGVE/localdata-mcp)
 - **PyPI**: [localdata-mcp](https://pypi.org/project/localdata-mcp/)
 - **MCP Protocol**: [Model Context Protocol](https://modelcontextprotocol.io/)
 - **FastMCP**: [FastMCP Framework](https://github.com/jlowin/fastmcp)
 
 ## 📊 Stats
 
-![GitHub stars](https://img.shields.io/github/stars/your-username/localdata-mcp?style=social)
-![GitHub forks](https://img.shields.io/github/forks/your-username/localdata-mcp?style=social)
+![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
+![GitHub forks](https://img.shields.io/github/forks/ChrisGVE/localdata-mcp?style=social)
 ![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
 
 ---
