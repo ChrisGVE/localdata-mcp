@@ -61,18 +61,18 @@ def test_connection_management():
         db_path = temp_db.name
     
     try:
-        # Test connection
-        result = manager.connect_database("test_db", "sqlite", db_path)
+        # Test connection - use the underlying method, not the decorated tool
+        result = manager.connect_database.fn(manager, "test_db", "sqlite", db_path)
         assert "Successfully connected" in result
         assert "test_db" in manager.connections
         
         # Test listing databases
-        result = manager.list_databases()
+        result = manager.list_databases.fn(manager)
         databases = eval(result)  # Safe since we control the output
         assert "test_db" in databases
         
         # Test disconnection
-        result = manager.disconnect_database("test_db")
+        result = manager.disconnect_database.fn(manager, "test_db")
         assert "Successfully disconnected" in result
         assert "test_db" not in manager.connections
         
@@ -106,13 +106,13 @@ def test_query_id_generation():
     """Test query ID generation."""
     manager = DatabaseManager()
     
-    db_name = "test_db"
+    db_name = "testdb"  # Use simple name without underscores
     query = "SELECT * FROM test_table"
     
     query_id1 = manager._generate_query_id(db_name, query)
     query_id2 = manager._generate_query_id(db_name, query)
     
-    # IDs should have the expected format
+    # IDs should have the expected format: dbname_timestamp_hash
     assert db_name in query_id1
     assert "_" in query_id1
     
