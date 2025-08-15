@@ -1,7 +1,7 @@
 [project]
-name = "db-client-mcp"
+name = "localdata-mcp"
 version = "0.1.0"
-description = "A dynamic MCP server for local databases and CSV files."
+description = "A dynamic MCP server for local databases and text files."
 authors = [{ name = "Christian C. Berclaz" }]
 requires-python = ">=3.8"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-db-client-mcp = "db_client_mcp.db_client_mcp:main"
+localdata-mcp = "localdata_mcp.localdata_mcp:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

@@ -4,12 +4,17 @@ Basic test script for db-client-mcp security improvements
 """
 
 import os
+import sys
 import json
 import sqlite3
 import pandas as pd
 import tempfile
 import time
 from pathlib import Path
+
+# Add src to path to import the module
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+from db_client_mcp.db_client_mcp import DatabaseManager
 
 def create_test_data():
     """Create test data files and databases for testing."""

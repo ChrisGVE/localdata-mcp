@@ -1,4 +1,4 @@
-# db-client-mcp.py
+# localdata-mcp.py
 
 # /// script
 # dependencies = [
@@ -31,7 +31,7 @@ from sqlalchemy.sql import quoted_name
 from typing import Literal, Optional, Dict, Any, List
 
 # Create the MCP server instance
-mcp = FastMCP("db-client-mcp")
+mcp = FastMCP("localdata-mcp")
 
 @dataclass
 class QueryBuffer:
