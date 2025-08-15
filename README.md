@@ -290,6 +290,24 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 ![GitHub forks](https://img.shields.io/github/forks/ChrisGVE/localdata-mcp?style=social)
 ![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
 
+## 📚 Additional Resources
+
+- **[FAQ](FAQ.md)**: Common questions and troubleshooting
+- **[Troubleshooting Guide](TROUBLESHOOTING.md)**: Comprehensive problem resolution
+- **[Advanced Examples](ADVANCED_EXAMPLES.md)**: Production-ready usage patterns
+- **[Blog Post](BLOG_POST.md)**: Technical deep dive and use cases
+
+## 🤔 Need Help?
+
+- **Issues**: [GitHub Issues](https://github.com/ChrisGVE/localdata-mcp/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/ChrisGVE/localdata-mcp/discussions)
+- **Email**: Available in GitHub profile
+- **Community**: Join MCP community forums
+
+## 🏷️ Tags
+
+`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `mongodb` `csv` `json` `yaml` `toml` `ai` `machine-learning` `data-integration` `python` `security` `performance`
+
 ---
 
 **Made with ❤️ for the MCP Community**
