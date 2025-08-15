@@ -1,0 +1,8 @@
+fastmcp
+pandas
+sqlalchemy
+psycopg2-binary
+mysql-connector-python
+pymongo
+pyyaml
+toml
