@@ -1,6 +1,6 @@
 [project]
 name = "localdata-mcp"
-version = "0.1.0"
+version = "1.0.0"
 description = "A dynamic MCP server for local databases and text files."
 readme = "README.md"
 authors = [{ name = "Christian C. Berclaz", email = "christian@berclaz.org" }]
