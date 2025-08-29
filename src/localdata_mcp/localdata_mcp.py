@@ -280,19 +280,19 @@ class DatabaseManager:
             # Load data based on file type
             if file_type == "csv":
                 try:
-                    df = pd.read_csv(file_path)
+                    data = pd.read_csv(file_path)
                 except pd.errors.ParserError:
                     # Fallback for CSV with no header
-                    df = pd.read_csv(file_path, header=None)
+                    data = pd.read_csv(file_path, header=None)
             elif file_type == "json":
-                df = pd.read_json(file_path)
+                data = pd.read_json(file_path)
             elif file_type == "yaml":
                 with open(file_path, "r") as f:
-                    data = yaml.safe_load(f)
-                df = (
-                    pd.json_normalize(data)
-                    if isinstance(data, (list, dict))
-                    else pd.DataFrame(data)
+                    yaml_data = yaml.safe_load(f)
+                data = (
+                    pd.json_normalize(yaml_data)
+                    if isinstance(yaml_data, (list, dict))
+                    else pd.DataFrame(yaml_data)
                 )
             elif file_type == "toml":
                 if not TOML_AVAILABLE:
@@ -301,11 +301,11 @@ class DatabaseManager:
                         "Install with: pip install toml"
                     )
                 with open(file_path, "r") as f:
-                    data = toml.load(f)
-                df = (
-                    pd.json_normalize(data)
-                    if isinstance(data, (list, dict))
-                    else pd.DataFrame(data)
+                    toml_data = toml.load(f)
+                data = (
+                    pd.json_normalize(toml_data)
+                    if isinstance(toml_data, (list, dict))
+                    else pd.DataFrame(toml_data)
                 )
             elif file_type == "excel":
                 data = self._load_excel_file(file_path, sheet_name)
