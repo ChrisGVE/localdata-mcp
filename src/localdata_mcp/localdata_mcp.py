@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import psutil
 import tempfile
 import threading
 import time
@@ -748,16 +749,27 @@ class DatabaseManager:
 
 
     @mcp.tool
-    def execute_query_json(self, name: str, query: str) -> str:
+    def execute_query(self, name: str, query: str, chunk_size: Optional[int] = None) -> str:
         """
         Execute a SQL query and return results as JSON.
-        For results with >100 rows, returns first 10 rows + metadata + buffering info.
+        
+        For large result sets (>100 rows), automatically creates chunked response with pagination.
+        Includes memory usage check before execution to prevent server crashes.
+        Auto-clears buffers from the same database when memory is high.
 
         Args:
             name: The name of the database connection.
             query: The SQL query to execute.
+            chunk_size: Optional chunk size for pagination. If not specified, uses default chunking behavior.
         """
         try:
+            # Check memory usage before query execution
+            memory_info = self._check_memory_usage()
+            if memory_info.get("low_memory", False):
+                logger.warning(f"High memory usage detected ({memory_info.get('used_percent', 0)}%) before query execution")
+                # Auto-clear buffers from same database to free memory
+                self._auto_clear_buffers_if_needed(name)
+
             # Clean up expired buffers
             self._cleanup_expired_buffers()
 
@@ -768,8 +780,11 @@ class DatabaseManager:
             if df.empty:
                 return json.dumps([])
 
+            # Determine chunking threshold - use chunk_size if provided, otherwise 100
+            threshold = chunk_size if chunk_size is not None else 100
+
             # Check row count for large result handling
-            if len(df) > 100:
+            if len(df) > threshold:
                 # Store full result in buffer
                 query_id = self._generate_query_id(name, query)
 
@@ -799,30 +814,117 @@ class DatabaseManager:
                 with self.query_buffer_lock:
                     self.query_buffers[query_id] = buffer
 
-                # Return first 10 rows with metadata
-                first_10 = df.head(10)
+                # Return first chunk with metadata
+                chunk_limit = min(chunk_size or 10, len(df))
+                first_chunk = df.head(chunk_limit)
 
                 response = {
                     "metadata": {
                         "total_rows": len(df),
-                        "showing_rows": f"1-{min(10, len(df))}",
+                        "showing_rows": f"1-{chunk_limit}",
                         "query_id": query_id,
                         "file_modified_since_buffer": False,  # Will be updated when we implement file tracking
+                        "memory_info": memory_info,
+                        "chunked": True,
+                        "chunk_size": chunk_limit
                     },
-                    "data": json.loads(first_10.to_json(orient="records")),
-                    "next_options": {
-                        "get_next_100": f"get_query_chunk(query_id='{query_id}', start_row=11, chunk_size=100)",
-                        "get_all_remaining": f"get_query_chunk(query_id='{query_id}', start_row=11, chunk_size='all')",
+                    "data": json.loads(first_chunk.to_json(orient="records")),
+                    "pagination": {
+                        "use_next_chunk": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size=100)",
+                        "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size='all')",
                     },
                 }
 
                 return json.dumps(response, indent=2)
             else:
                 # Return all results for small result sets
-                return df.to_json(orient="records")
+                response = {
+                    "metadata": {
+                        "total_rows": len(df),
+                        "showing_rows": f"1-{len(df)}",
+                        "memory_info": memory_info,
+                        "chunked": False
+                    },
+                    "data": json.loads(df.to_json(orient="records"))
+                }
+                return json.dumps(response, indent=2)
 
         except Exception as e:
             return f"An error occurred while executing the query: {e}"
+
+    @mcp.tool
+    def next_chunk(self, query_id: str, start_row: int, chunk_size: str) -> str:
+        """
+        Retrieve the next chunk of rows from a buffered query result.
+
+        Args:
+            query_id: The ID of the buffered query result.
+            start_row: The starting row number (1-based indexing).
+            chunk_size: Number of rows to retrieve, or 'all' for all remaining rows.
+        """
+        try:
+            # Clean up expired buffers
+            self._cleanup_expired_buffers()
+
+            with self.query_buffer_lock:
+                if query_id not in self.query_buffers:
+                    return f"Error: Query buffer '{query_id}' not found. It may have expired or been cleared."
+
+                buffer = self.query_buffers[query_id]
+
+            df = buffer.results
+            total_rows = len(df)
+
+            # Validate start_row (1-based indexing)
+            if start_row < 1 or start_row > total_rows:
+                return f"Error: start_row must be between 1 and {total_rows}."
+
+            # Convert to 0-based indexing for pandas
+            start_idx = start_row - 1
+
+            # Handle chunk_size
+            if chunk_size == "all":
+                end_idx = total_rows
+                chunk_df = df.iloc[start_idx:]
+            else:
+                try:
+                    chunk_size_int = int(chunk_size)
+                    if chunk_size_int <= 0:
+                        return "Error: chunk_size must be a positive integer or 'all'."
+                    end_idx = min(start_idx + chunk_size_int, total_rows)
+                    chunk_df = df.iloc[start_idx:end_idx]
+                except ValueError:
+                    return "Error: chunk_size must be a positive integer or 'all'."
+
+            if chunk_df.empty:
+                return json.dumps({"metadata": {"message": "No more rows available"}, "data": []})
+
+            # Build response
+            showing_end = start_idx + len(chunk_df)
+            response = {
+                "metadata": {
+                    "query_id": query_id,
+                    "total_rows": total_rows,
+                    "showing_rows": f"{start_row}-{showing_end}",
+                    "chunk_size": len(chunk_df),
+                    "buffer_timestamp": buffer.timestamp,
+                    "file_modified_since_buffer": self._check_file_modified(buffer),
+                },
+                "data": json.loads(chunk_df.to_json(orient="records")),
+            }
+
+            # Add next pagination options if more rows available
+            if showing_end < total_rows:
+                next_start = showing_end + 1
+                response["pagination"] = {
+                    "next_100": f"next_chunk(query_id='{query_id}', start_row={next_start}, chunk_size=100)",
+                    "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={next_start}, chunk_size='all')",
+                }
+
+            return json.dumps(response, indent=2)
+
+        except Exception as e:
+            return f"An error occurred while retrieving query chunk: {e}"
 
     @mcp.tool
     def get_query_history(self, name: str) -> str:
@@ -950,6 +1052,40 @@ class DatabaseManager:
         except OSError:
             # File might not exist anymore
             return True
+
+    def _check_memory_usage(self) -> Dict[str, Any]:
+        """Check current memory usage and available memory."""
+        try:
+            memory = psutil.virtual_memory()
+            return {
+                "total_gb": round(memory.total / (1024**3), 2),
+                "available_gb": round(memory.available / (1024**3), 2),
+                "used_percent": memory.percent,
+                "low_memory": memory.percent > 85  # Consider 85% as low memory threshold
+            }
+        except Exception as e:
+            logger.warning(f"Could not check memory usage: {e}")
+            return {"error": str(e), "low_memory": False}
+
+    def _auto_clear_buffers_if_needed(self, db_name: str) -> bool:
+        """Auto-clear buffers from the same database if memory is high."""
+        memory_info = self._check_memory_usage()
+        
+        if memory_info.get("low_memory", False):
+            with self.query_buffer_lock:
+                # Clear buffers from the same database
+                buffers_to_clear = [
+                    query_id for query_id, buffer in self.query_buffers.items()
+                    if buffer.db_name == db_name
+                ]
+                for query_id in buffers_to_clear:
+                    del self.query_buffers[query_id]
+                
+                if buffers_to_clear:
+                    logger.info(f"Auto-cleared {len(buffers_to_clear)} buffers from '{db_name}' due to low memory")
+                    return True
+        
+        return False
 
     def _safe_table_identifier(self, table_name: str) -> str:
         """Create a safe SQL identifier for table names to prevent injection."""
