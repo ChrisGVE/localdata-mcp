@@ -14,9 +14,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
-import toml
 import yaml
 from fastmcp import FastMCP
+
+# TOML support
+try:
+    import toml
+    TOML_AVAILABLE = True
+except ImportError:
+    TOML_AVAILABLE = False
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.sql import quoted_name
 
@@ -286,6 +292,11 @@ class DatabaseManager:
                     else pd.DataFrame(data)
                 )
             elif file_type == "toml":
+                if not TOML_AVAILABLE:
+                    raise ValueError(
+                        "toml library is required for TOML files. "
+                        "Install with: pip install toml"
+                    )
                 with open(file_path, "r") as f:
                     data = toml.load(f)
                 df = (
@@ -1015,6 +1026,8 @@ class DatabaseManager:
             elif format == "yaml":
                 parsed_data = yaml.safe_load(content)
             elif format == "toml":
+                if not TOML_AVAILABLE:
+                    return "Error: toml library is required for TOML files. Install with: pip install toml"
                 parsed_data = toml.loads(content)
             else:
                 return f"Error: Unsupported format '{format}'."
