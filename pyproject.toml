@@ -3,56 +3,58 @@ name = "localdata-mcp"
 version = "1.1.0"
 description = "A dynamic MCP server for local databases and text files."
 readme = "README.md"
-authors = [{ name = "Christian C. Berclaz", email = "christian@berclaz.org" }]
+authors = [
+  { name = "Christian C. Berclaz", email = "christian.berclaz@mac.com" },
+]
 license = "MIT"
 requires-python = ">=3.10"
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Database",
-    "Topic :: Software Development :: Libraries :: Python Modules",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Database",
+  "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 keywords = ["mcp", "model-context-protocol", "database", "ai", "assistant"]
 dependencies = [
-    "fastmcp",
-    "pandas>=1.3.0",
-    "sqlalchemy>=1.4.0",
-    "psycopg2-binary",
-    "mysql-connector-python",
-    "pyyaml>=5.4.0",
-    "toml>=0.10.0",
-    # Spreadsheet format support
-    "openpyxl>=3.0.0",         # Excel .xlsx/.xlsm support
-    "defusedxml>=0.7.0",       # Security for XML-based formats
-    "xlrd>=2.0.0",             # Legacy Excel .xls support
-    "odfpy>=1.4.0",            # LibreOffice Calc .ods support
-    "pyarrow>=10.0.0",         # Parquet/Feather analytical formats
-    "lxml>=4.6.0",             # XML format support
+  "fastmcp",
+  "pandas>=1.3.0",
+  "sqlalchemy>=1.4.0",
+  "psycopg2-binary",
+  "mysql-connector-python",
+  "pyyaml>=5.4.0",
+  "toml>=0.10.0",
+  # Spreadsheet format support
+  "openpyxl>=3.0.0",   # Excel .xlsx/.xlsm support
+  "defusedxml>=0.7.0", # Security for XML-based formats
+  "xlrd>=2.0.0",       # Legacy Excel .xls support
+  "odfpy>=1.4.0",      # LibreOffice Calc .ods support
+  "pyarrow>=10.0.0",   # Parquet/Feather analytical formats
+  "lxml>=4.6.0",       # XML format support
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=6.0.0",
-    "pytest-cov",
-    "black",
-    "isort",
-    "flake8",
-    "mypy",
-    "numbers-parser>=4.15.0",  # Apple Numbers .numbers support (optional)
-    "pandas-stubs",
-    "types-toml",
-    "types-PyYAML",
+  "pytest>=6.0.0",
+  "pytest-cov",
+  "black",
+  "isort",
+  "flake8",
+  "mypy",
+  "numbers-parser>=4.15.0", # Apple Numbers .numbers support (optional)
+  "pandas-stubs",
+  "types-toml",
+  "types-PyYAML",
 ]
 
 [project.urls]
-Homepage = "https://github.com/ChristianBerclaz/localdata-mcp"
-Repository = "https://github.com/ChristianBerclaz/localdata-mcp"
-Documentation = "https://github.com/ChristianBerclaz/localdata-mcp#readme"
-"Bug Tracker" = "https://github.com/ChristianBerclaz/localdata-mcp/issues"
+Homepage = "https://github.com/chrisgve/localdata-mcp"
+Repository = "https://github.com/chrisgve/localdata-mcp"
+Documentation = "https://github.com/chrisgve/localdata-mcp#readme"
+"Bug Tracker" = "https://github.com/chrisgve/localdata-mcp/issues"
 
 [project.scripts]
 localdata-mcp = "localdata_mcp.localdata_mcp:main"
