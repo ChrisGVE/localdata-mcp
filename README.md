@@ -87,6 +87,29 @@ connect_database("csvdata", "csv", "./data.csv")
 
 # JSON Files
 connect_database("config", "json", "./config.json")
+
+# Excel Spreadsheets (all sheets)
+connect_database("sales", "xlsx", "./sales_data.xlsx")
+
+# Excel with specific sheet
+connect_database("q1data", "xlsx", "./quarterly.xlsx?sheet=Q1_Sales")
+
+# LibreOffice Calc
+connect_database("budget", "ods", "./budget_2024.ods")
+
+# Tab-separated values
+connect_database("exports", "tsv", "./export_data.tsv")
+
+# XML structured data
+connect_database("config_xml", "xml", "./config.xml")
+
+# INI configuration files
+connect_database("settings", "ini", "./app.ini")
+
+# Analytical formats
+connect_database("analytics", "parquet", "./data.parquet")
+connect_database("features", "feather", "./features.feather")
+connect_database("vectors", "arrow", "./vectors.arrow")
 ```
 
 #### Query Data
@@ -289,6 +312,55 @@ connect_database("logs", "json", "./logs.json")
 # Query across sources (in application logic)
 user_data = execute_query("postgres", "SELECT * FROM users")
 config = read_text_file("./config.yaml", "yaml")
+```
+
+### Multi-Sheet Spreadsheet Handling
+
+LocalData MCP Server provides comprehensive support for multi-sheet spreadsheets (Excel and LibreOffice Calc):
+
+#### Automatic Multi-Sheet Processing
+
+```python
+# Connect to Excel file - all sheets become separate tables
+connect_database("workbook", "xlsx", "./financial_data.xlsx")
+
+# Query specific sheet (table names are sanitized sheet names)
+execute_query("workbook", "SELECT * FROM Q1_Sales")
+execute_query("workbook", "SELECT * FROM Q2_Budget")
+execute_query("workbook", "SELECT * FROM Annual_Summary")
+```
+
+#### Single Sheet Selection
+
+```python
+# Connect to specific sheet only using ?sheet=SheetName syntax
+connect_database("q1only", "xlsx", "./financial_data.xlsx?sheet=Q1 Sales")
+
+# The data is available as the default table
+execute_query("q1only", "SELECT * FROM data")
+```
+
+#### Sheet Name Sanitization
+
+Sheet names are automatically sanitized for SQL compatibility:
+
+| Original Sheet Name | SQL Table Name |
+| ------------------- | -------------- |
+| "Q1 Sales"          | Q1_Sales       |
+| "2024-Budget"       | _2024_Budget   |
+| "Summary & Notes"   | Summary__Notes |
+
+#### Discovering Available Sheets
+
+```python
+# Connect to multi-sheet workbook
+connect_database("workbook", "xlsx", "./data.xlsx")
+
+# List all available tables (sheets)
+describe_database("workbook")
+
+# Get sample data from specific sheet
+get_table_sample("workbook", "Sheet1")
 ```
 
 ## 🚧 Roadmap
