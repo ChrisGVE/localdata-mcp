@@ -365,11 +365,91 @@ get_table_sample("workbook", "Sheet1")
 
 ## 🚧 Roadmap
 
-- [ ] **Enhanced File Formats**: Excel, Parquet support
+### Completed (v1.1.0)
+- [x] **Spreadsheet Formats**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with full multi-sheet support
+- [x] **Enhanced File Formats**: XML, INI, TSV support
+- [x] **Analytical Formats**: Parquet, Feather, Arrow support
+
+### Planned Features
 - [ ] **Caching Layer**: Configurable query result caching
 - [ ] **Connection Pooling**: Advanced connection management
 - [ ] **Streaming APIs**: Real-time data processing
 - [ ] **Monitoring Tools**: Connection and performance metrics
+- [ ] **Export Capabilities**: Query results to various formats
+
+## 🛠️ Troubleshooting
+
+### Spreadsheet Format Issues
+
+#### Large Excel Files
+```python
+# For files over 100MB, temporary SQLite storage is used automatically
+connect_database("largefile", "xlsx", "./large_workbook.xlsx")
+
+# Monitor processing with describe_database
+describe_database("largefile")  # Shows processing status
+```
+
+#### Sheet Name Conflicts
+```python
+# If sheet names conflict after sanitization, use specific sheet selection
+connect_database("specific", "xlsx", "./workbook.xlsx?sheet=Sheet1")
+
+# Check sanitized names
+describe_database("workbook")  # Lists all table names
+```
+
+#### Format Detection
+```python
+# Ensure correct file extension for proper format detection
+connect_database("data", "xlsx", "./file.xlsx")  # ✅ Correct
+connect_database("data", "xlsx", "./file.xls")   # ⚠️ May cause issues
+
+# Use explicit format specification
+connect_database("data", "xls", "./old_format.xls")  # ✅ Better
+```
+
+#### Multi-Sheet Selection Issues
+```python
+# Sheet names with special characters need URL encoding
+connect_database("data", "xlsx", "./file.xlsx?sheet=Q1%20Sales")  # For "Q1 Sales"
+
+# Or use the sanitized table name after connecting all sheets
+connect_database("workbook", "xlsx", "./file.xlsx")
+execute_query("workbook", "SELECT * FROM Q1_Sales")  # Use sanitized name
+```
+
+#### Performance Optimization
+```python
+# For better performance with large spreadsheets:
+# 1. Use specific sheet selection when possible
+connect_database("q1", "xlsx", "./large.xlsx?sheet=Q1_Data")
+
+# 2. Use LIMIT clauses for large datasets
+execute_query("data", "SELECT * FROM large_sheet LIMIT 1000")
+
+# 3. Consider converting to Parquet for repeated analysis
+# (Manual conversion outside of LocalData MCP recommended for very large files)
+```
+
+### General File Issues
+
+#### Path Security Errors
+```python
+# ✅ Allowed paths (current directory and subdirectories)
+connect_database("data", "csv", "./data/file.csv")
+connect_database("data", "csv", "subfolder/file.csv")
+
+# ❌ Blocked paths (parent directories)
+connect_database("data", "csv", "../data/file.csv")  # Security error
+```
+
+#### Connection Limits
+```python
+# Maximum 10 concurrent connections
+# Use disconnect_database() to free up connections when done
+disconnect_database("old_connection")
+```
 
 ## 🤝 Contributing
 
@@ -419,7 +499,7 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🏷️ Tags
 
-`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `mongodb` `csv` `json` `yaml` `toml` `ai` `machine-learning` `data-integration` `python` `security` `performance`
+`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `mongodb` `spreadsheet` `excel` `xlsx` `ods` `csv` `tsv` `json` `yaml` `toml` `xml` `ini` `parquet` `feather` `arrow` `ai` `machine-learning` `data-integration` `python` `security` `performance`
 
 ---
 
