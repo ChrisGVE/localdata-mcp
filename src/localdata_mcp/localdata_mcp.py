@@ -1,6 +1,7 @@
 """LocalData MCP - Database connection and query management."""
 
 import atexit
+import configparser
 import hashlib
 import json
 import logging
@@ -37,6 +38,27 @@ try:
     DEFUSEDXML_AVAILABLE = True
 except ImportError:
     DEFUSEDXML_AVAILABLE = False
+
+# ODS (LibreOffice Calc) support libraries with graceful error handling
+try:
+    import odfpy
+    ODFPY_AVAILABLE = True
+except ImportError:
+    ODFPY_AVAILABLE = False
+
+# XML parsing support
+try:
+    import lxml
+    LXML_AVAILABLE = True
+except ImportError:
+    LXML_AVAILABLE = False
+
+# Analytical format support (Parquet, Arrow, Feather)
+try:
+    import pyarrow
+    PYARROW_AVAILABLE = True
+except ImportError:
+    PYARROW_AVAILABLE = False
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -189,7 +211,7 @@ class DatabaseManager:
             return create_engine(conn_string)
         elif db_type == "mysql":
             return create_engine(conn_string)
-        elif db_type in ["csv", "json", "yaml", "toml", "excel"]:
+        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "xml", "ini", "tsv", "parquet", "feather", "arrow"]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_engine_from_file(sanitized_path, db_type)
         else:
@@ -228,6 +250,39 @@ class DatabaseManager:
                 )
             elif file_type == "excel":
                 df = self._load_excel_file(file_path)
+            elif file_type == "ods":
+                df = self._load_ods_file(file_path)
+            elif file_type == "xml":
+                df = self._load_xml_file(file_path)
+            elif file_type == "ini":
+                df = self._load_ini_file(file_path)
+            elif file_type == "tsv":
+                try:
+                    df = pd.read_csv(file_path, sep='\t')
+                except pd.errors.ParserError:
+                    # Fallback for TSV with no header
+                    df = pd.read_csv(file_path, sep='\t', header=None)
+            elif file_type == "parquet":
+                if not PYARROW_AVAILABLE:
+                    raise ValueError(
+                        "pyarrow library is required for Parquet files. "
+                        "Install with: pip install pyarrow"
+                    )
+                df = pd.read_parquet(file_path, engine='pyarrow')
+            elif file_type == "feather":
+                if not PYARROW_AVAILABLE:
+                    raise ValueError(
+                        "pyarrow library is required for Feather files. "
+                        "Install with: pip install pyarrow"
+                    )
+                df = pd.read_feather(file_path)
+            elif file_type == "arrow":
+                if not PYARROW_AVAILABLE:
+                    raise ValueError(
+                        "pyarrow library is required for Arrow files. "
+                        "Install with: pip install pyarrow"
+                    )
+                df = pd.read_feather(file_path)  # Arrow IPC format uses same reader
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -314,6 +369,106 @@ class DatabaseManager:
         except Exception as e:
             raise ValueError(f"Failed to load Excel file '{file_path}': {e}")
 
+    def _load_ods_file(self, file_path: str) -> pd.DataFrame:
+        """Load LibreOffice Calc ODS file into pandas DataFrame."""
+        # Check for ODS support
+        if not ODFPY_AVAILABLE:
+            logger.warning("odfpy not available - ODS files cannot be loaded")
+            raise ValueError(
+                "odfpy library is required for .ods files. "
+                "Install with: pip install odfpy"
+            )
+        
+        try:
+            # Use pandas native ODS support with odfpy engine
+            df = pd.read_excel(file_path, engine='odf')
+            
+            # Validate that we have data
+            if df.empty:
+                raise ValueError(f"ODS file '{file_path}' contains no data")
+            
+            # Clean up column names (remove extra whitespace, replace problematic characters)
+            df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
+            
+            # Handle ODS-specific data types
+            # Convert any datetime-like columns properly
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    # Try to convert to datetime if it looks like dates
+                    try:
+                        pd.to_datetime(df[col], errors='raise')
+                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                    except:
+                        pass  # Keep as object type
+            
+            logger.info(f"Successfully loaded ODS file '{file_path}' with {len(df)} rows and {len(df.columns)} columns")
+            return df
+            
+        except Exception as e:
+            raise ValueError(f"Failed to load ODS file '{file_path}': {e}")
+
+    def _load_xml_file(self, file_path: str) -> pd.DataFrame:
+        """Load XML file into pandas DataFrame."""
+        try:
+            # Use pandas native XML support (available since pandas 1.3.0)
+            df = pd.read_xml(file_path)
+            
+            # Validate that we have data
+            if df.empty:
+                raise ValueError(f"XML file '{file_path}' contains no data")
+            
+            # Clean up column names
+            df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
+            
+            logger.info(f"Successfully loaded XML file '{file_path}' with {len(df)} rows and {len(df.columns)} columns")
+            return df
+            
+        except Exception as e:
+            # If pandas XML reading fails, provide helpful error message
+            if "lxml" in str(e).lower():
+                if not LXML_AVAILABLE:
+                    raise ValueError(
+                        f"Failed to load XML file '{file_path}': lxml library is required. "
+                        "Install with: pip install lxml"
+                    )
+            raise ValueError(f"Failed to load XML file '{file_path}': {e}")
+
+    def _load_ini_file(self, file_path: str) -> pd.DataFrame:
+        """Load INI configuration file into pandas DataFrame."""
+        try:
+            config = configparser.ConfigParser()
+            config.read(file_path)
+            
+            # Convert INI structure to flat DataFrame format
+            rows = []
+            for section_name in config.sections():
+                section = config[section_name]
+                for key, value in section.items():
+                    rows.append({
+                        'section': section_name,
+                        'key': key,
+                        'value': value
+                    })
+            
+            # Handle case where no sections exist (only DEFAULT section)
+            if not rows and config.defaults():
+                for key, value in config.defaults().items():
+                    rows.append({
+                        'section': 'DEFAULT',
+                        'key': key,
+                        'value': value
+                    })
+            
+            if not rows:
+                raise ValueError(f"INI file '{file_path}' contains no configuration data")
+            
+            df = pd.DataFrame(rows)
+            logger.info(f"Successfully loaded INI file '{file_path}' with {len(df)} configuration entries")
+            return df
+            
+        except Exception as e:
+            raise ValueError(f"Failed to load INI file '{file_path}': {e}")
+
     def _get_table_metadata(self, inspector, table_name):
         columns = inspector.get_columns(table_name)
         foreign_keys = inspector.get_foreign_keys(table_name)
@@ -372,7 +527,7 @@ class DatabaseManager:
 
         Args:
             name: A unique name to identify the connection (e.g., "analytics_db", "user_data").
-            db_type: The type of the database ("sqlite", "postgresql", "mysql", "csv", "json", "yaml", "toml", "excel").
+            db_type: The type of the database ("sqlite", "postgresql", "mysql", "csv", "json", "yaml", "toml", "excel", "ods", "xml", "ini", "tsv", "parquet", "feather", "arrow").
             conn_string: The connection string or file path for the database.
         """
         logger.info(f"Attempting to connect to database '{name}' of type '{db_type}'")
