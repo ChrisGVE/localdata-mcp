@@ -158,6 +158,45 @@ class DatabaseManager:
         threshold_bytes = threshold_mb * 1024 * 1024
         return self._get_file_size(file_path) > threshold_bytes
 
+    def _sanitize_sheet_name(self, sheet_name: str, used_names: set = None) -> str:
+        """Sanitize sheet name for use as SQL table name."""
+        import re
+        
+        if used_names is None:
+            used_names = set()
+        
+        # Convert to string and strip whitespace
+        name = str(sheet_name).strip()
+        
+        # Replace spaces and hyphens with underscores
+        name = re.sub(r'[\s\-]+', '_', name)
+        
+        # Remove or replace problematic characters, keep only alphanumeric and underscore
+        name = re.sub(r'[^\w]', '_', name)
+        
+        # Remove consecutive underscores
+        name = re.sub(r'_+', '_', name)
+        
+        # Ensure it starts with letter or underscore
+        if name and not re.match(r'^[a-zA-Z_]', name):
+            name = 'sheet_' + name
+        
+        # Handle empty names
+        if not name:
+            name = 'sheet_unnamed'
+        
+        # Ensure uniqueness
+        original_name = name
+        counter = 1
+        while name.lower() in {n.lower() for n in used_names}:
+            name = f"{original_name}_{counter}"
+            counter += 1
+        
+        # Add to used names
+        used_names.add(name)
+        
+        return name
+
     def _generate_query_id(self, db_name: str, query: str) -> str:
         """Generate a unique query ID in format: {db}_{timestamp}_{4char_hash}."""
         timestamp = int(time.time())
@@ -249,40 +288,40 @@ class DatabaseManager:
                     else pd.DataFrame(data)
                 )
             elif file_type == "excel":
-                df = self._load_excel_file(file_path)
+                data = self._load_excel_file(file_path)
             elif file_type == "ods":
-                df = self._load_ods_file(file_path)
+                data = self._load_ods_file(file_path)
             elif file_type == "xml":
-                df = self._load_xml_file(file_path)
+                data = self._load_xml_file(file_path)
             elif file_type == "ini":
-                df = self._load_ini_file(file_path)
+                data = self._load_ini_file(file_path)
             elif file_type == "tsv":
                 try:
-                    df = pd.read_csv(file_path, sep='\t')
+                    data = pd.read_csv(file_path, sep='\t')
                 except pd.errors.ParserError:
                     # Fallback for TSV with no header
-                    df = pd.read_csv(file_path, sep='\t', header=None)
+                    data = pd.read_csv(file_path, sep='\t', header=None)
             elif file_type == "parquet":
                 if not PYARROW_AVAILABLE:
                     raise ValueError(
                         "pyarrow library is required for Parquet files. "
                         "Install with: pip install pyarrow"
                     )
-                df = pd.read_parquet(file_path, engine='pyarrow')
+                data = pd.read_parquet(file_path, engine='pyarrow')
             elif file_type == "feather":
                 if not PYARROW_AVAILABLE:
                     raise ValueError(
                         "pyarrow library is required for Feather files. "
                         "Install with: pip install pyarrow"
                     )
-                df = pd.read_feather(file_path)
+                data = pd.read_feather(file_path)
             elif file_type == "arrow":
                 if not PYARROW_AVAILABLE:
                     raise ValueError(
                         "pyarrow library is required for Arrow files. "
                         "Install with: pip install pyarrow"
                     )
-                df = pd.read_feather(file_path)  # Arrow IPC format uses same reader
+                data = pd.read_feather(file_path)  # Arrow IPC format uses same reader
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -304,7 +343,17 @@ class DatabaseManager:
                 engine = create_engine("sqlite:///:memory:")
 
             # Load data into SQLite
-            df.to_sql("data_table", engine, index=False, if_exists="replace")
+            # Handle multi-sheet files (Excel/ODS) vs single DataFrame files
+            if isinstance(data, dict):
+                # Multi-sheet file: create separate table for each sheet
+                for table_name, df in data.items():
+                    df.to_sql(table_name, engine, index=False, if_exists="replace")
+                    logger.info(f"Created table '{table_name}' with {len(df)} rows")
+            else:
+                # Single DataFrame: create single table called 'data_table'
+                data.to_sql("data_table", engine, index=False, if_exists="replace")
+                logger.info(f"Created table 'data_table' with {len(data)} rows")
+            
             return engine
 
         except Exception as e:
@@ -312,8 +361,8 @@ class DatabaseManager:
                 f"Failed to create engine from {file_type} file '{file_path}': {e}"
             )
 
-    def _load_excel_file(self, file_path: str) -> pd.DataFrame:
-        """Load Excel file (.xlsx or .xls) into pandas DataFrame."""
+    def _load_excel_file(self, file_path: str) -> Dict[str, pd.DataFrame]:
+        """Load Excel file (.xlsx or .xls) into dict of pandas DataFrames (one per sheet)."""
         # Check for security library
         if not DEFUSEDXML_AVAILABLE:
             logger.warning("defusedxml not available - Excel files may be vulnerable to XML attacks")
@@ -322,6 +371,7 @@ class DatabaseManager:
         file_ext = Path(file_path).suffix.lower()
         
         try:
+            # Determine engine based on file extension
             if file_ext in ['.xlsx', '.xlsm']:
                 # Modern Excel format
                 if not OPENPYXL_AVAILABLE:
@@ -329,7 +379,7 @@ class DatabaseManager:
                         "openpyxl library is required for .xlsx files. "
                         "Install with: pip install openpyxl"
                     )
-                df = pd.read_excel(file_path, engine='openpyxl')
+                engine = 'openpyxl'
                 
             elif file_ext == '.xls':
                 # Legacy Excel format
@@ -338,39 +388,67 @@ class DatabaseManager:
                         "xlrd library is required for .xls files. "
                         "Install with: pip install xlrd"
                     )
-                df = pd.read_excel(file_path, engine='xlrd')
+                engine = 'xlrd'
                 
             else:
                 # Try pandas auto-detection as fallback
                 logger.info(f"Unknown Excel extension '{file_ext}', trying pandas auto-detection")
-                df = pd.read_excel(file_path)
+                engine = None
             
-            # Validate that we have data
-            if df.empty:
-                raise ValueError(f"Excel file '{file_path}' contains no data")
-            
-            # Clean up column names (remove extra whitespace, replace problematic characters)
-            df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
-            
-            # Handle Excel-specific data types
-            # Convert any datetime-like columns properly
-            for col in df.columns:
-                if df[col].dtype == 'object':
-                    # Try to convert to datetime if it looks like dates
+            # Read all sheets
+            with pd.ExcelFile(file_path, engine=engine) as excel_file:
+                sheet_names = excel_file.sheet_names
+                logger.info(f"Found {len(sheet_names)} sheets in Excel file: {sheet_names}")
+                
+                # Track used table names for uniqueness
+                used_names = set()
+                sheets_data = {}
+                
+                for sheet_name in sheet_names:
                     try:
-                        pd.to_datetime(df[col], errors='raise')
-                        df[col] = pd.to_datetime(df[col], errors='coerce')
-                    except:
-                        pass  # Keep as object type
-            
-            logger.info(f"Successfully loaded Excel file '{file_path}' with {len(df)} rows and {len(df.columns)} columns")
-            return df
+                        # Load sheet data
+                        df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                        
+                        # Skip empty sheets
+                        if df.empty:
+                            logger.warning(f"Sheet '{sheet_name}' is empty, skipping")
+                            continue
+                        
+                        # Clean up column names (remove extra whitespace, replace problematic characters)
+                        df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
+                        
+                        # Handle Excel-specific data types
+                        # Convert any datetime-like columns properly
+                        for col in df.columns:
+                            if df[col].dtype == 'object':
+                                # Try to convert to datetime if it looks like dates
+                                try:
+                                    pd.to_datetime(df[col], errors='raise')
+                                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                                except:
+                                    pass  # Keep as object type
+                        
+                        # Sanitize sheet name for SQL table name
+                        table_name = self._sanitize_sheet_name(sheet_name, used_names)
+                        sheets_data[table_name] = df
+                        
+                        logger.info(f"Successfully loaded sheet '{sheet_name}' as table '{table_name}' with {len(df)} rows and {len(df.columns)} columns")
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to load sheet '{sheet_name}': {e}")
+                        continue
+                
+                if not sheets_data:
+                    raise ValueError(f"Excel file '{file_path}' contains no readable data in any sheets")
+                
+                logger.info(f"Successfully loaded Excel file '{file_path}' with {len(sheets_data)} sheets")
+                return sheets_data
             
         except Exception as e:
             raise ValueError(f"Failed to load Excel file '{file_path}': {e}")
 
-    def _load_ods_file(self, file_path: str) -> pd.DataFrame:
-        """Load LibreOffice Calc ODS file into pandas DataFrame."""
+    def _load_ods_file(self, file_path: str) -> Dict[str, pd.DataFrame]:
+        """Load LibreOffice Calc ODS file into dict of pandas DataFrames (one per sheet)."""
         # Check for ODS support
         if not ODFPY_AVAILABLE:
             logger.warning("odfpy not available - ODS files cannot be loaded")
@@ -381,28 +459,53 @@ class DatabaseManager:
         
         try:
             # Use pandas native ODS support with odfpy engine
-            df = pd.read_excel(file_path, engine='odf')
-            
-            # Validate that we have data
-            if df.empty:
-                raise ValueError(f"ODS file '{file_path}' contains no data")
-            
-            # Clean up column names (remove extra whitespace, replace problematic characters)
-            df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
-            
-            # Handle ODS-specific data types
-            # Convert any datetime-like columns properly
-            for col in df.columns:
-                if df[col].dtype == 'object':
-                    # Try to convert to datetime if it looks like dates
+            with pd.ExcelFile(file_path, engine='odf') as excel_file:
+                sheet_names = excel_file.sheet_names
+                logger.info(f"Found {len(sheet_names)} sheets in ODS file: {sheet_names}")
+                
+                # Track used table names for uniqueness
+                used_names = set()
+                sheets_data = {}
+                
+                for sheet_name in sheet_names:
                     try:
-                        pd.to_datetime(df[col], errors='raise')
-                        df[col] = pd.to_datetime(df[col], errors='coerce')
-                    except:
-                        pass  # Keep as object type
-            
-            logger.info(f"Successfully loaded ODS file '{file_path}' with {len(df)} rows and {len(df.columns)} columns")
-            return df
+                        # Load sheet data
+                        df = pd.read_excel(excel_file, sheet_name=sheet_name, engine='odf')
+                        
+                        # Skip empty sheets
+                        if df.empty:
+                            logger.warning(f"Sheet '{sheet_name}' is empty, skipping")
+                            continue
+                        
+                        # Clean up column names (remove extra whitespace, replace problematic characters)
+                        df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
+                        
+                        # Handle ODS-specific data types
+                        # Convert any datetime-like columns properly
+                        for col in df.columns:
+                            if df[col].dtype == 'object':
+                                # Try to convert to datetime if it looks like dates
+                                try:
+                                    pd.to_datetime(df[col], errors='raise')
+                                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                                except:
+                                    pass  # Keep as object type
+                        
+                        # Sanitize sheet name for SQL table name
+                        table_name = self._sanitize_sheet_name(sheet_name, used_names)
+                        sheets_data[table_name] = df
+                        
+                        logger.info(f"Successfully loaded sheet '{sheet_name}' as table '{table_name}' with {len(df)} rows and {len(df.columns)} columns")
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to load sheet '{sheet_name}': {e}")
+                        continue
+                
+                if not sheets_data:
+                    raise ValueError(f"ODS file '{file_path}' contains no readable data in any sheets")
+                
+                logger.info(f"Successfully loaded ODS file '{file_path}' with {len(sheets_data)} sheets")
+                return sheets_data
             
         except Exception as e:
             raise ValueError(f"Failed to load ODS file '{file_path}': {e}")
