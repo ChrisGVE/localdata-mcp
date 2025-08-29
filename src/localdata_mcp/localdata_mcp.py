@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Literal, Optional
 import pandas as pd
 import yaml
 from fastmcp import FastMCP
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.sql import quoted_name
 
 # TOML support
 try:
@@ -23,8 +25,6 @@ try:
     TOML_AVAILABLE = True
 except ImportError:
     TOML_AVAILABLE = False
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.sql import quoted_name
 
 # Excel support libraries with graceful error handling
 try:
