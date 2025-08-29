@@ -1,22 +1,23 @@
 """LocalData MCP - Database connection and query management."""
 
-import os
+import atexit
+import hashlib
 import json
 import logging
-import pandas as pd
-import yaml
-import toml
-import hashlib
-import time
-import threading
+import os
 import tempfile
-import atexit
-from pathlib import Path
+import threading
+import time
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+import pandas as pd
+import toml
+import yaml
 from fastmcp import FastMCP
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.sql import quoted_name
-from typing import Literal, Optional, Dict, Any, List
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -26,12 +27,15 @@ logger.setLevel(logging.INFO)
 if not logger.handlers:
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
 # Create the MCP server instance
 mcp = FastMCP("localdata-mcp")
+
 
 @dataclass
 class QueryBuffer:
@@ -48,24 +52,26 @@ class DatabaseManager:
     def __init__(self):
         self.connections: Dict[str, Any] = {}
         self.query_history: Dict[str, List[str]] = {}
-        
+
         # Security and connection management
-        self.connection_semaphore = threading.Semaphore(10)  # Max 10 concurrent connections
+        self.connection_semaphore = threading.Semaphore(
+            10
+        )  # Max 10 concurrent connections
         self.connection_lock = threading.Lock()
         self.connection_count = 0
-        
+
         # Query buffering system
         self.query_buffers: Dict[str, QueryBuffer] = {}
         self.query_buffer_lock = threading.Lock()
-        
+
         # Temporary file management
         self.temp_files: List[str] = []
         self.temp_file_lock = threading.Lock()
-        
+
         # Auto-cleanup for buffers (10 minute expiry)
         self.buffer_cleanup_interval = 600  # 10 minutes
         self.last_cleanup = time.time()
-        
+
         # Register cleanup on exit
         atexit.register(self._cleanup_all)
 
@@ -84,53 +90,56 @@ class DatabaseManager:
             abs_file_path = Path(file_path).resolve()
         except (OSError, ValueError) as e:
             raise ValueError(f"Invalid path '{file_path}': {e}")
-        
+
         # Security check: ensure path is within base directory
         try:
             abs_file_path.relative_to(base_dir)
         except ValueError:
-            raise ValueError(f"Path '{file_path}' is outside the allowed directory. Only current directory and subdirectories are allowed.")
-        
+            raise ValueError(
+                f"Path '{file_path}' is outside the allowed directory. Only current directory and subdirectories are allowed."
+            )
+
         # Check if file exists
         if not abs_file_path.is_file():
             raise ValueError(f"File not found at path '{file_path}'.")
-        
+
         return str(abs_file_path)
-    
+
     def _get_file_size(self, file_path: str) -> int:
         """Get file size in bytes."""
         try:
             return os.path.getsize(file_path)
         except OSError as e:
             raise ValueError(f"Cannot get size of file '{file_path}': {e}")
-    
+
     def _is_large_file(self, file_path: str, threshold_mb: int = 100) -> bool:
         """Check if file exceeds the size threshold (default 100MB)."""
         threshold_bytes = threshold_mb * 1024 * 1024
         return self._get_file_size(file_path) > threshold_bytes
-    
+
     def _generate_query_id(self, db_name: str, query: str) -> str:
         """Generate a unique query ID in format: {db}_{timestamp}_{4char_hash}."""
         timestamp = int(time.time())
         query_hash = hashlib.md5(query.encode()).hexdigest()[:4]
         return f"{db_name}_{timestamp}_{query_hash}"
-    
+
     def _cleanup_expired_buffers(self):
         """Remove expired query buffers (older than 10 minutes)."""
         current_time = time.time()
         if current_time - self.last_cleanup < self.buffer_cleanup_interval:
             return  # Skip if not time for cleanup yet
-        
+
         with self.query_buffer_lock:
             expired_ids = [
-                query_id for query_id, buffer in self.query_buffers.items()
+                query_id
+                for query_id, buffer in self.query_buffers.items()
                 if current_time - buffer.timestamp > self.buffer_cleanup_interval
             ]
             for query_id in expired_ids:
                 del self.query_buffers[query_id]
-        
+
         self.last_cleanup = current_time
-    
+
     def _cleanup_all(self):
         """Clean up all resources on exit."""
         # Clean up temporary files
@@ -142,7 +151,7 @@ class DatabaseManager:
                 except OSError:
                     pass  # Ignore errors during cleanup
             self.temp_files.clear()
-        
+
         # Close all database connections
         with self.connection_lock:
             for name, engine in self.connections.items():
@@ -164,13 +173,13 @@ class DatabaseManager:
             return self._create_engine_from_file(sanitized_path, db_type)
         else:
             raise ValueError(f"Unsupported db_type: {db_type}")
-    
+
     def _create_engine_from_file(self, file_path: str, file_type: str):
         """Create SQLite engine from file, using temporary storage for large files."""
         try:
             # Check if file is large
             is_large = self._is_large_file(file_path)
-            
+
             # Load data based on file type
             if file_type == "csv":
                 try:
@@ -181,35 +190,49 @@ class DatabaseManager:
             elif file_type == "json":
                 df = pd.read_json(file_path)
             elif file_type == "yaml":
-                with open(file_path, 'r') as f:
+                with open(file_path, "r") as f:
                     data = yaml.safe_load(f)
-                df = pd.json_normalize(data) if isinstance(data, (list, dict)) else pd.DataFrame(data)
+                df = (
+                    pd.json_normalize(data)
+                    if isinstance(data, (list, dict))
+                    else pd.DataFrame(data)
+                )
             elif file_type == "toml":
-                with open(file_path, 'r') as f:
+                with open(file_path, "r") as f:
                     data = toml.load(f)
-                df = pd.json_normalize(data) if isinstance(data, (list, dict)) else pd.DataFrame(data)
+                df = (
+                    pd.json_normalize(data)
+                    if isinstance(data, (list, dict))
+                    else pd.DataFrame(data)
+                )
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
-            
+
             # Create engine - use temporary file for large files, memory for small ones
             if is_large:
                 # Create temporary SQLite file
-                temp_fd, temp_path = tempfile.mkstemp(suffix='.sqlite', prefix='db_client_')
-                os.close(temp_fd)  # Close the file descriptor, SQLAlchemy will handle the file
-                
+                temp_fd, temp_path = tempfile.mkstemp(
+                    suffix=".sqlite", prefix="db_client_"
+                )
+                os.close(
+                    temp_fd
+                )  # Close the file descriptor, SQLAlchemy will handle the file
+
                 with self.temp_file_lock:
                     self.temp_files.append(temp_path)
-                
+
                 engine = create_engine(f"sqlite:///{temp_path}")
             else:
                 engine = create_engine("sqlite:///:memory:")
-            
+
             # Load data into SQLite
             df.to_sql("data_table", engine, index=False, if_exists="replace")
             return engine
-            
+
         except Exception as e:
-            raise ValueError(f"Failed to create engine from {file_type} file '{file_path}': {e}")
+            raise ValueError(
+                f"Failed to create engine from {file_type} file '{file_path}': {e}"
+            )
 
     def _get_table_metadata(self, inspector, table_name):
         columns = inspector.get_columns(table_name)
@@ -273,25 +296,27 @@ class DatabaseManager:
             conn_string: The connection string or file path for the database.
         """
         logger.info(f"Attempting to connect to database '{name}' of type '{db_type}'")
-        
+
         if name in self.connections:
             logger.warning(f"Database '{name}' is already connected")
             return f"Error: A database with the name '{name}' is already connected."
-        
+
         # Check connection limit
         if not self.connection_semaphore.acquire(blocking=False):
             logger.warning(f"Connection limit reached for database '{name}'")
             return f"Error: Maximum number of concurrent connections (10) reached. Please disconnect a database first."
-        
+
         try:
             engine = self._get_engine(db_type, conn_string)
-            
+
             with self.connection_lock:
                 self.connections[name] = engine
                 self.query_history[name] = []
                 self.connection_count += 1
-            
-            logger.info(f"Successfully connected to database '{name}'. Total connections: {self.connection_count}")
+
+            logger.info(
+                f"Successfully connected to database '{name}'. Total connections: {self.connection_count}"
+            )
             return f"Successfully connected to database '{name}'."
         except Exception as e:
             # Release semaphore on failure
@@ -311,16 +336,18 @@ class DatabaseManager:
         try:
             conn = self._get_connection(name)
             conn.dispose()
-            
+
             with self.connection_lock:
                 del self.connections[name]
                 del self.query_history[name]
                 self.connection_count -= 1
-            
+
             # Release semaphore slot
             self.connection_semaphore.release()
-            
-            logger.info(f"Successfully disconnected from database '{name}'. Total connections: {self.connection_count}")
+
+            logger.info(
+                f"Successfully disconnected from database '{name}'. Total connections: {self.connection_count}"
+            )
             return f"Successfully disconnected from database '{name}'."
         except ValueError as e:
             logger.error(f"Database '{name}' not found for disconnection: {e}")
@@ -342,18 +369,18 @@ class DatabaseManager:
         try:
             # Clean up expired buffers
             self._cleanup_expired_buffers()
-            
+
             engine = self._get_connection(name)
             df = pd.read_sql_query(query, engine)
             self.query_history[name].append(query)
-            
+
             if df.empty:
                 return "Query executed successfully, but no results were returned."
-            
+
             # Check row count limit for markdown queries
             if len(df) > 100:
                 return f"Error: Query returned {len(df)} rows, which exceeds the 100-row limit for markdown format. Use execute_query_json() for large result sets."
-            
+
             return df.to_markdown()
         except Exception as e:
             return f"An error occurred while executing the query: {e}"
@@ -371,28 +398,32 @@ class DatabaseManager:
         try:
             # Clean up expired buffers
             self._cleanup_expired_buffers()
-            
+
             engine = self._get_connection(name)
             df = pd.read_sql_query(query, engine)
             self.query_history[name].append(query)
-            
+
             if df.empty:
                 return json.dumps([])
-            
+
             # Check row count for large result handling
             if len(df) > 100:
                 # Store full result in buffer
                 query_id = self._generate_query_id(name, query)
-                
+
                 # Check if this is a file-based connection to track modifications
                 source_file_path = None
                 source_file_mtime = None
                 connection = self.connections[name]
-                if hasattr(connection, 'url') and connection.url.database and connection.url.database != ':memory:':
+                if (
+                    hasattr(connection, "url")
+                    and connection.url.database
+                    and connection.url.database != ":memory:"
+                ):
                     # This might be a file-based database, but for CSV connections we need to track the original file
                     # For now, we'll leave this as None - more complex file tracking would need connection metadata
                     pass
-                
+
                 buffer = QueryBuffer(
                     query_id=query_id,
                     db_name=name,
@@ -400,34 +431,34 @@ class DatabaseManager:
                     results=df,
                     timestamp=time.time(),
                     source_file_path=source_file_path,
-                    source_file_mtime=source_file_mtime
+                    source_file_mtime=source_file_mtime,
                 )
-                
+
                 with self.query_buffer_lock:
                     self.query_buffers[query_id] = buffer
-                
+
                 # Return first 10 rows with metadata
                 first_10 = df.head(10)
-                
+
                 response = {
                     "metadata": {
                         "total_rows": len(df),
                         "showing_rows": f"1-{min(10, len(df))}",
                         "query_id": query_id,
-                        "file_modified_since_buffer": False  # Will be updated when we implement file tracking
+                        "file_modified_since_buffer": False,  # Will be updated when we implement file tracking
                     },
                     "data": json.loads(first_10.to_json(orient="records")),
                     "next_options": {
                         "get_next_100": f"get_query_chunk(query_id='{query_id}', start_row=11, chunk_size=100)",
-                        "get_all_remaining": f"get_query_chunk(query_id='{query_id}', start_row=11, chunk_size='all')"
-                    }
+                        "get_all_remaining": f"get_query_chunk(query_id='{query_id}', start_row=11, chunk_size='all')",
+                    },
                 }
-                
+
                 return json.dumps(response, indent=2)
             else:
                 # Return all results for small result sets
                 return df.to_json(orient="records")
-                
+
         except Exception as e:
             return f"An error occurred while executing the query: {e}"
 
@@ -481,7 +512,9 @@ class DatabaseManager:
                 table_info = self._get_table_metadata(inspector, table_name)
                 with engine.connect() as conn:
                     safe_table_name = self._safe_table_identifier(table_name)
-                    result = conn.execute(text(f"SELECT COUNT(*) FROM {safe_table_name}"))
+                    result = conn.execute(
+                        text(f"SELECT COUNT(*) FROM {safe_table_name}")
+                    )
                     row_count = result.scalar()
                 table_info["size"] = row_count
                 db_info["tables"].append(table_info)
@@ -622,25 +655,25 @@ class DatabaseManager:
         try:
             # Clean up expired buffers
             self._cleanup_expired_buffers()
-            
+
             with self.query_buffer_lock:
                 if query_id not in self.query_buffers:
                     return f"Error: Query buffer '{query_id}' not found. It may have expired or been cleared."
-                
+
                 buffer = self.query_buffers[query_id]
-            
+
             df = buffer.results
             total_rows = len(df)
-            
+
             # Validate start_row (1-based indexing)
             if start_row < 1 or start_row > total_rows:
                 return f"Error: start_row must be between 1 and {total_rows}."
-            
+
             # Convert to 0-based indexing for pandas
             start_idx = start_row - 1
-            
+
             # Handle chunk_size
-            if chunk_size == 'all':
+            if chunk_size == "all":
                 end_idx = total_rows
                 chunk_df = df.iloc[start_idx:]
             else:
@@ -652,10 +685,10 @@ class DatabaseManager:
                     chunk_df = df.iloc[start_idx:end_idx]
                 except ValueError:
                     return "Error: chunk_size must be a positive integer or 'all'."
-            
+
             if chunk_df.empty:
                 return json.dumps([])
-            
+
             # Build response
             showing_end = start_idx + len(chunk_df)
             response = {
@@ -665,21 +698,21 @@ class DatabaseManager:
                     "showing_rows": f"{start_row}-{showing_end}",
                     "chunk_size": len(chunk_df),
                     "buffer_timestamp": buffer.timestamp,
-                    "file_modified_since_buffer": self._check_file_modified(buffer)
+                    "file_modified_since_buffer": self._check_file_modified(buffer),
                 },
-                "data": json.loads(chunk_df.to_json(orient="records"))
+                "data": json.loads(chunk_df.to_json(orient="records")),
             }
-            
+
             # Add next options if more rows available
             if showing_end < total_rows:
                 next_start = showing_end + 1
                 response["next_options"] = {
                     "get_next_100": f"get_query_chunk(query_id='{query_id}', start_row={next_start}, chunk_size=100)",
-                    "get_all_remaining": f"get_query_chunk(query_id='{query_id}', start_row={next_start}, chunk_size='all')"
+                    "get_all_remaining": f"get_query_chunk(query_id='{query_id}', start_row={next_start}, chunk_size='all')",
                 }
-            
+
             return json.dumps(response, indent=2)
-            
+
         except Exception as e:
             return f"An error occurred while retrieving query chunk: {e}"
 
@@ -694,13 +727,13 @@ class DatabaseManager:
         try:
             # Clean up expired buffers
             self._cleanup_expired_buffers()
-            
+
             with self.query_buffer_lock:
                 if query_id not in self.query_buffers:
                     return f"Error: Query buffer '{query_id}' not found. It may have expired or been cleared."
-                
+
                 buffer = self.query_buffers[query_id]
-            
+
             info = {
                 "query_id": query_id,
                 "db_name": buffer.db_name,
@@ -708,17 +741,19 @@ class DatabaseManager:
                 "total_rows": len(buffer.results),
                 "buffer_created": buffer.timestamp,
                 "buffer_age_seconds": time.time() - buffer.timestamp,
-                "expires_in_seconds": max(0, self.buffer_cleanup_interval - (time.time() - buffer.timestamp)),
+                "expires_in_seconds": max(
+                    0, self.buffer_cleanup_interval - (time.time() - buffer.timestamp)
+                ),
                 "source_file_path": buffer.source_file_path,
-                "file_modified_since_buffer": self._check_file_modified(buffer)
+                "file_modified_since_buffer": self._check_file_modified(buffer),
             }
-            
+
             return json.dumps(info, indent=2)
-            
+
         except Exception as e:
             return f"An error occurred while retrieving query buffer info: {e}"
 
-    @mcp.tool  
+    @mcp.tool
     def clear_query_buffer(self, query_id: str) -> str:
         """
         Clear a specific query buffer.
@@ -730,37 +765,41 @@ class DatabaseManager:
             with self.query_buffer_lock:
                 if query_id not in self.query_buffers:
                     return f"Error: Query buffer '{query_id}' not found."
-                
+
                 del self.query_buffers[query_id]
-            
+
             return f"Successfully cleared query buffer '{query_id}'."
-            
+
         except Exception as e:
             return f"An error occurred while clearing query buffer: {e}"
-    
+
     def _check_file_modified(self, buffer: QueryBuffer) -> bool:
         """Check if the source file has been modified since buffer creation."""
         if not buffer.source_file_path or not buffer.source_file_mtime:
             return False
-        
+
         try:
             current_mtime = os.path.getmtime(buffer.source_file_path)
             return current_mtime > buffer.source_file_mtime
         except OSError:
             # File might not exist anymore
             return True
-    
+
     def _safe_table_identifier(self, table_name: str) -> str:
         """Create a safe SQL identifier for table names to prevent injection."""
         # Validate table name contains only safe characters
         import re
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table_name):
-            raise ValueError(f"Invalid table name '{table_name}'. Table names must start with a letter or underscore and contain only alphanumeric characters and underscores.")
-        
+
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", table_name):
+            raise ValueError(
+                f"Invalid table name '{table_name}'. Table names must start with a letter or underscore and contain only alphanumeric characters and underscores."
+            )
+
         # Use SQLAlchemy's quoted_name for safe identifier quoting
         return str(quoted_name(table_name, quote=True))
 
-def main(): 
+
+def main():
     manager = DatabaseManager()
     mcp.run(transport="stdio")
 
