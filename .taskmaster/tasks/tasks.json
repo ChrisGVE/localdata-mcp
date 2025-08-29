@@ -1,0 +1,166 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Research and select spreadsheet libraries",
+        "description": "Identify and evaluate Python libraries for reading Excel (.xlsx, .xls), Numbers (.numbers), and LibreOffice Calc (.ods) files. Priority should be on pandas-compatible, well-maintained libraries.",
+        "details": "- Research openpyxl, xlrd, xlsxwriter for Excel support\n- Investigate python-numbers-parser for Numbers files  \n- Research odfpy or ezodf for LibreOffice Calc support\n- Evaluate library maintenance status, security, and pandas compatibility\n- Document recommended libraries with rationale",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 2,
+        "title": "Add spreadsheet dependencies to project",
+        "description": "Update pyproject.toml to include the selected spreadsheet libraries as dependencies",
+        "details": "- Add openpyxl for Excel .xlsx support\n- Add xlrd for Excel .xls support  \n- Add python-numbers-parser for Numbers support\n- Add odfpy for LibreOffice Calc .ods support\n- Update optional dependencies for development/testing\n- Ensure compatibility with existing Python 3.10+ requirement",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          1
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 3,
+        "title": "Implement Excel file format support",
+        "description": "Add support for Microsoft Excel formats (.xlsx and .xls) to the localdata_mcp.py file",
+        "details": "- Extend _create_engine_from_file method to handle 'excel' database type\n- Implement Excel file reading using selected libraries (openpyxl/xlrd)\n- Handle multiple worksheets as separate tables\n- Integrate with existing large file handling (100MB+ threshold)\n- Maintain existing security and path validation\n- Convert Excel data to pandas DataFrame for SQL querying",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          2
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 4,
+        "title": "Implement Apple Numbers file support",
+        "description": "Add support for Apple Numbers format (.numbers) files to the localdata_mcp.py file",
+        "details": "- Extend _create_engine_from_file method to handle 'numbers' database type\n- Implement Numbers file reading using python-numbers-parser or similar\n- Handle multiple sheets/tables within Numbers files\n- Extract data from complex Numbers layouts and convert to DataFrame\n- Integrate with existing file handling and security patterns\n- Handle Numbers-specific data types and formatting",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          2
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 5,
+        "title": "Implement LibreOffice Calc ODS support",
+        "description": "Add support for LibreOffice Calc format (.ods) and other OSS spreadsheet formats",
+        "details": "- Extend _create_engine_from_file method to handle 'ods' database type\n- Implement ODS file reading using odfpy or similar library\n- Handle multiple sheets within ODS files\n- Support other OSS formats like Gnumeric if feasible\n- Convert ODS data to pandas DataFrame for SQL querying\n- Maintain compatibility with existing architecture",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          2
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 6,
+        "title": "Enhance multi-sheet handling and database integration",
+        "description": "Improve the database integration to properly handle multiple sheets from spreadsheet files as separate tables",
+        "details": "- Modify describe_database to list all sheets as tables\n- Update describe_table to show sheet-specific metadata\n- Implement sheet name sanitization for SQL table names\n- Add sheet selection capabilities in connect_database\n- Ensure proper table naming conventions for multi-sheet files\n- Handle edge cases like duplicate sheet names",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          3,
+          4,
+          5
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 7,
+        "title": "Create comprehensive test suite for spreadsheet formats",
+        "description": "Develop extensive tests for all new spreadsheet format support including edge cases and security testing",
+        "details": "- Create test files for Excel (.xlsx, .xls), Numbers (.numbers), and ODS formats\n- Test multi-sheet files with various data types\n- Test large file handling with 100MB+ spreadsheets\n- Security tests for malicious files and path traversal\n- Performance tests for memory usage and processing time\n- Integration tests with existing MCP tools\n- Test error handling for corrupted/invalid files",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          6
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 8,
+        "title": "Update documentation for spreadsheet support",
+        "description": "Update all project documentation to reflect the new spreadsheet format capabilities",
+        "details": "- Update README.md with new supported formats (Excel, Numbers, ODS)\n- Add usage examples for each spreadsheet format\n- Update tool documentation for connect_database\n- Document multi-sheet handling capabilities\n- Update roadmap to mark Excel/spreadsheet support as complete\n- Add troubleshooting section for common spreadsheet issues\n- Update API documentation and examples",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          7
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 9,
+        "title": "Design and implement dynamic toolset architecture",
+        "description": "Implement GitHub MCP-style toolset system to enable/disable tools on-demand and reduce LLM context bloat",
+        "details": "- Research GitHub MCP toolset implementation pattern\n- Design toolset categories (connection-management, sql-databases, document-databases, etc.)\n- Implement enable/disable toolset functionality\n- Refactor existing tools into appropriate toolsets\n- Add toolset discovery and listing capabilities\n- Maintain backward compatibility for existing users\n- Update MCP server initialization to support toolsets",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 10,
+        "title": "Add enterprise database support",
+        "description": "Implement support for enterprise databases including Oracle, SQL Server, DB2, and cloud analytical databases",
+        "details": "- Add Oracle Database support (cx_Oracle/oracledb driver)\n- Add Microsoft SQL Server support (pyodbc/pymssql driver)\n- Add IBM DB2 support (ibm_db driver)\n- Add cloud database support (Redshift, BigQuery, Snowflake)\n- Implement enterprise authentication patterns (SSO, Kerberos)\n- Handle different SQL dialects and connection patterns\n- Add optional dependencies for enterprise drivers\n- Create enterprise-specific toolset in dynamic architecture",
+        "testStrategy": "",
+        "status": "deferred",
+        "dependencies": [
+          9
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 11,
+        "title": "Add analytical data formats support",
+        "description": "Implement support for Parquet, Arrow/Feather, HDF5, and other analytical data formats",
+        "details": "- Add Parquet file support using pandas/pyarrow\n- Add Arrow/Feather format support for fast columnar data\n- Add HDF5 support for scientific data (h5py)\n- Add XML file support with proper parsing\n- Add INI configuration file support\n- Add TSV (tab-separated values) support\n- Integrate with existing large file handling patterns\n- Create analytical-formats toolset",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          9
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 12,
+        "title": "Add modern database support",
+        "description": "Implement support for Redis, DuckDB, Elasticsearch and other modern local databases",
+        "details": "- Add Redis support for key-value operations (redis-py)\n- Add DuckDB support for analytical SQL queries (perfect fit for this project)\n- Add Elasticsearch support for search/indexing operations\n- Add InfluxDB support for time-series data\n- Add Neo4j support for graph database operations\n- Add CouchDB support as MongoDB alternative\n- Create appropriate toolsets (key-value-stores, search-engines, etc.)\n- Handle different query paradigms (SQL, NoSQL, graph queries)",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          9
+        ],
+        "priority": "medium",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "created": "2025-08-29T16:16:00Z",
+      "version": "1.0.0",
+      "description": "Spreadsheet format support extension for LocalData MCP Server",
+      "updated": "2025-08-29T14:43:32.197Z"
+    }
+  }
+}

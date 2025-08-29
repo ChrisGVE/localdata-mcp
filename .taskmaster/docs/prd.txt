@@ -1,0 +1,175 @@
+# Product Requirements Document: Spreadsheet Format Support Extension
+
+## Project Overview
+
+Extend the LocalData MCP Server to support popular spreadsheet formats including Microsoft Excel (.xlsx, .xls), Apple Numbers (.numbers), and open-source spreadsheet formats (LibreOffice Calc .ods). This enhancement will broaden the server's capability to handle structured data from various spreadsheet applications.
+
+## Current State
+
+The LocalData MCP Server currently supports:
+- SQL Databases: PostgreSQL, MySQL, SQLite
+- Document Databases: MongoDB
+- Structured Files: CSV, JSON, YAML, TOML
+
+The project already has a robust architecture with:
+- Path security restrictions
+- Large file handling (100MB+ with automatic SQLite conversion)
+- Query buffering for large datasets
+- Thread-safe connection management
+
+## Requirements
+
+### 1. Core Spreadsheet Format Support
+
+#### 1.1 Microsoft Excel Support
+- Support for Excel 2007+ format (.xlsx)
+- Support for legacy Excel format (.xls)
+- Handle multiple worksheets within a single file
+- Preserve basic data types (text, numbers, dates, booleans)
+- Support for named ranges (if accessible)
+
+#### 1.2 Apple Numbers Support
+- Support for Apple Numbers format (.numbers)
+- Handle multiple sheets/tables within Numbers files
+- Extract data from complex Numbers layouts
+
+#### 1.3 Open Source Spreadsheet Support
+- Support for LibreOffice Calc (.ods)
+- Support for Gnumeric (.gnumeric)
+- Consider other OSS formats based on library availability
+
+### 2. Technical Requirements
+
+#### 2.1 Library Selection
+- Use pandas-compatible libraries where possible
+- Prioritize well-maintained, secure libraries
+- Ensure compatibility with existing Python 3.10+ requirement
+- Libraries should support reading (write capability not required initially)
+
+#### 2.2 Integration with Existing Architecture
+- Maintain compatibility with existing file handling patterns
+- Use the same large file handling logic (100MB+ threshold)
+- Integrate with existing query buffering system
+- Preserve all security features (path sanitization, etc.)
+
+#### 2.3 Database Integration
+- Convert spreadsheet data to pandas DataFrame (consistent with current approach)
+- Support SQL queries against spreadsheet data via SQLite conversion
+- Handle multiple sheets as separate tables in virtual database
+- Maintain existing naming conventions for tables
+
+### 3. User Experience
+
+#### 3.1 Connection Interface
+- Extend existing `connect_database` tool to support new formats
+- Use intuitive database type names: "excel", "numbers", "ods"
+- Support sheet selection via connection parameters
+- Default to first sheet if no sheet specified
+
+#### 3.2 Sheet Handling
+- List available sheets via `describe_database`
+- Access individual sheets as separate tables
+- Use sheet names as table names (sanitized for SQL compatibility)
+- Provide metadata about sheet dimensions and data types
+
+#### 3.3 Error Handling
+- Clear error messages for unsupported Excel features
+- Graceful handling of password-protected files
+- Informative messages for corrupted or invalid files
+
+### 4. Performance Requirements
+
+#### 4.1 Large File Handling
+- Maintain existing 100MB threshold for temporary SQLite conversion
+- Efficient memory usage when loading large spreadsheets
+- Support for chunked reading where possible
+
+#### 4.2 Multi-Sheet Processing
+- Load sheets on-demand rather than all at once
+- Efficient handling of files with many sheets
+- Memory cleanup after sheet processing
+
+### 5. Security Requirements
+
+#### 5.1 Path Security
+- Maintain existing path sanitization
+- No access to files outside current working directory
+- Validate file extensions match actual file format
+
+#### 5.2 Content Security
+- Handle potentially malicious spreadsheet content safely
+- No execution of embedded macros or formulas
+- Sanitize sheet and column names for SQL safety
+
+### 6. Testing Requirements
+
+#### 6.1 Format Coverage
+- Test files for each supported format
+- Multi-sheet test files
+- Large file test cases
+- Various data types and formats
+
+#### 6.2 Security Testing
+- Path traversal prevention
+- Malicious file handling
+- Invalid file format handling
+
+#### 6.3 Performance Testing
+- Large file processing times
+- Memory usage profiling
+- Concurrent access testing
+
+### 7. Documentation Requirements
+
+#### 7.1 User Documentation
+- Update README with supported formats
+- Add usage examples for each new format
+- Update tool documentation
+
+#### 7.2 Developer Documentation
+- Document new dependencies
+- Update API documentation
+- Include troubleshooting guide
+
+### 8. Compatibility
+
+#### 8.1 Backward Compatibility
+- All existing functionality must remain unchanged
+- Existing API signatures preserved
+- No breaking changes to current tools
+
+#### 8.2 Dependency Management
+- Add new dependencies to pyproject.toml
+- Use optional dependencies where appropriate
+- Maintain Python 3.10+ compatibility
+
+### 9. Implementation Priorities
+
+#### Phase 1: Core Excel Support
+- Implement .xlsx and .xls support
+- Basic multi-sheet handling
+- Integration with existing architecture
+
+#### Phase 2: Extended Format Support
+- Add Numbers (.numbers) support
+- Add LibreOffice Calc (.ods) support
+- Enhanced multi-sheet features
+
+#### Phase 3: Advanced Features
+- Named range support
+- Enhanced data type detection
+- Performance optimizations
+
+### 10. Success Criteria
+
+- All new spreadsheet formats can be connected as databases
+- Multi-sheet files accessible as separate tables
+- Large spreadsheet files handled efficiently
+- All existing tests pass
+- New formats have comprehensive test coverage
+- Documentation updated and complete
+- No security vulnerabilities introduced
+
+## Implementation Notes
+
+The implementation should leverage existing patterns in the codebase, particularly the file handling logic in `_create_engine_from_file` method. New format support should be added to the existing conditional structure and follow the same patterns for DataFrame creation and SQLite conversion.
