@@ -20,42 +20,47 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pandas as pd
 import pytest
-from localdata_mcp import DatabaseManager
+from localdata_mcp.localdata_mcp import DatabaseManager
+
+
+# Shared fixtures for all test classes
+@pytest.fixture(scope="session")
+def test_csv_file():
+    """Create a test CSV file."""
+    df = pd.DataFrame({
+        'id': range(1, 151),  # 150 rows to test chunking
+        'name': [f'user_{i}' for i in range(1, 151)],
+        'value': [i * 10 for i in range(1, 151)]
+    })
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+        df.to_csv(f.name, index=False)
+        yield f.name
+    
+    # Cleanup
+    if os.path.exists(f.name):
+        os.unlink(f.name)
+
+@pytest.fixture(scope="session")
+def test_json_file():
+    """Create a test JSON file."""
+    data = [
+        {'category': 'A', 'count': 10, 'active': True},
+        {'category': 'B', 'count': 20, 'active': False},
+        {'category': 'C', 'count': 15, 'active': True}
+    ]
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json.dump(data, f)
+        yield f.name
+    
+    # Cleanup
+    if os.path.exists(f.name):
+        os.unlink(f.name)
 
 
 class TestStreamlinedArchitecture:
     """Test the 9 core tools of the streamlined architecture."""
-    
-    @pytest.fixture
-    def manager(self):
-        """Create a fresh DatabaseManager instance for testing."""
-        return DatabaseManager()
-    
-    @pytest.fixture
-    def test_csv_file(self):
-        """Create a test CSV file."""
-        df = pd.DataFrame({
-            'id': range(1, 151),  # 150 rows to test chunking
-            'name': [f'user_{i}' for i in range(1, 151)],
-            'value': [i * 10 for i in range(1, 151)]
-        })
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
-            df.to_csv(f.name, index=False)
-            return f.name
-    
-    @pytest.fixture  
-    def test_json_file(self):
-        """Create a test JSON file."""
-        data = [
-            {'category': 'A', 'count': 10, 'active': True},
-            {'category': 'B', 'count': 20, 'active': False},
-            {'category': 'C', 'count': 15, 'active': True}
-        ]
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(data, f)
-            return f.name
 
 
 class TestConnectDatabase:
@@ -67,7 +72,9 @@ class TestConnectDatabase:
     
     def test_connect_csv_with_sql_flavor(self, manager, test_csv_file):
         """Test connecting to CSV with SQL flavor detection."""
-        result = manager.connect_database("test_csv", "csv", test_csv_file)
+        # Access the underlying function directly
+        connect_func = manager.connect_database.function
+        result = connect_func(manager, "test_csv", "csv", test_csv_file)
         
         # Parse JSON response
         response = json.loads(result)
@@ -111,8 +118,8 @@ class TestConnectDatabase:
             with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
                 df1 = pd.DataFrame({'col1': [1, 2], 'col2': [3, 4]})
                 df2 = pd.DataFrame({'colA': [5, 6], 'colB': [7, 8]})
-                df1.to_sheet(writer, sheet_name='Sheet1', index=False)
-                df2.to_sheet(writer, sheet_name='Sheet2', index=False)
+                df1.to_excel(writer, sheet_name='Sheet1', index=False)
+                df2.to_excel(writer, sheet_name='Sheet2', index=False)
             
             result = manager.connect_database("excel_test", "excel", excel_path, sheet_name="Sheet1")
             
