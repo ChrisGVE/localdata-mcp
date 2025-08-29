@@ -99,6 +99,7 @@ class QueryBuffer:
 class DatabaseManager:
     def __init__(self):
         self.connections: Dict[str, Any] = {}
+        self.db_types: Dict[str, str] = {}  # Track database type for each connection
         self.query_history: Dict[str, List[str]] = {}
 
         # Security and connection management
@@ -249,6 +250,7 @@ class DatabaseManager:
                 except:
                     pass  # Ignore errors during cleanup
             self.connections.clear()
+            self.db_types.clear()
 
     def _get_engine(self, db_type: str, conn_string: str, sheet_name: Optional[str] = None):
         if db_type == "sqlite":
@@ -699,16 +701,31 @@ class DatabaseManager:
 
         try:
             engine = self._get_engine(db_type, conn_string, sheet_name)
+            sql_flavor = self._get_sql_flavor(db_type, engine)
 
             with self.connection_lock:
                 self.connections[name] = engine
+                self.db_types[name] = db_type
                 self.query_history[name] = []
                 self.connection_count += 1
 
             logger.info(
-                f"Successfully connected to database '{name}'. Total connections: {self.connection_count}"
+                f"Successfully connected to database '{name}' ({sql_flavor}). Total connections: {self.connection_count}"
             )
-            return f"Successfully connected to database '{name}'."
+            
+            response = {
+                "success": True,
+                "message": f"Successfully connected to database '{name}'",
+                "connection_info": {
+                    "name": name,
+                    "db_type": db_type,
+                    "sql_flavor": sql_flavor,
+                    "total_connections": self.connection_count
+                }
+            }
+            
+            return json.dumps(response, indent=2)
+            
         except Exception as e:
             # Release semaphore on failure
             self.connection_semaphore.release()
@@ -730,6 +747,7 @@ class DatabaseManager:
 
             with self.connection_lock:
                 del self.connections[name]
+                del self.db_types[name]
                 del self.query_history[name]
                 self.connection_count -= 1
 
@@ -945,11 +963,27 @@ class DatabaseManager:
     @mcp.tool
     def list_databases(self) -> str:
         """
-        List all available database connections.
+        List all available database connections with their SQL flavor information.
         """
         if not self.connections:
-            return "No databases are currently connected."
-        return json.dumps(list(self.connections.keys()))
+            return json.dumps({"message": "No databases are currently connected.", "databases": []})
+        
+        databases = []
+        for name in self.connections.keys():
+            db_type = self.db_types.get(name, "unknown")
+            sql_flavor = self._get_sql_flavor(db_type, self.connections[name])
+            databases.append({
+                "name": name,
+                "db_type": db_type,
+                "sql_flavor": sql_flavor
+            })
+        
+        response = {
+            "total_connections": len(databases),
+            "databases": databases
+        }
+        
+        return json.dumps(response, indent=2)
 
     @mcp.tool
     def describe_database(self, name: str) -> str:
@@ -1086,6 +1120,23 @@ class DatabaseManager:
                     return True
         
         return False
+
+    def _get_sql_flavor(self, db_type: str, engine=None) -> str:
+        """Determine the SQL flavor/dialect for the database type."""
+        if db_type == "sqlite":
+            return "SQLite"
+        elif db_type == "postgresql":
+            return "PostgreSQL"
+        elif db_type == "mysql":
+            return "MySQL"
+        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "xml", "ini", "tsv", "parquet", "feather", "arrow"]:
+            # File formats use SQLite dialect internally
+            return "SQLite"
+        else:
+            # Try to get from engine if available
+            if engine and hasattr(engine, 'dialect'):
+                return engine.dialect.name.title()
+            return "Unknown"
 
     def _safe_table_identifier(self, table_name: str) -> str:
         """Create a safe SQL identifier for table names to prevent injection."""
