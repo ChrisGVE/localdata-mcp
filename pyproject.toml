@@ -1,6 +1,6 @@
 [project]
 name = "localdata-mcp"
-version = "1.0.3"
+version = "1.1.0"
 description = "A dynamic MCP server for local databases and text files."
 readme = "README.md"
 authors = [{ name = "Christian C. Berclaz", email = "christian@berclaz.org" }]
@@ -25,6 +25,14 @@ dependencies = [
     "mysql-connector-python",
     "pyyaml>=5.4.0",
     "toml>=0.10.0",
+    # Spreadsheet format support
+    "openpyxl>=3.0.0",         # Excel .xlsx/.xlsm support
+    "defusedxml>=0.7.0",       # Security for XML-based formats
+    "xlrd>=2.0.0",             # Legacy Excel .xls support
+    "odfpy>=1.4.0",            # LibreOffice Calc .ods support
+    "numbers-parser>=4.15.0",  # Apple Numbers .numbers support
+    "pyarrow>=10.0.0",         # Parquet/Feather analytical formats
+    "lxml>=4.6.0",             # XML format support
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,6 @@
+Name	Age	Department	Salary	Start_Date	Active
+Alice Johnson	28	Engineering	75000	2020-01-15	True
+Bob Smith	35	Sales	65000	2019-03-22	True
+Carol Williams	42	Marketing	70000	2021-07-10	False
+David Brown	31	Engineering	80000	2020-11-05	True
+Eve Davis	26	HR	55000	2022-02-28	True
