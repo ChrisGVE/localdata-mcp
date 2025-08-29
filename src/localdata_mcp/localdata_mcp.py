@@ -613,7 +613,11 @@ class DatabaseManager:
         foreign_keys = inspector.get_foreign_keys(table_name)
         primary_keys = inspector.get_pk_constraint(table_name)["constrained_columns"]
         indexes = inspector.get_indexes(table_name)
-        table_options = inspector.get_table_options(table_name)
+        try:
+            table_options = inspector.get_table_options(table_name)
+        except NotImplementedError:
+            # SQLite and some other dialects don't support table options
+            table_options = {}
 
         col_list = []
         for col in columns:
