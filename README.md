@@ -9,23 +9,27 @@
 ## ✨ Features
 
 ### 🗄️ **Multi-Database Support**
+
 - **SQL Databases**: PostgreSQL, MySQL, SQLite
 - **Document Databases**: MongoDB
 - **Structured Files**: CSV, JSON, YAML, TOML
 
 ### 🔒 **Advanced Security**
+
 - **Path Security**: Restricts file access to current working directory only
 - **SQL Injection Prevention**: Parameterized queries and safe table identifiers
 - **Connection Limits**: Maximum 10 concurrent database connections
 - **Input Validation**: Comprehensive validation and sanitization
 
 ### 📊 **Large Dataset Handling**
+
 - **Query Buffering**: Automatic buffering for results with 100+ rows
 - **Large File Support**: 100MB+ files automatically use temporary SQLite storage
 - **Chunk Retrieval**: Paginated access to large result sets
 - **Auto-Cleanup**: 10-minute expiry with file modification detection
 
 ### 🛠️ **Developer Experience**
+
 - **Comprehensive Tools**: 12 database operation tools
 - **Error Handling**: Detailed, actionable error messages
 - **Thread Safety**: Concurrent operation support
@@ -66,6 +70,7 @@ Add to your MCP client configuration:
 ### Usage Examples
 
 #### Connect to Databases
+
 ```python
 # PostgreSQL
 connect_database("analytics", "postgresql", "postgresql://user:pass@localhost/db")
@@ -76,11 +81,12 @@ connect_database("local", "sqlite", "./data.sqlite")
 # CSV Files
 connect_database("csvdata", "csv", "./data.csv")
 
-# JSON Files  
+# JSON Files
 connect_database("config", "json", "./config.json")
 ```
 
 #### Query Data
+
 ```python
 # Execute queries with automatic result formatting
 execute_query("analytics", "SELECT * FROM users LIMIT 50")
@@ -90,6 +96,7 @@ execute_query_json("analytics", "SELECT * FROM large_table")
 ```
 
 #### Handle Large Results
+
 ```python
 # Get chunked results for large datasets
 get_query_chunk("analytics_1640995200_a1b2", 101, "100")
@@ -103,34 +110,37 @@ clear_query_buffer("analytics_1640995200_a1b2")
 
 ## 🔧 Available Tools
 
-| Tool | Description | Use Case |
-|------|-------------|----------|
-| `connect_database` | Connect to databases/files | Initial setup |
-| `disconnect_database` | Close connections | Cleanup |
-| `list_databases` | Show active connections | Status check |
-| `execute_query` | Run SQL (markdown output) | Small results |
-| `execute_query_json` | Run SQL (JSON output) | Large results |
-| `describe_database` | Show schema/structure | Exploration |
-| `describe_table` | Show table details | Analysis |
-| `get_table_sample` | Preview table data | Quick look |
-| `get_table_sample_json` | Preview (JSON format) | Development |
-| `find_table` | Locate tables by name | Navigation |
-| `read_text_file` | Read structured files | File access |
-| `get_query_chunk` | Paginated result access | Large data |
-| `get_buffered_query_info` | Buffer status info | Monitoring |
-| `clear_query_buffer` | Manual buffer cleanup | Management |
+| Tool                      | Description                | Use Case      |
+| ------------------------- | -------------------------- | ------------- |
+| `connect_database`        | Connect to databases/files | Initial setup |
+| `disconnect_database`     | Close connections          | Cleanup       |
+| `list_databases`          | Show active connections    | Status check  |
+| `execute_query`           | Run SQL (markdown output)  | Small results |
+| `execute_query_json`      | Run SQL (JSON output)      | Large results |
+| `describe_database`       | Show schema/structure      | Exploration   |
+| `describe_table`          | Show table details         | Analysis      |
+| `get_table_sample`        | Preview table data         | Quick look    |
+| `get_table_sample_json`   | Preview (JSON format)      | Development   |
+| `find_table`              | Locate tables by name      | Navigation    |
+| `read_text_file`          | Read structured files      | File access   |
+| `get_query_chunk`         | Paginated result access    | Large data    |
+| `get_buffered_query_info` | Buffer status info         | Monitoring    |
+| `clear_query_buffer`      | Manual buffer cleanup      | Management    |
 
 ## 📋 Supported Data Sources
 
 ### SQL Databases
+
 - **PostgreSQL**: Full support with connection pooling
-- **MySQL**: Complete MySQL/MariaDB compatibility  
+- **MySQL**: Complete MySQL/MariaDB compatibility
 - **SQLite**: Local file and in-memory databases
 
 ### Document Databases
+
 - **MongoDB**: Collection queries and aggregation
 
 ### Structured Files
+
 - **CSV**: Large file automatic SQLite conversion
 - **JSON**: Nested structure flattening
 - **YAML**: Configuration file support
@@ -139,10 +149,11 @@ clear_query_buffer("analytics_1640995200_a1b2")
 ## 🛡️ Security Features
 
 ### Path Security
+
 ```python
 # ✅ Allowed - current directory and subdirectories
 "./data/users.csv"
-"data/config.json" 
+"data/config.json"
 "subdir/file.yaml"
 
 # ❌ Blocked - parent directory access
@@ -152,6 +163,7 @@ clear_query_buffer("analytics_1640995200_a1b2")
 ```
 
 ### SQL Injection Prevention
+
 ```python
 # ✅ Safe - parameterized queries
 describe_table("mydb", "users")  # Validates table name
@@ -161,6 +173,7 @@ describe_table("mydb", "users; DROP TABLE users; --")
 ```
 
 ### Resource Limits
+
 - **Connection Limit**: Maximum 10 concurrent connections
 - **File Size Threshold**: 100MB triggers temporary storage
 - **Query Buffering**: Automatic for 100+ row results
@@ -169,16 +182,19 @@ describe_table("mydb", "users; DROP TABLE users; --")
 ## 📊 Performance & Scalability
 
 ### Large File Handling
+
 - Files over 100MB automatically use temporary SQLite storage
 - Memory-efficient streaming for large datasets
 - Automatic cleanup of temporary files
 
 ### Query Optimization
+
 - Results with 100+ rows automatically use buffering system
 - Chunk-based retrieval for large datasets
 - File modification detection for cache invalidation
 
 ### Concurrency
+
 - Thread-safe connection management
 - Concurrent query execution support
 - Resource pooling and limits
@@ -186,18 +202,21 @@ describe_table("mydb", "users; DROP TABLE users; --")
 ## 🧪 Testing & Quality
 
 **✅ 100% Test Coverage**
+
 - 100+ comprehensive test cases
 - Security vulnerability testing
 - Performance benchmarking
 - Edge case validation
 
 **🔒 Security Validated**
+
 - Path traversal prevention
-- SQL injection protection  
+- SQL injection protection
 - Resource exhaustion testing
 - Malicious input handling
 
 **⚡ Performance Tested**
+
 - Large file processing
 - Concurrent connection handling
 - Memory usage optimization
@@ -215,6 +234,7 @@ All existing MCP tool signatures remain **100% backward compatible**. New functi
 ## 📖 Examples
 
 ### Basic Database Operations
+
 ```python
 # Connect to SQLite
 connect_database("sales", "sqlite", "./sales.db")
@@ -228,6 +248,7 @@ execute_query("sales", "SELECT product, SUM(amount) FROM orders GROUP BY product
 ```
 
 ### Large Dataset Processing
+
 ```python
 # Connect to large CSV
 connect_database("bigdata", "csv", "./million_records.csv")
@@ -240,6 +261,7 @@ chunk = get_query_chunk("bigdata_1640995200_a1b2", 1, "1000")
 ```
 
 ### Multi-Database Analysis
+
 ```python
 # Connect multiple sources
 connect_database("postgres", "postgresql", "postgresql://localhost/prod")
@@ -254,7 +276,7 @@ config = read_text_file("./config.yaml", "yaml")
 ## 🚧 Roadmap
 
 - [ ] **Enhanced File Formats**: Excel, Parquet support
-- [ ] **Caching Layer**: Configurable query result caching  
+- [ ] **Caching Layer**: Configurable query result caching
 - [ ] **Connection Pooling**: Advanced connection management
 - [ ] **Streaming APIs**: Real-time data processing
 - [ ] **Monitoring Tools**: Connection and performance metrics
@@ -264,6 +286,7 @@ config = read_text_file("./config.yaml", "yaml")
 Contributions welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
 ### Development Setup
+
 ```bash
 git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
