@@ -52,8 +52,6 @@ This guide will help you complete the setup for automated PyPI publishing and re
    ✅ Require branches to be up to date before merging
    
    Required status checks:
-   ✅ test (3.8)
-   ✅ test (3.9)  
    ✅ test (3.10)
    ✅ test (3.11)
    ✅ test (3.12)
@@ -107,7 +105,7 @@ After completing setup and testing a release:
 ## 🔧 **Workflow Features**
 
 ### Automated CI/CD
-- **Multi-Python testing** (3.8-3.12)
+- **Multi-Python testing** (3.10-3.12)
 - **Code quality** (black, isort, flake8, mypy)
 - **Security scanning** (safety, bandit, pip-audit, CodeQL)
 - **Coverage reporting**
