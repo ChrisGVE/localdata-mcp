@@ -19,6 +19,25 @@ from fastmcp import FastMCP
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.sql import quoted_name
 
+# Excel support libraries with graceful error handling
+try:
+    import openpyxl
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+
+try:
+    import xlrd
+    XLRD_AVAILABLE = True
+except ImportError:
+    XLRD_AVAILABLE = False
+
+try:
+    import defusedxml
+    DEFUSEDXML_AVAILABLE = True
+except ImportError:
+    DEFUSEDXML_AVAILABLE = False
+
 # Set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -170,7 +189,7 @@ class DatabaseManager:
             return create_engine(conn_string)
         elif db_type == "mysql":
             return create_engine(conn_string)
-        elif db_type in ["csv", "json", "yaml", "toml"]:
+        elif db_type in ["csv", "json", "yaml", "toml", "excel"]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_engine_from_file(sanitized_path, db_type)
         else:
@@ -207,6 +226,8 @@ class DatabaseManager:
                     if isinstance(data, (list, dict))
                     else pd.DataFrame(data)
                 )
+            elif file_type == "excel":
+                df = self._load_excel_file(file_path)
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -235,6 +256,63 @@ class DatabaseManager:
             raise ValueError(
                 f"Failed to create engine from {file_type} file '{file_path}': {e}"
             )
+
+    def _load_excel_file(self, file_path: str) -> pd.DataFrame:
+        """Load Excel file (.xlsx or .xls) into pandas DataFrame."""
+        # Check for security library
+        if not DEFUSEDXML_AVAILABLE:
+            logger.warning("defusedxml not available - Excel files may be vulnerable to XML attacks")
+        
+        # Detect file format based on extension
+        file_ext = Path(file_path).suffix.lower()
+        
+        try:
+            if file_ext in ['.xlsx', '.xlsm']:
+                # Modern Excel format
+                if not OPENPYXL_AVAILABLE:
+                    raise ValueError(
+                        "openpyxl library is required for .xlsx files. "
+                        "Install with: pip install openpyxl"
+                    )
+                df = pd.read_excel(file_path, engine='openpyxl')
+                
+            elif file_ext == '.xls':
+                # Legacy Excel format
+                if not XLRD_AVAILABLE:
+                    raise ValueError(
+                        "xlrd library is required for .xls files. "
+                        "Install with: pip install xlrd"
+                    )
+                df = pd.read_excel(file_path, engine='xlrd')
+                
+            else:
+                # Try pandas auto-detection as fallback
+                logger.info(f"Unknown Excel extension '{file_ext}', trying pandas auto-detection")
+                df = pd.read_excel(file_path)
+            
+            # Validate that we have data
+            if df.empty:
+                raise ValueError(f"Excel file '{file_path}' contains no data")
+            
+            # Clean up column names (remove extra whitespace, replace problematic characters)
+            df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
+            
+            # Handle Excel-specific data types
+            # Convert any datetime-like columns properly
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    # Try to convert to datetime if it looks like dates
+                    try:
+                        pd.to_datetime(df[col], errors='raise')
+                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                    except:
+                        pass  # Keep as object type
+            
+            logger.info(f"Successfully loaded Excel file '{file_path}' with {len(df)} rows and {len(df.columns)} columns")
+            return df
+            
+        except Exception as e:
+            raise ValueError(f"Failed to load Excel file '{file_path}': {e}")
 
     def _get_table_metadata(self, inspector, table_name):
         columns = inspector.get_columns(table_name)
@@ -294,7 +372,7 @@ class DatabaseManager:
 
         Args:
             name: A unique name to identify the connection (e.g., "analytics_db", "user_data").
-            db_type: The type of the database ("sqlite", "postgresql", "mysql", "csv", "json", "yaml", "toml").
+            db_type: The type of the database ("sqlite", "postgresql", "mysql", "csv", "json", "yaml", "toml", "excel").
             conn_string: The connection string or file path for the database.
         """
         logger.info(f"Attempting to connect to database '{name}' of type '{db_type}'")
