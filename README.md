@@ -145,10 +145,24 @@ clear_query_buffer("analytics_1640995200_a1b2")
 
 ### Structured Files
 
+#### Spreadsheet Formats
+- **Excel (.xlsx, .xls)**: Full multi-sheet support with automatic table creation
+- **LibreOffice Calc (.ods)**: Complete ODS support with sheet handling
+- **Multi-sheet handling**: Each sheet becomes a separate queryable table
+
+#### Text-Based Formats
 - **CSV**: Large file automatic SQLite conversion
+- **TSV**: Tab-separated values with same features as CSV
 - **JSON**: Nested structure flattening
 - **YAML**: Configuration file support
 - **TOML**: Settings and config files
+- **XML**: Structured XML document parsing
+- **INI**: Configuration file format support
+
+#### Analytical Formats
+- **Parquet**: High-performance columnar data format
+- **Feather**: Fast binary format for data interchange
+- **Arrow**: In-memory columnar format support
 
 ## 🛡️ Security Features
 
