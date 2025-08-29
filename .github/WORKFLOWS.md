@@ -19,7 +19,7 @@ The repository includes several automated workflows to ensure code quality, secu
 **Triggers:** Push to `main`/`develop`, Pull requests to `main`
 
 **Jobs:**
-- **Test Matrix**: Tests against Python 3.8-3.12
+- **Test Matrix**: Tests against Python 3.10-3.12
 - **Linting**: flake8, black, isort, mypy
 - **Testing**: pytest with coverage reporting
 - **Build Validation**: Package building and validation
@@ -115,8 +115,6 @@ branches:
       required_status_checks:
         strict: true
         contexts:
-          - "test (3.8)"
-          - "test (3.9)"
           - "test (3.10)"
           - "test (3.11)"
           - "test (3.12)"
