@@ -6,7 +6,7 @@
 [![FastMCP](https://img.shields.io/badge/FastMCP-Compatible-green.svg)](https://github.com/jlowin/fastmcp)
 [![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/cd737717-02f3-4388-bab7-5ec7cbe40713)
 
-**A powerful, secure MCP server for local databases and structured text files with advanced security features and large dataset handling.**
+**A powerful, secure MCP server for local databases, spreadsheets, and structured data files with advanced security features and large dataset handling.**
 
 ## ✨ Features
 
@@ -14,7 +14,9 @@
 
 - **SQL Databases**: PostgreSQL, MySQL, SQLite
 - **Document Databases**: MongoDB
-- **Structured Files**: CSV, JSON, YAML, TOML
+- **Spreadsheets**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with multi-sheet support
+- **Structured Files**: CSV, TSV, JSON, YAML, TOML, XML, INI
+- **Analytical Formats**: Parquet, Feather, Arrow
 
 ### 🔒 **Advanced Security**
 
