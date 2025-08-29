@@ -746,34 +746,6 @@ class DatabaseManager:
             logger.error(f"Error disconnecting from database '{name}': {e}")
             return f"An error occurred while disconnecting: {e}"
 
-    @mcp.tool
-    def execute_query(self, name: str, query: str) -> str:
-        """
-        Execute a SQL query and return results as a markdown table.
-        Returns error for results with more than 100 rows.
-
-        Args:
-            name: The name of the database connection.
-            query: The SQL query to execute.
-        """
-        try:
-            # Clean up expired buffers
-            self._cleanup_expired_buffers()
-
-            engine = self._get_connection(name)
-            df = pd.read_sql_query(query, engine)
-            self.query_history[name].append(query)
-
-            if df.empty:
-                return "Query executed successfully, but no results were returned."
-
-            # Check row count limit for markdown queries
-            if len(df) > 100:
-                return f"Error: Query returned {len(df)} rows, which exceeds the 100-row limit for markdown format. Use execute_query_json() for large result sets."
-
-            return df.to_markdown()
-        except Exception as e:
-            return f"An error occurred while executing the query: {e}"
 
     @mcp.tool
     def execute_query_json(self, name: str, query: str) -> str:
