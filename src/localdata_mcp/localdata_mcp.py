@@ -564,8 +564,8 @@ class DatabaseManager:
             with engine.connect() as conn:
                 safe_table_name = self._safe_table_identifier(table_name)
                 result = conn.execute(
-                    text(f"SELECT COUNT(*) FROM {safe_table_name}")
-                )  # nosec B608
+                    text(f"SELECT COUNT(*) FROM {safe_table_name}")  # nosec B608
+                )
                 row_count = result.scalar()
             table_info["size"] = row_count
 
