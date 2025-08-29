@@ -1,0 +1,53 @@
+name: Security
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security checks weekly on Mondays at 8:00 AM UTC
+    - cron: '0 8 * * 1'
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install security tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety bandit pip-audit
+    
+    - name: Check for known vulnerabilities with safety
+      run: |
+        pip install -e .
+        safety check --json --output safety-report.json || true
+        safety check
+    
+    - name: Security linting with bandit
+      run: |
+        bandit -r src/localdata_mcp -f json -o bandit-report.json || true
+        bandit -r src/localdata_mcp -ll
+    
+    - name: Audit dependencies with pip-audit
+      run: |
+        pip-audit --format=json --output=pip-audit-report.json || true
+        pip-audit
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          safety-report.json
+          bandit-report.json
+          pip-audit-report.json

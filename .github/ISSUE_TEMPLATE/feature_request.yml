@@ -1,0 +1,75 @@
+name: Feature Request
+description: Suggest an idea for localdata-mcp
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature!
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Is your feature request related to a problem?
+      description: A clear description of what the problem is
+      placeholder: I'm always frustrated when...
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: A clear description of what you want to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: A clear description of any alternative solutions or features you've considered
+
+  - type: dropdown
+    id: feature-type
+    attributes:
+      label: Feature Type
+      description: What type of feature is this?
+      options:
+        - New database support
+        - New file format support
+        - Performance improvement
+        - API enhancement
+        - Documentation improvement
+        - Developer experience
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Low - Nice to have
+        - Medium - Would help my workflow
+        - High - Blocking my use case
+        - Critical - Cannot use without this
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: Describe your specific use case for this feature
+      placeholder: |
+        - What are you trying to accomplish?
+        - How would this feature help?
+        - What's your current workaround (if any)?
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context, screenshots, or examples about the feature request
