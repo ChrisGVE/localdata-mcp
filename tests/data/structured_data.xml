@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<data>
+    <person>
+        <name>Alice Johnson</name>
+        <age>28</age>
+        <department>Engineering</department>
+        <salary>75000</salary>
+        <start_date>2020-01-15</start_date>
+        <active>True</active>
+    </person>
+    <person>
+        <name>Bob Smith</name>
+        <age>35</age>
+        <department>Sales</department>
+        <salary>65000</salary>
+        <start_date>2019-03-22</start_date>
+        <active>True</active>
+    </person>
+    <person>
+        <name>Carol Williams</name>
+        <age>42</age>
+        <department>Marketing</department>
+        <salary>70000</salary>
+        <start_date>2021-07-10</start_date>
+        <active>False</active>
+    </person>
+</data>
