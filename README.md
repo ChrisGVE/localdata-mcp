@@ -6,7 +6,7 @@
 [![FastMCP](https://img.shields.io/badge/FastMCP-Compatible-green.svg)](https://github.com/jlowin/fastmcp)
 [![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/cd737717-02f3-4388-bab7-5ec7cbe40713)
 
-**A powerful, secure MCP server for local databases and structured text files with advanced security features and large dataset handling.**
+**A powerful, secure MCP server for local databases, spreadsheets, and structured data files with advanced security features and large dataset handling.**
 
 ## ✨ Features
 
@@ -14,7 +14,9 @@
 
 - **SQL Databases**: PostgreSQL, MySQL, SQLite
 - **Document Databases**: MongoDB
-- **Structured Files**: CSV, JSON, YAML, TOML
+- **Spreadsheets**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with multi-sheet support
+- **Structured Files**: CSV, TSV, JSON, YAML, TOML, XML, INI
+- **Analytical Formats**: Parquet, Feather, Arrow
 
 ### 🔒 **Advanced Security**
 
@@ -85,6 +87,29 @@ connect_database("csvdata", "csv", "./data.csv")
 
 # JSON Files
 connect_database("config", "json", "./config.json")
+
+# Excel Spreadsheets (all sheets)
+connect_database("sales", "xlsx", "./sales_data.xlsx")
+
+# Excel with specific sheet
+connect_database("q1data", "xlsx", "./quarterly.xlsx?sheet=Q1_Sales")
+
+# LibreOffice Calc
+connect_database("budget", "ods", "./budget_2024.ods")
+
+# Tab-separated values
+connect_database("exports", "tsv", "./export_data.tsv")
+
+# XML structured data
+connect_database("config_xml", "xml", "./config.xml")
+
+# INI configuration files
+connect_database("settings", "ini", "./app.ini")
+
+# Analytical formats
+connect_database("analytics", "parquet", "./data.parquet")
+connect_database("features", "feather", "./features.feather")
+connect_database("vectors", "arrow", "./vectors.arrow")
 ```
 
 #### Query Data
@@ -143,10 +168,24 @@ clear_query_buffer("analytics_1640995200_a1b2")
 
 ### Structured Files
 
+#### Spreadsheet Formats
+- **Excel (.xlsx, .xls)**: Full multi-sheet support with automatic table creation
+- **LibreOffice Calc (.ods)**: Complete ODS support with sheet handling
+- **Multi-sheet handling**: Each sheet becomes a separate queryable table
+
+#### Text-Based Formats
 - **CSV**: Large file automatic SQLite conversion
+- **TSV**: Tab-separated values with same features as CSV
 - **JSON**: Nested structure flattening
 - **YAML**: Configuration file support
 - **TOML**: Settings and config files
+- **XML**: Structured XML document parsing
+- **INI**: Configuration file format support
+
+#### Analytical Formats
+- **Parquet**: High-performance columnar data format
+- **Feather**: Fast binary format for data interchange
+- **Arrow**: In-memory columnar format support
 
 ## 🛡️ Security Features
 
@@ -275,13 +314,142 @@ user_data = execute_query("postgres", "SELECT * FROM users")
 config = read_text_file("./config.yaml", "yaml")
 ```
 
+### Multi-Sheet Spreadsheet Handling
+
+LocalData MCP Server provides comprehensive support for multi-sheet spreadsheets (Excel and LibreOffice Calc):
+
+#### Automatic Multi-Sheet Processing
+
+```python
+# Connect to Excel file - all sheets become separate tables
+connect_database("workbook", "xlsx", "./financial_data.xlsx")
+
+# Query specific sheet (table names are sanitized sheet names)
+execute_query("workbook", "SELECT * FROM Q1_Sales")
+execute_query("workbook", "SELECT * FROM Q2_Budget")
+execute_query("workbook", "SELECT * FROM Annual_Summary")
+```
+
+#### Single Sheet Selection
+
+```python
+# Connect to specific sheet only using ?sheet=SheetName syntax
+connect_database("q1only", "xlsx", "./financial_data.xlsx?sheet=Q1 Sales")
+
+# The data is available as the default table
+execute_query("q1only", "SELECT * FROM data")
+```
+
+#### Sheet Name Sanitization
+
+Sheet names are automatically sanitized for SQL compatibility:
+
+| Original Sheet Name | SQL Table Name |
+| ------------------- | -------------- |
+| "Q1 Sales"          | Q1_Sales       |
+| "2024-Budget"       | _2024_Budget   |
+| "Summary & Notes"   | Summary__Notes |
+
+#### Discovering Available Sheets
+
+```python
+# Connect to multi-sheet workbook
+connect_database("workbook", "xlsx", "./data.xlsx")
+
+# List all available tables (sheets)
+describe_database("workbook")
+
+# Get sample data from specific sheet
+get_table_sample("workbook", "Sheet1")
+```
+
 ## 🚧 Roadmap
 
-- [ ] **Enhanced File Formats**: Excel, Parquet support
+### Completed (v1.1.0)
+- [x] **Spreadsheet Formats**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with full multi-sheet support
+- [x] **Enhanced File Formats**: XML, INI, TSV support
+- [x] **Analytical Formats**: Parquet, Feather, Arrow support
+
+### Planned Features
 - [ ] **Caching Layer**: Configurable query result caching
 - [ ] **Connection Pooling**: Advanced connection management
 - [ ] **Streaming APIs**: Real-time data processing
 - [ ] **Monitoring Tools**: Connection and performance metrics
+- [ ] **Export Capabilities**: Query results to various formats
+
+## 🛠️ Troubleshooting
+
+### Spreadsheet Format Issues
+
+#### Large Excel Files
+```python
+# For files over 100MB, temporary SQLite storage is used automatically
+connect_database("largefile", "xlsx", "./large_workbook.xlsx")
+
+# Monitor processing with describe_database
+describe_database("largefile")  # Shows processing status
+```
+
+#### Sheet Name Conflicts
+```python
+# If sheet names conflict after sanitization, use specific sheet selection
+connect_database("specific", "xlsx", "./workbook.xlsx?sheet=Sheet1")
+
+# Check sanitized names
+describe_database("workbook")  # Lists all table names
+```
+
+#### Format Detection
+```python
+# Ensure correct file extension for proper format detection
+connect_database("data", "xlsx", "./file.xlsx")  # ✅ Correct
+connect_database("data", "xlsx", "./file.xls")   # ⚠️ May cause issues
+
+# Use explicit format specification
+connect_database("data", "xls", "./old_format.xls")  # ✅ Better
+```
+
+#### Multi-Sheet Selection Issues
+```python
+# Sheet names with special characters need URL encoding
+connect_database("data", "xlsx", "./file.xlsx?sheet=Q1%20Sales")  # For "Q1 Sales"
+
+# Or use the sanitized table name after connecting all sheets
+connect_database("workbook", "xlsx", "./file.xlsx")
+execute_query("workbook", "SELECT * FROM Q1_Sales")  # Use sanitized name
+```
+
+#### Performance Optimization
+```python
+# For better performance with large spreadsheets:
+# 1. Use specific sheet selection when possible
+connect_database("q1", "xlsx", "./large.xlsx?sheet=Q1_Data")
+
+# 2. Use LIMIT clauses for large datasets
+execute_query("data", "SELECT * FROM large_sheet LIMIT 1000")
+
+# 3. Consider converting to Parquet for repeated analysis
+# (Manual conversion outside of LocalData MCP recommended for very large files)
+```
+
+### General File Issues
+
+#### Path Security Errors
+```python
+# ✅ Allowed paths (current directory and subdirectories)
+connect_database("data", "csv", "./data/file.csv")
+connect_database("data", "csv", "subfolder/file.csv")
+
+# ❌ Blocked paths (parent directories)
+connect_database("data", "csv", "../data/file.csv")  # Security error
+```
+
+#### Connection Limits
+```python
+# Maximum 10 concurrent connections
+# Use disconnect_database() to free up connections when done
+disconnect_database("old_connection")
+```
 
 ## 🤝 Contributing
 
@@ -331,7 +499,7 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🏷️ Tags
 
-`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `mongodb` `csv` `json` `yaml` `toml` `ai` `machine-learning` `data-integration` `python` `security` `performance`
+`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `mongodb` `spreadsheet` `excel` `xlsx` `ods` `csv` `tsv` `json` `yaml` `toml` `xml` `ini` `parquet` `feather` `arrow` `ai` `machine-learning` `data-integration` `python` `security` `performance`
 
 ---
 
