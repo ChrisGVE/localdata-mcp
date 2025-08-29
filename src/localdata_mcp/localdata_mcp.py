@@ -120,7 +120,9 @@ class DatabaseManager:
     def _generate_query_id(self, db_name: str, query: str) -> str:
         """Generate a unique query ID in format: {db}_{timestamp}_{4char_hash}."""
         timestamp = int(time.time())
-        query_hash = hashlib.md5(query.encode(), usedforsecurity=False).hexdigest()[:4]  # nosec B324
+        query_hash = hashlib.md5(query.encode(), usedforsecurity=False).hexdigest()[
+            :4
+        ]  # nosec B324
         return f"{db_name}_{timestamp}_{query_hash}"
 
     def _cleanup_expired_buffers(self):
@@ -561,7 +563,9 @@ class DatabaseManager:
             table_info = self._get_table_metadata(inspector, table_name)
             with engine.connect() as conn:
                 safe_table_name = self._safe_table_identifier(table_name)
-                result = conn.execute(text(f"SELECT COUNT(*) FROM {safe_table_name}"))  # nosec B608
+                result = conn.execute(
+                    text(f"SELECT COUNT(*) FROM {safe_table_name}")
+                )  # nosec B608
                 row_count = result.scalar()
             table_info["size"] = row_count
 
