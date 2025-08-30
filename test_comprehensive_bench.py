@@ -185,7 +185,16 @@ def test_comprehensive_formats():
                 # Disconnect
                 manager.disconnect_database.fn(manager, name=f"test_{db_type}")
             else:
-                print(f"   ❌ Connection failed: {result}")
+                # Provide specific failure context for known problematic formats
+                if name in ["JSON", "TOML", "INI"]:
+                    error_context = {
+                        "JSON": "complex nested object serialization issue",
+                        "TOML": "complex array serialization issue", 
+                        "INI": "malformed test file with '%' syntax error"
+                    }
+                    print(f"   ❌ Connection failed ({error_context[name]}): {result[:100]}...")
+                else:
+                    print(f"   ❌ Connection failed: {result[:100]}...")
                 results["failed"].append(name)
                 
         except Exception as e:
