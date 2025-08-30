@@ -67,6 +67,13 @@ try:
 except ImportError:
     PYARROW_AVAILABLE = False
 
+# Apple Numbers support
+try:
+    from numbers_parser import Document
+    NUMBERS_PARSER_AVAILABLE = True
+except ImportError:
+    NUMBERS_PARSER_AVAILABLE = False
+
 # Set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -259,7 +266,7 @@ class DatabaseManager:
             return create_engine(conn_string)
         elif db_type == "mysql":
             return create_engine(conn_string)
-        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "xml", "ini", "tsv", "parquet", "feather", "arrow"]:
+        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow"]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_engine_from_file(sanitized_path, db_type, sheet_name)
         else:
@@ -270,8 +277,8 @@ class DatabaseManager:
         
         Args:
             file_path: Path to the file
-            file_type: Type of file (excel, ods, etc.)
-            sheet_name: For Excel/ODS files, specific sheet to load. If None, load all sheets.
+            file_type: Type of file (excel, ods, numbers, etc.)
+            sheet_name: For Excel/ODS/Numbers files, specific sheet to load. If None, load all sheets.
         """
         try:
             # Check if file is large
@@ -311,6 +318,8 @@ class DatabaseManager:
                 data = self._load_excel_file(file_path, sheet_name)
             elif file_type == "ods":
                 data = self._load_ods_file(file_path, sheet_name)
+            elif file_type == "numbers":
+                data = self._load_numbers_file(file_path, sheet_name)
             elif file_type == "xml":
                 data = self._load_xml_file(file_path)
             elif file_type == "ini":
@@ -560,6 +569,137 @@ class DatabaseManager:
         except Exception as e:
             raise ValueError(f"Failed to load ODS file '{file_path}': {e}")
 
+    def _load_numbers_file(self, file_path: str, sheet_name: Optional[str] = None) -> Dict[str, pd.DataFrame]:
+        """Load Apple Numbers file into dict of pandas DataFrames (one per sheet/table).
+        
+        Args:
+            file_path: Path to the Numbers file
+            sheet_name: Specific sheet to load. If None, load all sheets.
+        """
+        # Check for Numbers support
+        if not NUMBERS_PARSER_AVAILABLE:
+            logger.warning("numbers-parser not available - Numbers files cannot be loaded")
+            raise ValueError(
+                "numbers-parser library is required for .numbers files. "
+                "Install with: pip install numbers-parser"
+            )
+        
+        try:
+            # Open Numbers document
+            doc = Document(file_path)
+            logger.info(f"Opened Numbers document with {len(doc.sheets)} sheets")
+            
+            # Determine which sheets to load
+            if sheet_name is not None:
+                available_sheet_names = [sheet.name for sheet in doc.sheets]
+                if sheet_name not in available_sheet_names:
+                    raise ValueError(f"Sheet '{sheet_name}' not found in Numbers file. Available sheets: {available_sheet_names}")
+                sheets_to_load = [sheet for sheet in doc.sheets if sheet.name == sheet_name]
+                logger.info(f"Loading specific sheet: {sheet_name}")
+            else:
+                sheets_to_load = doc.sheets
+                sheet_names = [sheet.name for sheet in sheets_to_load]
+                logger.info(f"Loading all sheets: {sheet_names}")
+            
+            # Track used table names for uniqueness
+            used_names = set()
+            sheets_data = {}
+            
+            for sheet in sheets_to_load:
+                logger.info(f"Processing sheet '{sheet.name}' with {len(sheet.tables)} tables")
+                
+                # Numbers files can have multiple tables per sheet
+                for table_idx, table in enumerate(sheet.tables):
+                    try:
+                        # Get table data as list of lists (includes headers)
+                        table_data = table.rows(values_only=True)
+                        
+                        if not table_data:
+                            logger.warning(f"Table {table_idx} in sheet '{sheet.name}' is empty, skipping")
+                            continue
+                        
+                        # First row is typically headers
+                        if len(table_data) < 2:
+                            logger.warning(f"Table {table_idx} in sheet '{sheet.name}' has no data rows, skipping")
+                            continue
+                        
+                        # Create DataFrame from table data
+                        headers = table_data[0]
+                        data_rows = table_data[1:]
+                        
+                        # Handle case where headers might be None or empty
+                        if not headers or all(h is None or h == '' for h in headers):
+                            # Generate column names
+                            headers = [f'Column_{i+1}' for i in range(len(data_rows[0]) if data_rows else 0)]
+                        else:
+                            # Clean up headers
+                            headers = [str(h) if h is not None else f'Column_{i+1}' for i, h in enumerate(headers)]
+                        
+                        df = pd.DataFrame(data_rows, columns=headers)
+                        
+                        # Skip empty DataFrames
+                        if df.empty:
+                            logger.warning(f"Table {table_idx} in sheet '{sheet.name}' resulted in empty DataFrame, skipping")
+                            continue
+                        
+                        # Clean up column names (remove extra whitespace, replace problematic characters)
+                        df.columns = [str(col).strip().replace(' ', '_').replace('-', '_').replace('.', '_') for col in df.columns]
+                        
+                        # Handle Numbers-specific data types and formatting
+                        for col in df.columns:
+                            if df[col].dtype == 'object':
+                                # Try to convert numeric strings to numbers
+                                try:
+                                    # Check if this looks like a numeric column
+                                    numeric_df = pd.to_numeric(df[col], errors='coerce')
+                                    non_null_count = numeric_df.notna().sum()
+                                    if non_null_count > len(df) * 0.5:  # If >50% can be converted to numbers
+                                        df[col] = numeric_df
+                                        continue
+                                except:
+                                    pass
+                                
+                                # Try to convert to datetime if it looks like dates
+                                try:
+                                    pd.to_datetime(df[col], errors='raise')
+                                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                                except:
+                                    pass  # Keep as object type
+                        
+                        # Create unique table name
+                        if len(sheet.tables) == 1:
+                            # Single table per sheet - use sheet name
+                            base_table_name = sheet.name or f"Sheet_{len(sheets_data) + 1}"
+                        else:
+                            # Multiple tables per sheet - include table index
+                            base_table_name = f"{sheet.name}_Table_{table_idx + 1}" if sheet.name else f"Sheet_{len(sheets_data) + 1}_Table_{table_idx + 1}"
+                        
+                        # Sanitize table name for SQL table name
+                        table_name = self._sanitize_sheet_name(base_table_name, used_names)
+                        sheets_data[table_name] = df
+                        
+                        logger.info(f"Successfully loaded table {table_idx} from sheet '{sheet.name}' as table '{table_name}' with {len(df)} rows and {len(df.columns)} columns")
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to load table {table_idx} from sheet '{sheet.name}': {e}")
+                        continue
+            
+            if not sheets_data:
+                raise ValueError(f"Numbers file '{file_path}' contains no readable data in any sheets/tables")
+            
+            logger.info(f"Successfully loaded Numbers file '{file_path}' with {len(sheets_data)} tables")
+            return sheets_data
+            
+        except Exception as e:
+            # Handle specific Numbers parser limitations
+            error_msg = str(e).lower()
+            if "password" in error_msg or "encrypted" in error_msg:
+                raise ValueError(f"Numbers file '{file_path}' is password-protected. Please remove the password and try again.")
+            elif "unsupported" in error_msg:
+                raise ValueError(f"Numbers file '{file_path}' uses unsupported features. Try re-saving the file in Numbers and try again.")
+            else:
+                raise ValueError(f"Failed to load Numbers file '{file_path}': {e}")
+
     def _load_xml_file(self, file_path: str) -> pd.DataFrame:
         """Load XML file into pandas DataFrame."""
         try:
@@ -684,9 +824,9 @@ class DatabaseManager:
 
         Args:
             name: A unique name to identify the connection (e.g., "analytics_db", "user_data").
-            db_type: The type of the database ("sqlite", "postgresql", "mysql", "csv", "json", "yaml", "toml", "excel", "ods", "xml", "ini", "tsv", "parquet", "feather", "arrow").
+            db_type: The type of the database ("sqlite", "postgresql", "mysql", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow").
             conn_string: The connection string or file path for the database.
-            sheet_name: Optional sheet name to load from Excel/ODS files. If not specified, all sheets are loaded.
+            sheet_name: Optional sheet name to load from Excel/ODS/Numbers files. If not specified, all sheets are loaded.
         """
         logger.info(f"Attempting to connect to database '{name}' of type '{db_type}'")
 

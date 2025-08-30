@@ -44,7 +44,7 @@
         "description": "Add support for Apple Numbers format (.numbers) files to the localdata_mcp.py file",
         "details": "- Extend _create_engine_from_file method to handle 'numbers' database type\n- Implement Numbers file reading using python-numbers-parser or similar\n- Handle multiple sheets/tables within Numbers files\n- Extract data from complex Numbers layouts and convert to DataFrame\n- Integrate with existing file handling and security patterns\n- Handle Numbers-specific data types and formatting",
         "testStrategy": "",
-        "status": "pending",
+        "status": "in-progress",
         "dependencies": [
           2
         ],
@@ -154,13 +154,35 @@
         ],
         "priority": "medium",
         "subtasks": []
+      },
+      {
+        "id": 13,
+        "title": "Implement hybrid test coverage approach (85-90%)",
+        "description": "Achieve 85-90% test coverage focusing on comprehensive user-facing functionality and real-world edge cases",
+        "details": "- Focus on all user optionality: text files, DBs, Excel, ODS, etc.\n- Create realistic dummy assets with real-world edge cases\n- Test mixed data types (numbers with misformatted string cells)\n- Handle graceful degradation for messy data\n- Full coverage of all 15+ supported file formats\n- Test multi-sheet scenarios with edge cases\n- Memory management under realistic load conditions\n- Security edge cases for all format types",
+        "testStrategy": "",
+        "status": "done",
+        "dependencies": [],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 14,
+        "title": "Future: Dynamic data exploration tools",
+        "description": "Implement dynamic data exploration tools that appear on-demand to assist users with data discovery and analysis",
+        "details": "- Design dynamic tool system that shows data exploration tools only when needed\n- Data profiling tools (column statistics, data types, null counts)\n- Data quality assessment tools\n- Schema inference and suggestions\n- Data relationship discovery\n- Integration with existing 9-tool architecture\n- Context-aware tool presentation",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "low",
+        "subtasks": []
       }
     ],
     "metadata": {
       "created": "2025-08-29T16:16:00Z",
       "version": "1.0.0",
       "description": "Spreadsheet format support extension for LocalData MCP Server",
-      "updated": "2025-08-29T20:42:49.140Z"
+      "updated": "2025-08-30T11:13:49.558Z"
     }
   }
 }
