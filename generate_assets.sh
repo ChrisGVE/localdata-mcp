@@ -1,6 +1,6 @@
 #!/bin/bash
 # Generate logo assets for LocalData MCP Server
-# This script creates various icon sizes from the vector logo.svg source
+# This script creates various icon sizes from the high-quality logo.png source
 # Assets are generated locally and not stored in git
 
 set -e
@@ -14,15 +14,12 @@ if ! command -v magick &> /dev/null; then
     exit 1
 fi
 
-# Check if logo.svg exists, fall back to logo.png
-if [ -f "logo.svg" ]; then
-    SOURCE="logo.svg"
-    echo "📁 Using vector source: logo.svg"
-elif [ -f "logo.png" ]; then
+# Check if logo.png exists
+if [ -f "logo.png" ]; then
     SOURCE="logo.png"
-    echo "📁 Using raster source: logo.png"
+    echo "📁 Using high-quality PNG source: logo.png"
 else
-    echo "❌ Neither logo.svg nor logo.png found in current directory"
+    echo "❌ logo.png not found in current directory"
     exit 1
 fi
 
@@ -41,11 +38,7 @@ done
 echo "🌐 Creating favicon..."
 magick "$SOURCE" -resize 32x32 favicon.ico
 
-# Create PNG version from SVG if we're using SVG source
-if [ "$SOURCE" = "logo.svg" ]; then
-    echo "🖼️  Creating PNG version..."
-    magick "$SOURCE" -resize 512x512 logo.png
-fi
+# PNG is already our source, no conversion needed
 
 # Create rounded version (optional)
 echo "🔄 Creating rounded version..."

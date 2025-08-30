@@ -1,10 +1,4 @@
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
-
-<p align="center">
-  <img src="logo.png" alt="LocalData MCP Server" width="80" height="80">
-</p>
-
-# LocalData MCP Server
+# <img src="logo.png" alt="LocalData MCP Server" width="48" height="48" style="vertical-align: middle;"> LocalData MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -14,12 +8,14 @@
 
 **A comprehensive MCP server for databases, spreadsheets, and structured data files with security features, performance optimization, and extensive format support.**
 
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
+
 ## ✨ Features
 
 ### 🗄️ **Multi-Database Support**
 
 - **SQL Databases**: PostgreSQL, MySQL, SQLite, DuckDB
-- **Modern Databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j, CouchDB  
+- **Modern Databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j, CouchDB
 - **Spreadsheets**: Excel (.xlsx/.xls), LibreOffice Calc (.ods), Apple Numbers (.numbers)
 - **Structured Files**: CSV, TSV, JSON, YAML, TOML, XML, INI
 - **Analytical Formats**: Parquet, Feather, Arrow, HDF5
@@ -165,7 +161,7 @@ clear_query_buffer("analytics_1640995200_a1b2")
 ### SQL Databases
 
 - **PostgreSQL**: Full support with connection pooling
-- **MySQL**: Complete MySQL/MariaDB compatibility  
+- **MySQL**: Complete MySQL/MariaDB compatibility
 - **SQLite**: Local file and in-memory databases
 - **DuckDB**: High-performance analytical SQL database
 
@@ -181,12 +177,14 @@ clear_query_buffer("analytics_1640995200_a1b2")
 ### Structured Files
 
 #### Spreadsheet Formats
+
 - **Excel (.xlsx, .xls)**: Full multi-sheet support with automatic table creation
 - **LibreOffice Calc (.ods)**: Complete ODS support with sheet handling
 - **Apple Numbers (.numbers)**: Native support for Numbers documents
 - **Multi-sheet handling**: Each sheet becomes a separate queryable table
 
 #### Text-Based Formats
+
 - **CSV**: Large file automatic SQLite conversion
 - **TSV**: Tab-separated values with same features as CSV
 - **JSON**: Nested structure flattening
@@ -196,6 +194,7 @@ clear_query_buffer("analytics_1640995200_a1b2")
 - **INI**: Configuration file format support
 
 #### Analytical Formats
+
 - **Parquet**: High-performance columnar data format
 - **Feather**: Fast binary format for data interchange
 - **Arrow**: In-memory columnar format support
@@ -260,7 +259,7 @@ describe_table("mydb", "users; DROP TABLE users; --")
 
 - 68% test coverage with 500+ test cases
 - Import error handling and graceful degradation
-- Security vulnerability testing  
+- Security vulnerability testing
 - Performance benchmarking with large datasets
 - Modern database connection testing
 
@@ -359,11 +358,11 @@ execute_query("q1only", "SELECT * FROM data")
 
 Sheet names are automatically sanitized for SQL compatibility:
 
-| Original Sheet Name | SQL Table Name |
-| ------------------- | -------------- |
-| "Q1 Sales"          | Q1_Sales       |
-| "2024-Budget"       | _2024_Budget   |
-| "Summary & Notes"   | Summary__Notes |
+| Original Sheet Name | SQL Table Name   |
+| ------------------- | ---------------- |
+| "Q1 Sales"          | Q1_Sales         |
+| "2024-Budget"       | \_2024_Budget    |
+| "Summary & Notes"   | Summary\_\_Notes |
 
 #### Discovering Available Sheets
 
@@ -381,11 +380,13 @@ get_table_sample("workbook", "Sheet1")
 ## 🚧 Roadmap
 
 ### Completed (v1.1.0)
+
 - [x] **Spreadsheet Formats**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with full multi-sheet support
 - [x] **Enhanced File Formats**: XML, INI, TSV support
 - [x] **Analytical Formats**: Parquet, Feather, Arrow support
 
 ### Planned Features
+
 - [ ] **Caching Layer**: Configurable query result caching
 - [ ] **Connection Pooling**: Advanced connection management
 - [ ] **Streaming APIs**: Real-time data processing
@@ -397,6 +398,7 @@ get_table_sample("workbook", "Sheet1")
 ### Spreadsheet Format Issues
 
 #### Large Excel Files
+
 ```python
 # For files over 100MB, temporary SQLite storage is used automatically
 connect_database("largefile", "xlsx", "./large_workbook.xlsx")
@@ -406,6 +408,7 @@ describe_database("largefile")  # Shows processing status
 ```
 
 #### Sheet Name Conflicts
+
 ```python
 # If sheet names conflict after sanitization, use specific sheet selection
 connect_database("specific", "xlsx", "./workbook.xlsx?sheet=Sheet1")
@@ -415,6 +418,7 @@ describe_database("workbook")  # Lists all table names
 ```
 
 #### Format Detection
+
 ```python
 # Ensure correct file extension for proper format detection
 connect_database("data", "xlsx", "./file.xlsx")  # ✅ Correct
@@ -425,6 +429,7 @@ connect_database("data", "xls", "./old_format.xls")  # ✅ Better
 ```
 
 #### Multi-Sheet Selection Issues
+
 ```python
 # Sheet names with special characters need URL encoding
 connect_database("data", "xlsx", "./file.xlsx?sheet=Q1%20Sales")  # For "Q1 Sales"
@@ -435,6 +440,7 @@ execute_query("workbook", "SELECT * FROM Q1_Sales")  # Use sanitized name
 ```
 
 #### Performance Optimization
+
 ```python
 # For better performance with large spreadsheets:
 # 1. Use specific sheet selection when possible
@@ -450,6 +456,7 @@ execute_query("data", "SELECT * FROM large_sheet LIMIT 1000")
 ### General File Issues
 
 #### Path Security Errors
+
 ```python
 # ✅ Allowed paths (current directory and subdirectories)
 connect_database("data", "csv", "./data/file.csv")
@@ -460,6 +467,7 @@ connect_database("data", "csv", "../data/file.csv")  # Security error
 ```
 
 #### Connection Limits
+
 ```python
 # Maximum 10 concurrent connections
 # Use disconnect_database() to free up connections when done
