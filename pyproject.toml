@@ -52,6 +52,14 @@ dev = [
   "types-toml",
   "types-PyYAML",
 ]
+modern-databases = [
+  "redis>=6.0.0",           # Redis key-value store
+  "elasticsearch>=9.0.0",    # Elasticsearch search engine
+  "pymongo>=4.0.0",          # MongoDB document database
+  "influxdb-client>=1.40.0", # InfluxDB time-series database
+  "neo4j>=5.0.0",           # Neo4j graph database
+  "couchdb>=1.2.0",         # CouchDB document database
+]
 
 [project.urls]
 Homepage = "https://github.com/chrisgve/localdata-mcp"

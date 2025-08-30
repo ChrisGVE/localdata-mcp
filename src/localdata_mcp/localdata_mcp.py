@@ -88,6 +88,48 @@ try:
 except ImportError:
     H5PY_AVAILABLE = False
 
+# Modern database support - Redis
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+
+# Modern database support - Elasticsearch
+try:
+    from elasticsearch import Elasticsearch
+    ELASTICSEARCH_AVAILABLE = True
+except ImportError:
+    ELASTICSEARCH_AVAILABLE = False
+
+# Modern database support - MongoDB
+try:
+    import pymongo
+    PYMONGO_AVAILABLE = True
+except ImportError:
+    PYMONGO_AVAILABLE = False
+
+# Modern database support - InfluxDB
+try:
+    from influxdb_client import InfluxDBClient
+    INFLUXDB_AVAILABLE = True
+except ImportError:
+    INFLUXDB_AVAILABLE = False
+
+# Modern database support - Neo4j
+try:
+    from neo4j import GraphDatabase
+    NEO4J_AVAILABLE = True
+except ImportError:
+    NEO4J_AVAILABLE = False
+
+# Modern database support - CouchDB
+try:
+    import couchdb
+    COUCHDB_AVAILABLE = True
+except ImportError:
+    COUCHDB_AVAILABLE = False
+
 # Set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -284,6 +326,30 @@ class DatabaseManager:
             if not DUCKDB_AVAILABLE:
                 raise ValueError("duckdb library is required for DuckDB connections. Install with: pip install duckdb")
             return create_engine(f"duckdb:///{conn_string}")
+        elif db_type == "redis":
+            if not REDIS_AVAILABLE:
+                raise ValueError("redis library is required for Redis connections. Install with: pip install redis")
+            return self._create_redis_connection(conn_string)
+        elif db_type == "elasticsearch":
+            if not ELASTICSEARCH_AVAILABLE:
+                raise ValueError("elasticsearch library is required for Elasticsearch connections. Install with: pip install elasticsearch")
+            return self._create_elasticsearch_connection(conn_string)
+        elif db_type == "mongodb":
+            if not PYMONGO_AVAILABLE:
+                raise ValueError("pymongo library is required for MongoDB connections. Install with: pip install pymongo")
+            return self._create_mongodb_connection(conn_string)
+        elif db_type == "influxdb":
+            if not INFLUXDB_AVAILABLE:
+                raise ValueError("influxdb-client library is required for InfluxDB connections. Install with: pip install influxdb-client")
+            return self._create_influxdb_connection(conn_string)
+        elif db_type == "neo4j":
+            if not NEO4J_AVAILABLE:
+                raise ValueError("neo4j library is required for Neo4j connections. Install with: pip install neo4j")
+            return self._create_neo4j_connection(conn_string)
+        elif db_type == "couchdb":
+            if not COUCHDB_AVAILABLE:
+                raise ValueError("couchdb library is required for CouchDB connections. Install with: pip install couchdb")
+            return self._create_couchdb_connection(conn_string)
         elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5"]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_engine_from_file(sanitized_path, db_type, sheet_name)
@@ -1420,7 +1486,21 @@ class DatabaseManager:
             return "PostgreSQL"
         elif db_type == "mysql":
             return "MySQL"
-        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "xml", "ini", "tsv", "parquet", "feather", "arrow"]:
+        elif db_type == "duckdb":
+            return "Duckdb"
+        elif db_type == "redis":
+            return "Redis"
+        elif db_type == "elasticsearch":
+            return "Elasticsearch"
+        elif db_type == "mongodb":
+            return "MongoDB"
+        elif db_type == "influxdb":
+            return "InfluxDB"
+        elif db_type == "neo4j":
+            return "Neo4j"
+        elif db_type == "couchdb":
+            return "CouchDB"
+        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5"]:
             # File formats use SQLite dialect internally
             return "SQLite"
         else:
@@ -1441,6 +1521,78 @@ class DatabaseManager:
 
         # Use SQLAlchemy's quoted_name for safe identifier quoting
         return str(quoted_name(table_name, quote=True))
+
+    # Modern Database Connection Methods
+    
+    def _create_redis_connection(self, conn_string: str):
+        """Create Redis connection from connection string."""
+        import redis
+        
+        # Parse connection string (redis://localhost:6379/0)
+        if conn_string.startswith('redis://'):
+            # Parse URL format
+            parts = conn_string.replace('redis://', '').split('/')
+            host_port = parts[0].split(':')
+            host = host_port[0] or 'localhost'
+            port = int(host_port[1]) if len(host_port) > 1 else 6379
+            db = int(parts[1]) if len(parts) > 1 else 0
+        else:
+            # Default localhost
+            host, port, db = 'localhost', 6379, 0
+            
+        return redis.Redis(host=host, port=port, db=db, decode_responses=True)
+    
+    def _create_elasticsearch_connection(self, conn_string: str):
+        """Create Elasticsearch connection from connection string."""
+        from elasticsearch import Elasticsearch
+        
+        # Parse connection string (http://localhost:9200)
+        if not conn_string.startswith('http'):
+            conn_string = f"http://{conn_string}"
+            
+        return Elasticsearch([conn_string])
+    
+    def _create_mongodb_connection(self, conn_string: str):
+        """Create MongoDB connection from connection string."""
+        import pymongo
+        
+        # Parse connection string (mongodb://localhost:27017/database)
+        if not conn_string.startswith('mongodb://'):
+            conn_string = f"mongodb://{conn_string}"
+            
+        return pymongo.MongoClient(conn_string)
+    
+    def _create_influxdb_connection(self, conn_string: str):
+        """Create InfluxDB connection from connection string."""
+        from influxdb_client import InfluxDBClient
+        
+        # Parse connection string (http://localhost:8086)
+        if not conn_string.startswith('http'):
+            conn_string = f"http://{conn_string}"
+            
+        # InfluxDB requires token and org - use defaults for local testing
+        return InfluxDBClient(url=conn_string, token="", org="")
+    
+    def _create_neo4j_connection(self, conn_string: str):
+        """Create Neo4j connection from connection string."""
+        from neo4j import GraphDatabase
+        
+        # Parse connection string (bolt://localhost:7687)
+        if not conn_string.startswith('bolt://'):
+            conn_string = f"bolt://{conn_string}"
+            
+        # Neo4j requires auth - use defaults for local testing
+        return GraphDatabase.driver(conn_string, auth=("neo4j", "password"))
+    
+    def _create_couchdb_connection(self, conn_string: str):
+        """Create CouchDB connection from connection string."""
+        import couchdb
+        
+        # Parse connection string (http://admin:testpassword@localhost:5984/)
+        if not conn_string.startswith('http'):
+            conn_string = f"http://admin:testpassword@{conn_string}/"
+            
+        return couchdb.Server(conn_string)
 
 
 def main():
