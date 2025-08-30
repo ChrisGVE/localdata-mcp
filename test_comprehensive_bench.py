@@ -322,9 +322,10 @@ def main():
         else:
             print(f"\n⚠️  {total_failed} format(s) need attention")
         
-        print(f"\n📈 SUPPORTED FORMATS: {total_successful} total")
-        print("   📄 File-based: CSV, JSON, YAML, XML, TOML, INI, TSV, Excel, ODS, Numbers, Parquet, Feather, Arrow, HDF5")
-        print("   🗄️  Databases: SQLite, PostgreSQL, MySQL, DuckDB")
+        print(f"\n📈 FORMAT SUPPORT STATUS:")
+        print("   ✅ Working file formats: CSV, YAML, XML, TSV, Excel, ODS, Parquet, HDF5")
+        print("   ❌ Known failing formats: JSON (complex nested objects), TOML (complex arrays), INI (malformed syntax)")
+        print("   🗄️  Database support: SQLite, PostgreSQL, MySQL, DuckDB")
         
     finally:
         # Clean up services
