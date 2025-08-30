@@ -231,6 +231,13 @@ def test_database_services(service_manager):
         ("PostgreSQL", "postgresql", "postgresql://localhost:5432/postgres", "postgresql@14"),
         ("MySQL", "mysql", "mysql+pymysql://root@localhost:3306/mysql", "mysql"),
         ("DuckDB", "duckdb", ":memory:", None),
+        # Modern databases
+        ("Redis", "redis", "localhost:6379", "redis"),
+        ("Elasticsearch", "elasticsearch", "localhost:9200", "elasticsearch-full"),
+        ("MongoDB", "mongodb", "localhost:27017", "mongodb-community"),
+        ("InfluxDB", "influxdb", "localhost:8086", "influxdb"),
+        ("Neo4j", "neo4j", "localhost:7687", "neo4j"),
+        ("CouchDB", "couchdb", "localhost:5984", "couchdb"),
     ]
     
     for name, db_type, conn_string, service_name in databases:
@@ -257,25 +264,30 @@ def test_database_services(service_manager):
                 sql_flavor = connection_data.get("connection_info", {}).get("sql_flavor", "Unknown")
                 print(f"   ✅ Connection successful ({sql_flavor})")
                 
-                # Test query
-                try:
-                    query_result = manager.execute_query.fn(
-                        manager,
-                        name=f"test_{db_type}",
-                        query="SELECT 1 as test_value, 'hello' as test_string"
-                    )
-                    
-                    success, query_data = safe_json_parse(query_result)
-                    if success and "data" in query_data:
-                        print(f"   ✅ Query test successful")
-                        results["successful"].append(name)
-                    else:
-                        print(f"   ⚠️  Query returned unexpected result")
-                        results["failed"].append(name)
+                # Test query (SQL databases only)
+                if db_type in ["sqlite", "postgresql", "mysql", "duckdb"]:
+                    try:
+                        query_result = manager.execute_query.fn(
+                            manager,
+                            name=f"test_{db_type}",
+                            query="SELECT 1 as test_value, 'hello' as test_string"
+                        )
                         
-                except Exception as e:
-                    print(f"   ⚠️  Query failed: {e}")
-                    results["failed"].append(name)
+                        success, query_data = safe_json_parse(query_result)
+                        if success and "data" in query_data:
+                            print(f"   ✅ Query test successful")
+                            results["successful"].append(name)
+                        else:
+                            print(f"   ⚠️  Query returned unexpected result")
+                            results["failed"].append(name)
+                            
+                    except Exception as e:
+                        print(f"   ⚠️  Query failed: {e}")
+                        results["failed"].append(name)
+                else:
+                    # Modern databases don't support SQL queries yet
+                    print(f"   ✅ Connection test successful (NoSQL database)")
+                    results["successful"].append(name)
                 
                 # Disconnect
                 manager.disconnect_database.fn(manager, name=f"test_{db_type}")
@@ -344,7 +356,8 @@ def main():
         print(f"\n📈 FORMAT SUPPORT STATUS:")
         print("   ✅ Working file formats: CSV, YAML, XML, TSV, Excel, ODS, Parquet, HDF5")
         print("   ❌ Known failing formats: JSON (complex nested objects), TOML (complex arrays), INI (malformed syntax)")
-        print("   🗄️  Database support: SQLite, PostgreSQL, MySQL, DuckDB")
+        print("   🗄️  SQL Databases: SQLite, PostgreSQL, MySQL, DuckDB")
+        print("   🔥 Modern Databases: Redis, Elasticsearch, MongoDB, InfluxDB, Neo4j, CouchDB")
         
     finally:
         # Clean up services
