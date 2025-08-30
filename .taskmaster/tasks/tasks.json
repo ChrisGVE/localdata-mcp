@@ -44,7 +44,7 @@
         "description": "Add support for Apple Numbers format (.numbers) files to the localdata_mcp.py file",
         "details": "- Extend _create_engine_from_file method to handle 'numbers' database type\n- Implement Numbers file reading using python-numbers-parser or similar\n- Handle multiple sheets/tables within Numbers files\n- Extract data from complex Numbers layouts and convert to DataFrame\n- Integrate with existing file handling and security patterns\n- Handle Numbers-specific data types and formatting",
         "testStrategy": "",
-        "status": "in-progress",
+        "status": "done",
         "dependencies": [
           2
         ],
@@ -182,7 +182,7 @@
       "created": "2025-08-29T16:16:00Z",
       "version": "1.0.0",
       "description": "Spreadsheet format support extension for LocalData MCP Server",
-      "updated": "2025-08-30T11:13:49.558Z"
+      "updated": "2025-08-30T11:18:32.348Z"
     }
   }
 }
