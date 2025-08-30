@@ -10,7 +10,7 @@ import pandas as pd
 from localdata_mcp import DatabaseManager
 
 # Skip all tests in this file for now - they need MCP tool access refactoring
-pytestmark = pytest.mark.skip(reason="Tests need refactoring for streamlined architecture")
+# Tests for spreadsheet formats with comprehensive mocking - all tests enabled for 100% coverage
 
 
 class TestSpreadsheetFormats:
