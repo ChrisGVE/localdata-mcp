@@ -1,6 +1,7 @@
 <p align="center"> 
-  <img src="assets/logo.png" alt="LocalData MCP Server" style="height:2.5em; vertical-align:middle;">
+  <img src="assets/logo.png" alt="LocalData MCP Server" width="250">
 </p>
+
 # LocalData MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
