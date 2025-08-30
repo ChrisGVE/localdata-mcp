@@ -1,6 +1,7 @@
 #!/bin/bash
 # Generate logo assets for LocalData MCP Server
-# This script creates various icon sizes without storing them in git
+# This script creates various icon sizes from the vector logo.svg source
+# Assets are generated locally and not stored in git
 
 set -e
 
@@ -13,9 +14,15 @@ if ! command -v magick &> /dev/null; then
     exit 1
 fi
 
-# Check if logo.png exists
-if [ ! -f "logo.png" ]; then
-    echo "❌ logo.png not found in current directory"
+# Check if logo.svg exists, fall back to logo.png
+if [ -f "logo.svg" ]; then
+    SOURCE="logo.svg"
+    echo "📁 Using vector source: logo.svg"
+elif [ -f "logo.png" ]; then
+    SOURCE="logo.png"
+    echo "📁 Using raster source: logo.png"
+else
+    echo "❌ Neither logo.svg nor logo.png found in current directory"
     exit 1
 fi
 
@@ -26,17 +33,23 @@ echo "📁 Creating icon sizes..."
 
 # Generate different sizes
 for size in 16 32 64 128 256 512; do
-    magick logo.png -resize ${size}x${size} assets/icons/logo_${size}.png
+    magick "$SOURCE" -resize ${size}x${size} assets/icons/logo_${size}.png
     echo "   ✅ Created ${size}x${size}"
 done
 
-# Create favicon
+# Create favicon (use 32x32 for better quality)
 echo "🌐 Creating favicon..."
-magick logo.png -resize 32x32 favicon.ico
+magick "$SOURCE" -resize 32x32 favicon.ico
+
+# Create PNG version from SVG if we're using SVG source
+if [ "$SOURCE" = "logo.svg" ]; then
+    echo "🖼️  Creating PNG version..."
+    magick "$SOURCE" -resize 512x512 logo.png
+fi
 
 # Create rounded version (optional)
 echo "🔄 Creating rounded version..."
-magick logo.png \
+magick "$SOURCE" -resize 256x256 \
     \( +clone -alpha extract -draw "fill black polygon 0,0 0,20 20,0" \
        \( +clone -flip \) -compose Multiply -composite \
        \( +clone -flop \) -compose Multiply -composite \) \
