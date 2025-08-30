@@ -266,6 +266,9 @@ main()
 ### Development Setup
 
 ```bash
+# Generate assets if needed
+./generate_assets.sh
+
 # Mount source code for development
 docker run -it --rm \
   -v $(pwd):/app \
