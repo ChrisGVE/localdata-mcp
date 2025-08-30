@@ -48,7 +48,7 @@ except ImportError:
 
 # ODS (LibreOffice Calc) support libraries with graceful error handling
 try:
-    import odfpy
+    from odf import opendocument, table
     ODFPY_AVAILABLE = True
 except ImportError:
     ODFPY_AVAILABLE = False
@@ -80,6 +80,13 @@ try:
     DUCKDB_AVAILABLE = True
 except ImportError:
     DUCKDB_AVAILABLE = False
+
+# HDF5 support for scientific data
+try:
+    import h5py
+    H5PY_AVAILABLE = True
+except ImportError:
+    H5PY_AVAILABLE = False
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -277,7 +284,7 @@ class DatabaseManager:
             if not DUCKDB_AVAILABLE:
                 raise ValueError("duckdb library is required for DuckDB connections. Install with: pip install duckdb")
             return create_engine(f"duckdb:///{conn_string}")
-        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow"]:
+        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5"]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_engine_from_file(sanitized_path, db_type, sheet_name)
         else:
@@ -288,8 +295,8 @@ class DatabaseManager:
         
         Args:
             file_path: Path to the file
-            file_type: Type of file (excel, ods, numbers, etc.)
-            sheet_name: For Excel/ODS/Numbers files, specific sheet to load. If None, load all sheets.
+            file_type: Type of file (excel, ods, numbers, hdf5, etc.)
+            sheet_name: For Excel/ODS/Numbers files, specific sheet to load; for HDF5 files, specific dataset to load. If None, load all sheets/datasets.
         """
         try:
             # Check if file is large
@@ -362,6 +369,8 @@ class DatabaseManager:
                         "Install with: pip install pyarrow"
                     )
                 data = pd.read_feather(file_path)  # Arrow IPC format uses same reader
+            elif file_type == "hdf5":
+                data = self._load_hdf5_file(file_path, sheet_name)
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -711,6 +720,137 @@ class DatabaseManager:
             else:
                 raise ValueError(f"Failed to load Numbers file '{file_path}': {e}")
 
+    def _load_hdf5_file(self, file_path: str, dataset_name: Optional[str] = None) -> Dict[str, pd.DataFrame]:
+        """Load HDF5 file into dict of pandas DataFrames (one per dataset).
+        
+        Args:
+            file_path: Path to the HDF5 file
+            dataset_name: Specific dataset to load. If None, load all compatible datasets.
+        """
+        # Check for HDF5 support
+        if not H5PY_AVAILABLE:
+            logger.warning("h5py not available - HDF5 files cannot be loaded")
+            raise ValueError(
+                "h5py library is required for .hdf5 files. "
+                "Install with: pip install h5py"
+            )
+        
+        try:
+            import h5py
+            datasets_data = {}
+            used_names = set()
+            
+            with h5py.File(file_path, 'r') as hdf_file:
+                logger.info(f"Opened HDF5 file with {len(hdf_file.keys())} top-level items")
+                
+                # Recursive function to explore HDF5 structure
+                def explore_hdf5_group(group, path=""):
+                    """Recursively explore HDF5 groups and datasets."""
+                    datasets_found = {}
+                    
+                    for key in group.keys():
+                        item = group[key]
+                        current_path = f"{path}/{key}" if path else key
+                        
+                        if isinstance(item, h5py.Dataset):
+                            # This is a dataset - try to convert to DataFrame
+                            try:
+                                # Get dataset info
+                                shape = item.shape
+                                dtype = item.dtype
+                                logger.info(f"Found dataset '{current_path}': shape={shape}, dtype={dtype}")
+                                
+                                # Skip if dataset_name is specified and doesn't match
+                                if dataset_name is not None and key != dataset_name and current_path != dataset_name:
+                                    continue
+                                
+                                # Read dataset
+                                data = item[...]
+                                
+                                # Convert to DataFrame based on shape
+                                if len(shape) == 1:
+                                    # 1D array - create single column DataFrame
+                                    df = pd.DataFrame({key: data})
+                                elif len(shape) == 2:
+                                    # 2D array - assume rows x columns
+                                    if shape[1] == 1:
+                                        # Single column
+                                        df = pd.DataFrame({key: data.flatten()})
+                                    else:
+                                        # Multiple columns - generate column names
+                                        columns = [f'{key}_col_{i+1}' for i in range(shape[1])]
+                                        df = pd.DataFrame(data, columns=columns)
+                                else:
+                                    # Higher dimensional - flatten to 2D
+                                    data_2d = data.reshape(shape[0], -1)
+                                    columns = [f'{key}_dim_{i+1}' for i in range(data_2d.shape[1])]
+                                    df = pd.DataFrame(data_2d, columns=columns)
+                                    logger.info(f"Flattened {len(shape)}D dataset to 2D: {data_2d.shape}")
+                                
+                                # Handle data types
+                                for col in df.columns:
+                                    # Try to convert bytes to strings
+                                    if df[col].dtype.kind == 'S':  # String/bytes type
+                                        try:
+                                            df[col] = df[col].astype(str).str.decode('utf-8', errors='ignore')
+                                        except:
+                                            df[col] = df[col].astype(str)
+                                
+                                # Create sanitized table name
+                                table_name = self._sanitize_sheet_name(current_path.replace('/', '_'), used_names)
+                                datasets_found[table_name] = df
+                                
+                                logger.info(f"Successfully loaded dataset '{current_path}' as table '{table_name}' with {len(df)} rows and {len(df.columns)} columns")
+                                
+                            except Exception as e:
+                                logger.warning(f"Failed to load dataset '{current_path}': {e}")
+                                continue
+                                
+                        elif isinstance(item, h5py.Group):
+                            # This is a group - recurse into it
+                            logger.info(f"Exploring group '{current_path}' with {len(item.keys())} items")
+                            sub_datasets = explore_hdf5_group(item, current_path)
+                            datasets_found.update(sub_datasets)
+                    
+                    return datasets_found
+                
+                # Start exploration from root
+                if dataset_name is not None:
+                    # Look for specific dataset
+                    available_datasets = []
+                    def collect_dataset_names(group, path=""):
+                        for key in group.keys():
+                            item = group[key]
+                            current_path = f"{path}/{key}" if path else key
+                            if isinstance(item, h5py.Dataset):
+                                available_datasets.append(current_path)
+                            elif isinstance(item, h5py.Group):
+                                collect_dataset_names(item, current_path)
+                    
+                    collect_dataset_names(hdf_file)
+                    
+                    # Check if requested dataset exists
+                    if dataset_name not in available_datasets and dataset_name not in [d.split('/')[-1] for d in available_datasets]:
+                        raise ValueError(f"Dataset '{dataset_name}' not found in HDF5 file. Available datasets: {available_datasets}")
+                
+                datasets_data = explore_hdf5_group(hdf_file)
+                
+                if not datasets_data:
+                    raise ValueError(f"HDF5 file '{file_path}' contains no readable datasets")
+                
+                logger.info(f"Successfully loaded HDF5 file '{file_path}' with {len(datasets_data)} datasets")
+                return datasets_data
+                
+        except Exception as e:
+            # Handle specific HDF5 errors
+            error_msg = str(e).lower()
+            if "permission" in error_msg or "access" in error_msg:
+                raise ValueError(f"Cannot access HDF5 file '{file_path}': Permission denied or file in use")
+            elif "not an hdf5 file" in error_msg:
+                raise ValueError(f"File '{file_path}' is not a valid HDF5 file")
+            else:
+                raise ValueError(f"Failed to load HDF5 file '{file_path}': {e}")
+
     def _load_xml_file(self, file_path: str) -> pd.DataFrame:
         """Load XML file into pandas DataFrame."""
         try:
@@ -835,9 +975,9 @@ class DatabaseManager:
 
         Args:
             name: A unique name to identify the connection (e.g., "analytics_db", "user_data").
-            db_type: The type of the database ("sqlite", "postgresql", "mysql", "duckdb", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow").
+            db_type: The type of the database ("sqlite", "postgresql", "mysql", "duckdb", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5").
             conn_string: The connection string or file path for the database.
-            sheet_name: Optional sheet name to load from Excel/ODS/Numbers files. If not specified, all sheets are loaded.
+            sheet_name: Optional sheet name to load from Excel/ODS/Numbers files, or dataset name for HDF5 files. If not specified, all sheets/datasets are loaded.
         """
         logger.info(f"Attempting to connect to database '{name}' of type '{db_type}'")
 
