@@ -99,11 +99,33 @@ node_modules/
 *.sw?
 # OS specific
 
-# Task files
-# tasks.json
-# tasks/ 
-.claude/agents
+# Development directories
+.cursor/
+.serena/
+.taskmaster/
+.claude/
 
-# Generated assets (not stored in git)
+# Generated assets and build artifacts
 assets/
 favicon.ico
+logo*.png
+logo*.svg
+
+# Temporary and test files
+test_*.txt
+test_*.csv
+test_*.json
+cleanup_*.txt
+large_file_test_*.txt
+*_test_*/
+test_env/
+test_data_*
+
+# Development documentation
+*COVERAGE*.md
+*RELEASE_NOTES*.md
+*VALIDATION*.md
+*PYPI_PUBLISHING*.md
+*github_finalization*.md
+*INFLUXDB_FIX*.md
+*LOGO_DESIGN*.md
