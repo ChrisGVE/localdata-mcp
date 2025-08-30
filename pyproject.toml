@@ -35,6 +35,7 @@ dependencies = [
   "odfpy>=1.4.0",      # LibreOffice Calc .ods support
   "pyarrow>=10.0.0",   # Parquet/Feather analytical formats
   "lxml>=4.6.0",       # XML format support
+  "numbers-parser>=4.0.0", # Apple Numbers .numbers support
 ]
 
 [project.optional-dependencies]
