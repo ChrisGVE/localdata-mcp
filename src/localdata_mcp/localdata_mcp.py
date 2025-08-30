@@ -74,6 +74,13 @@ try:
 except ImportError:
     NUMBERS_PARSER_AVAILABLE = False
 
+# DuckDB support
+try:
+    import duckdb
+    DUCKDB_AVAILABLE = True
+except ImportError:
+    DUCKDB_AVAILABLE = False
+
 # Set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -266,6 +273,10 @@ class DatabaseManager:
             return create_engine(conn_string)
         elif db_type == "mysql":
             return create_engine(conn_string)
+        elif db_type == "duckdb":
+            if not DUCKDB_AVAILABLE:
+                raise ValueError("duckdb library is required for DuckDB connections. Install with: pip install duckdb")
+            return create_engine(f"duckdb:///{conn_string}")
         elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow"]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_engine_from_file(sanitized_path, db_type, sheet_name)
@@ -824,7 +835,7 @@ class DatabaseManager:
 
         Args:
             name: A unique name to identify the connection (e.g., "analytics_db", "user_data").
-            db_type: The type of the database ("sqlite", "postgresql", "mysql", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow").
+            db_type: The type of the database ("sqlite", "postgresql", "mysql", "duckdb", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow").
             conn_string: The connection string or file path for the database.
             sheet_name: Optional sheet name to load from Excel/ODS/Numbers files. If not specified, all sheets are loaded.
         """
