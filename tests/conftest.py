@@ -95,7 +95,7 @@ def mock_mcp_framework():
 # Comprehensive Mock Fixtures
 # =============================================================================
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def mock_external_dependencies():
     """Mock all external dependencies to prevent actual network calls or file operations"""
     with patch('psutil.virtual_memory') as mock_memory, \

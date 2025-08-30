@@ -122,24 +122,30 @@ class TestConnectDatabase:
     
     def test_connect_json_with_sql_flavor(self, manager, test_json_file):
         """Test connecting to JSON with SQL flavor detection."""
-        result = manager.connect_database("test_json", "json", test_json_file)
+        from tests.mock_helpers import mock_json_connection
         
-        response = json.loads(result)
-        
-        assert response["success"] is True
-        assert response["connection_info"]["sql_flavor"] == "SQLite"
-        assert response["connection_info"]["db_type"] == "json"
+        with mock_json_connection(file_path=test_json_file):
+            result = manager.connect_database("test_json", "json", test_json_file)
+            
+            response = json.loads(result)
+            
+            assert response["success"] is True
+            assert response["connection_info"]["sql_flavor"] == "SQLite"
+            assert response["connection_info"]["db_type"] == "json"
     
     def test_connect_duplicate_name(self, manager, test_csv_file):
         """Test connecting with duplicate database name."""
-        # First connection should succeed
-        result1 = manager.connect_database("test_db", "csv", test_csv_file)
-        response1 = json.loads(result1)
-        assert response1["success"] is True
+        from tests.mock_helpers import mock_csv_connection
         
-        # Second connection with same name should fail
-        result2 = manager.connect_database("test_db", "csv", test_csv_file)
-        assert "already connected" in result2
+        with mock_csv_connection(file_path=test_csv_file):
+            # First connection should succeed
+            result1 = manager.connect_database("test_db", "csv", test_csv_file)
+            response1 = json.loads(result1)
+            assert response1["success"] is True
+            
+            # Second connection with same name should fail
+            result2 = manager.connect_database("test_db", "csv", test_csv_file)
+            assert "already connected" in result2
     
     def test_connect_with_sheet_name(self, manager):
         """Test connecting to Excel file with specific sheet name."""
