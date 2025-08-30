@@ -111,7 +111,7 @@
         "description": "Implement GitHub MCP-style toolset system to enable/disable tools on-demand and reduce LLM context bloat",
         "details": "- Research GitHub MCP toolset implementation pattern\n- Design toolset categories (connection-management, sql-databases, document-databases, etc.)\n- Implement enable/disable toolset functionality\n- Refactor existing tools into appropriate toolsets\n- Add toolset discovery and listing capabilities\n- Maintain backward compatibility for existing users\n- Update MCP server initialization to support toolsets",
         "testStrategy": "",
-        "status": "pending",
+        "status": "done",
         "dependencies": [],
         "priority": "high",
         "subtasks": []
@@ -160,7 +160,7 @@
       "created": "2025-08-29T16:16:00Z",
       "version": "1.0.0",
       "description": "Spreadsheet format support extension for LocalData MCP Server",
-      "updated": "2025-08-29T17:10:26.601Z"
+      "updated": "2025-08-29T20:42:49.140Z"
     }
   }
 }
