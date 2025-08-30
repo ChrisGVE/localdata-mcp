@@ -103,3 +103,7 @@ node_modules/
 # tasks.json
 # tasks/ 
 .claude/agents
+
+# Generated assets (not stored in git)
+assets/
+favicon.ico
