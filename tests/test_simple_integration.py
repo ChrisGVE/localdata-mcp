@@ -22,27 +22,12 @@ def test_basic_list_databases():
 
 def test_connect_database_with_mocked_files():
     """Test database connection with properly mocked file operations."""
+    from tests.mock_helpers import mock_csv_connection
+    
     manager = create_test_manager()
     
-    # Create sample data
-    sample_df = pd.DataFrame({
-        'id': [1, 2, 3],
-        'name': ['Alice', 'Bob', 'Charlie'],
-        'age': [25, 30, 35]
-    })
-    
-    # Mock all the file and path operations that connect_database uses
-    with patch('localdata_mcp.localdata_mcp.DatabaseManager._sanitize_path') as mock_sanitize, \
-         patch('pandas.read_csv', return_value=sample_df) as mock_read_csv, \
-         patch('sqlalchemy.create_engine') as mock_create_engine, \
-         patch('pandas.DataFrame.to_sql') as mock_to_sql:
-        
-        # Configure mocks
-        mock_sanitize.return_value = '/tmp/test.csv'
-        mock_engine = Mock()
-        mock_engine.dialect.name = 'sqlite'
-        mock_create_engine.return_value = mock_engine
-        
+    # Use the mock helper for comprehensive mocking
+    with mock_csv_connection():
         # Test connection
         result = manager.connect_database("test_csv", "csv", "/tmp/test.csv")
         
@@ -56,24 +41,12 @@ def test_connect_database_with_mocked_files():
 
 def test_execute_query_basic():
     """Test execute query with mocked connection."""
+    from tests.mock_helpers import mock_csv_connection, mock_database_query
+    
     manager = create_test_manager()
     
     # First establish a connection using mocks
-    sample_df = pd.DataFrame({
-        'id': [1, 2, 3],
-        'name': ['Alice', 'Bob', 'Charlie']
-    })
-    
-    with patch('localdata_mcp.localdata_mcp.DatabaseManager._sanitize_path') as mock_sanitize, \
-         patch('pandas.read_csv', return_value=sample_df), \
-         patch('sqlalchemy.create_engine') as mock_create_engine, \
-         patch('pandas.DataFrame.to_sql'):
-        
-        mock_sanitize.return_value = '/tmp/test.csv'
-        mock_engine = Mock()
-        mock_engine.dialect.name = 'sqlite'
-        mock_create_engine.return_value = mock_engine
-        
+    with mock_csv_connection():
         # Connect database
         manager.connect_database("test_csv", "csv", "/tmp/test.csv")
         
@@ -83,7 +56,7 @@ def test_execute_query_basic():
             'name': ['Alice', 'Bob']
         })
         
-        with patch('pandas.read_sql_query', return_value=query_result_df):
+        with mock_database_query(query_result_df):
             result = manager.execute_query("test_csv", "SELECT * FROM data_table LIMIT 2")
             
             # Parse result
