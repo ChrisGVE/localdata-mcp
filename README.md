@@ -1,6 +1,11 @@
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
 
-# LocalData MCP Server
+<div align="center">
+  <h1>
+    LocalData MCP Server
+    <img src="logo.png" alt="LocalData MCP Server" width="64" height="64" style="vertical-align: middle; margin-left: 16px;">
+  </h1>
+</div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
