@@ -112,7 +112,17 @@ def create_hdf5_test_file():
         return None
 
 def test_comprehensive_formats():
-    """Test all supported file formats."""
+    """
+    Test all supported file formats.
+    
+    Success criteria: Connection established and data loaded (not describe_database working).
+    File formats don't have traditional table schemas that SQLAlchemy Inspector can read,
+    but they can successfully connect and make data accessible for queries.
+    
+    Expected results:
+    - 8 working formats: CSV, YAML, XML, TSV, Excel, ODS, Parquet, HDF5
+    - 3 failing formats: JSON (nested objects), TOML (complex arrays), INI (malformed syntax)
+    """
     print("\n" + "="*60)
     print("🧪 COMPREHENSIVE FORMAT TESTING")
     print("="*60)
