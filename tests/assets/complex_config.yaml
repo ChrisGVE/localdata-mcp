@@ -1,0 +1,20 @@
+config:
+  database:
+    host: localhost
+    port: 5432
+    settings:
+      retries: 3
+      timeout: 30
+  enabled: true
+  features:
+  - auth
+  - logging
+  - metrics
+  version: 1.5
+users:
+- name: admin
+  roles:
+  - admin
+  - user
+- name: guest
+  roles: []
