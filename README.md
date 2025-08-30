@@ -3,7 +3,7 @@
 <div align="center">
   <h1>
     LocalData MCP Server
-    <img src="logo.png" alt="LocalData MCP Server" width="64" height="64" style="vertical-align: middle; margin-left: 16px;">
+    <img src="logo.svg" alt="LocalData MCP Server" width="64" height="64" style="vertical-align: middle; margin-left: 16px;">
   </h1>
 </div>
 
