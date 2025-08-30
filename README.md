@@ -8,17 +8,17 @@
 [![FastMCP](https://img.shields.io/badge/FastMCP-Compatible-green.svg)](https://github.com/jlowin/fastmcp)
 [![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/cd737717-02f3-4388-bab7-5ec7cbe40713)
 
-**A powerful, secure MCP server for local databases, spreadsheets, and structured data files with advanced security features and large dataset handling.**
+**A comprehensive MCP server for databases, spreadsheets, and structured data files with security features, performance optimization, and extensive format support.**
 
 ## ✨ Features
 
 ### 🗄️ **Multi-Database Support**
 
-- **SQL Databases**: PostgreSQL, MySQL, SQLite
-- **Document Databases**: MongoDB
-- **Spreadsheets**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with multi-sheet support
+- **SQL Databases**: PostgreSQL, MySQL, SQLite, DuckDB
+- **Modern Databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j, CouchDB  
+- **Spreadsheets**: Excel (.xlsx/.xls), LibreOffice Calc (.ods), Apple Numbers (.numbers)
 - **Structured Files**: CSV, TSV, JSON, YAML, TOML, XML, INI
-- **Analytical Formats**: Parquet, Feather, Arrow
+- **Analytical Formats**: Parquet, Feather, Arrow, HDF5
 
 ### 🔒 **Advanced Security**
 
@@ -161,18 +161,25 @@ clear_query_buffer("analytics_1640995200_a1b2")
 ### SQL Databases
 
 - **PostgreSQL**: Full support with connection pooling
-- **MySQL**: Complete MySQL/MariaDB compatibility
+- **MySQL**: Complete MySQL/MariaDB compatibility  
 - **SQLite**: Local file and in-memory databases
+- **DuckDB**: High-performance analytical SQL database
 
-### Document Databases
+### Modern Databases
 
-- **MongoDB**: Collection queries and aggregation
+- **MongoDB**: Document store with collection queries and aggregation
+- **Redis**: High-performance key-value store
+- **Elasticsearch**: Full-text search and analytics engine
+- **InfluxDB**: Time-series database for metrics and IoT data
+- **Neo4j**: Graph database for relationship queries
+- **CouchDB**: Document-oriented database with HTTP API
 
 ### Structured Files
 
 #### Spreadsheet Formats
 - **Excel (.xlsx, .xls)**: Full multi-sheet support with automatic table creation
 - **LibreOffice Calc (.ods)**: Complete ODS support with sheet handling
+- **Apple Numbers (.numbers)**: Native support for Numbers documents
 - **Multi-sheet handling**: Each sheet becomes a separate queryable table
 
 #### Text-Based Formats
@@ -188,6 +195,7 @@ clear_query_buffer("analytics_1640995200_a1b2")
 - **Parquet**: High-performance columnar data format
 - **Feather**: Fast binary format for data interchange
 - **Arrow**: In-memory columnar format support
+- **HDF5**: Hierarchical data format for scientific computing
 
 ## 🛡️ Security Features
 
@@ -244,12 +252,13 @@ describe_table("mydb", "users; DROP TABLE users; --")
 
 ## 🧪 Testing & Quality
 
-**✅ 100% Test Coverage**
+**✅ Comprehensive Test Coverage**
 
-- 100+ comprehensive test cases
-- Security vulnerability testing
-- Performance benchmarking
-- Edge case validation
+- 68% test coverage with 500+ test cases
+- Import error handling and graceful degradation
+- Security vulnerability testing  
+- Performance benchmarking with large datasets
+- Modern database connection testing
 
 **🔒 Security Validated**
 
