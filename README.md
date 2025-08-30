@@ -1,4 +1,4 @@
-# <img src="assets/logo.png" alt="LocalData MCP Server" width="72" height="36" style="vertical-align: middle; margin-right: 12px;"> LocalData MCP Server
+# <img src="assets/logo.png" alt="LocalData MCP Server" width="144" height="72" style="vertical-align: middle; margin-right: 16px;"> LocalData MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
