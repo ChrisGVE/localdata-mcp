@@ -12,7 +12,6 @@ import pandas as pd
 from localdata_mcp import DatabaseManager
 
 
-@pytest.mark.skip(reason="Test class needs refactoring for streamlined architecture")
 class TestSecurityFeatures:
     """Test security features and protections."""
     
@@ -240,7 +239,6 @@ class TestSecurityFeatures:
                 os.unlink(temp_path)
 
 
-@pytest.mark.skip(reason="Test class needs refactoring for streamlined architecture")
 class TestEdgeCases:
     """Test various edge cases and error conditions."""
     
@@ -483,7 +481,6 @@ Alice,,70000
                 pass  # Cleanup failure is not critical for test
 
 
-@pytest.mark.skip(reason="Test class needs refactoring for streamlined architecture")  
 class TestPerformance:
     """Test performance characteristics and limits."""
     
