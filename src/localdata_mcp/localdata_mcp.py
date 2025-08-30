@@ -217,6 +217,50 @@ class DatabaseManager:
 
         return str(abs_file_path)
 
+    def _serialize_complex_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Serialize complex nested objects (dict, list) in DataFrame columns to JSON strings.
+        
+        This prevents SQLite insertion errors when DataFrame contains nested structures
+        that can't be directly serialized to database columns.
+        
+        Args:
+            df: DataFrame that may contain columns with complex nested objects
+            
+        Returns:
+            DataFrame with complex objects serialized as JSON strings
+        """
+        if df.empty:
+            return df
+        
+        # Create a copy to avoid modifying the original DataFrame
+        df_copy = df.copy()
+        
+        for col in df_copy.columns:
+            if df_copy[col].dtype == 'object':
+                # Check if this column contains complex objects (dict/list)
+                non_null_values = df_copy[col].dropna()
+                if not non_null_values.empty:
+                    # Check first few non-null values to determine if serialization is needed
+                    sample_values = non_null_values.head(3)
+                    needs_serialization = any(
+                        isinstance(val, (dict, list)) for val in sample_values.values
+                    )
+                    
+                    if needs_serialization:
+                        logger.info(f"Serializing column '{col}' containing complex nested objects")
+                        def serialize_value(x):
+                            # Handle null values safely - avoid pd.notna() with arrays
+                            if x is None:
+                                return x
+                            # Check if it's a complex object that needs serialization
+                            if isinstance(x, (dict, list)):
+                                return json.dumps(x)
+                            return x
+                        
+                        df_copy[col] = df_copy[col].apply(serialize_value)
+        
+        return df_copy
+
     def _get_file_size(self, file_path: str) -> int:
         """Get file size in bytes."""
         try:
@@ -462,12 +506,16 @@ class DatabaseManager:
             if isinstance(data, dict):
                 # Multi-sheet file: create separate table for each sheet
                 for table_name, df in data.items():
-                    df.to_sql(table_name, engine, index=False, if_exists="replace")
-                    logger.info(f"Created table '{table_name}' with {len(df)} rows")
+                    # Serialize complex nested objects before SQLite insertion
+                    df_serialized = self._serialize_complex_columns(df)
+                    df_serialized.to_sql(table_name, engine, index=False, if_exists="replace")
+                    logger.info(f"Created table '{table_name}' with {len(df_serialized)} rows")
             else:
                 # Single DataFrame: create single table called 'data_table'
-                data.to_sql("data_table", engine, index=False, if_exists="replace")
-                logger.info(f"Created table 'data_table' with {len(data)} rows")
+                # Serialize complex nested objects before SQLite insertion
+                data_serialized = self._serialize_complex_columns(data)
+                data_serialized.to_sql("data_table", engine, index=False, if_exists="replace")
+                logger.info(f"Created table 'data_table' with {len(data_serialized)} rows")
             
             return engine
 
