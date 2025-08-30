@@ -1,0 +1,11 @@
+messages:
+  emoji: 🌍 Hello 🚀
+  en: Hello, World!
+  es: ¡Hola, Mundo!
+  fr: Bonjour le monde!
+multiline: 'This is a
+
+  multiline string
+
+  with line breaks'
+special_chars: 'Contains "quotes" and ''apostrophes'' and: colons'

@@ -1,0 +1,31 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "name": "Alice",
+      "profile": {
+        "age": 30,
+        "city": "New York"
+      }
+    },
+    {
+      "id": 2,
+      "name": "Bob",
+      "profile": {
+        "age": "unknown",
+        "city": ""
+      }
+    },
+    {
+      "id": 3,
+      "name": "Charlie",
+      "profile": null
+    },
+    {
+      "id": 4,
+      "profile": {
+        "age": 25
+      }
+    }
+  ]
+}

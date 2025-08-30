@@ -1,0 +1,6 @@
+id	name	description	value
+1	Product A	Description with	tab	99.99
+2	Product B	Normal description	invalid_number
+3	Product	C	Contains tab in name	
+			
+4	"Quoted Name"	Description	-123.45
