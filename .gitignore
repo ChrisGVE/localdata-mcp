@@ -105,11 +105,13 @@ node_modules/
 .taskmaster/
 .claude/
 
-# Generated assets and build artifacts
-assets/
+# Generated assets and build artifacts (but allow assets/logo.png)
+/assets/icons/
+/assets/logos/
 favicon.ico
 logo*.png
 logo*.svg
+!assets/logo.png
 
 # Temporary and test files
 test_*.txt
