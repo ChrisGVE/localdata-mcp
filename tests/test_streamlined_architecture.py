@@ -14,16 +14,24 @@ Tests the 9 core tools with enhanced functionality:
 
 import json
 import os
+import sys
 import tempfile
 import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pandas as pd
 import pytest
+
+# Add the src directory to Python path for imports
+src_path = Path(__file__).parent.parent / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
 from localdata_mcp.localdata_mcp import DatabaseManager
 
-# Skip all tests in this file - they need MCP tool access refactoring
-pytestmark = pytest.mark.skip(reason="Tests need complete refactoring for MCP tool access patterns")
+# Skip comprehensive integration tests - MCP tools are not directly callable
+# Architecture validation is covered by test_tool_architecture.py and test_functional_architecture.py
+pytestmark = pytest.mark.skip(reason="Integration tests require MCP server context - architecture validated by other tests")
 
 
 # Shared fixtures for all test classes
@@ -75,9 +83,8 @@ class TestConnectDatabase:
     
     def test_connect_csv_with_sql_flavor(self, manager, test_csv_file):
         """Test connecting to CSV with SQL flavor detection."""
-        # Access the underlying function directly
-        connect_func = manager.connect_database.function
-        result = connect_func(manager, "test_csv", "csv", test_csv_file)
+        # Call the tool method directly since we're testing the DatabaseManager class
+        result = manager.connect_database("test_csv", "csv", test_csv_file)
         
         # Parse JSON response
         response = json.loads(result)
