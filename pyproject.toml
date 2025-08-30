@@ -36,6 +36,7 @@ dependencies = [
   "pyarrow>=10.0.0",   # Parquet/Feather analytical formats
   "lxml>=4.6.0",       # XML format support
   "numbers-parser>=4.0.0", # Apple Numbers .numbers support
+  "h5py>=3.0.0",       # HDF5 scientific data format support
 ]
 
 [project.optional-dependencies]
