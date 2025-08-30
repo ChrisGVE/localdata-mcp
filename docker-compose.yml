@@ -1,0 +1,110 @@
+# LocalData MCP Server - Docker Compose Configuration
+# Provides a complete environment with the MCP server and optional databases
+
+version: '3.8'
+
+services:
+  localdata-mcp:
+    build: .
+    container_name: localdata-mcp-server
+    restart: unless-stopped
+    volumes:
+      # Mount your data directory
+      - ./data:/app/data
+      # Mount additional directories if needed
+      - ./examples:/app/examples:ro
+    environment:
+      # Set any environment variables for database connections
+      - PYTHONUNBUFFERED=1
+    networks:
+      - localdata-net
+    depends_on:
+      - postgres
+      - mysql
+      - mongodb
+      - redis
+      - elasticsearch
+
+  # Optional database services for testing and development
+  postgres:
+    image: postgres:15-alpine
+    container_name: localdata-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - localdata-net
+
+  mysql:
+    image: mysql:8.0
+    container_name: localdata-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: testdb
+      MYSQL_USER: testuser
+      MYSQL_PASSWORD: testpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - localdata-net
+
+  mongodb:
+    image: mongo:7
+    container_name: localdata-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: testuser
+      MONGO_INITDB_ROOT_PASSWORD: testpass
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - localdata-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: localdata-redis
+    restart: unless-stopped
+    command: redis-server --requirepass testpass
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - localdata-net
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: localdata-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - localdata-net
+
+volumes:
+  postgres_data:
+  mysql_data:
+  mongodb_data:
+  redis_data:
+  elasticsearch_data:
+
+networks:
+  localdata-net:
+    driver: bridge
