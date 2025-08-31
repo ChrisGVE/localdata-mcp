@@ -621,3 +621,675 @@ def circuit_breaker_protection(breaker: CircuitBreaker, operation_name: str = "u
     except Exception as e:
         breaker.record_failure(e)
         raise
+
+
+# ============================================================================
+# Error Recovery Strategies
+# ============================================================================
+
+class RecoveryStrategy(Enum):
+    """Types of recovery strategies."""
+    CONNECTION_RESET = "connection_reset"
+    QUERY_SIMPLIFICATION = "query_simplification"
+    RESULT_PAGINATION = "result_pagination"
+    CACHE_FALLBACK = "cache_fallback"
+    READ_REPLICA = "read_replica"
+    GRACEFUL_DEGRADATION = "graceful_degradation"
+    PARTIAL_RESULTS = "partial_results"
+
+
+@dataclass
+class RecoveryAction:
+    """Represents a recovery action that can be taken."""
+    strategy: RecoveryStrategy
+    description: str
+    action_function: Callable
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    success_probability: float = 0.5
+    estimated_time: float = 0.0
+    
+    def execute(self, context: Dict[str, Any]) -> Tuple[bool, Any, Optional[str]]:
+        """Execute the recovery action.
+        
+        Returns:
+            Tuple[bool, Any, Optional[str]]: (success, result, error_message)
+        """
+        try:
+            result = self.action_function(context)
+            return True, result, None
+        except Exception as e:
+            return False, None, str(e)
+
+
+class ErrorRecoveryManager:
+    """Manages error recovery strategies and execution."""
+    
+    def __init__(self):
+        self._recovery_strategies: Dict[ErrorCategory, List[RecoveryAction]] = defaultdict(list)
+        self._recovery_history: deque = deque(maxlen=1000)
+        self._lock = threading.RLock()
+        self._register_default_strategies()
+    
+    def register_strategy(self, category: ErrorCategory, action: RecoveryAction):
+        """Register a recovery strategy for an error category."""
+        with self._lock:
+            self._recovery_strategies[category].append(action)
+    
+    def get_recovery_options(self, error: LocalDataError) -> List[RecoveryAction]:
+        """Get applicable recovery options for an error."""
+        with self._lock:
+            return self._recovery_strategies.get(error.category, []).copy()
+    
+    def attempt_recovery(self, error: LocalDataError, context: Optional[Dict[str, Any]] = None) -> Tuple[bool, Any, List[str]]:
+        """Attempt recovery from an error using available strategies.
+        
+        Returns:
+            Tuple[bool, Any, List[str]]: (recovered, result, attempted_strategies)
+        """
+        context = context or {}
+        context.update({
+            'error': error,
+            'database_name': error.database_name,
+            'query': error.query,
+            'metadata': error.metadata
+        })
+        
+        recovery_options = self.get_recovery_options(error)
+        attempted_strategies = []
+        
+        # Sort by success probability (highest first)
+        recovery_options.sort(key=lambda x: x.success_probability, reverse=True)
+        
+        for action in recovery_options:
+            attempted_strategies.append(action.strategy.value)
+            
+            try:
+                success, result, error_msg = action.execute(context)
+                
+                # Record recovery attempt
+                recovery_record = {
+                    'timestamp': time.time(),
+                    'error_code': error.error_code,
+                    'error_category': error.category.value,
+                    'strategy': action.strategy.value,
+                    'success': success,
+                    'error_message': error_msg,
+                    'database_name': error.database_name
+                }
+                
+                with self._lock:
+                    self._recovery_history.append(recovery_record)
+                
+                if success:
+                    logger.info(f"Recovery successful using strategy '{action.strategy.value}' for error: {error.error_code}")
+                    return True, result, attempted_strategies
+                else:
+                    logger.warning(f"Recovery attempt failed using strategy '{action.strategy.value}': {error_msg}")
+                    
+            except Exception as recovery_error:
+                logger.error(f"Recovery strategy '{action.strategy.value}' raised exception: {recovery_error}")
+        
+        logger.error(f"All recovery strategies failed for error: {error.error_code}")
+        return False, None, attempted_strategies
+    
+    def get_recovery_statistics(self) -> Dict[str, Any]:
+        """Get statistics about recovery attempts."""
+        with self._lock:
+            if not self._recovery_history:
+                return {
+                    'total_attempts': 0,
+                    'success_rate': 0.0,
+                    'strategy_stats': {},
+                    'category_stats': {}
+                }
+            
+            total_attempts = len(self._recovery_history)
+            successful_attempts = sum(1 for record in self._recovery_history if record['success'])
+            success_rate = (successful_attempts / total_attempts) * 100
+            
+            # Strategy statistics
+            strategy_stats = defaultdict(lambda: {'attempts': 0, 'successes': 0})
+            category_stats = defaultdict(lambda: {'attempts': 0, 'successes': 0})
+            
+            for record in self._recovery_history:
+                strategy = record['strategy']
+                category = record['error_category']
+                
+                strategy_stats[strategy]['attempts'] += 1
+                category_stats[category]['attempts'] += 1
+                
+                if record['success']:
+                    strategy_stats[strategy]['successes'] += 1
+                    category_stats[category]['successes'] += 1
+            
+            # Calculate success rates
+            for stats in strategy_stats.values():
+                if stats['attempts'] > 0:
+                    stats['success_rate'] = (stats['successes'] / stats['attempts']) * 100
+                else:
+                    stats['success_rate'] = 0.0
+            
+            for stats in category_stats.values():
+                if stats['attempts'] > 0:
+                    stats['success_rate'] = (stats['successes'] / stats['attempts']) * 100
+                else:
+                    stats['success_rate'] = 0.0
+            
+            return {
+                'total_attempts': total_attempts,
+                'successful_attempts': successful_attempts,
+                'success_rate': success_rate,
+                'strategy_stats': dict(strategy_stats),
+                'category_stats': dict(category_stats)
+            }
+    
+    def _register_default_strategies(self):
+        """Register default recovery strategies."""
+        
+        # Connection recovery strategies
+        def reset_connection(context: Dict[str, Any]) -> str:
+            """Reset database connection."""
+            database_name = context.get('database_name')
+            if not database_name:
+                raise ValueError("Database name required for connection reset")
+            
+            # This would integrate with ConnectionManager
+            # For now, return a placeholder message
+            return f"Connection reset initiated for database: {database_name}"
+        
+        self.register_strategy(
+            ErrorCategory.CONNECTION,
+            RecoveryAction(
+                strategy=RecoveryStrategy.CONNECTION_RESET,
+                description="Reset database connection and retry",
+                action_function=reset_connection,
+                success_probability=0.7,
+                estimated_time=5.0
+            )
+        )
+        
+        # Query simplification for resource exhaustion
+        def simplify_query(context: Dict[str, Any]) -> str:
+            """Suggest query simplification."""
+            query = context.get('query', '')
+            suggestions = []
+            
+            if 'ORDER BY' in query.upper():
+                suggestions.append("Remove or simplify ORDER BY clause")
+            if 'GROUP BY' in query.upper():
+                suggestions.append("Consider pre-aggregated tables")
+            if 'JOIN' in query.upper():
+                suggestions.append("Reduce number of JOINs or use EXISTS instead")
+            if 'DISTINCT' in query.upper():
+                suggestions.append("Remove DISTINCT if possible")
+            
+            if not suggestions:
+                suggestions = ["Add LIMIT clause to reduce result set size"]
+            
+            return f"Query simplification suggestions: {'; '.join(suggestions)}"
+        
+        self.register_strategy(
+            ErrorCategory.RESOURCE_EXHAUSTION,
+            RecoveryAction(
+                strategy=RecoveryStrategy.QUERY_SIMPLIFICATION,
+                description="Suggest query optimizations to reduce resource usage",
+                action_function=simplify_query,
+                success_probability=0.6,
+                estimated_time=0.1
+            )
+        )
+        
+        # Result pagination for large datasets
+        def suggest_pagination(context: Dict[str, Any]) -> Dict[str, Any]:
+            """Suggest result set pagination."""
+            query = context.get('query', '')
+            
+            # Simple heuristic for pagination
+            suggested_limit = 1000
+            if 'LIMIT' not in query.upper():
+                pagination_query = f"{query.rstrip(';')} LIMIT {suggested_limit}"
+            else:
+                pagination_query = query  # Already has LIMIT
+            
+            return {
+                'strategy': 'pagination',
+                'suggested_query': pagination_query,
+                'suggested_limit': suggested_limit,
+                'message': f"Consider paginating results with LIMIT {suggested_limit}"
+            }
+        
+        self.register_strategy(
+            ErrorCategory.RESOURCE_EXHAUSTION,
+            RecoveryAction(
+                strategy=RecoveryStrategy.RESULT_PAGINATION,
+                description="Suggest result pagination to reduce memory usage",
+                action_function=suggest_pagination,
+                success_probability=0.8,
+                estimated_time=0.1
+            )
+        )
+        
+        # Partial results for timeout errors
+        def partial_results_strategy(context: Dict[str, Any]) -> Dict[str, Any]:
+            """Suggest partial results approach."""
+            return {
+                'strategy': 'partial_results',
+                'message': 'Consider using streaming execution or reducing query scope',
+                'suggestions': [
+                    'Use streaming query execution for large results',
+                    'Add time-based filters to reduce data scope',
+                    'Consider pre-computed aggregations',
+                    'Use sampling for approximate results'
+                ]
+            }
+        
+        self.register_strategy(
+            ErrorCategory.TIMEOUT,
+            RecoveryAction(
+                strategy=RecoveryStrategy.PARTIAL_RESULTS,
+                description="Suggest partial results approaches for timeout issues",
+                action_function=partial_results_strategy,
+                success_probability=0.5,
+                estimated_time=0.1
+            )
+        )
+
+
+# ============================================================================
+# Enhanced Error Logging and Monitoring
+# ============================================================================
+
+@dataclass
+class ErrorMetrics:
+    """Metrics for error monitoring and analysis."""
+    total_errors: int = 0
+    errors_by_category: Dict[ErrorCategory, int] = field(default_factory=lambda: defaultdict(int))
+    errors_by_severity: Dict[ErrorSeverity, int] = field(default_factory=lambda: defaultdict(int))
+    errors_by_database: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    error_rate_per_minute: deque = field(default_factory=lambda: deque(maxlen=60))
+    recent_errors: deque = field(default_factory=lambda: deque(maxlen=100))
+    first_error_time: Optional[float] = None
+    last_error_time: Optional[float] = None
+
+
+class ErrorLogger:
+    """Enhanced error logging with structured metadata and monitoring."""
+    
+    def __init__(self, logger_name: str = "localdata.error_handler"):
+        self.logger = logging.getLogger(logger_name)
+        self.metrics = ErrorMetrics()
+        self.lock = threading.RLock()
+        
+        # Setup structured logging format
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - [%(error_code)s] %(message)s',
+                defaults={'error_code': 'N/A'}
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.INFO)
+    
+    def log_error(self, error: LocalDataError, extra_context: Optional[Dict[str, Any]] = None):
+        """Log an error with full context and metadata."""
+        current_time = time.time()
+        
+        with self.lock:
+            # Update metrics
+            self.metrics.total_errors += 1
+            self.metrics.errors_by_category[error.category] += 1
+            self.metrics.errors_by_severity[error.severity] += 1
+            
+            if error.database_name:
+                self.metrics.errors_by_database[error.database_name] += 1
+            
+            # Track timing
+            if self.metrics.first_error_time is None:
+                self.metrics.first_error_time = current_time
+            self.metrics.last_error_time = current_time
+            
+            # Add to recent errors
+            error_record = {
+                'timestamp': current_time,
+                'error_code': error.error_code,
+                'category': error.category.value,
+                'severity': error.severity.value,
+                'message': error.message,
+                'database_name': error.database_name,
+                'query_snippet': error.query[:100] if error.query else None
+            }
+            self.metrics.recent_errors.append(error_record)
+            
+            # Track error rate (errors per minute)
+            minute_timestamp = int(current_time // 60)
+            if not self.metrics.error_rate_per_minute or self.metrics.error_rate_per_minute[-1][0] != minute_timestamp:
+                self.metrics.error_rate_per_minute.append([minute_timestamp, 1])
+            else:
+                self.metrics.error_rate_per_minute[-1][1] += 1
+        
+        # Create logging context
+        log_context = {
+            'error_code': error.error_code,
+            'error_category': error.category.value,
+            'error_severity': error.severity.value,
+            'database_name': error.database_name,
+            'error_metadata': error.metadata
+        }
+        
+        if extra_context:
+            log_context.update(extra_context)
+        
+        # Choose log level based on severity
+        if error.severity == ErrorSeverity.CRITICAL:
+            log_level = logging.CRITICAL
+        elif error.severity == ErrorSeverity.HIGH:
+            log_level = logging.ERROR
+        elif error.severity == ErrorSeverity.MEDIUM:
+            log_level = logging.WARNING
+        else:
+            log_level = logging.INFO
+        
+        # Log the error
+        self.logger.log(
+            log_level,
+            error.message,
+            extra=log_context
+        )
+        
+        # Log recovery suggestions if available
+        if error.recovery_suggestions:
+            self.logger.info(
+                f"Recovery suggestions for {error.error_code}: {'; '.join(error.recovery_suggestions)}",
+                extra=log_context
+            )
+    
+    def get_error_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive error statistics."""
+        with self.lock:
+            current_time = time.time()
+            
+            # Calculate error rates
+            recent_error_rate = 0.0
+            if self.metrics.error_rate_per_minute:
+                # Average errors per minute over last 5 minutes
+                recent_minutes = [
+                    rate for timestamp, rate in self.metrics.error_rate_per_minute
+                    if current_time - (timestamp * 60) <= 300  # 5 minutes
+                ]
+                if recent_minutes:
+                    recent_error_rate = sum(recent_minutes) / len(recent_minutes)
+            
+            # Time-based statistics
+            uptime = current_time - self.metrics.first_error_time if self.metrics.first_error_time else 0
+            overall_error_rate = self.metrics.total_errors / (uptime / 60) if uptime > 0 else 0
+            
+            return {
+                'total_errors': self.metrics.total_errors,
+                'error_rate_per_minute': recent_error_rate,
+                'overall_error_rate_per_minute': overall_error_rate,
+                'uptime_minutes': uptime / 60,
+                'errors_by_category': dict(self.metrics.errors_by_category),
+                'errors_by_severity': dict(self.metrics.errors_by_severity),
+                'errors_by_database': dict(self.metrics.errors_by_database),
+                'first_error_time': self.metrics.first_error_time,
+                'last_error_time': self.metrics.last_error_time,
+                'recent_errors': list(self.metrics.recent_errors)[-10:]  # Last 10 errors
+            }
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get overall health status based on error patterns."""
+        stats = self.get_error_statistics()
+        
+        # Health scoring based on error rates and severity
+        health_score = 100.0
+        
+        # Deduct points for error rate
+        if stats['error_rate_per_minute'] > 10:
+            health_score -= 30
+        elif stats['error_rate_per_minute'] > 5:
+            health_score -= 15
+        elif stats['error_rate_per_minute'] > 1:
+            health_score -= 5
+        
+        # Deduct points for critical/high severity errors
+        critical_errors = stats['errors_by_severity'].get(ErrorSeverity.CRITICAL.value, 0)
+        high_errors = stats['errors_by_severity'].get(ErrorSeverity.HIGH.value, 0)
+        
+        health_score -= critical_errors * 10
+        health_score -= high_errors * 5
+        
+        health_score = max(0, health_score)
+        
+        # Determine health status
+        if health_score >= 90:
+            status = "healthy"
+        elif health_score >= 70:
+            status = "degraded"
+        elif health_score >= 50:
+            status = "unhealthy"
+        else:
+            status = "critical"
+        
+        return {
+            'status': status,
+            'health_score': health_score,
+            'error_rate': stats['error_rate_per_minute'],
+            'critical_errors': critical_errors,
+            'high_errors': high_errors,
+            'recommendations': self._get_health_recommendations(stats)
+        }
+    
+    def _get_health_recommendations(self, stats: Dict[str, Any]) -> List[str]:
+        """Generate health recommendations based on error patterns."""
+        recommendations = []
+        
+        if stats['error_rate_per_minute'] > 5:
+            recommendations.append("High error rate detected - investigate root causes")
+        
+        if stats['errors_by_severity'].get(ErrorSeverity.CRITICAL.value, 0) > 0:
+            recommendations.append("Critical errors present - immediate attention required")
+        
+        # Database-specific recommendations
+        db_errors = stats['errors_by_database']
+        if db_errors:
+            top_db = max(db_errors.items(), key=lambda x: x[1])
+            if top_db[1] > stats['total_errors'] * 0.5:
+                recommendations.append(f"Database '{top_db[0]}' has high error rate - check connectivity")
+        
+        # Category-specific recommendations
+        category_errors = stats['errors_by_category']
+        if category_errors.get(ErrorCategory.CONNECTION.value, 0) > stats['total_errors'] * 0.3:
+            recommendations.append("Frequent connection errors - check network and database status")
+        
+        if category_errors.get(ErrorCategory.TIMEOUT.value, 0) > stats['total_errors'] * 0.3:
+            recommendations.append("Frequent timeout errors - consider query optimization")
+        
+        if not recommendations:
+            recommendations.append("System operating within normal parameters")
+        
+        return recommendations
+
+
+# ============================================================================
+# Integration Utilities and Main Error Handler
+# ============================================================================
+
+class ErrorHandler:
+    """Main error handler that coordinates all error handling components."""
+    
+    def __init__(self):
+        self.logger = ErrorLogger()
+        self.recovery_manager = ErrorRecoveryManager()
+        self.circuit_breaker_registry = CircuitBreakerRegistry()
+        self.lock = threading.RLock()
+        
+        # Default retry policies for different error types
+        self.retry_policies = {
+            ErrorCategory.CONNECTION: RetryPolicy(
+                strategy=RetryStrategy.EXPONENTIAL_BACKOFF,
+                max_attempts=3,
+                base_delay=1.0,
+                max_delay=30.0,
+                retry_on=(DatabaseConnectionError,),
+                stop_on=(SecurityViolationError, ConfigurationError)
+            ),
+            ErrorCategory.TIMEOUT: RetryPolicy(
+                strategy=RetryStrategy.EXPONENTIAL_BACKOFF,
+                max_attempts=2,
+                base_delay=5.0,
+                max_delay=60.0,
+                retry_on=(QueryTimeoutError,)
+            ),
+            ErrorCategory.RESOURCE_EXHAUSTION: RetryPolicy(
+                strategy=RetryStrategy.LINEAR_BACKOFF,
+                max_attempts=2,
+                base_delay=10.0,
+                max_delay=120.0,
+                retry_on=(ResourceExhaustionError,)
+            )
+        }
+    
+    def handle_error(self, 
+                    error: Exception, 
+                    context: Optional[Dict[str, Any]] = None,
+                    attempt_recovery: bool = True) -> Tuple[bool, Any, Optional[LocalDataError]]:
+        """Main error handling entry point.
+        
+        Args:
+            error: The exception that occurred
+            context: Additional context for error handling
+            attempt_recovery: Whether to attempt automatic recovery
+            
+        Returns:
+            Tuple[bool, Any, Optional[LocalDataError]]: (recovered, result, processed_error)
+        """
+        context = context or {}
+        
+        # Convert to LocalDataError if needed
+        if isinstance(error, LocalDataError):
+            processed_error = error
+        else:
+            processed_error = self._convert_to_localdata_error(error, context)
+        
+        # Log the error
+        self.logger.log_error(processed_error, context)
+        
+        # Attempt recovery if requested
+        recovery_result = None
+        if attempt_recovery:
+            recovered, recovery_result, attempted_strategies = self.recovery_manager.attempt_recovery(
+                processed_error, context
+            )
+            
+            if recovered:
+                self.logger.logger.info(f"Error recovery successful for {processed_error.error_code} using strategies: {attempted_strategies}")
+                return True, recovery_result, processed_error
+            else:
+                self.logger.logger.warning(f"Error recovery failed for {processed_error.error_code} after attempting: {attempted_strategies}")
+        
+        return False, None, processed_error
+    
+    def get_circuit_breaker(self, name: str, config: Optional[CircuitBreakerConfig] = None) -> CircuitBreaker:
+        """Get a circuit breaker for a specific resource."""
+        return self.circuit_breaker_registry.get_breaker(name, config)
+    
+    def get_retry_policy(self, category: ErrorCategory) -> Optional[RetryPolicy]:
+        """Get retry policy for an error category."""
+        return self.retry_policies.get(category)
+    
+    def register_retry_policy(self, category: ErrorCategory, policy: RetryPolicy):
+        """Register a retry policy for an error category."""
+        with self.lock:
+            self.retry_policies[category] = policy
+    
+    def get_system_health(self) -> Dict[str, Any]:
+        """Get overall system health status."""
+        error_health = self.logger.get_health_status()
+        circuit_breaker_status = self.circuit_breaker_registry.get_status_summary()
+        recovery_stats = self.recovery_manager.get_recovery_statistics()
+        error_stats = self.logger.get_error_statistics()
+        
+        return {
+            'overall_health': error_health,
+            'circuit_breakers': circuit_breaker_status,
+            'recovery_statistics': recovery_stats,
+            'error_statistics': error_stats,
+            'timestamp': time.time()
+        }
+    
+    def _convert_to_localdata_error(self, error: Exception, context: Dict[str, Any]) -> LocalDataError:
+        """Convert a generic exception to a LocalDataError."""
+        error_message = str(error)
+        error_type = type(error).__name__
+        
+        # Determine category based on error type and message
+        if any(keyword in error_message.lower() for keyword in ['connection', 'network', 'host', 'port']):
+            category = ErrorCategory.CONNECTION
+            error_class = DatabaseConnectionError
+        elif any(keyword in error_message.lower() for keyword in ['timeout', 'time', 'expired']):
+            category = ErrorCategory.TIMEOUT
+            error_class = QueryTimeoutError
+        elif any(keyword in error_message.lower() for keyword in ['memory', 'resource', 'limit']):
+            category = ErrorCategory.RESOURCE_EXHAUSTION
+            error_class = ResourceExhaustionError
+        elif any(keyword in error_message.lower() for keyword in ['security', 'permission', 'access']):
+            category = ErrorCategory.SECURITY_VIOLATION
+            error_class = SecurityViolationError
+        elif any(keyword in error_message.lower() for keyword in ['config', 'setting', 'parameter']):
+            category = ErrorCategory.CONFIGURATION
+            error_class = ConfigurationError
+        else:
+            category = ErrorCategory.QUERY_EXECUTION
+            error_class = QueryExecutionError
+        
+        # Determine severity
+        severity = ErrorSeverity.MEDIUM
+        if any(keyword in error_message.lower() for keyword in ['critical', 'fatal', 'severe']):
+            severity = ErrorSeverity.CRITICAL
+        elif any(keyword in error_message.lower() for keyword in ['error', 'fail', 'exception']):
+            severity = ErrorSeverity.HIGH
+        elif any(keyword in error_message.lower() for keyword in ['warning', 'warn']):
+            severity = ErrorSeverity.LOW
+        
+        return error_class(
+            message=f"{error_type}: {error_message}",
+            database_name=context.get('database_name'),
+            query=context.get('query'),
+            metadata={
+                'original_error_type': error_type,
+                'context': context
+            },
+            cause=error,
+            severity=severity
+        )
+
+
+# Global error handler instance
+_error_handler: Optional[ErrorHandler] = None
+
+
+def get_error_handler() -> ErrorHandler:
+    """Get or create global error handler instance."""
+    global _error_handler
+    if _error_handler is None:
+        _error_handler = ErrorHandler()
+    return _error_handler
+
+
+def initialize_error_handler() -> ErrorHandler:
+    """Initialize a new global error handler instance."""
+    global _error_handler
+    _error_handler = ErrorHandler()
+    return _error_handler
+
+
+# Convenience functions for common operations
+def handle_error(error: Exception, context: Optional[Dict[str, Any]] = None) -> Tuple[bool, Any, Optional[LocalDataError]]:
+    """Handle an error using the global error handler."""
+    return get_error_handler().handle_error(error, context)
+
+
+def get_circuit_breaker(name: str, config: Optional[CircuitBreakerConfig] = None) -> CircuitBreaker:
+    """Get a circuit breaker using the global error handler."""
+    return get_error_handler().get_circuit_breaker(name, config)
