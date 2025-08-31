@@ -1,6 +1,6 @@
 # Docker Usage Guide - LocalData MCP Server
 
-## 🐳 Quick Start
+## Quick Start
 
 ### Option 1: Direct Docker Run
 
@@ -27,7 +27,7 @@ docker-compose logs -f localdata-mcp
 docker-compose down
 ```
 
-## 📁 Directory Structure
+## Directory Structure
 
 ```
 your-project/
@@ -41,30 +41,55 @@ your-project/
 └── Dockerfile            # Container definition
 ```
 
-## 🔧 Configuration Options
+## Configuration Options
 
 ### Environment Variables
+
+For basic setup, only minimal configuration is needed:
 
 ```bash
 # Set in docker-compose.yml or pass to docker run
 PYTHONUNBUFFERED=1    # Better logging output
 ```
 
-### Volume Mounting
+For comprehensive environment variable configuration and database connection setup, see [Database Connections Guide](DATABASE_CONNECTIONS.md).
+
+### Volume Mappings
+
+LocalData MCP Server supports several volume mappings for different use cases:
+
+#### Required Volumes
 
 ```bash
-# Mount your data directory
+# Data directory (required) - Your data files
 -v /path/to/your/data:/app/data
-
-# Mount additional directories
--v /path/to/config:/app/config:ro  # Read-only config
 ```
 
-## 🗄️ Using with Databases
+#### Recommended Volumes
 
-### Connecting to Container Databases
+```bash
+# Log directory (recommended) - Server logs
+-v /path/to/logs:/app/logs
 
-When using docker-compose, databases are available at:
+# Temporary directory (recommended) - Large file processing
+-v /path/to/temp:/app/temp
+```
+
+#### Optional Volumes
+
+```bash
+# Configuration files (optional, read-only)
+-v /path/to/config:/app/config:ro
+
+# Examples directory (optional, read-only)
+-v /path/to/examples:/app/examples:ro
+```
+
+## Using with Databases
+
+### Container Database Connections
+
+When using docker-compose, databases are available at container hostnames. Basic examples:
 
 ```python
 # PostgreSQL
@@ -72,16 +97,9 @@ connect_database("postgres", "postgresql", "postgresql://testuser:testpass@postg
 
 # MySQL
 connect_database("mysql", "mysql", "mysql+pymysql://testuser:testpass@mysql:3306/testdb")
-
-# MongoDB
-connect_database("mongo", "mongodb", "mongodb://testuser:testpass@mongodb:27017/testdb")
-
-# Redis
-connect_database("redis", "redis", "redis://:testpass@redis:6379/0")
-
-# Elasticsearch
-connect_database("elastic", "elasticsearch", "http://elasticsearch:9200")
 ```
+
+> **Note**: For detailed database connection strings, credential configuration, and security best practices for all supported databases, see the [Database Connections Guide](DATABASE_CONNECTIONS.md).
 
 ### Connecting to External Databases
 
@@ -93,7 +111,7 @@ docker run -it --rm \
   localdata-mcp
 ```
 
-## 📊 Working with Files
+## Working with Files
 
 ### Supported File Operations
 
@@ -127,7 +145,7 @@ data/
 }
 ```
 
-## 🚀 Advanced Usage
+## Advanced Usage
 
 ### Custom Database Configuration
 
@@ -185,7 +203,7 @@ docker-compose logs -f localdata-mcp
 docker-compose exec localdata-mcp bash
 ```
 
-## 🔒 Security Considerations
+## Security Considerations
 
 ### File Access Security
 
@@ -215,7 +233,7 @@ POSTGRES_PASSWORD=secure_random_password
 MYSQL_ROOT_PASSWORD=another_secure_password
 ```
 
-## 📋 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -261,7 +279,7 @@ main()
 "
 ```
 
-## 🧪 Development and Testing
+## Development and Testing
 
 ### Development Setup
 
@@ -297,7 +315,7 @@ docker-compose up -d localdata-mcp
 # (Use your MCP client to connect and test)
 ```
 
-## 📖 Integration Examples
+## Integration Examples
 
 ### With Claude Desktop
 
