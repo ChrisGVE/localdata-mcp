@@ -23,12 +23,10 @@
 - [Security Features](#security-features)
 - [Performance & Scalability](#performance--scalability)
 - [Examples](#examples)
-- [Specialized Documentation](#specialized-documentation)
-  - [Docker Usage Guide](DOCKER_USAGE.md) - Container deployment and configuration
-  - [Database Connections Guide](DATABASE_CONNECTIONS.md) - Detailed setup for all supported databases
 - [Testing & Quality](#testing--quality)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
+- [Additional Resources](#additional-resources)
 
 ## Features
 
@@ -528,9 +526,14 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Additional Resources
 
+### Core Documentation
 - **[FAQ](FAQ.md)**: Common questions and troubleshooting
 - **[Troubleshooting Guide](TROUBLESHOOTING.md)**: Comprehensive problem resolution
 - **[Advanced Examples](ADVANCED_EXAMPLES.md)**: Production-ready usage patterns
+
+### Specialized Guides
+- **[Docker Usage Guide](DOCKER_USAGE.md)**: Container deployment and configuration
+- **[Database Connections Guide](DATABASE_CONNECTIONS.md)**: Detailed setup for all supported databases
 
 ## Need Help?
 
