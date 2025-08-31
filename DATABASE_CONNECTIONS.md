@@ -2,6 +2,8 @@
 
 This guide provides comprehensive information for connecting to all database types supported by LocalData MCP Server.
 
+**⚠️ Security Warning:** All connection strings in this guide use placeholder credentials (`your_user`, `your_password`, etc.). Replace these with your actual credentials and always store sensitive information in environment variables, never in your code or configuration files.
+
 ## Table of Contents
 
 - [Environment Variables Overview](#environment-variables-overview)
@@ -67,10 +69,10 @@ POSTGRES_URL=postgresql://user:password@localhost:5432/mydb
 **Connection Examples:**
 ```python
 # Local PostgreSQL
-connect_database("postgres_local", "postgresql", "postgresql://user:pass@localhost:5432/mydb")
+connect_database("postgres_local", "postgresql", "postgresql://your_user:your_password@localhost:5432/your_database")
 
 # Remote PostgreSQL with SSL
-connect_database("postgres_prod", "postgresql", "postgresql://user:pass@prod-server:5432/mydb?sslmode=require")
+connect_database("postgres_prod", "postgresql", "postgresql://your_user:your_password@your-server:5432/your_database?sslmode=require")
 
 # Docker container
 connect_database("postgres_docker", "postgresql", "postgresql://testuser:testpass@postgres:5432/testdb")
@@ -94,10 +96,10 @@ MYSQL_URL=mysql+pymysql://user:password@localhost:3306/mydb
 **Connection Examples:**
 ```python
 # Local MySQL
-connect_database("mysql_local", "mysql", "mysql+pymysql://user:pass@localhost:3306/mydb")
+connect_database("mysql_local", "mysql", "mysql+pymysql://your_user:your_password@localhost:3306/mydb")
 
 # MariaDB with charset
-connect_database("mariadb", "mysql", "mysql+pymysql://user:pass@localhost:3306/mydb?charset=utf8mb4")
+connect_database("mariadb", "mysql", "mysql+pymysql://your_user:your_password@localhost:3306/mydb?charset=utf8mb4")
 
 # Docker container
 connect_database("mysql_docker", "mysql", "mysql+pymysql://testuser:testpass@mysql:3306/testdb")
@@ -164,14 +166,16 @@ MONGODB_URL=mongodb://user:password@localhost:27017/mydb
 **Connection Examples:**
 ```python
 # Local MongoDB
-connect_database("mongo_local", "mongodb", "mongodb://user:pass@localhost:27017/mydb")
+connect_database("mongo_local", "mongodb", "mongodb://your_user:your_password@localhost:27017/your_database")
 
-# MongoDB Atlas
-connect_database("mongo_atlas", "mongodb", "mongodb+srv://user:pass@cluster.mongodb.net/mydb")
+# MongoDB Atlas (replace with your actual Atlas cluster details)
+connect_database("mongo_atlas", "mongodb", "mongodb+srv://your_user:your_password@your-your-cluster.mongodb.net/your_database")
 
 # Docker container
 connect_database("mongo_docker", "mongodb", "mongodb://testuser:testpass@mongodb:27017/testdb")
 ```
+
+**Security Note:** Always use environment variables for production credentials. Never commit real usernames, passwords, or connection strings to version control.
 
 **Required Dependencies:**
 - `pymongo`
@@ -222,7 +226,7 @@ ELASTICSEARCH_URL=http://localhost:9200
 connect_database("elastic_local", "elasticsearch", "http://localhost:9200")
 
 # Elasticsearch with authentication
-connect_database("elastic_auth", "elasticsearch", "https://user:pass@elastic.example.com:9200")
+connect_database("elastic_auth", "elasticsearch", "https://your_user:your_password@elastic.example.com:9200")
 
 # Docker container
 connect_database("elastic_docker", "elasticsearch", "http://elasticsearch:9200")
@@ -377,9 +381,9 @@ secrets:
 
 ```python
 # Connect to multiple databases
-connect_database("users_db", "postgresql", "postgresql://user:pass@localhost:5432/users")
+connect_database("users_db", "postgresql", "postgresql://your_user:your_password@localhost:5432/users")
 connect_database("sessions", "redis", "redis://:pass@localhost:6379/0")
-connect_database("analytics", "mongodb", "mongodb://user:pass@localhost:27017/analytics")
+connect_database("analytics", "mongodb", "mongodb://your_user:your_password@localhost:27017/analytics")
 connect_database("search", "elasticsearch", "http://localhost:9200")
 
 # Query across different databases
@@ -434,7 +438,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 # Test connection
 try:
-    result = connect_database("test", "postgresql", "postgresql://user:pass@localhost:5432/test")
+    result = connect_database("test", "postgresql", "postgresql://your_user:your_password@localhost:5432/test")
     print(f"Connection successful: {result}")
 except Exception as e:
     print(f"Connection failed: {e}")
