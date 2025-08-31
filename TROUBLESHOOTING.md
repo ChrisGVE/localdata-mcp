@@ -789,10 +789,268 @@ connect_database("data", "csv", "../data/file.csv")  # Security error
 disconnect_database("old_connection")
 ```
 
+## v1.3.1 Specific Issues
+
+### Configuration Issues
+
+#### Issue: "Configuration file not found" with new YAML system
+```bash
+# Error message
+ConfigurationError: Could not find configuration file at localdata-config.yaml
+
+# Solutions
+# 1. Create configuration file in expected location
+touch ./localdata-config.yaml
+
+# 2. Use explicit path
+LOCALDATA_CONFIG_FILE=/path/to/config.yaml localdata-mcp
+
+# 3. Use environment variables instead
+POSTGRES_HOST=localhost POSTGRES_PORT=5432 localdata-mcp
+```
+
+#### Issue: Environment variable substitution not working
+```yaml
+# Problem: ${DB_PASSWORD} not being replaced
+databases:
+  prod:
+    password: ${DB_PASSWORD}  # Shows as literal string
+
+# Solution: Ensure environment variable is set and exported
+export DB_PASSWORD=your_password
+# Verify: echo $DB_PASSWORD
+
+# Alternative: Use default values
+password: ${DB_PASSWORD:-default_password}
+```
+
+### Memory Management Issues
+
+#### Issue: "Memory limit exceeded" with new memory management
+```bash
+# Error message  
+MemoryError: Operation exceeds configured memory limit (512MB)
+
+# Solutions
+# 1. Increase memory limit
+LOCALDATA_MAX_MEMORY_MB=1024
+
+# 2. Use streaming for large datasets
+# Queries with > 100 rows automatically use streaming
+execute_query_json("db", "SELECT * FROM large_table")
+
+# 3. Process in smaller chunks
+execute_query("db", "SELECT * FROM large_table LIMIT 10000")
+```
+
+#### Issue: Streaming not activating for large results
+```python
+# Problem: Large query returns all data instead of streaming
+result = execute_query_json("db", "SELECT * FROM million_row_table")
+# Result contains all data instead of buffering_info
+
+# Solutions
+# 1. Check if COUNT(*) analysis is working
+describe_table("db", "million_row_table")  # Verify row count
+
+# 2. Force streaming with explicit configuration
+LOCALDATA_DEFAULT_CHUNK_SIZE=1000
+LOCALDATA_MAX_TOKENS_DIRECT=2000  # Lower threshold
+
+# 3. Use pagination manually if needed
+result = execute_query("db", "SELECT * FROM million_row_table LIMIT 1000 OFFSET 0")
+```
+
+### Buffer Management Issues
+
+#### Issue: Query buffer expired during processing
+```python
+# Error message
+BufferError: Query buffer 'db_1640995200_a1b2' has expired
+
+# Solutions
+# 1. Increase buffer timeout
+LOCALDATA_BUFFER_TIMEOUT=1800  # 30 minutes
+
+# 2. Process chunks more quickly
+query_id = result["buffering_info"]["query_id"]
+# Process chunks immediately, don't delay
+
+# 3. Re-execute query if buffer expires
+try:
+    chunk = get_query_chunk(query_id, 1001, "1000")
+except BufferError:
+    # Re-run original query
+    result = execute_query_json("db", original_query)
+    new_query_id = result["buffering_info"]["query_id"]
+    chunk = get_query_chunk(new_query_id, 1001, "1000")
+```
+
+#### Issue: Buffer storage space issues
+```bash
+# Error message
+BufferError: Insufficient disk space for query buffer
+
+# Solutions  
+# 1. Clean up expired buffers
+curl -X POST http://localhost:8080/admin/cleanup-buffers
+
+# 2. Increase disk space for temp directory
+export TMPDIR=/path/to/larger/disk
+
+# 3. Configure buffer location
+LOCALDATA_BUFFER_STORAGE=/path/to/storage
+```
+
+### SQL Query Validation Issues
+
+#### Issue: Valid queries being blocked by new SQL validation
+```python
+# Error message
+SecurityError: SQL query contains disallowed statement type
+
+# Examples of newly blocked queries
+execute_query("db", "EXPLAIN ANALYZE SELECT * FROM table")  # May be blocked
+execute_query("db", "WITH cte AS (SELECT ...) SELECT * FROM cte")  # CTE queries
+
+# Solutions
+# 1. Disable SQL validation (not recommended for production)
+LOCALDATA_ENABLE_SQL_VALIDATION=false
+
+# 2. Use configuration to allow specific statements
+# In YAML config:
+security:
+  allowed_sql_statements:
+    - SELECT
+    - WITH
+    - EXPLAIN
+
+# 3. Rewrite query to use only SELECT
+# Instead of: EXPLAIN ANALYZE SELECT ...
+# Use database-specific tools or simpler SELECT queries
+```
+
+### Configuration Migration Issues
+
+#### Issue: Old environment variables not working after upgrade
+```bash
+# Old format (v1.3.0)
+MONGODB_URL=mongodb://localhost:27017/database
+
+# New format (v1.3.1) - old format still supported but deprecated
+MONGODB_HOST=localhost
+MONGODB_PORT=27017
+MONGODB_DATABASE=database
+
+# If old format stops working:
+# 1. Check deprecation warnings in logs
+grep "deprecated" localdata.log
+
+# 2. Migrate to new format gradually
+# Keep old format working during transition
+
+# 3. Use explicit configuration file
+# Create localdata-config.yaml with proper format
+```
+
+### Hot Reload Issues
+
+#### Issue: Configuration changes not taking effect
+```bash
+# Problem: Changed log level in YAML but still seeing DEBUG logs
+
+# Solutions
+# 1. Verify hot reload is enabled
+# In config file:
+configuration:
+  enable_hot_reload: true
+
+# 2. Check file permissions
+ls -la localdata-config.yaml
+# Should be readable by localdata process
+
+# 3. Manual reload
+kill -HUP $(pgrep localdata-mcp)
+# Or via API:
+curl -X POST http://localhost:8080/admin/reload-config
+
+# 4. Check logs for reload errors
+tail -f localdata.log | grep reload
+```
+
+### Performance Issues with New Architecture
+
+#### Issue: Queries slower than expected with new analysis system
+```python
+# Problem: Simple queries taking longer due to pre-analysis
+
+# Solutions
+# 1. Check if COUNT(*) analysis is causing delays
+# For very large tables, this can be expensive
+
+# 2. Disable pre-analysis for simple queries (if available)
+LOCALDATA_SKIP_ANALYSIS_FOR_SIMPLE_QUERIES=true
+
+# 3. Use query hints
+# Add /*+ NO_ANALYSIS */ hint if supported
+
+# 4. Monitor query complexity scoring
+result = execute_query_json("db", query)
+print(result["metadata"]["query_complexity"])
+```
+
+#### Issue: Higher memory usage than v1.3.0
+```bash
+# Problem: New metadata and analysis increasing memory usage
+
+# Solutions
+# 1. Reduce metadata collection
+LOCALDATA_MINIMAL_METADATA=true
+
+# 2. Adjust garbage collection
+LOCALDATA_AUTO_GC_THRESHOLD=128  # Lower threshold
+
+# 3. Monitor memory usage patterns
+curl http://localhost:9090/metrics | grep memory
+
+# 4. Use memory profiling
+LOCALDATA_MEMORY_PROFILING=true
+```
+
 ## Need Help?
+
+### v1.3.1 Specific Resources
+
+- **Migration Guide**: [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for v1.3.0 to v1.3.1 upgrade help
+- **Configuration Guide**: [CONFIGURATION.md](CONFIGURATION.md) for new configuration system
+- **Architecture Guide**: [ARCHITECTURE.md](ARCHITECTURE.md) for understanding new streaming architecture
+- **API Reference**: [API_REFERENCE.md](API_REFERENCE.md) for complete tool documentation
+
+### General Support
 
 - **Issues**: [GitHub Issues](https://github.com/ChrisGVE/localdata-mcp/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/ChrisGVE/localdata-mcp/discussions)
 - **FAQ**: [FAQ.md](FAQ.md) for common questions
 
-This guide covers the most common issues. For problems not addressed here, please create an issue on GitHub with detailed information about your specific situation.
+### Creating Effective Bug Reports for v1.3.1
+
+When reporting issues, please include:
+
+```bash
+# System information
+localdata-mcp --version
+python --version
+uname -a
+
+# Configuration dump (remove sensitive data)
+localdata-mcp --dump-config
+
+# Memory usage
+free -h
+ps aux | grep localdata
+
+# Recent logs with v1.3.1 specific info
+tail -50 localdata.log | grep -E "(memory|buffer|streaming|config)"
+```
+
+This guide covers the most common issues including new v1.3.1 specific problems. For problems not addressed here, please create an issue on GitHub with detailed information including the v1.3.1 specific diagnostic information above.
