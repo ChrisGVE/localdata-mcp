@@ -351,6 +351,13 @@ class DatabaseManager:
 
     def _cleanup_all(self):
         """Clean up all resources on exit."""
+        # Clean up streaming executor buffers
+        if hasattr(self, 'streaming_executor'):
+            try:
+                self.streaming_executor.cleanup_expired_buffers(max_age_seconds=0)  # Clean all
+            except Exception:
+                pass  # Ignore errors during cleanup
+        
         # Clean up temporary files
         with self.temp_file_lock:
             for temp_file in self.temp_files:
@@ -1847,6 +1854,120 @@ class DatabaseManager:
             conn_string = f"http://admin:testpassword@{conn_string}/"
             
         return couchdb.Server(conn_string)
+
+    @mcp.tool
+    def manage_memory_bounds(self) -> str:
+        """
+        Monitor and manage memory usage across all streaming operations.
+        
+        This tool provides comprehensive memory management including:
+        - Current memory status and usage statistics  
+        - Automatic cleanup of expired buffers
+        - Memory optimization recommendations
+        - Active buffer information
+        
+        Returns JSON with memory management actions taken and current status.
+        """
+        try:
+            # Execute memory management
+            management_result = self.streaming_executor.manage_memory_bounds()
+            
+            # Add database manager specific memory info
+            additional_info = {
+                "legacy_query_buffers": len(self.query_buffers),
+                "active_connections": len(self.connections),
+                "temp_files_count": len(self.temp_files)
+            }
+            
+            # Clean up legacy query buffers if memory is high
+            memory_status = management_result.get("memory_status", {})
+            if memory_status.get("is_low_memory", False):
+                with self.query_buffer_lock:
+                    legacy_buffers_cleared = len(self.query_buffers)
+                    self.query_buffers.clear()
+                    if legacy_buffers_cleared > 0:
+                        management_result["actions_taken"].append(f"Cleared {legacy_buffers_cleared} legacy query buffers")
+            
+            management_result["database_manager_info"] = additional_info
+            
+            return json.dumps(management_result, indent=2)
+            
+        except Exception as e:
+            logger.error(f"Error in memory management: {e}")
+            return f"Memory management error: {e}"
+    
+    @mcp.tool  
+    def get_streaming_status(self) -> str:
+        """
+        Get detailed status of all streaming operations and memory usage.
+        
+        Returns comprehensive information about:
+        - Active streaming buffers and their memory usage
+        - Memory status and recommendations
+        - Performance metrics from recent streaming operations
+        - Configuration settings for streaming
+        
+        Useful for monitoring and debugging streaming performance.
+        """
+        try:
+            # Get memory status
+            memory_info = self._check_memory_usage()
+            
+            # Get streaming executor status
+            streaming_status = {
+                "memory_status": memory_info,
+                "streaming_buffers": {},
+                "performance_config": {
+                    "memory_limit_mb": self.streaming_executor.config.memory_limit_mb,
+                    "default_chunk_size": self.streaming_executor.config.chunk_size,
+                    "memory_warning_threshold": self.streaming_executor.config.memory_warning_threshold,
+                    "enable_query_analysis": self.streaming_executor.config.enable_query_analysis,
+                    "auto_cleanup_buffers": self.streaming_executor.config.auto_cleanup_buffers
+                },
+                "recent_chunk_metrics": self.streaming_executor._chunk_metrics[-10:] if hasattr(self.streaming_executor, '_chunk_metrics') else []
+            }
+            
+            # Get info for each active buffer
+            for query_id in self.streaming_executor._result_buffers:
+                buffer_info = self.streaming_executor.get_buffer_info(query_id)
+                if buffer_info:
+                    streaming_status["streaming_buffers"][query_id] = buffer_info
+            
+            # Add database manager specific info
+            streaming_status["database_manager"] = {
+                "total_connections": len(self.connections),
+                "connection_types": {name: db_type for name, db_type in self.db_types.items()},
+                "legacy_buffers": len(self.query_buffers),
+                "temp_files": len(self.temp_files)
+            }
+            
+            return json.dumps(streaming_status, indent=2, default=str)
+            
+        except Exception as e:
+            logger.error(f"Error getting streaming status: {e}")
+            return f"Streaming status error: {e}"
+    
+    @mcp.tool
+    def clear_streaming_buffer(self, query_id: str) -> str:
+        """
+        Clear a specific streaming result buffer to free memory.
+        
+        Args:
+            query_id: The ID of the streaming buffer to clear.
+            
+        This is useful when you're done with a large result set and want to
+        free up memory immediately instead of waiting for automatic cleanup.
+        """
+        try:
+            success = self.streaming_executor.clear_buffer(query_id)
+            if success:
+                return f"Successfully cleared streaming buffer: {query_id}"
+            else:
+                return f"Streaming buffer '{query_id}' not found or already cleared."
+                
+        except Exception as e:
+            logger.error(f"Error clearing streaming buffer {query_id}: {e}")
+            return f"Error clearing buffer: {e}"
 
 
 def main():
