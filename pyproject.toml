@@ -41,6 +41,9 @@ dependencies = [
   "numbers-parser>=4.0.0", # Apple Numbers .numbers support
   "h5py>=3.0.0",       # HDF5 scientific data format support
   "ijson>=3.2.0",      # Streaming JSON processing for memory efficiency
+  "structlog>=23.0.0",  # Structured logging with JSON output
+  "prometheus_client>=0.17.0",  # Metrics collection and exposition
+  "python-json-logger>=2.0.0",  # Additional JSON logging capabilities
 ]
 
 [project.optional-dependencies]
