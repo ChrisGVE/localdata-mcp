@@ -29,6 +29,9 @@ from .query_analyzer import analyze_query, QueryAnalysis
 # Import streaming executor for memory-bounded processing
 from .streaming_executor import StreamingQueryExecutor, create_streaming_source
 
+# Import timeout manager for query timeout handling
+from .timeout_manager import QueryTimeoutError, get_timeout_manager
+
 # TOML support
 try:
     import toml
@@ -1273,12 +1276,13 @@ class DatabaseManager:
                 else:
                     initial_chunk_size = 100  # Default
             
-            # Execute streaming query
+            # Execute streaming query with timeout management
             try:
                 first_chunk, streaming_metadata = self.streaming_executor.execute_streaming(
                     streaming_source, 
                     query_id, 
-                    initial_chunk_size
+                    initial_chunk_size,
+                    database_name=name  # Pass database name for timeout configuration
                 )
                 self.query_history[name].append(query)
                 
@@ -1376,6 +1380,9 @@ class DatabaseManager:
                     
                     return json.dumps(response, indent=2)
                     
+            except QueryTimeoutError as timeout_error:
+                logger.error(f"Query timed out for database '{name}': {timeout_error}")
+                return f"Query Timeout Error: {timeout_error.message} (execution time: {timeout_error.execution_time:.1f}s, reason: {timeout_error.timeout_reason.value})"
             except Exception as streaming_error:
                 logger.error(f"Streaming execution failed for database '{name}': {streaming_error}")
                 return f"Streaming execution error: {streaming_error}"
