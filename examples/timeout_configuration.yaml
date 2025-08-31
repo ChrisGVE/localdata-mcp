@@ -1,0 +1,129 @@
+# LocalData MCP Configuration with Advanced Timeout Management
+# This example shows how to configure timeouts for different database types
+# to optimize performance and prevent resource exhaustion.
+
+databases:
+  # Local SQLite databases - Fast queries expected
+  local_analytics:
+    type: sqlite
+    connection_string: "sqlite:///analytics.db"
+    query_timeout: 30          # 30 seconds - local should be fast
+    connection_timeout: 10     # 10 seconds to connect
+    max_connections: 5
+    enabled: true
+    tags: ["local", "analytics"]
+
+  # Remote PostgreSQL - Allow more time for network latency
+  remote_warehouse:
+    type: postgresql
+    connection_string: "postgresql://${PG_USER}:${PG_PASS}@${PG_HOST}:5432/${PG_DB}"
+    query_timeout: 300         # 5 minutes - remote queries can be slower
+    connection_timeout: 60     # 1 minute to establish connection
+    max_connections: 10
+    enabled: true
+    tags: ["remote", "warehouse", "olap"]
+
+  # Production MySQL cluster - Medium timeout for balanced performance
+  prod_mysql:
+    type: mysql
+    connection_string: "mysql+mysqlconnector://${MYSQL_USER}:${MYSQL_PASS}@${MYSQL_HOST}:3306/${MYSQL_DB}"
+    query_timeout: 180         # 3 minutes - production workload
+    connection_timeout: 30     # 30 seconds to connect
+    max_connections: 15
+    enabled: true
+    tags: ["production", "mysql", "oltp"]
+
+  # Large CSV files - Medium timeout for file I/O
+  sales_data_csv:
+    type: csv
+    connection_string: "/data/sales/large_dataset.csv"
+    query_timeout: 120         # 2 minutes - file processing takes time
+    connection_timeout: 15     # File access timeout
+    max_connections: 3         # Limit concurrent file access
+    enabled: true
+    tags: ["file", "sales", "csv"]
+
+  # Excel files - Shorter timeout due to format complexity
+  financial_reports:
+    type: excel
+    connection_string: "/reports/financial_data.xlsx"
+    sheet_name: "Summary"      # Specific sheet
+    query_timeout: 60          # 1 minute - Excel parsing is intensive
+    connection_timeout: 10
+    max_connections: 2         # Limited concurrent Excel access
+    enabled: true
+    tags: ["file", "financial", "excel"]
+
+  # DuckDB for analytical workloads - Longer timeout for complex queries
+  analytics_duckdb:
+    type: duckdb
+    connection_string: "/analytics/olap.duckdb"
+    query_timeout: 600         # 10 minutes - analytical queries can be long
+    connection_timeout: 20
+    max_connections: 8
+    enabled: true
+    tags: ["analytical", "duckdb", "olap"]
+
+  # Redis for caching - Very short timeout expected
+  cache_redis:
+    type: redis
+    connection_string: "redis://${REDIS_HOST}:6379/0"
+    query_timeout: 10          # 10 seconds - cache should be fast
+    connection_timeout: 5      # Quick connection expected
+    max_connections: 20
+    enabled: true
+    tags: ["cache", "redis", "fast"]
+
+  # MongoDB document store - Medium timeout for document queries
+  document_mongo:
+    type: mongodb
+    connection_string: "mongodb://${MONGO_USER}:${MONGO_PASS}@${MONGO_HOST}:27017/${MONGO_DB}"
+    query_timeout: 120         # 2 minutes - document queries vary
+    connection_timeout: 30
+    max_connections: 12
+    enabled: true
+    tags: ["nosql", "mongodb", "documents"]
+
+  # Parquet files for big data - Longer timeout for large datasets
+  bigdata_parquet:
+    type: parquet
+    connection_string: "/bigdata/dataset.parquet"
+    query_timeout: 300         # 5 minutes - big data processing
+    connection_timeout: 30
+    max_connections: 4
+    enabled: true
+    tags: ["bigdata", "parquet", "analytics"]
+
+# Performance configuration affecting timeout behavior
+performance:
+  memory_limit_mb: 4096              # 4GB memory limit
+  query_buffer_timeout: 600          # 10 minutes buffer retention
+  max_concurrent_connections: 50     # Global connection limit
+  chunk_size: 1000                   # Default chunk size for streaming
+  enable_query_analysis: true        # Enable timeout risk analysis
+  auto_cleanup_buffers: true         # Auto-cleanup on timeout
+  memory_warning_threshold: 0.85     # 85% memory warning threshold
+
+# Logging configuration for timeout monitoring
+logging:
+  level: info
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_path: "/var/log/localdata-mcp.log"
+  console_output: true
+  max_file_size: 52428800             # 50MB
+  backup_count: 5
+
+# Example environment variables to set:
+# PG_USER=your_postgres_user
+# PG_PASS=your_postgres_password  
+# PG_HOST=postgres.example.com
+# PG_DB=your_database
+# MYSQL_USER=your_mysql_user
+# MYSQL_PASS=your_mysql_password
+# MYSQL_HOST=mysql.example.com
+# MYSQL_DB=your_mysql_database
+# REDIS_HOST=redis.example.com
+# MONGO_USER=your_mongo_user
+# MONGO_PASS=your_mongo_password
+# MONGO_HOST=mongo.example.com
+# MONGO_DB=your_mongo_database
