@@ -1349,8 +1349,8 @@ class DatabaseManager:
         except Exception as e:
             return f"An error occurred while retrieving query chunk: {e}"
 
-    @mcp.tool
-    def get_query_history(self, name: str) -> str:
+    # @mcp.tool  # COMMENTED OUT - Debugging tool for v1.4.0 dynamic tooling
+    # def get_query_history(self, name: str) -> str:
         """
         Get the recent query history for a specific database connection.
 
