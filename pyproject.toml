@@ -29,6 +29,8 @@ dependencies = [
   "toml>=0.10.0",
   "psutil>=5.8.0",     # Memory usage monitoring
   "tiktoken>=0.5.0",   # Token counting for query analysis
+  "pydantic>=2.0.0",   # Configuration validation and schema
+  "python-dotenv>=1.0.0", # Enhanced environment variable handling
   # Spreadsheet format support
   "openpyxl>=3.0.0",   # Excel .xlsx/.xlsm support
   "defusedxml>=0.7.0", # Security for XML-based formats
