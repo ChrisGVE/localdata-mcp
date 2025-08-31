@@ -596,7 +596,7 @@ class StreamingQueryExecutor:
         logger.info(f"Streaming execution completed: {total_rows_processed} rows in {execution_time:.3f}s, "
                    f"{chunk_number} chunks (timeout-managed)")
         
-        return first_chunk or pd.DataFrame(), metadata
+        return first_chunk if first_chunk is not None else pd.DataFrame(), metadata
     
     def _execute_streaming_internal(self, source: StreamingDataSource, query_id: str,
                                   chunk_size: int, memory_status: MemoryStatus) -> Tuple[pd.DataFrame, Dict[str, Any]]:
@@ -709,7 +709,7 @@ class StreamingQueryExecutor:
         logger.info(f"Streaming execution completed: {total_rows_processed} rows in {execution_time:.3f}s, "
                    f"{chunk_number} chunks")
         
-        return first_chunk or pd.DataFrame(), metadata
+        return first_chunk if first_chunk is not None else pd.DataFrame(), metadata
     
     def _generate_token_metadata(self, sample_df: pd.DataFrame, total_rows: int) -> Dict[str, Any]:
         """Generate rich token and response metadata using TokenManager.
