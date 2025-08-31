@@ -32,6 +32,9 @@ from .streaming_executor import StreamingQueryExecutor, create_streaming_source
 # Import timeout manager for query timeout handling
 from .timeout_manager import QueryTimeoutError, get_timeout_manager
 
+# Import streaming file processors for memory-efficient file loading
+from .file_processor import create_streaming_file_engine, FileProcessorFactory
+
 # TOML support
 try:
     import toml
@@ -423,27 +426,37 @@ class DatabaseManager:
             raise ValueError(f"Unsupported db_type: {db_type}")
 
     def _create_engine_from_file(self, file_path: str, file_type: str, sheet_name: Optional[str] = None):
-        """Create SQLite engine from file, using temporary storage for large files.
+        """Create SQLite engine from file, using streaming processing for supported formats.
         
         Args:
             file_path: Path to the file
-            file_type: Type of file (excel, ods, numbers, hdf5, etc.)
-            sheet_name: For Excel/ODS/Numbers files, specific sheet to load; for HDF5 files, specific dataset to load. If None, load all sheets/datasets.
+            file_type: Type of file (excel, ods, numbers, csv, json, etc.)
+            sheet_name: For Excel/ODS/Numbers files, specific sheet to load. If None, load all sheets/datasets.
         """
         try:
+            # Check if file type is supported by streaming processors
+            if FileProcessorFactory.is_supported(file_type):
+                logger.info(f"Using streaming processor for {file_type} file: {file_path}")
+                
+                # Use streaming file processing
+                engine, processing_metadata = create_streaming_file_engine(
+                    file_path=file_path,
+                    file_type=file_type,
+                    sheet_name=sheet_name,
+                    temp_files_registry=self.temp_files
+                )
+                
+                logger.info(f"Streaming processing completed: {processing_metadata}")
+                return engine
+            
+            # Fallback to batch processing for unsupported formats
+            logger.info(f"Using batch processing for {file_type} file: {file_path}")
+            
             # Check if file is large
             is_large = self._is_large_file(file_path)
 
-            # Load data based on file type
-            if file_type == "csv":
-                try:
-                    data = pd.read_csv(file_path)
-                except pd.errors.ParserError:
-                    # Fallback for CSV with no header
-                    data = pd.read_csv(file_path, header=None)
-            elif file_type == "json":
-                data = pd.read_json(file_path)
-            elif file_type == "yaml":
+            # Load data based on file type (keeping existing logic for unsupported formats)
+            if file_type == "yaml":
                 with open(file_path, "r") as f:
                     yaml_data = yaml.safe_load(f)
                 data = (
@@ -464,22 +477,10 @@ class DatabaseManager:
                     if isinstance(toml_data, (list, dict))
                     else pd.DataFrame(toml_data)
                 )
-            elif file_type == "excel":
-                data = self._load_excel_file(file_path, sheet_name)
-            elif file_type == "ods":
-                data = self._load_ods_file(file_path, sheet_name)
-            elif file_type == "numbers":
-                data = self._load_numbers_file(file_path, sheet_name)
             elif file_type == "xml":
                 data = self._load_xml_file(file_path)
             elif file_type == "ini":
                 data = self._load_ini_file(file_path)
-            elif file_type == "tsv":
-                try:
-                    data = pd.read_csv(file_path, sep='\t')
-                except pd.errors.ParserError:
-                    # Fallback for TSV with no header
-                    data = pd.read_csv(file_path, sep='\t', header=None)
             elif file_type == "parquet":
                 if not PYARROW_AVAILABLE:
                     raise ValueError(
