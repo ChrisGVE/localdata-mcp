@@ -1,0 +1,108 @@
+# LocalData MCP Configuration Example
+# This file demonstrates the comprehensive configuration system supporting
+# environment variables, YAML files, multi-database setups, and advanced features.
+
+# Database configurations - supports multiple databases with different types
+databases:
+  # Primary PostgreSQL database for production data
+  analytics_db:
+    type: postgresql
+    connection_string: postgresql://${DB_USER:postgres}:${DB_PASSWORD:password}@${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analytics}
+    enabled: true
+    max_connections: 15
+    connection_timeout: 30
+    query_timeout: 300
+    tags: ["analytics", "production", "primary"]
+    metadata:
+      region: us-east-1
+      backup_schedule: daily
+      data_classification: confidential
+
+  # Redis cache for session storage
+  cache_db:
+    type: redis
+    connection_string: redis://${REDIS_HOST:localhost}:${REDIS_PORT:6379}/${REDIS_DB:0}
+    enabled: true
+    max_connections: 20
+    tags: ["cache", "session", "memory"]
+    metadata:
+      ttl_default: 3600
+      max_memory: 256mb
+
+  # DuckDB for analytical queries
+  analytics_duckdb:
+    type: duckdb
+    connection_string: ${DATA_PATH:/data}/analytics.duckdb
+    enabled: true
+    max_connections: 5
+    tags: ["analytics", "olap", "local"]
+    metadata:
+      use_case: analytical_queries
+      performance_mode: high
+
+  # File-based data sources
+  sales_data:
+    type: excel
+    connection_string: ${DATA_PATH:/data}/sales_report.xlsx
+    sheet_name: Q4_Results
+    enabled: true
+    tags: ["file", "sales", "quarterly"]
+    metadata:
+      refresh_schedule: monthly
+      source_system: crm
+
+  # CSV data for machine learning
+  ml_features:
+    type: csv
+    connection_string: ${DATA_PATH:/data}/features.csv
+    enabled: true
+    tags: ["ml", "features", "training"]
+    metadata:
+      model_version: v2.1
+      last_updated: "2024-01-15"
+
+  # Development SQLite database (disabled in production)
+  dev_sqlite:
+    type: sqlite
+    connection_string: ${DEV_DB_PATH:/tmp/dev.sqlite}
+    enabled: ${ENABLE_DEV_DB:false}
+    max_connections: 3
+    tags: ["development", "testing"]
+
+# Logging configuration
+logging:
+  level: ${LOG_LEVEL:info}
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_path: ${LOG_FILE}  # Optional: logs to file if set
+  max_file_size: 10485760  # 10MB
+  backup_count: 5
+  console_output: true
+
+# Performance and resource management
+performance:
+  memory_limit_mb: ${MEMORY_LIMIT_MB:2048}
+  query_buffer_timeout: 600  # 10 minutes
+  max_concurrent_connections: ${MAX_CONNECTIONS:10}
+  chunk_size: ${CHUNK_SIZE:100}
+  enable_query_analysis: true
+  auto_cleanup_buffers: true
+  memory_warning_threshold: 0.85  # 85%
+
+# Security settings (example - would be implemented in future versions)
+security:
+  enable_query_validation: true
+  allowed_operations: ["SELECT"]
+  max_query_complexity: 100
+  rate_limiting:
+    requests_per_minute: 60
+    requests_per_hour: 1000
+
+# Advanced features (example - would be implemented in future versions)  
+monitoring:
+  enable_metrics: ${ENABLE_METRICS:false}
+  metrics_port: ${METRICS_PORT:9090}
+  health_check_interval: 30
+  alert_thresholds:
+    memory_usage: 0.9
+    connection_failures: 5
+    query_errors: 10
