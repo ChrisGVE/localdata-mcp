@@ -83,7 +83,7 @@ Ready to upgrade? See the [Migration Guide](MIGRATION_GUIDE.md) for step-by-step
 
 ### **Developer Experience**
 
-- **Comprehensive Tools**: 12 database operation tools
+- **Clean Tool Surface**: 8 essential database operation tools
 - **Error Handling**: Detailed, actionable error messages
 - **Thread Safety**: Concurrent operation support
 - **Backward Compatible**: All existing APIs preserved
@@ -188,22 +188,16 @@ clear_query_buffer("analytics_1640995200_a1b2")
 
 ## Available Tools
 
-| Tool                      | Description                | Use Case      |
-| ------------------------- | -------------------------- | ------------- |
-| `connect_database`        | Connect to databases/files | Initial setup |
-| `disconnect_database`     | Close connections          | Cleanup       |
-| `list_databases`          | Show active connections    | Status check  |
-| `execute_query`           | Run SQL (markdown output)  | Small results |
-| `execute_query_json`      | Run SQL (JSON output)      | Large results |
-| `describe_database`       | Show schema/structure      | Exploration   |
-| `describe_table`          | Show table details         | Analysis      |
-| `get_table_sample`        | Preview table data         | Quick look    |
-| `get_table_sample_json`   | Preview (JSON format)      | Development   |
-| `find_table`              | Locate tables by name      | Navigation    |
-| `read_text_file`          | Read structured files      | File access   |
-| `get_query_chunk`         | Paginated result access    | Large data    |
-| `get_buffered_query_info` | Buffer status info         | Monitoring    |
-| `clear_query_buffer`      | Manual buffer cleanup      | Management    |
+| Tool                 | Description                              | Use Case         |
+| -------------------- | ---------------------------------------- | ---------------- |
+| `connect_database`   | Connect to databases/files               | Initial setup    |
+| `disconnect_database`| Close connections                        | Cleanup          |
+| `list_databases`     | Show active connections                  | Status check     |
+| `execute_query`      | Run SQL with automatic chunking          | All query needs  |
+| `next_chunk`         | Get next chunk of large result sets     | Large data       |
+| `describe_database`  | Show database schema                     | Exploration      |
+| `describe_table`     | Show table structure                     | Analysis         |
+| `find_table`         | Locate tables by name                    | Navigation       |
 
 ## Supported Data Sources
 
