@@ -343,18 +343,22 @@ def migrate_configuration():
 """
                     
                     if db_type in ['postgresql', 'mysql']:
+                        # Use correct environment variable names (POSTGRES, not POSTGRESQL)
+                        env_prefix = 'POSTGRES' if db_type == 'postgresql' else 'MYSQL'
+                        default_port = 5432 if db_type == 'postgresql' else 3306
+                        
                         script_content += """            'host': os.getenv('{}', 'localhost'),
             'port': int(os.getenv('{}', {})),
             'database': os.getenv('{}', ''),
             'user': os.getenv('{}', ''),
             'password': os.getenv('{}', '')
 """.format(
-                            f'{db_type.upper()}_HOST',
-                            f'{db_type.upper()}_PORT',
-                            5432 if db_type == 'postgresql' else 3306,
-                            f'{db_type.upper()}_DB',
-                            f'{db_type.upper()}_USER',
-                            f'{db_type.upper()}_PASSWORD'
+                            f'{env_prefix}_HOST',
+                            f'{env_prefix}_PORT',
+                            default_port,
+                            f'{env_prefix}_DB',
+                            f'{env_prefix}_USER',
+                            f'{env_prefix}_PASSWORD'
                         )
                     elif db_type in ['sqlite', 'duckdb']:
                         script_content += f"            'path': os.getenv('{db_type.upper()}_PATH', '')\n"
