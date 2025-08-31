@@ -142,3 +142,7 @@ validate_test_fixes.py
 
 # Unused API configuration
 .env.example
+
+# Task files
+# tasks.json
+# tasks/ 

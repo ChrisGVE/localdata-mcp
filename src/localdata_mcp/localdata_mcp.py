@@ -26,6 +26,9 @@ from .query_parser import parse_and_validate_sql, SQLSecurityError
 # Import query analyzer for pre-execution analysis
 from .query_analyzer import analyze_query, QueryAnalysis
 
+# Import streaming executor for memory-bounded processing
+from .streaming_executor import StreamingQueryExecutor, create_streaming_source
+
 # TOML support
 try:
     import toml
@@ -189,6 +192,9 @@ class DatabaseManager:
         # Auto-cleanup for buffers (10 minute expiry)
         self.buffer_cleanup_interval = 600  # 10 minutes
         self.last_cleanup = time.time()
+
+        # Streaming executor for memory-bounded processing
+        self.streaming_executor = StreamingQueryExecutor()
 
         # Register cleanup on exit
         atexit.register(self._cleanup_all)
@@ -1242,132 +1248,130 @@ class DatabaseManager:
             # Clean up expired buffers
             self._cleanup_expired_buffers()
 
-            # Execute the main query
-            df = pd.read_sql_query(validated_query, engine)
-            self.query_history[name].append(query)
-
-            if df.empty:
-                # Include analysis results even for empty results
-                empty_response = {"data": []}
-                if query_analysis:
-                    empty_response["analysis"] = {
-                        "estimated_rows": query_analysis.estimated_rows,
-                        "actual_rows": 0,
-                        "analysis_accuracy": "N/A (empty result)",
-                        "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
-                    }
-                return json.dumps(empty_response)
-
-            # Determine chunking threshold - use analysis recommendations if available
-            if chunk_size is not None:
-                threshold = chunk_size
-            elif query_analysis and query_analysis.should_chunk:
-                threshold = query_analysis.recommended_chunk_size or 100
-            else:
-                threshold = 100  # Default threshold
-
-            # Check row count for large result handling
-            if len(df) > threshold:
-                # Store full result in buffer
-                query_id = self._generate_query_id(name, query)
-
-                # Check if this is a file-based connection to track modifications
-                source_file_path = None
-                source_file_mtime = None
-                connection = self.connections[name]
-                if (
-                    hasattr(connection, "url")
-                    and connection.url.database
-                    and connection.url.database != ":memory:"
-                ):
-                    # This might be a file-based database, but for CSV connections we need to track the original file
-                    # For now, we'll leave this as None - more complex file tracking would need connection metadata
-                    pass
-
-                buffer = QueryBuffer(
-                    query_id=query_id,
-                    db_name=name,
-                    query=query,
-                    results=df,
-                    timestamp=time.time(),
-                    source_file_path=source_file_path,
-                    source_file_mtime=source_file_mtime,
+            # Use streaming execution for memory-bounded processing
+            query_id = self._generate_query_id(name, query)
+            
+            # Create streaming source
+            streaming_source = create_streaming_source(
+                engine=engine,
+                query=validated_query,
+                query_analysis=query_analysis
+            )
+            
+            # Determine initial chunk size
+            initial_chunk_size = chunk_size
+            if initial_chunk_size is None:
+                if query_analysis and query_analysis.should_chunk:
+                    initial_chunk_size = query_analysis.recommended_chunk_size or 100
+                else:
+                    initial_chunk_size = 100  # Default
+            
+            # Execute streaming query
+            try:
+                first_chunk, streaming_metadata = self.streaming_executor.execute_streaming(
+                    streaming_source, 
+                    query_id, 
+                    initial_chunk_size
                 )
-
-                with self.query_buffer_lock:
-                    self.query_buffers[query_id] = buffer
-
-                # Return first chunk with metadata
-                chunk_limit = min(chunk_size or (query_analysis.recommended_chunk_size if query_analysis and query_analysis.recommended_chunk_size else 10), len(df))
-                first_chunk = df.head(chunk_limit)
-
-                response = {
-                    "metadata": {
-                        "total_rows": len(df),
-                        "showing_rows": f"1-{chunk_limit}",
-                        "query_id": query_id,
-                        "file_modified_since_buffer": False,  # Will be updated when we implement file tracking
-                        "memory_info": memory_info,
-                        "chunked": True,
-                        "chunk_size": chunk_limit
-                    },
-                    "data": json.loads(first_chunk.to_json(orient="records")),
-                    "pagination": {
-                        "use_next_chunk": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size=100)",
-                        "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size='all')",
-                    },
-                }
-
-                # Add analysis results to metadata
-                if query_analysis:
-                    response["analysis"] = {
-                        "estimated_rows": query_analysis.estimated_rows,
-                        "actual_rows": len(df),
-                        "row_estimate_accuracy": f"{(1 - abs(query_analysis.estimated_rows - len(df)) / max(len(df), 1)) * 100:.1f}%",
-                        "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
-                        "estimated_tokens": query_analysis.estimated_total_tokens,
-                        "complexity_score": query_analysis.complexity_score,
-                        "risk_levels": {
-                            "memory": query_analysis.memory_risk_level,
-                            "tokens": query_analysis.token_risk_level,
-                            "timeout": query_analysis.timeout_risk_level
+                self.query_history[name].append(query)
+                
+                # Handle empty results
+                if first_chunk.empty:
+                    empty_response = {"data": []}
+                    if query_analysis:
+                        empty_response["analysis"] = {
+                            "estimated_rows": query_analysis.estimated_rows,
+                            "actual_rows": 0,
+                            "analysis_accuracy": "N/A (empty result)",
+                            "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
+                        }
+                    return json.dumps(empty_response)
+                
+                # Check if we should use streaming approach based on data size
+                total_rows_processed = streaming_metadata.get("total_rows_processed", len(first_chunk))
+                threshold = initial_chunk_size
+                
+                if total_rows_processed > threshold or streaming_metadata.get("streaming", False):
+                    # Large result set - use streaming approach with buffering
+                    chunk_limit = len(first_chunk)
+                    estimated_total = streaming_metadata.get("estimated_total_rows") or total_rows_processed
+                    
+                    response = {
+                        "metadata": {
+                            "total_rows": estimated_total,
+                            "showing_rows": f"1-{chunk_limit}",
+                            "query_id": query_id,
+                            "memory_info": memory_info,
+                            "chunked": True,
+                            "chunk_size": chunk_limit,
+                            "streaming": True,
+                            "buffer_complete": streaming_metadata.get("buffer_complete", False)
                         },
-                        "recommendations": query_analysis.recommendations,
-                        "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
+                        "data": json.loads(first_chunk.to_json(orient="records")),
+                        "pagination": {
+                            "use_next_chunk": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size=100)",
+                            "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size='all')",
+                        },
+                        "streaming_metadata": streaming_metadata
                     }
 
-                return json.dumps(response, indent=2)
-            else:
-                # Return all results for small result sets
-                response = {
-                    "metadata": {
-                        "total_rows": len(df),
-                        "showing_rows": f"1-{len(df)}",
-                        "memory_info": memory_info,
-                        "chunked": False
-                    },
-                    "data": json.loads(df.to_json(orient="records"))
-                }
-                
-                # Add analysis results to metadata for small results too
-                if query_analysis:
-                    response["analysis"] = {
-                        "estimated_rows": query_analysis.estimated_rows,
-                        "actual_rows": len(df),
-                        "row_estimate_accuracy": f"{(1 - abs(query_analysis.estimated_rows - len(df)) / max(len(df), 1)) * 100:.1f}%",
-                        "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
-                        "estimated_tokens": query_analysis.estimated_total_tokens,
-                        "complexity_score": query_analysis.complexity_score,
-                        "risk_levels": {
-                            "memory": query_analysis.memory_risk_level,
-                            "tokens": query_analysis.token_risk_level,
-                            "timeout": query_analysis.timeout_risk_level
+                    # Add analysis results to metadata
+                    if query_analysis:
+                        actual_rows = streaming_metadata.get("total_rows_processed", len(first_chunk))
+                        response["analysis"] = {
+                            "estimated_rows": query_analysis.estimated_rows,
+                            "actual_rows": actual_rows,
+                            "row_estimate_accuracy": f"{(1 - abs(query_analysis.estimated_rows - actual_rows) / max(actual_rows, 1)) * 100:.1f}%",
+                            "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
+                            "estimated_tokens": query_analysis.estimated_total_tokens,
+                            "complexity_score": query_analysis.complexity_score,
+                            "risk_levels": {
+                                "memory": query_analysis.memory_risk_level,
+                                "tokens": query_analysis.token_risk_level,
+                                "timeout": query_analysis.timeout_risk_level
+                            },
+                            "recommendations": query_analysis.recommendations,
+                            "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
+                        }
+
+                    return json.dumps(response, indent=2)
+                else:
+                    # Small result set - return all results
+                    response = {
+                        "metadata": {
+                            "total_rows": len(first_chunk),
+                            "showing_rows": f"1-{len(first_chunk)}",
+                            "memory_info": memory_info,
+                            "chunked": False,
+                            "streaming": True
                         },
-                        "recommendations": query_analysis.recommendations,
-                        "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
+                        "data": json.loads(first_chunk.to_json(orient="records")),
+                        "streaming_metadata": streaming_metadata
                     }
-                
-                return json.dumps(response, indent=2)
+                    
+                    # Add analysis results to metadata for small results too
+                    if query_analysis:
+                        response["analysis"] = {
+                            "estimated_rows": query_analysis.estimated_rows,
+                            "actual_rows": len(first_chunk),
+                            "row_estimate_accuracy": f"{(1 - abs(query_analysis.estimated_rows - len(first_chunk)) / max(len(first_chunk), 1)) * 100:.1f}%",
+                            "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
+                            "estimated_tokens": query_analysis.estimated_total_tokens,
+                            "complexity_score": query_analysis.complexity_score,
+                            "risk_levels": {
+                                "memory": query_analysis.memory_risk_level,
+                                "tokens": query_analysis.token_risk_level,
+                                "timeout": query_analysis.timeout_risk_level
+                            },
+                            "recommendations": query_analysis.recommendations,
+                            "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
+                        }
+                    
+                    return json.dumps(response, indent=2)
+                    
+            except Exception as streaming_error:
+                logger.error(f"Streaming execution failed for database '{name}': {streaming_error}")
+                return f"Streaming execution error: {streaming_error}"
 
         except Exception as e:
             return f"An error occurred while executing the query: {e}"
@@ -1480,58 +1484,66 @@ class DatabaseManager:
             chunk_size: Number of rows to retrieve, or 'all' for all remaining rows.
         """
         try:
-            # Clean up expired buffers
-            self._cleanup_expired_buffers()
-
-            with self.query_buffer_lock:
-                if query_id not in self.query_buffers:
-                    return f"Error: Query buffer '{query_id}' not found. It may have expired or been cleared."
-
-                buffer = self.query_buffers[query_id]
-
-            df = buffer.results
-            total_rows = len(df)
-
-            # Validate start_row (1-based indexing)
-            if start_row < 1 or start_row > total_rows:
-                return f"Error: start_row must be between 1 and {total_rows}."
-
-            # Convert to 0-based indexing for pandas
-            start_idx = start_row - 1
-
-            # Handle chunk_size
+            # Clean up expired buffers in streaming executor
+            self.streaming_executor.cleanup_expired_buffers()
+            
+            # Get buffer info from streaming executor
+            buffer_info = self.streaming_executor.get_buffer_info(query_id)
+            if buffer_info is None:
+                return f"Error: Query buffer '{query_id}' not found. It may have expired or been cleared."
+            
+            # Handle chunk_size parameter
             if chunk_size == "all":
-                end_idx = total_rows
-                chunk_df = df.iloc[start_idx:]
+                requested_chunk_size = None  # Get all remaining
             else:
                 try:
-                    chunk_size_int = int(chunk_size)
-                    if chunk_size_int <= 0:
+                    requested_chunk_size = int(chunk_size)
+                    if requested_chunk_size <= 0:
                         return "Error: chunk_size must be a positive integer or 'all'."
-                    end_idx = min(start_idx + chunk_size_int, total_rows)
-                    chunk_df = df.iloc[start_idx:end_idx]
                 except ValueError:
                     return "Error: chunk_size must be a positive integer or 'all'."
+            
+            # Convert to 0-based indexing for streaming executor
+            start_idx = start_row - 1
+            
+            # Get chunk using streaming executor's chunk iterator
+            chunk_iterator = self.streaming_executor.get_chunk_iterator(
+                query_id, 
+                start_idx, 
+                requested_chunk_size or 1000  # Default large chunk if 'all'
+            )
+            
+            try:
+                chunk_df = next(chunk_iterator)
+                if chunk_df.empty:
+                    return json.dumps({"metadata": {"message": "No more rows available"}, "data": []})
+            except StopIteration:
+                return json.dumps({"metadata": {"message": "No more rows available"}, "data": []})
 
             if chunk_df.empty:
                 return json.dumps({"metadata": {"message": "No more rows available"}, "data": []})
 
             # Build response
-            showing_end = start_idx + len(chunk_df)
+            showing_end = start_row + len(chunk_df) - 1  # Adjust for 1-based indexing
+            total_rows = buffer_info.get("total_rows", "unknown")
+            
             response = {
                 "metadata": {
                     "query_id": query_id,
                     "total_rows": total_rows,
                     "showing_rows": f"{start_row}-{showing_end}",
                     "chunk_size": len(chunk_df),
-                    "buffer_timestamp": buffer.timestamp,
-                    "file_modified_since_buffer": self._check_file_modified(buffer),
+                    "buffer_timestamp": buffer_info.get("timestamp"),
+                    "buffer_memory_usage_mb": buffer_info.get("memory_usage_mb"),
+                    "buffer_complete": buffer_info.get("is_complete", False),
+                    "streaming": True
                 },
                 "data": json.loads(chunk_df.to_json(orient="records")),
             }
 
-            # Add next pagination options if more rows available
-            if showing_end < total_rows:
+            # Add next pagination options if more rows might be available
+            # For streaming, we don't always know the total, so we provide next options
+            if len(chunk_df) > 0:  # If we got data, there might be more
                 next_start = showing_end + 1
                 response["pagination"] = {
                     "next_100": f"next_chunk(query_id='{query_id}', start_row={next_start}, chunk_size=100)",
