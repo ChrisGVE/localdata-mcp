@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .query_parser import parse_and_validate_sql, SQLSecurityError
+from .token_manager import get_token_manager
 
 logger = logging.getLogger(__name__)
 
@@ -387,7 +388,7 @@ class QueryAnalyzer:
     
     def _estimate_token_count(self, row_count: int, sample_row: Optional[pd.Series],
                             column_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Estimate token count using DataFrame-based approach.
+        """Estimate token count using enhanced TokenManager.
         
         Args:
             row_count: Estimated number of rows
@@ -397,51 +398,24 @@ class QueryAnalyzer:
         Returns:
             Dictionary with token count estimates
         """
-        if sample_row is None or row_count == 0 or not self.encoding:
+        if sample_row is None or row_count == 0:
             return {
                 'tokens_per_row': 0,
                 'total_tokens': 0,
                 'risk_level': 'low'
             }
         
-        # Estimate tokens per row based on column types and sample data
-        tokens_per_row = 0
+        # Create DataFrame from sample for TokenManager
+        sample_df = pd.DataFrame([sample_row])
         
-        for col_name, value in sample_row.items():
-            col_type = column_info['types'].get(col_name, 'object')
-            
-            if pd.isna(value):
-                tokens_per_row += 1  # "null" or similar
-            elif 'int' in col_type.lower() or 'float' in col_type.lower():
-                tokens_per_row += 1  # Numeric values typically = 1 token
-            elif 'bool' in col_type.lower():
-                tokens_per_row += 1  # Boolean values = 1 token
-            else:
-                # Text/string data - use tiktoken to count actual tokens
-                text_value = str(value)
-                try:
-                    token_count = len(self.encoding.encode(text_value))
-                    tokens_per_row += token_count
-                except Exception:
-                    # Fallback: estimate 1 token per 4 characters
-                    tokens_per_row += max(1, len(text_value) // 4)
-        
-        # Add overhead for JSON formatting (brackets, commas, quotes)
-        json_overhead = len(sample_row.index) * 2  # Roughly 2 tokens per field for JSON structure
-        tokens_per_row += json_overhead
-        
-        total_tokens = row_count * tokens_per_row
-        
-        # Determine risk level
-        risk_level = 'low'
-        for level, threshold in self.TOKEN_THRESHOLDS.items():
-            if total_tokens > threshold:
-                risk_level = level
+        # Use TokenManager for intelligent estimation
+        token_manager = get_token_manager()
+        estimation = token_manager.estimate_tokens_for_query_result(row_count, sample_df)
         
         return {
-            'tokens_per_row': tokens_per_row,
-            'total_tokens': total_tokens,
-            'risk_level': risk_level
+            'tokens_per_row': estimation.tokens_per_row,
+            'total_tokens': estimation.total_tokens,
+            'risk_level': estimation.risk_level
         }
     
     def _estimate_execution_time(self, row_count: int, complexity_analysis: Dict[str, Any],
