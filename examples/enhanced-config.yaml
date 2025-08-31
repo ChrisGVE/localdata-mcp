@@ -1,0 +1,166 @@
+# Enhanced Configuration Example for LocalData MCP v1.3.1
+# Demonstrates advanced database connection management with tags, resource limits, and per-database settings
+
+# Database configurations with enhanced connection management
+databases:
+  # Production PostgreSQL database
+  analytics_prod:
+    type: postgresql
+    connection_string: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:analytics}"
+    enabled: true
+    max_connections: 20
+    connection_timeout: 30
+    query_timeout: 600  # 10 minutes for complex analytics queries
+    tags:
+      - production
+      - analytics
+      - postgresql
+    metadata:
+      description: "Main analytics database for production workloads"
+      owner: "analytics-team"
+      backup_schedule: "daily"
+
+  # Development PostgreSQL database
+  analytics_dev:
+    type: postgresql
+    connection_string: "postgresql://${DEV_POSTGRES_USER}:${DEV_POSTGRES_PASSWORD}@dev-postgres:5432/analytics_dev"
+    enabled: true
+    max_connections: 10
+    connection_timeout: 15
+    query_timeout: 300  # 5 minutes for development
+    tags:
+      - development
+      - analytics
+      - postgresql
+    metadata:
+      description: "Development analytics database"
+      owner: "analytics-team"
+
+  # High-performance MySQL database
+  transactions_db:
+    type: mysql
+    connection_string: "mysql+mysqlconnector://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql-cluster:3306/transactions"
+    enabled: true
+    max_connections: 50  # High concurrency for transactions
+    connection_timeout: 10  # Fast timeout for transactions
+    query_timeout: 120   # 2 minutes max for transaction queries
+    tags:
+      - production
+      - transactions
+      - mysql
+      - high-performance
+    metadata:
+      description: "High-throughput transaction processing database"
+      owner: "payments-team"
+      sla: "99.9%"
+
+  # Local SQLite for development
+  local_testing:
+    type: sqlite
+    connection_string: "./data/test.db"
+    enabled: true
+    max_connections: 1
+    connection_timeout: 5
+    query_timeout: 60
+    tags:
+      - development
+      - testing
+      - sqlite
+      - local
+    metadata:
+      description: "Local SQLite database for testing"
+      
+  # DuckDB for analytics workloads
+  analytics_warehouse:
+    type: duckdb
+    connection_string: "./data/warehouse.duckdb"
+    enabled: true
+    max_connections: 5
+    connection_timeout: 30
+    query_timeout: 1800  # 30 minutes for large analytical queries
+    tags:
+      - analytics
+      - warehouse
+      - duckdb
+      - olap
+    metadata:
+      description: "DuckDB-based analytical warehouse"
+      owner: "data-team"
+
+  # Redis cache database
+  session_cache:
+    type: redis
+    connection_string: "redis://redis-cluster:6379/0"
+    enabled: true
+    max_connections: 20
+    connection_timeout: 5
+    query_timeout: 30
+    tags:
+      - cache
+      - redis
+      - sessions
+      - production
+    metadata:
+      description: "Redis session cache"
+      owner: "backend-team"
+
+  # Excel report files
+  monthly_reports:
+    type: excel
+    connection_string: "./reports/monthly_report.xlsx"
+    sheet_name: null  # Load all sheets
+    enabled: true
+    max_connections: 1
+    connection_timeout: 30
+    query_timeout: 300
+    tags:
+      - reports
+      - excel
+      - monthly
+      - readonly
+    metadata:
+      description: "Monthly Excel reports"
+      owner: "reporting-team"
+
+  # CSV data files
+  customer_data:
+    type: csv
+    connection_string: "./data/customers.csv"
+    enabled: true
+    max_connections: 1
+    connection_timeout: 10
+    query_timeout: 120
+    tags:
+      - data
+      - csv
+      - customers
+      - readonly
+    metadata:
+      description: "Customer data CSV files"
+      owner: "data-team"
+
+# Logging configuration
+logging:
+  level: info
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_path: "./logs/localdata.log"
+  max_file_size: 52428800  # 50MB
+  backup_count: 5
+  console_output: true
+
+# Performance and resource configuration
+performance:
+  memory_limit_mb: 4096        # 4GB memory limit
+  query_buffer_timeout: 900    # 15 minutes buffer timeout
+  max_concurrent_connections: 100
+  chunk_size: 500              # Larger chunks for better performance
+  enable_query_analysis: true
+  auto_cleanup_buffers: true
+  memory_warning_threshold: 0.80  # 80% memory usage warning
+
+# Example environment variable usage:
+# ${POSTGRES_USER} - PostgreSQL username
+# ${POSTGRES_PASSWORD} - PostgreSQL password  
+# ${POSTGRES_HOST:localhost} - PostgreSQL host with localhost default
+# ${POSTGRES_PORT:5432} - PostgreSQL port with 5432 default
+# ${POSTGRES_DB:analytics} - Database name with analytics default
