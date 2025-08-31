@@ -1,0 +1,335 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'src/localdata_mcp/**'
+      - 'scripts/**'
+      - 'requirements*.txt'
+      - '.github/workflows/performance-benchmarks.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/localdata_mcp/**'
+      - 'scripts/**'
+      - 'requirements*.txt'
+  schedule:
+    # Run weekly performance regression tests on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      benchmark_type:
+        description: 'Type of benchmark to run'
+        required: false
+        default: 'quick'
+        type: choice
+        options:
+        - quick
+        - full
+        - extensive
+        - memory
+        - token
+        - streaming
+      dataset_sizes:
+        description: 'Dataset sizes to test (comma-separated)'
+        required: false
+        default: '1000,10000,50000'
+        type: string
+
+jobs:
+  performance-benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+      fail-fast: false
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql postgresql-contrib sqlite3
+        sudo systemctl start postgresql
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+        # Install additional benchmarking dependencies
+        pip install memory_profiler psutil
+    
+    - name: Setup PostgreSQL test database
+      run: |
+        sudo -u postgres createuser --superuser $USER
+        sudo -u postgres createdb benchmark_test
+        echo "PostgreSQL setup completed"
+      env:
+        PGPASSWORD: postgres
+    
+    - name: Determine benchmark configuration
+      id: config
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          BENCHMARK_TYPE="${{ github.event.inputs.benchmark_type }}"
+          DATASET_SIZES="${{ github.event.inputs.dataset_sizes }}"
+        elif [[ "${{ github.event_name }}" == "schedule" ]]; then
+          BENCHMARK_TYPE="full"
+          DATASET_SIZES="1000,10000,50000,100000"
+        elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          BENCHMARK_TYPE="quick"
+          DATASET_SIZES="1000,5000"
+        else
+          BENCHMARK_TYPE="quick"
+          DATASET_SIZES="1000,10000"
+        fi
+        
+        echo "benchmark_type=${BENCHMARK_TYPE}" >> $GITHUB_OUTPUT
+        echo "dataset_sizes=${DATASET_SIZES}" >> $GITHUB_OUTPUT
+        echo "Selected benchmark type: ${BENCHMARK_TYPE}"
+        echo "Dataset sizes: ${DATASET_SIZES}"
+    
+    - name: Run performance benchmarks
+      run: |
+        # Create results directory
+        mkdir -p benchmark_results
+        
+        # Set benchmark parameters based on type
+        case "${{ steps.config.outputs.benchmark_type }}" in
+          "quick")
+            ITERATIONS=2
+            CATEGORY="all"
+            ;;
+          "full")
+            ITERATIONS=3
+            CATEGORY="all"
+            ;;
+          "extensive")
+            ITERATIONS=5
+            CATEGORY="all"
+            ;;
+          "memory")
+            ITERATIONS=3
+            CATEGORY="memory"
+            ;;
+          "token")
+            ITERATIONS=3
+            CATEGORY="token"
+            ;;
+          "streaming")
+            ITERATIONS=3
+            CATEGORY="streaming"
+            ;;
+          *)
+            ITERATIONS=2
+            CATEGORY="all"
+            ;;
+        esac
+        
+        # Run benchmarks with error handling
+        python scripts/run_benchmarks.py \
+          --category "${CATEGORY}" \
+          --iterations ${ITERATIONS} \
+          --output-dir benchmark_results \
+          --chunk-sizes 100,500,1000 \
+          --verbose || {
+            echo "Benchmark execution failed, but continuing to collect results"
+            exit_code=$?
+          }
+        
+        # Check if any results were generated
+        if [ -f "benchmark_results/benchmark_summary.json" ]; then
+          echo "Benchmark results generated successfully"
+          cat benchmark_results/benchmark_summary.json
+        else
+          echo "No benchmark results found"
+          ls -la benchmark_results/ || echo "No benchmark_results directory"
+        fi
+      env:
+        # Limit memory usage for CI
+        BENCHMARK_MEMORY_LIMIT: 1024
+        # Set environment variables for database connections
+        POSTGRES_DB: benchmark_test
+        POSTGRES_USER: ${{ env.USER }}
+    
+    - name: Run version comparison (main branch only)
+      if: github.ref == 'refs/heads/main' && steps.config.outputs.benchmark_type != 'quick'
+      run: |
+        echo "Running version comparison..."
+        python scripts/compare_versions.py \
+          --dataset-sizes "${{ steps.config.outputs.dataset_sizes }}" \
+          --iterations 2 \
+          --output-dir version_comparison \
+          --verbose || {
+            echo "Version comparison failed, but continuing"
+          }
+    
+    - name: Generate performance report
+      if: always()
+      run: |
+        echo "## Performance Benchmark Results" > benchmark_report.md
+        echo "" >> benchmark_report.md
+        echo "**Run Date:** $(date -u)" >> benchmark_report.md
+        echo "**Python Version:** ${{ matrix.python-version }}" >> benchmark_report.md
+        echo "**Benchmark Type:** ${{ steps.config.outputs.benchmark_type }}" >> benchmark_report.md
+        echo "**Dataset Sizes:** ${{ steps.config.outputs.dataset_sizes }}" >> benchmark_report.md
+        echo "" >> benchmark_report.md
+        
+        if [ -f "benchmark_results/benchmark_summary.json" ]; then
+          echo "### Summary Statistics" >> benchmark_report.md
+          echo "" >> benchmark_report.md
+          python -c "
+import json
+with open('benchmark_results/benchmark_summary.json', 'r') as f:
+    data = json.load(f)
+print(f'- **Total Tests:** {data.get(\"total_tests\", 0)}')
+print(f'- **Success Rate:** {data.get(\"success_rate\", 0):.1%}')
+print(f'- **Avg Processing Rate:** {data.get(\"average_processing_rate\", 0):.0f} rows/sec')
+print(f'- **Avg Memory Usage:** {data.get(\"average_memory_usage_mb\", 0):.1f} MB')
+print(f'- **Performance Improvements:** {data.get(\"performance_improvements\", 0)}')
+print(f'- **Performance Regressions:** {data.get(\"performance_regressions\", 0)}')
+          " >> benchmark_report.md 2>/dev/null || echo "Failed to parse summary statistics" >> benchmark_report.md
+        else
+          echo "❌ **No benchmark results available**" >> benchmark_report.md
+        fi
+        
+        echo "" >> benchmark_report.md
+        echo "### Files Generated" >> benchmark_report.md
+        echo "" >> benchmark_report.md
+        find benchmark_results version_comparison -type f 2>/dev/null | head -20 | while read file; do
+          echo "- \`$file\`" >> benchmark_report.md
+        done || echo "No result files found" >> benchmark_report.md
+    
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: benchmark-results-python-${{ matrix.python-version }}
+        path: |
+          benchmark_results/
+          version_comparison/
+          benchmark_report.md
+        retention-days: 30
+    
+    - name: Check for performance regressions
+      if: always()
+      run: |
+        if [ -f "benchmark_results/benchmark_summary.json" ]; then
+          python -c "
+import json
+import sys
+with open('benchmark_results/benchmark_summary.json', 'r') as f:
+    data = json.load(f)
+
+success_rate = data.get('success_rate', 0)
+regressions = data.get('performance_regressions', 0)
+improvements = data.get('performance_improvements', 0)
+
+print(f'Success rate: {success_rate:.1%}')
+print(f'Regressions: {regressions}, Improvements: {improvements}')
+
+if success_rate < 0.8:
+    print('❌ Low success rate detected!')
+    sys.exit(1)
+elif regressions > improvements and regressions > 0:
+    print('⚠️  Performance regressions detected!')
+    sys.exit(2)
+else:
+    print('✅ Performance benchmarks passed!')
+    sys.exit(0)
+          "
+        else
+          echo "No benchmark summary found - treating as failure"
+          exit 1
+        fi
+    
+    - name: Comment PR with results (PR only)
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          
+          let comment = '## 🚀 Performance Benchmark Results\n\n';
+          
+          try {
+            const report = fs.readFileSync('benchmark_report.md', 'utf8');
+            comment += report;
+          } catch (error) {
+            comment += '❌ Failed to generate benchmark report\n\n';
+            comment += `Error: ${error.message}`;
+          }
+          
+          comment += '\n\n---\n*Automated performance testing via GitHub Actions*';
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  performance-regression-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: performance-benchmarks
+    
+    steps:
+    - name: Download benchmark results
+      uses: actions/download-artifact@v3
+      with:
+        name: benchmark-results-python-3.11
+        path: results/
+    
+    - name: Check for significant regressions
+      run: |
+        echo "Analyzing performance trends..."
+        
+        # This is a placeholder for more sophisticated regression analysis
+        # In a real implementation, you would compare against historical data
+        
+        if [ -f "results/benchmark_results/benchmark_summary.json" ]; then
+          python3 -c "
+import json
+with open('results/benchmark_results/benchmark_summary.json', 'r') as f:
+    data = json.load(f)
+
+regressions = data.get('performance_regressions', 0)
+success_rate = data.get('success_rate', 1.0)
+
+if success_rate < 0.7 or regressions > 3:
+    print('🚨 ALERT: Significant performance issues detected!')
+    print(f'Success Rate: {success_rate:.1%}')
+    print(f'Regressions: {regressions}')
+    # In production, this could trigger alerts to Slack, email, etc.
+else:
+    print('✅ Performance metrics within acceptable range')
+          "
+        else
+          echo "⚠️ No benchmark data available for regression analysis"
+        fi
+    
+    - name: Archive long-term performance data
+      run: |
+        # Placeholder for archiving performance data for trend analysis
+        echo "Archiving performance data for trend analysis..."
+        echo "In production, this would store data in a time-series database"
+        echo "for long-term performance monitoring and alerting"
