@@ -310,13 +310,16 @@ class TokenManager:
         for col in df.columns:
             dtype = df[col].dtype
             
-            # Numeric types (int, float, etc.)
-            if pd.api.types.is_numeric_dtype(dtype):
+            # Boolean types first (before numeric check)
+            if pd.api.types.is_bool_dtype(dtype):
+                other_cols.append(col)
+            # Numeric types (int, float, etc.) - but not boolean
+            elif pd.api.types.is_numeric_dtype(dtype):
                 numeric_cols.append(col)
             # String/object types that likely contain text
             elif pd.api.types.is_object_dtype(dtype) or pd.api.types.is_string_dtype(dtype):
                 text_cols.append(col)
-            # Everything else (datetime, boolean, etc.)
+            # Everything else (datetime, etc.)
             else:
                 other_cols.append(col)
         
