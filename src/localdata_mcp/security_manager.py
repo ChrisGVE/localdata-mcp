@@ -31,8 +31,10 @@ from typing import Any, Deque, Dict, List, Optional, Set, Tuple, Union
 from .query_parser import QueryParser, SQLSecurityError, get_query_parser
 from .timeout_manager import get_timeout_manager, TimeoutReason
 from .connection_manager import get_enhanced_connection_manager
+from .logging_manager import get_logging_manager, get_logger
 
-logger = logging.getLogger(__name__)
+# Get structured logger
+logger = get_logger(__name__)
 
 
 class SecurityThreatLevel(Enum):
@@ -211,7 +213,16 @@ class SecurityManager:
         self._resource_monitor_active = True
         self._start_resource_monitoring()
         
-        logger.info("SecurityManager initialized with enterprise-grade protection")
+        logging_manager = get_logging_manager()
+        with logging_manager.context(
+            operation="security_manager_init",
+            component="security_manager"
+        ):
+            logger.info("SecurityManager initialized",
+                      threat_detection_enabled=True,
+                      rate_limiting_enabled=True,
+                      resource_monitoring_enabled=True,
+                      attack_patterns_loaded=len(self._attack_patterns))
     
     def _compile_attack_patterns(self) -> Dict[AttackPattern, re.Pattern]:
         """Compile regex patterns for attack detection."""
@@ -477,7 +488,15 @@ class SecurityManager:
             return True, None
             
         except Exception as e:
-            logger.warning(f"Error checking resource limits: {e}")
+            logging_manager = get_logging_manager()
+            with logging_manager.context(
+                operation="resource_limit_check_error",
+                component="security_manager",
+                database_name=database_name
+            ):
+                logger.warning("Resource limit check failed, allowing query",
+                             error_type=type(e).__name__,
+                             error_message=str(e))
             return True, None  # Allow query if we can't check resources
     
     def validate_query_security(self, query: str, database_name: str, 
@@ -642,7 +661,11 @@ class SecurityManager:
             return True, None, security_metadata
             
         except Exception as e:
-            logger.error(f"Error during security validation: {e}")
+            logging_manager = get_logging_manager()
+            logging_manager.log_error(e, "security_manager",
+                                    database_name=database_name,
+                                    connection_id=connection_id,
+                                    validation_time=time.time() - start_time)
             security_metadata['validation_time'] = time.time() - start_time
             security_metadata['error'] = str(e)
             return False, f"Security validation error: {e}", security_metadata
@@ -742,7 +765,7 @@ class SecurityManager:
             raise
     
     def _log_security_event(self, event: SecurityEvent):
-        """Log a security event.
+        """Log a security event using structured logging.
         
         Args:
             event: SecurityEvent to log
@@ -750,18 +773,29 @@ class SecurityManager:
         with self._events_lock:
             self._security_events.append(event)
             
-        # Log to standard logging system
-        log_level = logging.WARNING
-        if event.threat_level == SecurityThreatLevel.CRITICAL:
-            log_level = logging.ERROR
-        elif event.threat_level == SecurityThreatLevel.HIGH:
-            log_level = logging.WARNING
-        elif event.threat_level == SecurityThreatLevel.LOW:
-            log_level = logging.INFO
-            
-        logger.log(log_level, f"[SECURITY] {event.message}", extra={
-            'security_event': event.to_dict()
-        })
+        # Log using structured logging system
+        logging_manager = get_logging_manager()
+        
+        # Map threat levels to severity for structured logging
+        severity_mapping = {
+            SecurityThreatLevel.LOW: "low",
+            SecurityThreatLevel.MEDIUM: "medium", 
+            SecurityThreatLevel.HIGH: "high",
+            SecurityThreatLevel.CRITICAL: "critical"
+        }
+        
+        # Use the structured logging security event method
+        logging_manager.log_security_event(
+            event.event_type.value,
+            severity_mapping[event.threat_level],
+            event.message,
+            query_fingerprint=event.query_fingerprint,
+            connection_id=event.connection_id,
+            database_name=event.database_name,
+            client_ip=event.client_ip,
+            timestamp=event.timestamp,
+            metadata=event.metadata
+        )
     
     def get_security_events(self, limit: Optional[int] = None, 
                            event_types: Optional[List[SecurityEventType]] = None,
@@ -905,17 +939,33 @@ class SecurityManager:
                     time.sleep(60)  # Run cleanup every minute
                     
                 except Exception as e:
-                    logger.error(f"Error in resource monitoring: {e}")
+                    logging_manager = get_logging_manager()
+                    logging_manager.log_error(e, "security_manager",
+                                            operation="resource_monitoring")
                     time.sleep(10)
         
         thread = threading.Thread(target=monitor, daemon=True)
         thread.start()
-        logger.info("Started security resource monitoring thread")
+        logging_manager = get_logging_manager()
+        with logging_manager.context(
+            operation="resource_monitoring_start",
+            component="security_manager"
+        ):
+            logger.info("Security resource monitoring started",
+                      cleanup_interval=60,
+                      audit_retention_days=self.config.retain_audit_days)
     
     def close(self):
         """Close the security manager and clean up resources."""
         self._resource_monitor_active = False
-        logger.info("SecurityManager closed")
+        logging_manager = get_logging_manager()
+        with logging_manager.context(
+            operation="security_manager_close",
+            component="security_manager"
+        ):
+            logger.info("SecurityManager shutdown complete",
+                      events_processed=len(self._security_events),
+                      connections_monitored=len(self._rate_limits))
 
 
 # Global security manager instance
