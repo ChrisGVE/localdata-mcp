@@ -14,9 +14,25 @@
 
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
 
-## ✨ Features
+## Table of Contents
 
-### 🗄️ **Multi-Database Support**
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Available Tools](#available-tools)
+- [Supported Data Sources](#supported-data-sources)
+- [Security Features](#security-features)
+- [Performance & Scalability](#performance--scalability)
+- [Examples](#examples)
+- [Specialized Documentation](#specialized-documentation)
+  - [Docker Usage Guide](DOCKER_USAGE.md) - Container deployment and configuration
+  - [Database Connections Guide](DATABASE_CONNECTIONS.md) - Detailed setup for all supported databases
+- [Testing & Quality](#testing--quality)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+
+## Features
+
+### **Multi-Database Support**
 
 - **SQL Databases**: PostgreSQL, MySQL, SQLite, DuckDB
 - **Modern Databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j, CouchDB
@@ -24,28 +40,28 @@
 - **Structured Files**: CSV, TSV, JSON, YAML, TOML, XML, INI
 - **Analytical Formats**: Parquet, Feather, Arrow, HDF5
 
-### 🔒 **Advanced Security**
+### **Advanced Security**
 
 - **Path Security**: Restricts file access to current working directory only
 - **SQL Injection Prevention**: Parameterized queries and safe table identifiers
 - **Connection Limits**: Maximum 10 concurrent database connections
 - **Input Validation**: Comprehensive validation and sanitization
 
-### 📊 **Large Dataset Handling**
+### **Large Dataset Handling**
 
 - **Query Buffering**: Automatic buffering for results with 100+ rows
 - **Large File Support**: 100MB+ files automatically use temporary SQLite storage
 - **Chunk Retrieval**: Paginated access to large result sets
 - **Auto-Cleanup**: 10-minute expiry with file modification detection
 
-### 🛠️ **Developer Experience**
+### **Developer Experience**
 
 - **Comprehensive Tools**: 12 database operation tools
 - **Error Handling**: Detailed, actionable error messages
 - **Thread Safety**: Concurrent operation support
 - **Backward Compatible**: All existing APIs preserved
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -141,7 +157,7 @@ get_buffered_query_info("analytics_1640995200_a1b2")
 clear_query_buffer("analytics_1640995200_a1b2")
 ```
 
-## 🔧 Available Tools
+## Available Tools
 
 | Tool                      | Description                | Use Case      |
 | ------------------------- | -------------------------- | ------------- |
@@ -160,7 +176,7 @@ clear_query_buffer("analytics_1640995200_a1b2")
 | `get_buffered_query_info` | Buffer status info         | Monitoring    |
 | `clear_query_buffer`      | Manual buffer cleanup      | Management    |
 
-## 📋 Supported Data Sources
+## Supported Data Sources
 
 ### SQL Databases
 
@@ -204,7 +220,7 @@ clear_query_buffer("analytics_1640995200_a1b2")
 - **Arrow**: In-memory columnar format support
 - **HDF5**: Hierarchical data format for scientific computing
 
-## 🛡️ Security Features
+## Security Features
 
 ### Path Security
 
@@ -237,7 +253,7 @@ describe_table("mydb", "users; DROP TABLE users; --")
 - **Query Buffering**: Automatic for 100+ row results
 - **Auto-Cleanup**: Buffers expire after 10 minutes
 
-## 📊 Performance & Scalability
+## Performance & Scalability
 
 ### Large File Handling
 
@@ -257,9 +273,9 @@ describe_table("mydb", "users; DROP TABLE users; --")
 - Concurrent query execution support
 - Resource pooling and limits
 
-## 🧪 Testing & Quality
+## Testing & Quality
 
-**✅ Comprehensive Test Coverage**
+**Comprehensive Test Coverage**
 
 - 68% test coverage with 500+ test cases
 - Import error handling and graceful degradation
@@ -267,30 +283,30 @@ describe_table("mydb", "users; DROP TABLE users; --")
 - Performance benchmarking with large datasets
 - Modern database connection testing
 
-**🔒 Security Validated**
+**Security Validated**
 
 - Path traversal prevention
 - SQL injection protection
 - Resource exhaustion testing
 - Malicious input handling
 
-**⚡ Performance Tested**
+**Performance Tested**
 
 - Large file processing
 - Concurrent connection handling
 - Memory usage optimization
 - Query response times
 
-## 🔄 API Compatibility
+## API Compatibility
 
 All existing MCP tool signatures remain **100% backward compatible**. New functionality is additive only:
 
-- ✅ All original tools work unchanged
-- ✅ Enhanced responses with additional metadata
-- ✅ New buffering tools for large datasets
-- ✅ Improved error messages and validation
+- All original tools work unchanged
+- Enhanced responses with additional metadata
+- New buffering tools for large datasets
+- Improved error messages and validation
 
-## 📖 Examples
+## Examples
 
 ### Basic Database Operations
 
@@ -381,23 +397,23 @@ describe_database("workbook")
 get_table_sample("workbook", "Sheet1")
 ```
 
-## 🚧 Roadmap
+## Roadmap
 
 ### Completed (v1.1.0)
 
-- [x] **Spreadsheet Formats**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with full multi-sheet support
-- [x] **Enhanced File Formats**: XML, INI, TSV support
-- [x] **Analytical Formats**: Parquet, Feather, Arrow support
+- **Spreadsheet Formats**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with full multi-sheet support
+- **Enhanced File Formats**: XML, INI, TSV support
+- **Analytical Formats**: Parquet, Feather, Arrow support
 
 ### Planned Features
 
-- [ ] **Caching Layer**: Configurable query result caching
-- [ ] **Connection Pooling**: Advanced connection management
-- [ ] **Streaming APIs**: Real-time data processing
-- [ ] **Monitoring Tools**: Connection and performance metrics
-- [ ] **Export Capabilities**: Query results to various formats
+- **Caching Layer**: Configurable query result caching
+- **Connection Pooling**: Advanced connection management
+- **Streaming APIs**: Real-time data processing
+- **Monitoring Tools**: Connection and performance metrics
+- **Export Capabilities**: Query results to various formats
 
-## 🛠️ Troubleshooting
+## Troubleshooting
 
 ### Spreadsheet Format Issues
 
@@ -478,7 +494,7 @@ connect_database("data", "csv", "../data/file.csv")  # Security error
 disconnect_database("old_connection")
 ```
 
-## 🤝 Contributing
+## Contributing
 
 Contributions welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
@@ -493,41 +509,40 @@ pip install -e ".[dev]"
 pytest
 ```
 
-## 📄 License
+## License
 
 MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🔗 Links
+## Links
 
 - **GitHub**: [localdata-mcp](https://github.com/ChrisGVE/localdata-mcp)
 - **PyPI**: [localdata-mcp](https://pypi.org/project/localdata-mcp/)
 - **MCP Protocol**: [Model Context Protocol](https://modelcontextprotocol.io/)
 - **FastMCP**: [FastMCP Framework](https://github.com/jlowin/fastmcp)
 
-## 📊 Stats
+## Stats
 
 ![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/ChrisGVE/localdata-mcp?style=social)
 ![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
 
-## 📚 Additional Resources
+## Additional Resources
 
 - **[FAQ](FAQ.md)**: Common questions and troubleshooting
 - **[Troubleshooting Guide](TROUBLESHOOTING.md)**: Comprehensive problem resolution
 - **[Advanced Examples](ADVANCED_EXAMPLES.md)**: Production-ready usage patterns
-- **[Blog Post](BLOG_POST.md)**: Technical deep dive and use cases
 
-## 🤔 Need Help?
+## Need Help?
 
 - **Issues**: [GitHub Issues](https://github.com/ChrisGVE/localdata-mcp/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/ChrisGVE/localdata-mcp/discussions)
 - **Email**: Available in GitHub profile
 - **Community**: Join MCP community forums
 
-## 🏷️ Tags
+## Tags
 
 `mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `mongodb` `spreadsheet` `excel` `xlsx` `ods` `csv` `tsv` `json` `yaml` `toml` `xml` `ini` `parquet` `feather` `arrow` `ai` `machine-learning` `data-integration` `python` `security` `performance`
 
 ---
 
-**Made with ❤️ for the MCP Community**
+**Made with care for the MCP Community**
