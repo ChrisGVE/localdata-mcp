@@ -85,15 +85,60 @@ class DatabaseConfig:
             raise ValueError(f"query_timeout must be positive, got {self.query_timeout}")
 
 
+class OutputFormat(str, Enum):
+    """Supported log output formats."""
+    JSON = "json"
+    TEXT = "text"
+    CONSOLE = "console"
+
+
+class OutputDestination(str, Enum):
+    """Supported log output destinations."""
+    STDOUT = "stdout"
+    FILE = "file"
+    SYSLOG = "syslog"
+    JSON_FILE = "json_file"
+
+
 @dataclass
 class LoggingConfig:
-    """Logging configuration."""
+    """Enhanced logging configuration with structured logging support."""
     level: LogLevel = LogLevel.INFO
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    output_format: OutputFormat = OutputFormat.JSON
+    destinations: List[OutputDestination] = field(default_factory=lambda: [OutputDestination.STDOUT])
     file_path: Optional[str] = None
+    json_file_path: Optional[str] = None
     max_file_size: int = 10 * 1024 * 1024  # 10MB
     backup_count: int = 5
     console_output: bool = True
+    
+    # Structured logging features
+    enable_correlation_ids: bool = True
+    enable_context_propagation: bool = True
+    enable_query_audit: bool = True
+    enable_performance_logging: bool = True
+    enable_security_logging: bool = True
+    
+    # Performance logging thresholds
+    slow_query_threshold: float = 1.0  # seconds
+    very_slow_query_threshold: float = 5.0  # seconds
+    
+    # Metrics configuration
+    enable_metrics: bool = True
+    metrics_port: int = 8000
+    metrics_endpoint: str = "/metrics"
+    
+    # Security logging configuration
+    log_blocked_queries: bool = True
+    log_timeout_events: bool = True
+    log_resource_limits: bool = True
+    log_failed_connections: bool = True
+    
+    # Debug configuration
+    enable_debug_traces: bool = False
+    debug_sql_queries: bool = False
+    debug_connection_pool: bool = False
 
     def __post_init__(self):
         """Validate logging configuration."""
@@ -101,6 +146,18 @@ class LoggingConfig:
             raise ValueError(f"max_file_size must be positive, got {self.max_file_size}")
         if self.backup_count < 0:
             raise ValueError(f"backup_count must be non-negative, got {self.backup_count}")
+        if self.slow_query_threshold <= 0:
+            raise ValueError(f"slow_query_threshold must be positive, got {self.slow_query_threshold}")
+        if self.very_slow_query_threshold <= self.slow_query_threshold:
+            raise ValueError(f"very_slow_query_threshold must be greater than slow_query_threshold")
+        if self.metrics_port <= 0 or self.metrics_port > 65535:
+            raise ValueError(f"metrics_port must be between 1-65535, got {self.metrics_port}")
+        
+        # Set default file paths if destinations include file types but paths not specified
+        if OutputDestination.FILE in self.destinations and not self.file_path:
+            self.file_path = "./logs/localdata-mcp.log"
+        if OutputDestination.JSON_FILE in self.destinations and not self.json_file_path:
+            self.json_file_path = "./logs/localdata-mcp.json"
 
 
 @dataclass
