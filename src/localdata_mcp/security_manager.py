@@ -467,8 +467,8 @@ class SecurityManager:
                 )
                 return False, f"System CPU threshold exceeded: {cpu_percent:.1f}%"
             
-            # Check active query count using connection manager
-            active_operations = self.connection_manager.get_active_operations()
+            # Check active query count using timeout manager
+            active_operations = self.timeout_manager.get_active_operations()
             db_operations = [op for op in active_operations.values() if op['database_name'] == database_name]
             
             if len(db_operations) >= self.config.max_concurrent_queries:
