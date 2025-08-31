@@ -31,8 +31,11 @@ from .timeout_manager import get_timeout_manager, QueryTimeoutError, TimeoutReas
 # Import token manager for intelligent response metadata
 from .token_manager import get_token_manager
 
+# Import structured logging
+from .logging_manager import get_logging_manager, get_logger
 
-logger = logging.getLogger(__name__)
+# Get structured logger
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -403,8 +406,16 @@ class StreamingQueryExecutor:
         self._result_buffers: Dict[str, ResultBuffer] = {}
         self._chunk_metrics: List[ChunkMetrics] = []
         
-        logger.info(f"StreamingQueryExecutor initialized with memory limit: {self.config.memory_limit_mb}MB, "
-                   f"default chunk size: {self.config.chunk_size}")
+        logging_manager = get_logging_manager()
+        with logging_manager.context(
+            operation="streaming_executor_init",
+            component="streaming_executor"
+        ):
+            logger.info("StreamingQueryExecutor initialized",
+                      memory_limit_mb=self.config.memory_limit_mb,
+                      default_chunk_size=self.config.chunk_size,
+                      buffer_timeout=self.config.query_buffer_timeout,
+                      max_concurrent_connections=self.config.max_concurrent_connections)
     
     def execute_streaming(self, source: StreamingDataSource, query_id: str, 
                          initial_chunk_size: Optional[int] = None,
@@ -424,6 +435,14 @@ class StreamingQueryExecutor:
             QueryTimeoutError: If query execution times out
         """
         start_time = time.time()
+        logging_manager = get_logging_manager()
+        
+        # Start query performance tracking
+        request_id = logging_manager.log_query_start(
+            database_name or "file_source",
+            f"streaming_query_{query_id}",
+            "streaming"
+        )
         
         # Get timeout manager and setup timeout context
         timeout_manager = get_timeout_manager()
@@ -432,38 +451,108 @@ class StreamingQueryExecutor:
         
         if database_name:
             timeout_config = timeout_manager.get_timeout_config(database_name)
-            logger.info(f"Query timeout configured: {timeout_config.query_timeout}s for database '{database_name}'")
+            with logging_manager.context(
+                request_id=request_id,
+                operation="streaming_timeout_config",
+                component="streaming_executor",
+                database_name=database_name
+            ):
+                logger.info("Query timeout configured",
+                          timeout_seconds=timeout_config.query_timeout,
+                          database_name=database_name)
         
         # Define cleanup function for timeout scenarios
         def cleanup_on_timeout():
             """Clean up resources if query times out."""
             try:
                 if query_id in self._result_buffers:
-                    logger.info(f"Cleaning up result buffer for timed out query: {query_id}")
+                    with logging_manager.context(
+                        request_id=request_id,
+                        operation="streaming_timeout_cleanup",
+                        component="streaming_executor"
+                    ):
+                        logger.info("Cleaning up result buffer for timed out query",
+                                  query_id=query_id,
+                                  buffer_size=len(self._result_buffers[query_id].chunks))
                     del self._result_buffers[query_id]
                 
                 # Force garbage collection to free memory
                 gc.collect()
-                logger.info(f"Cleanup completed for timed out query: {query_id}")
+                logging_manager.log_timeout("query_timeout", database_name or "file_source",
+                                          request_id=request_id, query_id=query_id)
             except Exception as e:
-                logger.error(f"Error during timeout cleanup for {query_id}: {e}")
+                logging_manager.log_error(e, "streaming_executor",
+                                        database_name=database_name,
+                                        query_id=query_id,
+                                        request_id=request_id)
         
         # Get initial memory status and chunk size
         memory_status = self._get_memory_status()
         chunk_size = initial_chunk_size or memory_status.recommended_chunk_size
         
-        logger.info(f"Starting streaming execution for {query_id} with chunk_size={chunk_size}, "
-                   f"available_memory={memory_status.available_gb:.1f}GB")
+        with logging_manager.context(
+            request_id=request_id,
+            operation="streaming_execution_start",
+            component="streaming_executor",
+            query_id=query_id
+        ):
+            logger.info("Starting streaming execution",
+                      chunk_size=chunk_size,
+                      available_memory_gb=memory_status.available_gb,
+                      memory_used_percent=memory_status.used_percent,
+                      is_low_memory=memory_status.is_low_memory)
         
         # Execute with timeout management if configured
-        if timeout_config:
-            with timeout_manager.timeout_context(operation_id, timeout_config, cleanup_on_timeout) as context:
-                return self._execute_streaming_with_timeout(
-                    source, query_id, chunk_size, memory_status, context, timeout_manager, operation_id
-                )
-        else:
-            # Execute without timeout management for backward compatibility
-            return self._execute_streaming_internal(source, query_id, chunk_size, memory_status)
+        try:
+            if timeout_config:
+                with timeout_manager.timeout_context(operation_id, timeout_config, cleanup_on_timeout) as context:
+                    result, metadata = self._execute_streaming_with_timeout(
+                        source, query_id, chunk_size, memory_status, context, timeout_manager, operation_id
+                    )
+            else:
+                # Execute without timeout management for backward compatibility
+                result, metadata = self._execute_streaming_internal(source, query_id, chunk_size, memory_status)
+            
+            # Log successful completion with performance metrics
+            execution_time = time.time() - start_time
+            logging_manager.log_query_complete(
+                request_id,
+                database_name or "file_source",
+                "streaming",
+                execution_time,
+                row_count=len(result) if result is not None else 0,
+                success=True
+            )
+            
+            # Log performance metrics
+            final_memory = self._get_memory_status()
+            logging_manager.log_performance_metrics("streaming_executor", {
+                "execution_time": execution_time,
+                "memory_usage_bytes": (memory_status.total_gb - final_memory.available_gb) * 1024**3,
+                "chunk_count": metadata.get("chunk_count", 0),
+                "total_rows": len(result) if result is not None else 0,
+                "memory_efficiency": final_memory.available_gb / memory_status.total_gb
+            })
+            
+            return result, metadata
+            
+        except Exception as e:
+            # Log failed execution
+            execution_time = time.time() - start_time
+            logging_manager.log_query_complete(
+                request_id,
+                database_name or "file_source",
+                "streaming",
+                execution_time,
+                success=False
+            )
+            
+            logging_manager.log_error(e, "streaming_executor",
+                                    database_name=database_name,
+                                    query_id=query_id,
+                                    execution_time=execution_time,
+                                    request_id=request_id)
+            raise
 
     def _execute_streaming_with_timeout(self, source: StreamingDataSource, query_id: str, 
                                       chunk_size: int, memory_status: MemoryStatus,
