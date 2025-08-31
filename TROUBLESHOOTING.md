@@ -710,4 +710,89 @@ get_query_history("restored_db")  # Shows recent queries
 important_data = execute_query("restored_db", "SELECT * FROM critical_table")
 ```
 
+## Spreadsheet Format Issues
+
+### Large Excel Files
+
+```python
+# For files over 100MB, temporary SQLite storage is used automatically
+connect_database("largefile", "xlsx", "./large_workbook.xlsx")
+
+# Monitor processing with describe_database
+describe_database("largefile")  # Shows processing status
+```
+
+### Sheet Name Conflicts
+
+```python
+# If sheet names conflict after sanitization, use specific sheet selection
+connect_database("specific", "xlsx", "./workbook.xlsx?sheet=Sheet1")
+
+# Check sanitized names
+describe_database("workbook")  # Lists all table names
+```
+
+### Format Detection
+
+```python
+# Ensure correct file extension for proper format detection
+connect_database("data", "xlsx", "./file.xlsx")  # ✅ Correct
+connect_database("data", "xlsx", "./file.xls")   # ⚠️ May cause issues
+
+# Use explicit format specification
+connect_database("data", "xls", "./old_format.xls")  # ✅ Better
+```
+
+### Multi-Sheet Selection Issues
+
+```python
+# Sheet names with special characters need URL encoding
+connect_database("data", "xlsx", "./file.xlsx?sheet=Q1%20Sales")  # For "Q1 Sales"
+
+# Or use the sanitized table name after connecting all sheets
+connect_database("workbook", "xlsx", "./file.xlsx")
+execute_query("workbook", "SELECT * FROM Q1_Sales")  # Use sanitized name
+```
+
+### Performance Optimization
+
+```python
+# For better performance with large spreadsheets:
+# 1. Use specific sheet selection when possible
+connect_database("q1", "xlsx", "./large.xlsx?sheet=Q1_Data")
+
+# 2. Use LIMIT clauses for large datasets
+execute_query("data", "SELECT * FROM large_sheet LIMIT 1000")
+
+# 3. Consider converting to Parquet for repeated analysis
+# (Manual conversion outside of LocalData MCP recommended for very large files)
+```
+
+## General File Issues
+
+### Path Security Errors
+
+```python
+# ✅ Allowed paths (current directory and subdirectories)
+connect_database("data", "csv", "./data/file.csv")
+connect_database("data", "csv", "subfolder/file.csv")
+
+# ❌ Blocked paths (parent directories)
+connect_database("data", "csv", "../data/file.csv")  # Security error
+```
+
+### Connection Limits
+
+```python
+# Maximum 10 concurrent connections
+# Use disconnect_database() to free up connections when done
+disconnect_database("old_connection")
+```
+
+## Need Help?
+
+- **Issues**: [GitHub Issues](https://github.com/ChrisGVE/localdata-mcp/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/ChrisGVE/localdata-mcp/discussions)
+- **FAQ**: [FAQ.md](FAQ.md) for common questions
+
 This guide covers the most common issues. For problems not addressed here, please create an issue on GitHub with detailed information about your specific situation.

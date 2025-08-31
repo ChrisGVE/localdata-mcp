@@ -9,6 +9,9 @@
 [![PyPI version](https://img.shields.io/pypi/v/localdata-mcp.svg)](https://pypi.org/project/localdata-mcp/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-Compatible-green.svg)](https://github.com/jlowin/fastmcp)
 [![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/cd737717-02f3-4388-bab7-5ec7cbe40713)
+![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
+![GitHub forks](https://img.shields.io/github/forks/ChrisGVE/localdata-mcp?style=social)
+![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
 
 **A comprehensive MCP server for databases, spreadsheets, and structured data files with security features, performance optimization, and extensive format support.**
 
@@ -26,7 +29,6 @@
 - [Testing & Quality](#testing--quality)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
-- [Additional Resources](#additional-resources)
 
 ## Features
 
@@ -90,6 +92,8 @@ Add to your MCP client configuration:
   }
 }
 ```
+
+**Docker Usage**: See [Docker Usage Guide](DOCKER_USAGE.md) for container deployment and configuration.
 
 ### Usage Examples
 
@@ -175,6 +179,8 @@ clear_query_buffer("analytics_1640995200_a1b2")
 | `clear_query_buffer`      | Manual buffer cleanup      | Management    |
 
 ## Supported Data Sources
+
+**Detailed Connection Guide**: See [Database Connections Guide](DATABASE_CONNECTIONS.md) for setup instructions, connection strings, and security practices.
 
 ### SQL Databases
 
@@ -306,6 +312,8 @@ All existing MCP tool signatures remain **100% backward compatible**. New functi
 
 ## Examples
 
+**Production Examples**: See [Advanced Examples](ADVANCED_EXAMPLES.md) for production-ready usage patterns and complex scenarios.
+
 ### Basic Database Operations
 
 ```python
@@ -413,84 +421,7 @@ get_table_sample("workbook", "Sheet1")
 
 ## Troubleshooting
 
-### Spreadsheet Format Issues
-
-#### Large Excel Files
-
-```python
-# For files over 100MB, temporary SQLite storage is used automatically
-connect_database("largefile", "xlsx", "./large_workbook.xlsx")
-
-# Monitor processing with describe_database
-describe_database("largefile")  # Shows processing status
-```
-
-#### Sheet Name Conflicts
-
-```python
-# If sheet names conflict after sanitization, use specific sheet selection
-connect_database("specific", "xlsx", "./workbook.xlsx?sheet=Sheet1")
-
-# Check sanitized names
-describe_database("workbook")  # Lists all table names
-```
-
-#### Format Detection
-
-```python
-# Ensure correct file extension for proper format detection
-connect_database("data", "xlsx", "./file.xlsx")  # ✅ Correct
-connect_database("data", "xlsx", "./file.xls")   # ⚠️ May cause issues
-
-# Use explicit format specification
-connect_database("data", "xls", "./old_format.xls")  # ✅ Better
-```
-
-#### Multi-Sheet Selection Issues
-
-```python
-# Sheet names with special characters need URL encoding
-connect_database("data", "xlsx", "./file.xlsx?sheet=Q1%20Sales")  # For "Q1 Sales"
-
-# Or use the sanitized table name after connecting all sheets
-connect_database("workbook", "xlsx", "./file.xlsx")
-execute_query("workbook", "SELECT * FROM Q1_Sales")  # Use sanitized name
-```
-
-#### Performance Optimization
-
-```python
-# For better performance with large spreadsheets:
-# 1. Use specific sheet selection when possible
-connect_database("q1", "xlsx", "./large.xlsx?sheet=Q1_Data")
-
-# 2. Use LIMIT clauses for large datasets
-execute_query("data", "SELECT * FROM large_sheet LIMIT 1000")
-
-# 3. Consider converting to Parquet for repeated analysis
-# (Manual conversion outside of LocalData MCP recommended for very large files)
-```
-
-### General File Issues
-
-#### Path Security Errors
-
-```python
-# ✅ Allowed paths (current directory and subdirectories)
-connect_database("data", "csv", "./data/file.csv")
-connect_database("data", "csv", "subfolder/file.csv")
-
-# ❌ Blocked paths (parent directories)
-connect_database("data", "csv", "../data/file.csv")  # Security error
-```
-
-#### Connection Limits
-
-```python
-# Maximum 10 concurrent connections
-# Use disconnect_database() to free up connections when done
-disconnect_database("old_connection")
-```
+For comprehensive troubleshooting guidance, see [Troubleshooting Guide](TROUBLESHOOTING.md). For common questions, check the [FAQ](FAQ.md).
 
 ## Contributing
 
@@ -518,29 +449,7 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 - **MCP Protocol**: [Model Context Protocol](https://modelcontextprotocol.io/)
 - **FastMCP**: [FastMCP Framework](https://github.com/jlowin/fastmcp)
 
-## Stats
 
-![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
-![GitHub forks](https://img.shields.io/github/forks/ChrisGVE/localdata-mcp?style=social)
-![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
-
-## Additional Resources
-
-### Core Documentation
-- **[FAQ](FAQ.md)**: Common questions and troubleshooting
-- **[Troubleshooting Guide](TROUBLESHOOTING.md)**: Comprehensive problem resolution
-- **[Advanced Examples](ADVANCED_EXAMPLES.md)**: Production-ready usage patterns
-
-### Specialized Guides
-- **[Docker Usage Guide](DOCKER_USAGE.md)**: Container deployment and configuration
-- **[Database Connections Guide](DATABASE_CONNECTIONS.md)**: Detailed setup for all supported databases
-
-## Need Help?
-
-- **Issues**: [GitHub Issues](https://github.com/ChrisGVE/localdata-mcp/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/ChrisGVE/localdata-mcp/discussions)
-- **Email**: Available in GitHub profile
-- **Community**: Join MCP community forums
 
 ## Tags
 
