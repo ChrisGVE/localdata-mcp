@@ -35,6 +35,14 @@ from .timeout_manager import QueryTimeoutError, get_timeout_manager
 # Import streaming file processors for memory-efficient file loading
 from .file_processor import create_streaming_file_engine, FileProcessorFactory
 
+# Import enhanced response metadata system
+from .response_metadata import (
+    get_metadata_generator, 
+    EnhancedResponseMetadata, 
+    LLMCommunicationProtocol,
+    ResponseMetadataGenerator
+)
+
 # TOML support
 try:
     import toml
@@ -172,6 +180,10 @@ class QueryBuffer:
     timestamp: float
     source_file_path: Optional[str] = None
     source_file_mtime: Optional[float] = None
+    
+    # Enhanced metadata integration
+    response_metadata: Optional['EnhancedResponseMetadata'] = None
+    llm_protocol: Optional['LLMCommunicationProtocol'] = None
 
 
 class DatabaseManager:
@@ -1299,6 +1311,16 @@ class DatabaseManager:
                         }
                     return json.dumps(empty_response)
                 
+                # Generate enhanced response metadata
+                metadata_generator = get_metadata_generator()
+                enhanced_metadata = metadata_generator.generate_metadata(
+                    query_id=query_id,
+                    df=first_chunk,
+                    query=validated_query,
+                    query_analysis=query_analysis,
+                    db_name=name
+                )
+                
                 # Check if we should use streaming approach based on data size
                 total_rows_processed = streaming_metadata.get("total_rows_processed", len(first_chunk))
                 threshold = initial_chunk_size
@@ -1307,6 +1329,23 @@ class DatabaseManager:
                     # Large result set - use streaming approach with buffering
                     chunk_limit = len(first_chunk)
                     estimated_total = streaming_metadata.get("estimated_total_rows") or total_rows_processed
+                    
+                    # Create LLM communication protocol
+                    llm_protocol = LLMCommunicationProtocol(enhanced_metadata)
+                    
+                    # Store enhanced QueryBuffer with metadata
+                    enhanced_query_buffer = QueryBuffer(
+                        query_id=query_id,
+                        db_name=name,
+                        query=validated_query,
+                        results=first_chunk,
+                        timestamp=time.time(),
+                        response_metadata=enhanced_metadata,
+                        llm_protocol=llm_protocol
+                    )
+                    
+                    with self.query_buffer_lock:
+                        self.query_buffers[query_id] = enhanced_query_buffer
                     
                     response = {
                         "metadata": {
@@ -1324,7 +1363,22 @@ class DatabaseManager:
                             "use_next_chunk": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size=100)",
                             "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size='all')",
                         },
-                        "streaming_metadata": streaming_metadata
+                        "streaming_metadata": streaming_metadata,
+                        "enhanced_metadata": {
+                            "llm_summary": llm_protocol.get_summary(),
+                            "complexity": {
+                                "level": enhanced_metadata.query_complexity_level.value,
+                                "score": enhanced_metadata.query_complexity_score,
+                                "processing_time_estimate": enhanced_metadata.estimated_processing_time
+                            },
+                            "data_quality": {
+                                "overall": enhanced_metadata.data_quality_metrics.overall_quality.value,
+                                "score": enhanced_metadata.data_quality_metrics.quality_score,
+                                "completeness": enhanced_metadata.data_quality_metrics.completeness
+                            },
+                            "recommended_action": enhanced_metadata.recommended_action,
+                            "action_rationale": enhanced_metadata.action_rationale
+                        }
                     }
 
                     # Add analysis results to metadata
@@ -1349,6 +1403,23 @@ class DatabaseManager:
                     return json.dumps(response, indent=2)
                 else:
                     # Small result set - return all results
+                    # Create LLM communication protocol for small results too
+                    llm_protocol = LLMCommunicationProtocol(enhanced_metadata)
+                    
+                    # Store enhanced QueryBuffer with metadata
+                    enhanced_query_buffer = QueryBuffer(
+                        query_id=query_id,
+                        db_name=name,
+                        query=validated_query,
+                        results=first_chunk,
+                        timestamp=time.time(),
+                        response_metadata=enhanced_metadata,
+                        llm_protocol=llm_protocol
+                    )
+                    
+                    with self.query_buffer_lock:
+                        self.query_buffers[query_id] = enhanced_query_buffer
+                    
                     response = {
                         "metadata": {
                             "total_rows": len(first_chunk),
@@ -1358,7 +1429,22 @@ class DatabaseManager:
                             "streaming": True
                         },
                         "data": json.loads(first_chunk.to_json(orient="records")),
-                        "streaming_metadata": streaming_metadata
+                        "streaming_metadata": streaming_metadata,
+                        "enhanced_metadata": {
+                            "llm_summary": llm_protocol.get_summary(),
+                            "complexity": {
+                                "level": enhanced_metadata.query_complexity_level.value,
+                                "score": enhanced_metadata.query_complexity_score,
+                                "processing_time_estimate": enhanced_metadata.estimated_processing_time
+                            },
+                            "data_quality": {
+                                "overall": enhanced_metadata.data_quality_metrics.overall_quality.value,
+                                "score": enhanced_metadata.data_quality_metrics.quality_score,
+                                "completeness": enhanced_metadata.data_quality_metrics.completeness
+                            },
+                            "recommended_action": enhanced_metadata.recommended_action,
+                            "action_rationale": enhanced_metadata.action_rationale
+                        }
                     }
                     
                     # Add analysis results to metadata for small results too
@@ -1976,6 +2062,199 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error clearing streaming buffer {query_id}: {e}")
             return f"Error clearing buffer: {e}"
+    
+    @mcp.tool
+    def get_query_metadata(self, query_id: str) -> str:
+        """
+        Get comprehensive metadata for a query result including LLM-friendly summary,
+        data quality metrics, complexity analysis, and processing recommendations.
+        
+        Args:
+            query_id: The ID of the query to get metadata for.
+            
+        Returns:
+            Comprehensive metadata in JSON format for LLM decision-making.
+        """
+        try:
+            with self.query_buffer_lock:
+                if query_id not in self.query_buffers:
+                    return f"Query ID '{query_id}' not found in buffers."
+                
+                query_buffer = self.query_buffers[query_id]
+                
+                if not query_buffer.llm_protocol:
+                    return f"Query ID '{query_id}' does not have enhanced metadata available."
+                
+                # Get comprehensive summary
+                summary = query_buffer.llm_protocol.get_summary()
+                
+                # Add additional metadata
+                metadata_response = {
+                    "query_info": {
+                        "query_id": query_id,
+                        "database": query_buffer.db_name,
+                        "timestamp": query_buffer.timestamp,
+                        "query": query_buffer.query
+                    },
+                    "llm_summary": summary,
+                    "schema_details": query_buffer.llm_protocol.get_schema_details(),
+                    "data_quality_report": query_buffer.llm_protocol.get_data_quality_report(),
+                    "enhanced_metadata": {
+                        "complexity_score": query_buffer.response_metadata.query_complexity_score,
+                        "processing_time_estimate": query_buffer.response_metadata.estimated_processing_time,
+                        "memory_footprint_mb": query_buffer.response_metadata.memory_footprint,
+                        "token_estimation": {
+                            "total_tokens": query_buffer.response_metadata.token_estimation.total_tokens,
+                            "tokens_per_row": query_buffer.response_metadata.token_estimation.tokens_per_row,
+                            "confidence": query_buffer.response_metadata.token_estimation.confidence
+                        },
+                        "llm_friendly_summary": query_buffer.response_metadata.llm_friendly_summary
+                    }
+                }
+                
+                return json.dumps(metadata_response, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Error getting query metadata for {query_id}: {e}")
+            return f"Error getting metadata: {e}"
+    
+    @mcp.tool
+    def request_data_chunk(self, query_id: str, chunk_id: int) -> str:
+        """
+        Request a specific chunk of data using the LLM communication protocol.
+        This enables progressive loading of large datasets.
+        
+        Args:
+            query_id: The ID of the query to get chunk from.
+            chunk_id: The ID of the chunk to retrieve (starting from 0).
+            
+        Returns:
+            Chunk data with metadata in JSON format.
+        """
+        try:
+            with self.query_buffer_lock:
+                if query_id not in self.query_buffers:
+                    return f"Query ID '{query_id}' not found in buffers."
+                
+                query_buffer = self.query_buffers[query_id]
+                
+                if not query_buffer.llm_protocol:
+                    return f"Query ID '{query_id}' does not support chunk requests."
+                
+                # Request the chunk
+                chunk_data = query_buffer.llm_protocol.request_chunk(chunk_id)
+                
+                if chunk_data is None:
+                    return f"Chunk {chunk_id} not available for query {query_id}."
+                
+                return json.dumps(chunk_data, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Error requesting chunk {chunk_id} for query {query_id}: {e}")
+            return f"Error requesting chunk: {e}"
+    
+    @mcp.tool 
+    def request_multiple_chunks(self, query_id: str, chunk_ids: str) -> str:
+        """
+        Request multiple chunks of data efficiently.
+        
+        Args:
+            query_id: The ID of the query to get chunks from.
+            chunk_ids: Comma-separated list of chunk IDs (e.g., "0,1,2").
+            
+        Returns:
+            Multiple chunks data with metadata in JSON format.
+        """
+        try:
+            # Parse chunk IDs
+            try:
+                chunk_id_list = [int(cid.strip()) for cid in chunk_ids.split(',')]
+            except ValueError:
+                return f"Invalid chunk_ids format. Use comma-separated integers like '0,1,2'."
+            
+            with self.query_buffer_lock:
+                if query_id not in self.query_buffers:
+                    return f"Query ID '{query_id}' not found in buffers."
+                
+                query_buffer = self.query_buffers[query_id]
+                
+                if not query_buffer.llm_protocol:
+                    return f"Query ID '{query_id}' does not support chunk requests."
+                
+                # Request multiple chunks
+                chunks_data = query_buffer.llm_protocol.request_multiple_chunks(chunk_id_list)
+                
+                return json.dumps(chunks_data, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Error requesting chunks {chunk_ids} for query {query_id}: {e}")
+            return f"Error requesting chunks: {e}"
+    
+    @mcp.tool
+    def cancel_query_operation(self, query_id: str, reason: str = "User requested") -> str:
+        """
+        Cancel an ongoing query operation and free resources.
+        
+        Args:
+            query_id: The ID of the query operation to cancel.
+            reason: Reason for cancellation (optional).
+            
+        Returns:
+            Cancellation status message.
+        """
+        try:
+            with self.query_buffer_lock:
+                if query_id not in self.query_buffers:
+                    return f"Query ID '{query_id}' not found in buffers."
+                
+                query_buffer = self.query_buffers[query_id]
+                
+                if not query_buffer.llm_protocol:
+                    return f"Query ID '{query_id}' does not support cancellation."
+                
+                # Cancel the operation
+                success = query_buffer.llm_protocol.cancel_operation(reason)
+                
+                if success:
+                    # Also clear from our buffers
+                    del self.query_buffers[query_id]
+                    return f"Successfully cancelled operation for query {query_id}. Reason: {reason}"
+                else:
+                    return f"Failed to cancel operation for query {query_id}. Operation may not support cancellation."
+                
+        except Exception as e:
+            logger.error(f"Error cancelling operation for query {query_id}: {e}")
+            return f"Error cancelling operation: {e}"
+    
+    @mcp.tool
+    def get_data_quality_report(self, query_id: str) -> str:
+        """
+        Get a comprehensive data quality assessment for a query result.
+        
+        Args:
+            query_id: The ID of the query to assess data quality for.
+            
+        Returns:
+            Detailed data quality report in JSON format.
+        """
+        try:
+            with self.query_buffer_lock:
+                if query_id not in self.query_buffers:
+                    return f"Query ID '{query_id}' not found in buffers."
+                
+                query_buffer = self.query_buffers[query_id]
+                
+                if not query_buffer.llm_protocol:
+                    return f"Query ID '{query_id}' does not have data quality information available."
+                
+                # Get data quality report
+                quality_report = query_buffer.llm_protocol.get_data_quality_report()
+                
+                return json.dumps(quality_report, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Error getting data quality report for {query_id}: {e}")
+            return f"Error getting quality report: {e}"
 
 
 def main():
