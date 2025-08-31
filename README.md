@@ -17,6 +17,32 @@
 
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
 
+## What's New in v1.3.1 🚀
+
+### Memory-Safe Query Architecture
+- **Intelligent Pre-Query Analysis**: Automatic query complexity assessment using `COUNT(*)` and sample row analysis
+- **Memory-Bounded Streaming**: Predictable memory usage with configurable limits and streaming pipeline
+- **Smart Token Management**: AI-optimized response sizes with automatic chunking for large datasets
+
+### Advanced Configuration System
+- **Dual Configuration Mode**: Simple environment variables for basic setups, powerful YAML for complex scenarios
+- **Hot Configuration Reload**: Dynamic configuration updates without service restart
+- **Multi-Database Support**: Granular per-database settings with timeout and memory controls
+
+### Enhanced Security & Performance
+- **SQL Query Validation**: Complete protection against non-SELECT operations
+- **Configurable Timeouts**: Per-database and global query timeout enforcement
+- **Structured Logging**: JSON logging with detailed query metrics and security events
+- **Connection Optimization**: Intelligent connection pooling and resource management
+
+### Developer Experience Improvements
+- **Rich Response Metadata**: Query execution stats, memory usage, and optimization hints
+- **Progressive Data Loading**: Chunk-based access for massive datasets
+- **Enhanced Error Messages**: Actionable guidance for configuration and query issues
+- **Backward Compatibility**: 100% API compatibility with automated migration tools
+
+Ready to upgrade? See the [Migration Guide](MIGRATION_GUIDE.md) for step-by-step instructions.
+
 ## Table of Contents
 
 - [Features](#features)
