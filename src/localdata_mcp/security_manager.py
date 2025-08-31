@@ -245,7 +245,7 @@ class SecurityManager:
                 re.IGNORECASE
             ),
             AttackPattern.FUNCTION_ABUSE: re.compile(
-                r'\b(?:load_file\s*\(|into\s+outfile|into\s+dumpfile|exec\s*\(|eval\s*\()\b',
+                r'\b(?:load_file\s*\(|into\s+outfile|into\s+dumpfile|exec\s*\(|eval\s*\()',
                 re.IGNORECASE
             )
         }
