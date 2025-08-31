@@ -25,7 +25,10 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 from functools import wraps
 
-logger = logging.getLogger(__name__)
+from .logging_manager import get_logging_manager, get_logger
+
+# Get structured logger
+logger = get_logger(__name__)
 
 
 class ErrorCategory(Enum):
@@ -324,7 +327,16 @@ class RetryableOperation:
                 
                 # Log successful execution after retries
                 if attempt > 1:
-                    logger.info(f"Operation '{self.operation_name}' succeeded on attempt {attempt}")
+                    logging_manager = get_logging_manager()
+                    with logging_manager.context(
+                        operation="retry_success",
+                        component="error_handler",
+                        operation_name=self.operation_name
+                    ):
+                        logger.info("Operation succeeded after retries",
+                                  attempt=attempt,
+                                  total_attempts=self.policy.max_attempts,
+                                  retry_policy=self.policy.__class__.__name__)
                 
                 return result
                 
@@ -343,13 +355,28 @@ class RetryableOperation:
                 
                 # Check if we should retry
                 if not self.policy.should_retry(e, attempt):
-                    logger.error(f"Operation '{self.operation_name}' failed permanently after {attempt} attempts: {e}")
+                    logging_manager = get_logging_manager()
+                    logging_manager.log_error(e, "error_handler", 
+                                           operation_name=self.operation_name,
+                                           final_attempt=attempt,
+                                           retry_policy=self.policy.__class__.__name__)
                     break
                 
                 # Calculate delay before next attempt
                 if attempt < self.policy.max_attempts:
                     delay = self.policy.calculate_delay(attempt)
-                    logger.warning(f"Operation '{self.operation_name}' failed on attempt {attempt}, retrying in {delay:.2f}s: {e}")
+                    logging_manager = get_logging_manager()
+                    with logging_manager.context(
+                        operation="retry_attempt",
+                        component="error_handler",
+                        operation_name=self.operation_name
+                    ):
+                        logger.warning("Operation failed, will retry",
+                                     attempt=attempt,
+                                     max_attempts=self.policy.max_attempts,
+                                     retry_delay=delay,
+                                     error_type=type(e).__name__,
+                                     error_message=str(e))
                     time.sleep(delay)
         
         # All retries exhausted, raise the last exception with context
@@ -529,7 +556,16 @@ class CircuitBreaker:
             self.half_open_attempts = 0
             self.state_change_time = time.time()
             # Keep stats for monitoring, but could optionally reset them
-            logger.info(f"Circuit breaker '{self.name}' has been reset")
+            logging_manager = get_logging_manager()
+            with logging_manager.context(
+                operation="circuit_breaker_reset",
+                component="error_handler",
+                circuit_breaker_name=self.name
+            ):
+                logger.info("Circuit breaker reset",
+                          failure_rate=self.stats.failure_rate,
+                          total_requests=self.stats.total_requests,
+                          failed_requests=self.stats.failed_requests)
     
     def _transition_to_open(self):
         """Transition circuit breaker to open state."""
@@ -537,21 +573,47 @@ class CircuitBreaker:
         self.state_change_time = time.time()
         self.stats.circuit_opened_count += 1
         self.half_open_attempts = 0
-        logger.warning(f"Circuit breaker '{self.name}' opened due to failures")
+        logging_manager = get_logging_manager()
+        logging_manager.log_security_event(
+            "circuit_breaker_opened",
+            "medium",
+            f"Circuit breaker '{self.name}' opened due to excessive failures",
+            circuit_breaker_name=self.name,
+            failure_rate=self.stats.failure_rate,
+            failed_requests=self.stats.failed_requests,
+            threshold=self.config.failure_threshold
+        )
     
     def _transition_to_half_open(self):
         """Transition circuit breaker to half-open state."""
         self.state = CircuitState.HALF_OPEN
         self.state_change_time = time.time()
         self.half_open_attempts = 0
-        logger.info(f"Circuit breaker '{self.name}' moved to half-open state")
+        logging_manager = get_logging_manager()
+        with logging_manager.context(
+            operation="circuit_breaker_half_open",
+            component="error_handler",
+            circuit_breaker_name=self.name
+        ):
+            logger.info("Circuit breaker moved to half-open state",
+                      timeout_duration=self.config.timeout_duration,
+                      open_duration=time.time() - self.state_change_time)
     
     def _transition_to_closed(self):
         """Transition circuit breaker to closed state."""
         self.state = CircuitState.CLOSED
         self.state_change_time = time.time()
         self.half_open_attempts = 0
-        logger.info(f"Circuit breaker '{self.name}' closed after successful recovery")
+        logging_manager = get_logging_manager()
+        with logging_manager.context(
+            operation="circuit_breaker_closed",
+            component="error_handler",
+            circuit_breaker_name=self.name
+        ):
+            logger.info("Circuit breaker closed after recovery",
+                      half_open_attempts=self.half_open_attempts,
+                      success_threshold=self.config.success_threshold,
+                      total_downtime=time.time() - self.state_change_time)
 
 
 class CircuitBreakerRegistry:
@@ -721,15 +783,43 @@ class ErrorRecoveryManager:
                     self._recovery_history.append(recovery_record)
                 
                 if success:
-                    logger.info(f"Recovery successful using strategy '{action.strategy.value}' for error: {error.error_code}")
+                    logging_manager = get_logging_manager()
+                    with logging_manager.context(
+                        operation="error_recovery_success",
+                        component="error_handler",
+                        error_code=error.error_code
+                    ):
+                        logger.info("Error recovery successful",
+                                  strategy=action.strategy.value,
+                                  attempt_duration=recovery_record['duration'],
+                                  attempts_before_success=len(attempted_strategies))
                     return True, result, attempted_strategies
                 else:
-                    logger.warning(f"Recovery attempt failed using strategy '{action.strategy.value}': {error_msg}")
+                    logging_manager = get_logging_manager()
+                    with logging_manager.context(
+                        operation="error_recovery_attempt",
+                        component="error_handler",
+                        error_code=error.error_code
+                    ):
+                        logger.warning("Error recovery attempt failed",
+                                     strategy=action.strategy.value,
+                                     error_message=error_msg,
+                                     attempt_duration=recovery_record['duration'])
                     
             except Exception as recovery_error:
-                logger.error(f"Recovery strategy '{action.strategy.value}' raised exception: {recovery_error}")
+                logging_manager = get_logging_manager()
+                logging_manager.log_error(recovery_error, "error_handler",
+                                        strategy=action.strategy.value,
+                                        original_error=error.error_code)
         
-        logger.error(f"All recovery strategies failed for error: {error.error_code}")
+        logging_manager = get_logging_manager()
+        logging_manager.log_error(
+            Exception(f"All recovery strategies exhausted for {error.error_code}"),
+            "error_handler",
+            error_code=error.error_code,
+            attempted_strategies=attempted_strategies,
+            strategy_count=len(attempted_strategies)
+        )
         return False, None, attempted_strategies
     
     def get_recovery_statistics(self) -> Dict[str, Any]:
