@@ -47,6 +47,9 @@ from .response_metadata import (
 from .logging_manager import get_logging_manager, get_logger
 from .config_manager import get_config_manager
 
+# Import backward compatibility management
+from .compatibility_manager import get_compatibility_manager
+
 # TOML support
 try:
     import toml
@@ -238,8 +241,33 @@ class DatabaseManager:
         # Streaming executor for memory-bounded processing
         self.streaming_executor = StreamingQueryExecutor()
 
+        # Initialize backward compatibility manager
+        self.compatibility_manager = get_compatibility_manager()
+        
+        # Check for legacy configuration and show warnings
+        self._check_legacy_configuration()
+
         # Register cleanup on exit
         atexit.register(self._cleanup_all)
+
+    def _check_legacy_configuration(self):
+        """Check for legacy configuration patterns and show warnings."""
+        try:
+            legacy_config = self.compatibility_manager.detect_legacy_configuration()
+            
+            if legacy_config['detected']:
+                logger.info("Legacy configuration patterns detected")
+                
+                for pattern in legacy_config['detected']:
+                    if pattern['pattern'] == 'Legacy Environment Variables':
+                        self.compatibility_manager.warn_deprecated('single_database_env_vars')
+                        
+                if legacy_config['migration_required']:
+                    self.compatibility_manager.warn_deprecated('env_only_config')
+                    logger.info("Consider running compatibility check for migration assistance")
+                    
+        except Exception as e:
+            logger.warning(f"Error checking legacy configuration: {e}")
 
     def _get_connection(self, name: str):
         if name not in self.connections:
@@ -1246,6 +1274,27 @@ class DatabaseManager:
             chunk_size: Optional chunk size for pagination. If not specified, uses analysis recommendations.
             enable_analysis: Whether to perform pre-query analysis (default: True).
         """
+        try:
+            # Backward compatibility check
+            import inspect
+            frame = inspect.currentframe()
+            args, _, _, values = inspect.getargvalues(frame)
+            compatibility_info = self.compatibility_manager.check_api_compatibility(
+                'execute_query', 
+                (name, query), 
+                {'chunk_size': chunk_size, 'enable_analysis': enable_analysis}
+            )
+            
+            # Log compatibility warnings if any
+            for warning in compatibility_info['warnings']:
+                logger.info(f"COMPATIBILITY: {warning}")
+            for suggestion in compatibility_info['suggestions']:
+                logger.info(f"SUGGESTION: {suggestion}")
+                
+        except Exception as e:
+            # Don't fail on compatibility check errors
+            logger.warning(f"Compatibility check error: {e}")
+        
         try:
             # Security validation: Only allow SELECT queries
             try:
@@ -2279,6 +2328,67 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting data quality report for {query_id}: {e}")
             return f"Error getting quality report: {e}"
+
+    @mcp.tool
+    def check_compatibility(self, generate_migration_script: bool = False) -> str:
+        """
+        Check backward compatibility status and get migration recommendations.
+        
+        Args:
+            generate_migration_script: Whether to generate a migration script for legacy configuration
+            
+        Returns:
+            Comprehensive compatibility report and migration guidance
+        """
+        try:
+            # Get compatibility status
+            status = self.compatibility_manager.get_compatibility_status()
+            
+            # Create report
+            report = {
+                "compatibility_status": "OK" if not status['legacy_config_detected'] else "LEGACY_DETECTED",
+                "version": status['version'],
+                "compatibility_mode": status['compatibility_mode'],
+                "legacy_configuration": status['legacy_config_detected'],
+                "recommendations": status['recommendations'],
+                "deprecation_warnings": status['deprecation_warnings_shown'],
+                "details": status['legacy_patterns']
+            }
+            
+            # Generate migration script if requested
+            if generate_migration_script and status['legacy_config_detected']:
+                try:
+                    migration_script = self.compatibility_manager.create_migration_script()
+                    report['migration_script'] = migration_script
+                    report['migration_script_note'] = "Save this script and run it to migrate your configuration"
+                except Exception as e:
+                    report['migration_script_error'] = f"Failed to generate migration script: {e}"
+            
+            # Add helpful information
+            if status['legacy_config_detected']:
+                report['migration_guidance'] = {
+                    "current_status": "Using deprecated configuration patterns",
+                    "action_required": "Migration recommended but not required immediately",
+                    "timeline": "Legacy patterns will be removed in v1.4.0",
+                    "next_steps": [
+                        "Review recommendations above",
+                        "Create YAML configuration file (localdata.yaml)",
+                        "Test new configuration alongside existing setup",
+                        "Gradually migrate environment variables to YAML"
+                    ]
+                }
+            else:
+                report['migration_guidance'] = {
+                    "current_status": "Using modern configuration patterns",
+                    "action_required": "None - configuration is up to date",
+                    "next_steps": ["Continue using current configuration"]
+                }
+            
+            return json.dumps(report, indent=2)
+            
+        except Exception as e:
+            logger.error(f"Error checking compatibility: {e}")
+            return f"Error checking compatibility: {e}"
 
 
 def main():
