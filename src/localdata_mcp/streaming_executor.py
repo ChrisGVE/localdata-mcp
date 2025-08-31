@@ -590,7 +590,7 @@ class StreamingQueryExecutor:
         }
         
         # Enhance metadata with TokenManager insights
-        if first_chunk is not None and not first_chunk.empty:
+        if first_chunk is not None and len(first_chunk) > 0:
             metadata.update(self._generate_token_metadata(first_chunk, total_rows_processed))
         
         logger.info(f"Streaming execution completed: {total_rows_processed} rows in {execution_time:.3f}s, "
@@ -703,7 +703,7 @@ class StreamingQueryExecutor:
         }
         
         # Enhance metadata with TokenManager insights
-        if first_chunk is not None and not first_chunk.empty:
+        if first_chunk is not None and len(first_chunk) > 0:
             metadata.update(self._generate_token_metadata(first_chunk, total_rows_processed))
         
         logger.info(f"Streaming execution completed: {total_rows_processed} rows in {execution_time:.3f}s, "
@@ -722,6 +722,16 @@ class StreamingQueryExecutor:
             Dictionary with enhanced metadata for LLM decision-making
         """
         try:
+            # Validate input data
+            if sample_df is None or len(sample_df) == 0 or total_rows <= 0:
+                return {
+                    "token_analysis": {
+                        "estimated_total_tokens": 0,
+                        "risk_level": "low",
+                        "note": "No data to analyze"
+                    }
+                }
+            
             token_manager = get_token_manager()
             
             # Get token estimation for the complete result
