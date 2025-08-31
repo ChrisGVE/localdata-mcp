@@ -1,0 +1,229 @@
+# LocalData MCP Server v1.3.1 - Memory-Safe Query Architecture & Configuration Refactoring
+
+## Problem Statement
+
+Current LocalData MCP architecture has critical memory management and performance issues:
+
+1. **Memory Overflow Vulnerabilities**: Multiple pipeline stages load entire datasets into memory simultaneously
+2. **Arbitrary Resource Limits**: File size limits (100MB) are meaningless when data flows through DataFrames
+3. **Inefficient Token Management**: Token counting happens after data is already in memory
+4. **Poor Configuration Architecture**: Monolithic environment variables, no multi-database support
+5. **Missing Query Safety**: No protection against non-SELECT queries or resource exhaustion
+
+## Solution Architecture
+
+### Core Principle: Streaming-First, Memory-Bounded Pipeline
+
+Replace discrete "load-all-then-process" steps with intelligent streaming architecture that:
+- Analyzes queries before execution using COUNT(*) and LIMIT 1 sampling
+- Makes memory and token decisions proactively
+- Streams data in manageable chunks
+- Provides LLM with response metadata for informed decision-making
+
+## Technical Requirements
+
+### 1. Proactive Query Analysis System
+
+**Pre-Query Intelligence**:
+- Execute `SELECT COUNT(*) FROM (user_query)` to get result row count
+- Execute `SELECT * FROM (user_query) LIMIT 1` to sample row structure/size
+- Calculate estimated memory usage: row_count * sample_row_size
+- Calculate estimated token count: numeric_cols * row_count + text_analysis(sample_row)
+- Determine execution strategy: direct/chunked/streaming based on estimates
+
+**Query Safety**:
+- Implement SQL query parser to allow only SELECT statements
+- Block INSERT, UPDATE, DELETE, DROP, CREATE, ALTER operations
+- Add query timeout configuration per database type
+
+### 2. Memory-Bounded Streaming Architecture
+
+**File Processing Pipeline**:
+- Replace pandas.read_excel(entire_file) with chunked readers where possible
+- For unavoidable full-file loads: implement memory checks before proceeding
+- Stream DataFrame chunks to temporary SQLite instead of loading all data first
+- Add configurable memory limits and monitoring
+
+**Query Execution Pipeline**:
+- Implement result streaming for large responses using database cursors
+- Chunk results into memory-bounded segments (e.g., 1000 rows max per chunk)
+- Buffer management with configurable timeouts and cleanup
+
+**Response Management**:
+- Provide LLM with query metadata: estimated_rows, estimated_tokens, chunks_available
+- Allow LLM to request specific chunks or cancel large operations
+- Implement progressive loading: "first 100 rows available, 10,000 more available"
+
+### 3. Intelligent Token Management
+
+**DataFrame-Based Token Estimation**:
+- Numeric columns: row_count * 1 token per value
+- Text columns: sample first 100 rows, extrapolate average tokens per row
+- JSON serialization impact: account for field names and structure overhead
+- Pre-execution estimation using sample data from LIMIT 1 queries
+
+**Adaptive Response Strategies**:
+- < 1000 tokens: return complete response
+- 1000-4000 tokens: return with warning and chunk availability info
+- 4000-8000 tokens: automatic chunking with first chunk + metadata
+- > 8000 tokens: buffering required, provide summary and chunk access
+
+### 4. Configuration Architecture Refactoring
+
+**Dual Configuration System**:
+- Environment variables for simple single-database scenarios
+- YAML configuration file for complex multi-database environments
+- Backward compatibility during transition period
+
+**Granular Database Configuration**:
+
+Environment Variables (Simple Mode):
+```
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432  
+POSTGRES_USER=username
+POSTGRES_PASSWORD=password
+POSTGRES_DATABASE=dbname
+POSTGRES_TIMEOUT=30
+
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=username
+MYSQL_PASSWORD=password
+MYSQL_DATABASE=dbname
+MYSQL_TIMEOUT=60
+```
+
+YAML Configuration (Complex Mode):
+```yaml
+databases:
+  primary_postgres:
+    type: postgresql
+    host: localhost
+    port: 5432
+    user: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    database: production
+    timeout: 30
+    max_memory_mb: 500
+    
+  analytics_postgres:
+    type: postgresql
+    host: analytics.company.com
+    port: 5432
+    user: ${ANALYTICS_USER}
+    password: ${ANALYTICS_PASSWORD}
+    database: analytics
+    timeout: 120
+    max_memory_mb: 1000
+    
+  local_files:
+    type: file_system
+    base_path: ./data
+    max_file_size_mb: 200
+    timeout: 60
+
+logging:
+  level: WARNING
+  format: json
+  file: ./logs/localdata.log
+  
+performance:
+  default_chunk_size: 1000
+  max_tokens_direct: 4000
+  buffer_timeout_seconds: 600
+```
+
+**Breaking Changes**:
+- Replace generic MONGODB_URL with MONGODB_HOST, MONGODB_PORT, etc.
+- Deprecate arbitrary file size limits in favor of memory-based limits
+- Restructure logging configuration
+
+### 5. Enhanced Security & Performance
+
+**Query Timeout System**:
+- Global timeout defaults
+- Per-database timeout configuration
+- Per-query timeout enforcement
+- Graceful cancellation and cleanup
+
+**Memory Management**:
+- Real-time memory monitoring using psutil
+- Configurable memory limits per operation
+- Automatic garbage collection triggers
+- Memory usage reporting in debug mode
+
+**Logging Improvements**:
+- JSON structured logging for production environments
+- Detailed query performance metrics
+- Memory usage tracking
+- Security event logging (blocked queries, timeouts)
+
+## Implementation Phases
+
+### Phase 1: Query Safety & Analysis Engine
+- SQL query validation and parsing
+- Pre-query analysis system (COUNT, LIMIT 1 sampling) 
+- Memory and token estimation algorithms
+- Query timeout implementation
+
+### Phase 2: Streaming Architecture Foundation
+- Replace DataFrame batch loading with streaming
+- Implement chunked file processing
+- Memory-bounded query execution
+- Cursor-based result streaming
+
+### Phase 3: Configuration System Refactoring  
+- YAML configuration parser and validation
+- Granular database environment variables
+- Breaking changes migration path
+- Multi-database connection management
+
+### Phase 4: Advanced Response Management
+- Intelligent chunking based on pre-analysis
+- LLM communication protocol for large datasets
+- Progressive loading and cancellation support
+- Performance optimization and monitoring
+
+### Phase 5: Documentation & Testing
+- Update all documentation for new configuration system
+- Comprehensive testing of memory limits and streaming
+- Performance benchmarks and optimization
+- Migration guide for breaking changes
+
+## Success Criteria
+
+**Memory Safety**:
+- No out-of-memory errors for datasets up to configured limits
+- Predictable memory usage patterns
+- Graceful degradation for oversized requests
+
+**Performance**:
+- Sub-second response for queries < 1000 tokens
+- Efficient streaming for large datasets
+- Minimal memory footprint during operations
+
+**Usability**:
+- Simple environment variable configuration for basic use
+- Powerful YAML configuration for complex scenarios
+- Clear error messages and guidance for resource limits
+
+**Security**:
+- Complete protection against non-SELECT queries
+- Proper timeout enforcement
+- Secure credential management
+
+## Version Compatibility
+
+**Breaking Changes (v1.3.1)**:
+- Environment variable names changed (MONGODB_URL → MONGODB_HOST, etc.)
+- Removed arbitrary file size limits
+- Changed default logging level to WARNING
+- New JSON logging format default
+
+**Migration Path**:
+- Provide compatibility layer for old environment variables
+- Clear migration documentation
+- Deprecation warnings before removal
+
+This represents a fundamental architectural improvement focusing on memory safety, intelligent resource management, and scalable configuration for production environments.
