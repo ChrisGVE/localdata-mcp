@@ -28,6 +28,9 @@ from .query_analyzer import analyze_query, QueryAnalysis
 # Import timeout manager for query timeout management
 from .timeout_manager import get_timeout_manager, QueryTimeoutError, TimeoutReason
 
+# Import token manager for intelligent response metadata
+from .token_manager import get_token_manager
+
 
 logger = logging.getLogger(__name__)
 
@@ -586,6 +589,10 @@ class StreamingQueryExecutor:
             "buffer_complete": result_buffer.is_complete
         }
         
+        # Enhance metadata with TokenManager insights
+        if first_chunk is not None and not first_chunk.empty:
+            metadata.update(self._generate_token_metadata(first_chunk, total_rows_processed))
+        
         logger.info(f"Streaming execution completed: {total_rows_processed} rows in {execution_time:.3f}s, "
                    f"{chunk_number} chunks (timeout-managed)")
         
@@ -695,10 +702,81 @@ class StreamingQueryExecutor:
             "buffer_complete": result_buffer.is_complete
         }
         
+        # Enhance metadata with TokenManager insights
+        if first_chunk is not None and not first_chunk.empty:
+            metadata.update(self._generate_token_metadata(first_chunk, total_rows_processed))
+        
         logger.info(f"Streaming execution completed: {total_rows_processed} rows in {execution_time:.3f}s, "
                    f"{chunk_number} chunks")
         
         return first_chunk or pd.DataFrame(), metadata
+    
+    def _generate_token_metadata(self, sample_df: pd.DataFrame, total_rows: int) -> Dict[str, Any]:
+        """Generate rich token and response metadata using TokenManager.
+        
+        Args:
+            sample_df: First chunk/sample of the data
+            total_rows: Total number of rows in the complete result
+            
+        Returns:
+            Dictionary with enhanced metadata for LLM decision-making
+        """
+        try:
+            token_manager = get_token_manager()
+            
+            # Get token estimation for the complete result
+            estimation = token_manager.estimate_tokens_for_query_result(total_rows, sample_df)
+            
+            # Get rich response metadata
+            response_metadata = token_manager.get_response_metadata(estimation)
+            
+            # Create enhanced metadata structure
+            return {
+                "token_analysis": {
+                    "estimated_total_tokens": estimation.total_tokens,
+                    "tokens_per_row": round(estimation.tokens_per_row, 2),
+                    "confidence": estimation.confidence,
+                    "risk_level": estimation.risk_level,
+                    "memory_risk": estimation.memory_risk
+                },
+                "data_characteristics": {
+                    "response_size_category": response_metadata.response_size_category,
+                    "data_density": response_metadata.data_density,
+                    "text_heavy": response_metadata.text_heavy,
+                    "column_breakdown": {
+                        "numeric_columns": estimation.numeric_columns,
+                        "text_columns": estimation.text_columns,
+                        "other_columns": estimation.other_columns
+                    }
+                },
+                "chunking_recommendation": {
+                    "should_chunk": response_metadata.chunking_recommendation.should_chunk if response_metadata.chunking_recommendation else False,
+                    "recommended_chunk_size": response_metadata.chunking_recommendation.recommended_chunk_size if response_metadata.chunking_recommendation else None,
+                    "strategy": response_metadata.chunking_recommendation.strategy if response_metadata.chunking_recommendation else None,
+                    "rationale": response_metadata.chunking_recommendation.chunk_size_rationale if response_metadata.chunking_recommendation else None
+                },
+                "model_compatibility": {
+                    model: info["fits_in_context"] 
+                    for model, info in response_metadata.model_compatibility.items()
+                },
+                "performance_indicators": {
+                    "processing_complexity": response_metadata.processing_complexity,
+                    "estimated_response_time": response_metadata.estimated_response_time,
+                    "estimated_memory_mb": response_metadata.estimated_memory_mb,
+                    "streaming_recommended": response_metadata.streaming_recommended
+                },
+                "sampling_options": response_metadata.sampling_options
+            }
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate token metadata: {e}")
+            return {
+                "token_analysis": {
+                    "error": f"Token analysis failed: {str(e)}",
+                    "estimated_total_tokens": 0,
+                    "risk_level": "unknown"
+                }
+            }
     
     def get_chunk_iterator(self, query_id: str, start_row: int = 0, 
                           chunk_size: Optional[int] = None) -> Iterator[pd.DataFrame]:
