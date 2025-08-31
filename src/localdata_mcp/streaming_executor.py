@@ -25,6 +25,9 @@ from .config_manager import get_config_manager, PerformanceConfig
 # Import query analyzer for intelligent chunking decisions
 from .query_analyzer import analyze_query, QueryAnalysis
 
+# Import timeout manager for query timeout management
+from .timeout_manager import get_timeout_manager, QueryTimeoutError, TimeoutReason
+
 
 logger = logging.getLogger(__name__)
 
@@ -401,18 +404,46 @@ class StreamingQueryExecutor:
                    f"default chunk size: {self.config.chunk_size}")
     
     def execute_streaming(self, source: StreamingDataSource, query_id: str, 
-                         initial_chunk_size: Optional[int] = None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-        """Execute streaming query with adaptive memory management.
+                         initial_chunk_size: Optional[int] = None,
+                         database_name: Optional[str] = None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute streaming query with adaptive memory management and timeout control.
         
         Args:
             source: Streaming data source
             query_id: Unique identifier for buffering
             initial_chunk_size: Initial chunk size (adaptive if None)
+            database_name: Name of the database for timeout configuration
         
         Returns:
             Tuple of (first_chunk_df, metadata_dict)
+            
+        Raises:
+            QueryTimeoutError: If query execution times out
         """
         start_time = time.time()
+        
+        # Get timeout manager and setup timeout context
+        timeout_manager = get_timeout_manager()
+        timeout_config = None
+        operation_id = f"streaming_{query_id}"
+        
+        if database_name:
+            timeout_config = timeout_manager.get_timeout_config(database_name)
+            logger.info(f"Query timeout configured: {timeout_config.query_timeout}s for database '{database_name}'")
+        
+        # Define cleanup function for timeout scenarios
+        def cleanup_on_timeout():
+            """Clean up resources if query times out."""
+            try:
+                if query_id in self._result_buffers:
+                    logger.info(f"Cleaning up result buffer for timed out query: {query_id}")
+                    del self._result_buffers[query_id]
+                
+                # Force garbage collection to free memory
+                gc.collect()
+                logger.info(f"Cleanup completed for timed out query: {query_id}")
+            except Exception as e:
+                logger.error(f"Error during timeout cleanup for {query_id}: {e}")
         
         # Get initial memory status and chunk size
         memory_status = self._get_memory_status()
@@ -420,6 +451,160 @@ class StreamingQueryExecutor:
         
         logger.info(f"Starting streaming execution for {query_id} with chunk_size={chunk_size}, "
                    f"available_memory={memory_status.available_gb:.1f}GB")
+        
+        # Execute with timeout management if configured
+        if timeout_config:
+            with timeout_manager.timeout_context(operation_id, timeout_config, cleanup_on_timeout) as context:
+                return self._execute_streaming_with_timeout(
+                    source, query_id, chunk_size, memory_status, context, timeout_manager, operation_id
+                )
+        else:
+            # Execute without timeout management for backward compatibility
+            return self._execute_streaming_internal(source, query_id, chunk_size, memory_status)
+
+    def _execute_streaming_with_timeout(self, source: StreamingDataSource, query_id: str, 
+                                      chunk_size: int, memory_status: MemoryStatus,
+                                      timeout_context: Dict[str, Any], timeout_manager, operation_id: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Internal streaming execution with timeout checking.
+        
+        Args:
+            source: Streaming data source
+            query_id: Query identifier
+            chunk_size: Initial chunk size
+            memory_status: Current memory status
+            timeout_context: Timeout context from manager
+            timeout_manager: Timeout manager instance
+            operation_id: Operation identifier for timeout tracking
+            
+        Returns:
+            Tuple of (first_chunk_df, metadata_dict)
+            
+        Raises:
+            QueryTimeoutError: If query times out
+        """
+        # Initialize result buffer
+        buffer_memory_limit = min(self.config.memory_limit_mb // 4, 500)  # Use 1/4 of limit, max 500MB
+        result_buffer = ResultBuffer(query_id, "streaming", "streaming_query", buffer_memory_limit)
+        self._result_buffers[query_id] = result_buffer
+        
+        first_chunk = None
+        total_rows_processed = 0
+        chunk_number = 0
+        
+        try:
+            chunk_iterator = source.get_chunk_iterator(chunk_size)
+            
+            for chunk in chunk_iterator:
+                # Check for timeout cancellation before processing each chunk
+                if timeout_manager.is_cancelled(operation_id):
+                    raise timeout_manager.create_timeout_error(operation_id, TimeoutReason.USER_TIMEOUT)
+                chunk_start_time = time.time()
+                chunk_number += 1
+                
+                # Check memory before processing chunk
+                current_memory = self._get_memory_status()
+                if current_memory.is_low_memory:
+                    logger.warning(f"Low memory detected ({current_memory.used_percent:.1f}%), "
+                                 f"reducing chunk size from {chunk_size} to {current_memory.recommended_chunk_size}")
+                    chunk_size = current_memory.recommended_chunk_size
+                
+                # Process chunk
+                processed_chunk = self._process_chunk(chunk, chunk_number)
+                rows_in_chunk = len(processed_chunk)
+                total_rows_processed += rows_in_chunk
+                
+                # Store first chunk for immediate return
+                if first_chunk is None:
+                    first_chunk = processed_chunk.copy()
+                
+                # Try to buffer the chunk
+                buffered = result_buffer.add_chunk(processed_chunk)
+                
+                # Record chunk metrics
+                chunk_time = time.time() - chunk_start_time
+                chunk_memory = processed_chunk.memory_usage(deep=True).sum() / (1024 * 1024)
+                
+                metrics = ChunkMetrics(
+                    chunk_number=chunk_number,
+                    rows_processed=rows_in_chunk,
+                    memory_used_mb=chunk_memory,
+                    processing_time_seconds=chunk_time
+                )
+                self._chunk_metrics.append(metrics)
+                
+                logger.debug(f"Processed chunk {chunk_number}: {rows_in_chunk} rows, "
+                           f"{chunk_memory:.1f}MB, {chunk_time:.3f}s, buffered={buffered}")
+                
+                # Adaptive chunk size adjustment based on performance
+                if chunk_number > 1:
+                    chunk_size = self._adapt_chunk_size(chunk_size, metrics, current_memory)
+                
+                # Additional timeout check after chunk processing
+                if timeout_manager.is_cancelled(operation_id):
+                    raise timeout_manager.create_timeout_error(operation_id, TimeoutReason.USER_TIMEOUT)
+                
+                # Break if we have enough data for initial response and memory is getting tight
+                if chunk_number >= 3 and current_memory.is_low_memory and total_rows_processed >= chunk_size:
+                    logger.info(f"Stopping initial streaming due to memory constraints after {chunk_number} chunks")
+                    break
+        
+        except QueryTimeoutError:
+            logger.warning(f"Query timed out during streaming execution: {query_id}")
+            raise  # Re-raise timeout errors
+        except Exception as e:
+            logger.error(f"Error during streaming execution: {e}")
+            raise
+        
+        # Mark buffer as complete if we processed all data
+        result_buffer.is_complete = True
+        
+        # Build metadata with timeout information
+        start_time = timeout_context.get('start_time', time.time())
+        execution_time = time.time() - start_time
+        final_memory = self._get_memory_status()
+        
+        timeout_config = timeout_context.get('timeout_config')
+        metadata = {
+            "query_id": query_id,
+            "total_rows_processed": total_rows_processed,
+            "chunks_processed": chunk_number,
+            "execution_time_seconds": execution_time,
+            "final_chunk_size": chunk_size,
+            "memory_status": {
+                "initial_available_gb": memory_status.available_gb,
+                "final_available_gb": final_memory.available_gb,
+                "final_used_percent": final_memory.used_percent
+            },
+            "timeout_info": {
+                "timeout_configured": True,
+                "timeout_limit_seconds": timeout_config.query_timeout if timeout_config else None,
+                "time_remaining_seconds": max(0, (timeout_config.query_timeout - execution_time)) if timeout_config else None,
+                "database_name": timeout_config.database_name if timeout_config else None
+            },
+            "estimated_total_rows": source.estimate_total_rows(),
+            "streaming": True,
+            "buffer_complete": result_buffer.is_complete
+        }
+        
+        logger.info(f"Streaming execution completed: {total_rows_processed} rows in {execution_time:.3f}s, "
+                   f"{chunk_number} chunks (timeout-managed)")
+        
+        return first_chunk or pd.DataFrame(), metadata
+    
+    def _execute_streaming_internal(self, source: StreamingDataSource, query_id: str,
+                                  chunk_size: int, memory_status: MemoryStatus) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Internal streaming execution without timeout management (backward compatibility).
+        
+        Args:
+            source: Streaming data source
+            query_id: Query identifier
+            chunk_size: Initial chunk size
+            memory_status: Current memory status
+            
+        Returns:
+            Tuple of (first_chunk_df, metadata_dict)
+        """
+        start_time = time.time()
         
         # Initialize result buffer
         buffer_memory_limit = min(self.config.memory_limit_mb // 4, 500)  # Use 1/4 of limit, max 500MB
@@ -501,6 +686,9 @@ class StreamingQueryExecutor:
                 "initial_available_gb": memory_status.available_gb,
                 "final_available_gb": final_memory.available_gb,
                 "final_used_percent": final_memory.used_percent
+            },
+            "timeout_info": {
+                "timeout_configured": False
             },
             "estimated_total_rows": source.estimate_total_rows(),
             "streaming": True,
