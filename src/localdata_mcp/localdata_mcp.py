@@ -43,6 +43,10 @@ from .response_metadata import (
     ResponseMetadataGenerator
 )
 
+# Import structured logging system
+from .logging_manager import get_logging_manager, get_logger
+from .config_manager import get_config_manager
+
 # TOML support
 try:
     import toml
@@ -154,21 +158,41 @@ except ImportError:
     COUCHDB_AVAILABLE = False
 
 # Set up logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# Initialize structured logging before other components
+config_manager = get_config_manager()
+logging_config = config_manager.get_logging_config()
+logging_manager = get_logging_manager(logging_config)
 
-# Create console handler if none exists
-if not logger.handlers:
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+# Get structured logger (logging configuration handled by LoggingManager)
+logger = get_logger(__name__)
 
 # Create the MCP server instance
 mcp = FastMCP("localdata-mcp")
+
+# Add metrics endpoint if enabled
+if logging_config.enable_metrics:
+    from prometheus_client import CONTENT_TYPE_LATEST
+    
+    @mcp.tool()
+    def get_metrics() -> str:
+        """Get Prometheus metrics for monitoring dashboards.
+        
+        Returns:
+            Prometheus-formatted metrics string
+        """
+        try:
+            with logging_manager.context(
+                operation="metrics_export",
+                component="localdata_mcp"
+            ):
+                logger.debug("Exporting Prometheus metrics")
+            
+            metrics_data = logging_manager.get_metrics()
+            return metrics_data
+            
+        except Exception as e:
+            logging_manager.log_error(e, "localdata_mcp", operation="metrics_export")
+            return f"Error exporting metrics: {e}"
 
 
 @dataclass
@@ -2258,8 +2282,38 @@ class DatabaseManager:
 
 
 def main():
-    manager = DatabaseManager()
-    mcp.run(transport="stdio")
+    """Main entry point with structured logging initialization."""
+    try:
+        # Log system startup with structured logging
+        with logging_manager.context(
+            operation="system_startup",
+            component="localdata_mcp"
+        ):
+            logger.info("LocalData MCP starting up",
+                      version="1.3.1",
+                      structured_logging_enabled=True,
+                      metrics_enabled=logging_config.enable_metrics,
+                      security_logging_enabled=logging_config.enable_security_logging)
+        
+        # Initialize database manager
+        manager = DatabaseManager()
+        
+        # Log successful initialization
+        with logging_manager.context(
+            operation="system_ready",
+            component="localdata_mcp"
+        ):
+            logger.info("LocalData MCP ready to accept connections",
+                      transport="stdio",
+                      logging_level=logging_config.level.value,
+                      metrics_endpoint=f"http://localhost:{logging_config.metrics_port}{logging_config.metrics_endpoint}" if logging_config.enable_metrics else None)
+        
+        # Start MCP server
+        mcp.run(transport="stdio")
+        
+    except Exception as e:
+        logging_manager.log_error(e, "localdata_mcp", operation="system_startup")
+        raise
 
 
 if __name__ == "__main__":
