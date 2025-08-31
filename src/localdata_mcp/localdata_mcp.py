@@ -20,6 +20,9 @@ from fastmcp import FastMCP
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.sql import quoted_name
 
+# Import SQL query parser for security validation
+from .query_parser import parse_and_validate_sql, SQLSecurityError
+
 # TOML support
 try:
     import toml
@@ -1186,6 +1189,17 @@ class DatabaseManager:
             chunk_size: Optional chunk size for pagination. If not specified, uses default chunking behavior.
         """
         try:
+            # Security validation: Only allow SELECT queries
+            try:
+                validated_query = parse_and_validate_sql(query)
+                logger.info(f"SQL query validation passed for database '{name}'")
+            except SQLSecurityError as e:
+                logger.warning(f"SQL query blocked for database '{name}': {e}")
+                return f"Security Error: {e}"
+            except Exception as e:
+                logger.error(f"Query validation error for database '{name}': {e}")
+                return f"Query validation failed: {e}"
+
             # Check memory usage before query execution
             memory_info = self._check_memory_usage()
             if memory_info.get("low_memory", False):
@@ -1197,7 +1211,7 @@ class DatabaseManager:
             self._cleanup_expired_buffers()
 
             engine = self._get_connection(name)
-            df = pd.read_sql_query(query, engine)
+            df = pd.read_sql_query(validated_query, engine)
             self.query_history[name].append(query)
 
             if df.empty:
