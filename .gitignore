@@ -131,3 +131,14 @@ test_data_*
 *github_finalization*.md
 *INFLUXDB_FIX*.md
 *LOGO_DESIGN*.md
+
+# Submission files (keep local copies only)
+docker-mcp-submission.yaml
+submission-instructions.md
+
+# Validation scripts (keep local if needed)
+validate_synchronous.py
+validate_test_fixes.py
+
+# Unused API configuration
+.env.example
