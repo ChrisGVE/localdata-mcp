@@ -17,6 +17,7 @@ from .query_parser import parse_and_validate_sql, SQLSecurityError
 from .query_analyzer import analyze_query
 from .streaming_executor import StreamingQueryExecutor, create_streaming_source
 from .timeout_manager import get_timeout_manager, QueryTimeoutError
+from .security_manager import get_security_manager, SecurityManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class EnhancedDatabaseTools:
         self.connection_manager = get_enhanced_connection_manager()
         self.config_manager = get_config_manager()
         self.timeout_manager = get_timeout_manager()
+        self.security_manager = get_security_manager()
         self.streaming_executor = StreamingQueryExecutor()
     
     def initialize_all_configured_databases(self) -> Dict[str, bool]:
@@ -119,24 +121,38 @@ class EnhancedDatabaseTools:
     
     def execute_enhanced_query(self, database_name: str, query: str, 
                              chunk_size: Optional[int] = None,
-                             enable_analysis: bool = True) -> Dict[str, Any]:
-        """Execute query using enhanced connection management.
+                             enable_analysis: bool = True,
+                             connection_id: Optional[str] = None) -> Dict[str, Any]:
+        """Execute query using enhanced connection management with enterprise security.
         
         Args:
             database_name: Name of the database
             query: SQL query to execute
             chunk_size: Optional chunk size for pagination
             enable_analysis: Whether to perform pre-query analysis
+            connection_id: Optional connection identifier for security tracking
             
         Returns:
-            Dict[str, Any]: Query execution results
+            Dict[str, Any]: Query execution results with security metadata
         """
         try:
-            # Validate query
+            # Basic SQL validation (Task 1 - QueryParser)
             try:
                 validated_query = parse_and_validate_sql(query)
             except SQLSecurityError as e:
-                return {"error": f"Security Error: {e}"}
+                return {"error": f"Basic Security Error: {e}"}
+            
+            # Advanced security validation (Task 10 - SecurityManager)
+            connection_id = connection_id or f"enhanced_db_tools_{int(time.time() * 1000)}"
+            is_secure, security_error, security_metadata = self.security_manager.validate_query_security(
+                validated_query, database_name, connection_id
+            )
+            
+            if not is_secure:
+                return {
+                    "error": f"Advanced Security Error: {security_error}",
+                    "security_metadata": security_metadata
+                }
             
             # Get engine using enhanced connection manager
             engine = self.connection_manager.get_engine(database_name)
@@ -159,83 +175,98 @@ class EnhancedDatabaseTools:
             # Generate query ID for tracking
             query_id = f"{database_name}_{int(time.time() * 1000)}"
             
-            # Execute with enhanced connection management
-            with self.connection_manager.managed_query_execution(database_name, query_id) as context:
-                # Create streaming source
-                streaming_source = create_streaming_source(
-                    engine=engine,
-                    query=validated_query,
-                    query_analysis=query_analysis
-                )
-                
-                # Determine chunk size
-                initial_chunk_size = chunk_size or (
-                    query_analysis.recommended_chunk_size if query_analysis and query_analysis.should_chunk 
-                    else 100
-                )
-                
-                # Execute with timeout management
-                timeout_config = self.timeout_manager.get_timeout_config(database_name)
-                operation_id = f"query_{query_id}"
-                
-                try:
-                    with self.timeout_manager.timeout_context(operation_id, timeout_config):
-                        first_chunk, streaming_metadata = self.streaming_executor.execute_streaming(
-                            streaming_source,
-                            query_id,
-                            initial_chunk_size,
-                            database_name=database_name
-                        )
+            # Execute with enterprise security and enhanced connection management
+            with self.security_manager.secure_query_execution(validated_query, database_name, connection_id) as security_context:
+                with self.connection_manager.managed_query_execution(database_name, query_id) as context:
+                    # Create streaming source
+                    streaming_source = create_streaming_source(
+                        engine=engine,
+                        query=validated_query,
+                        query_analysis=query_analysis
+                    )
                     
-                    # Process results
-                    if first_chunk.empty:
-                        result = {"data": [], "metadata": {"total_rows": 0}}
-                    else:
-                        total_rows = streaming_metadata.get("total_rows_processed", len(first_chunk))
+                    # Determine chunk size
+                    initial_chunk_size = chunk_size or (
+                        query_analysis.recommended_chunk_size if query_analysis and query_analysis.should_chunk 
+                        else 100
+                    )
+                    
+                    # Execute with timeout management
+                    timeout_config = self.timeout_manager.get_timeout_config(database_name)
+                    operation_id = f"query_{query_id}"
+                    
+                    try:
+                        with self.timeout_manager.timeout_context(operation_id, timeout_config):
+                            first_chunk, streaming_metadata = self.streaming_executor.execute_streaming(
+                                streaming_source,
+                                query_id,
+                                initial_chunk_size,
+                                database_name=database_name
+                            )
                         
-                        result = {
-                            "metadata": {
-                                "query_id": query_id,
-                                "database_name": database_name,
-                                "total_rows": total_rows,
-                                "showing_rows": f"1-{len(first_chunk)}",
-                                "chunked": total_rows > initial_chunk_size,
-                                "streaming": True,
-                                "execution_time_ms": (time.time() - context["start_time"]) * 1000
-                            },
-                            "data": json.loads(first_chunk.to_json(orient="records")),
-                            "streaming_metadata": streaming_metadata
+                        # Process results
+                        if first_chunk.empty:
+                            result = {"data": [], "metadata": {"total_rows": 0}}
+                        else:
+                            total_rows = streaming_metadata.get("total_rows_processed", len(first_chunk))
+                            
+                            result = {
+                                "metadata": {
+                                    "query_id": query_id,
+                                    "database_name": database_name,
+                                    "total_rows": total_rows,
+                                    "showing_rows": f"1-{len(first_chunk)}",
+                                    "chunked": total_rows > initial_chunk_size,
+                                    "streaming": True,
+                                    "execution_time_ms": (time.time() - context["start_time"]) * 1000
+                                },
+                                "data": json.loads(first_chunk.to_json(orient="records")),
+                                "streaming_metadata": streaming_metadata
+                            }
+                            
+                            # Add pagination if needed
+                            if total_rows > len(first_chunk):
+                                result["pagination"] = {
+                                    "next_chunk": f"next_chunk(query_id='{query_id}', start_row={len(first_chunk) + 1}, chunk_size=100)",
+                                    "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={len(first_chunk) + 1}, chunk_size='all')"
+                                }
+                        
+                        # Add analysis results
+                        if query_analysis:
+                            result["analysis"] = {
+                                "estimated_rows": query_analysis.estimated_rows,
+                                "actual_rows": len(first_chunk),
+                                "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
+                                "complexity_score": query_analysis.complexity_score,
+                                "risk_levels": {
+                                    "memory": query_analysis.memory_risk_level,
+                                    "tokens": query_analysis.token_risk_level,
+                                    "timeout": query_analysis.timeout_risk_level
+                                }
+                            }
+                        
+                        # Add security metadata to results
+                        result["security"] = {
+                            "fingerprint": security_metadata["fingerprint"],
+                            "threat_level": security_metadata["threat_level"].value,
+                            "checks_performed": security_metadata["checks_performed"],
+                            "validation_time": security_metadata["validation_time"],
+                            "complexity": security_metadata.get("complexity", {}),
+                            "attack_patterns": security_metadata.get("attack_patterns", [])
                         }
                         
-                        # Add pagination if needed
-                        if total_rows > len(first_chunk):
-                            result["pagination"] = {
-                                "next_chunk": f"next_chunk(query_id='{query_id}', start_row={len(first_chunk) + 1}, chunk_size=100)",
-                                "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={len(first_chunk) + 1}, chunk_size='all')"
-                            }
-                    
-                    # Add analysis results
-                    if query_analysis:
-                        result["analysis"] = {
-                            "estimated_rows": query_analysis.estimated_rows,
-                            "actual_rows": len(first_chunk),
-                            "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
-                            "complexity_score": query_analysis.complexity_score,
-                            "risk_levels": {
-                                "memory": query_analysis.memory_risk_level,
-                                "tokens": query_analysis.token_risk_level,
-                                "timeout": query_analysis.timeout_risk_level
+                        return result
+                        
+                    except QueryTimeoutError as e:
+                        return {
+                            "error": f"Query timeout: {e.message}",
+                            "timeout_reason": e.timeout_reason.value,
+                            "execution_time": e.execution_time,
+                            "security": {
+                                "fingerprint": security_metadata["fingerprint"],
+                                "threat_level": security_metadata["threat_level"].value
                             }
                         }
-                    
-                    return result
-                    
-                except QueryTimeoutError as e:
-                    return {
-                        "error": f"Query timeout: {e.message}",
-                        "timeout_reason": e.timeout_reason.value,
-                        "execution_time": e.execution_time
-                    }
                     
         except Exception as e:
             logger.error(f"Enhanced query execution failed: {e}")
@@ -286,18 +317,28 @@ def connect_enhanced_database(name: str) -> str:
 
 
 @enhanced_mcp.tool
-def execute_enhanced_query(name: str, query: str, chunk_size: Optional[int] = None) -> str:
-    """Execute a query using enhanced connection management with improved resource handling.
+def execute_enhanced_query(name: str, query: str, chunk_size: Optional[int] = None, 
+                         connection_id: Optional[str] = None) -> str:
+    """Execute a query using enhanced connection management with enterprise-grade security.
     
     Provides automatic resource management, health monitoring, timeout handling,
-    and comprehensive query analysis.
+    comprehensive query analysis, and advanced security validation.
+    
+    Features:
+    - Basic SQL injection prevention (SELECT-only queries)
+    - Advanced attack pattern detection (UNION, time-based, boolean-blind, etc.)
+    - Rate limiting per connection with configurable thresholds
+    - Resource exhaustion protection with memory and CPU monitoring
+    - Query fingerprinting and comprehensive audit logging
+    - Query complexity analysis and limits enforcement
     
     Args:
         name: Database name
-        query: SQL query to execute
+        query: SQL query to execute (must be SELECT-only for security)
         chunk_size: Optional chunk size for large result sets
+        connection_id: Optional connection identifier for security tracking
     """
-    result = enhanced_tools.execute_enhanced_query(name, query, chunk_size)
+    result = enhanced_tools.execute_enhanced_query(name, query, chunk_size, connection_id=connection_id)
     return json.dumps(result, indent=2, default=str)
 
 
@@ -382,6 +423,110 @@ def get_resource_usage(name: str) -> str:
         
     except Exception as e:
         return json.dumps({"error": f"Failed to get resource usage: {str(e)}"})
+
+
+@enhanced_mcp.tool
+def get_security_statistics() -> str:
+    """Get comprehensive security statistics and event information.
+    
+    Provides insights into:
+    - Security event counts and types
+    - Rate limiting status for all connections
+    - Resource monitoring metrics
+    - Attack pattern detection results
+    - Configuration status
+    """
+    try:
+        stats = enhanced_tools.security_manager.get_security_statistics()
+        return json.dumps(stats, indent=2, default=str)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to get security statistics: {str(e)}"})
+
+
+@enhanced_mcp.tool
+def get_security_events(limit: Optional[int] = 50, 
+                       event_type: Optional[str] = None,
+                       threat_level: Optional[str] = None) -> str:
+    """Get recent security events with optional filtering.
+    
+    Args:
+        limit: Maximum number of events to return (default: 50)
+        event_type: Filter by event type (query_blocked, injection_attempt, rate_limit_exceeded, etc.)
+        threat_level: Filter by threat level (low, medium, high, critical)
+    """
+    try:
+        from .security_manager import SecurityEventType, SecurityThreatLevel
+        
+        # Parse filter parameters
+        event_types = None
+        if event_type:
+            try:
+                event_types = [SecurityEventType(event_type.lower())]
+            except ValueError:
+                return json.dumps({"error": f"Invalid event_type: {event_type}. Valid types: {', '.join([e.value for e in SecurityEventType])}"})
+        
+        threat_levels = None
+        if threat_level:
+            try:
+                threat_levels = [SecurityThreatLevel(threat_level.lower())]
+            except ValueError:
+                return json.dumps({"error": f"Invalid threat_level: {threat_level}. Valid levels: {', '.join([t.value for t in SecurityThreatLevel])}"})
+        
+        events = enhanced_tools.security_manager.get_security_events(
+            limit=limit,
+            event_types=event_types,
+            threat_levels=threat_levels
+        )
+        
+        # Convert events to dictionaries for JSON serialization
+        events_data = [event.to_dict() for event in events]
+        
+        return json.dumps({
+            "total_events": len(events_data),
+            "events": events_data
+        }, indent=2, default=str)
+        
+    except Exception as e:
+        return json.dumps({"error": f"Failed to get security events: {str(e)}"})
+
+
+@enhanced_mcp.tool
+def validate_query_security_standalone(query: str, database_name: str, 
+                                     connection_id: Optional[str] = None) -> str:
+    """Validate query security without executing it.
+    
+    Performs comprehensive security validation including:
+    - Basic SQL injection prevention
+    - Advanced attack pattern detection
+    - Query complexity analysis
+    - Rate limiting checks
+    - Resource limit validation
+    
+    Args:
+        query: SQL query to validate
+        database_name: Target database name
+        connection_id: Optional connection identifier for tracking
+    """
+    try:
+        is_valid, error_msg, metadata = enhanced_tools.security_manager.validate_query_security(
+            query, database_name, connection_id
+        )
+        
+        return json.dumps({
+            "is_valid": is_valid,
+            "error_message": error_msg,
+            "security_metadata": {
+                "fingerprint": metadata["fingerprint"],
+                "threat_level": metadata["threat_level"].value,
+                "checks_performed": metadata["checks_performed"],
+                "validation_time": metadata["validation_time"],
+                "complexity": metadata.get("complexity", {}),
+                "attack_patterns": metadata.get("attack_patterns", [])
+            }
+        }, indent=2, default=str)
+        
+    except Exception as e:
+        return json.dumps({"error": f"Security validation failed: {str(e)}"})
 
 
 @enhanced_mcp.tool
