@@ -28,6 +28,7 @@
 - [Examples](#examples)
 - [Testing & Quality](#testing--quality)
 - [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
 - [Contributing](#contributing)
 
 ## Features
@@ -403,6 +404,11 @@ describe_database("workbook")
 get_table_sample("workbook", "Sheet1")
 ```
 
+
+## Troubleshooting
+
+For comprehensive troubleshooting guidance, see [Troubleshooting Guide](TROUBLESHOOTING.md). For common questions, check the [FAQ](FAQ.md).
+
 ## Roadmap
 
 ### Completed (v1.1.0)
@@ -418,10 +424,6 @@ get_table_sample("workbook", "Sheet1")
 - **Streaming APIs**: Real-time data processing
 - **Monitoring Tools**: Connection and performance metrics
 - **Export Capabilities**: Query results to various formats
-
-## Troubleshooting
-
-For comprehensive troubleshooting guidance, see [Troubleshooting Guide](TROUBLESHOOTING.md). For common questions, check the [FAQ](FAQ.md).
 
 ## Contributing
 
