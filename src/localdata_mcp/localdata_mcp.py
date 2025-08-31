@@ -23,6 +23,9 @@ from sqlalchemy.sql import quoted_name
 # Import SQL query parser for security validation
 from .query_parser import parse_and_validate_sql, SQLSecurityError
 
+# Import query analyzer for pre-execution analysis
+from .query_analyzer import analyze_query, QueryAnalysis
+
 # TOML support
 try:
     import toml
@@ -1175,18 +1178,20 @@ class DatabaseManager:
 
 
     @mcp.tool
-    def execute_query(self, name: str, query: str, chunk_size: Optional[int] = None) -> str:
+    def execute_query(self, name: str, query: str, chunk_size: Optional[int] = None, 
+                     enable_analysis: bool = True) -> str:
         """
         Execute a SQL query and return results as JSON.
         
         For large result sets (>100 rows), automatically creates chunked response with pagination.
-        Includes memory usage check before execution to prevent server crashes.
+        Includes pre-query analysis to estimate resource usage and prevent crashes.
         Auto-clears buffers from the same database when memory is high.
 
         Args:
             name: The name of the database connection.
             query: The SQL query to execute.
-            chunk_size: Optional chunk size for pagination. If not specified, uses default chunking behavior.
+            chunk_size: Optional chunk size for pagination. If not specified, uses analysis recommendations.
+            enable_analysis: Whether to perform pre-query analysis (default: True).
         """
         try:
             # Security validation: Only allow SELECT queries
@@ -1200,6 +1205,33 @@ class DatabaseManager:
                 logger.error(f"Query validation error for database '{name}': {e}")
                 return f"Query validation failed: {e}"
 
+            engine = self._get_connection(name)
+            
+            # Pre-query analysis (optional but recommended)
+            query_analysis = None
+            if enable_analysis:
+                try:
+                    logger.info(f"Performing pre-query analysis for database '{name}'")
+                    query_analysis = analyze_query(validated_query, engine, name)
+                    
+                    # Log analysis results
+                    logger.info(f"Query analysis complete: {query_analysis.estimated_rows} rows, "
+                               f"{query_analysis.estimated_total_memory_mb:.1f}MB, "
+                               f"{query_analysis.estimated_total_tokens} tokens, "
+                               f"risks: {query_analysis.memory_risk_level}/{query_analysis.token_risk_level}/{query_analysis.timeout_risk_level}")
+                    
+                    # Check for critical risks and warn user
+                    if query_analysis.memory_risk_level == 'critical':
+                        logger.warning(f"CRITICAL memory risk detected: {query_analysis.estimated_total_memory_mb:.1f}MB estimated")
+                    
+                    if query_analysis.timeout_risk_level == 'critical':
+                        logger.warning(f"CRITICAL timeout risk detected: {query_analysis.estimated_execution_time_seconds:.1f}s estimated")
+                        
+                except Exception as e:
+                    logger.warning(f"Pre-query analysis failed for database '{name}': {e}")
+                    # Continue with execution even if analysis fails
+                    query_analysis = None
+
             # Check memory usage before query execution
             memory_info = self._check_memory_usage()
             if memory_info.get("low_memory", False):
@@ -1210,15 +1242,29 @@ class DatabaseManager:
             # Clean up expired buffers
             self._cleanup_expired_buffers()
 
-            engine = self._get_connection(name)
+            # Execute the main query
             df = pd.read_sql_query(validated_query, engine)
             self.query_history[name].append(query)
 
             if df.empty:
-                return json.dumps([])
+                # Include analysis results even for empty results
+                empty_response = {"data": []}
+                if query_analysis:
+                    empty_response["analysis"] = {
+                        "estimated_rows": query_analysis.estimated_rows,
+                        "actual_rows": 0,
+                        "analysis_accuracy": "N/A (empty result)",
+                        "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
+                    }
+                return json.dumps(empty_response)
 
-            # Determine chunking threshold - use chunk_size if provided, otherwise 100
-            threshold = chunk_size if chunk_size is not None else 100
+            # Determine chunking threshold - use analysis recommendations if available
+            if chunk_size is not None:
+                threshold = chunk_size
+            elif query_analysis and query_analysis.should_chunk:
+                threshold = query_analysis.recommended_chunk_size or 100
+            else:
+                threshold = 100  # Default threshold
 
             # Check row count for large result handling
             if len(df) > threshold:
@@ -1252,7 +1298,7 @@ class DatabaseManager:
                     self.query_buffers[query_id] = buffer
 
                 # Return first chunk with metadata
-                chunk_limit = min(chunk_size or 10, len(df))
+                chunk_limit = min(chunk_size or (query_analysis.recommended_chunk_size if query_analysis and query_analysis.recommended_chunk_size else 10), len(df))
                 first_chunk = df.head(chunk_limit)
 
                 response = {
@@ -1272,6 +1318,24 @@ class DatabaseManager:
                     },
                 }
 
+                # Add analysis results to metadata
+                if query_analysis:
+                    response["analysis"] = {
+                        "estimated_rows": query_analysis.estimated_rows,
+                        "actual_rows": len(df),
+                        "row_estimate_accuracy": f"{(1 - abs(query_analysis.estimated_rows - len(df)) / max(len(df), 1)) * 100:.1f}%",
+                        "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
+                        "estimated_tokens": query_analysis.estimated_total_tokens,
+                        "complexity_score": query_analysis.complexity_score,
+                        "risk_levels": {
+                            "memory": query_analysis.memory_risk_level,
+                            "tokens": query_analysis.token_risk_level,
+                            "timeout": query_analysis.timeout_risk_level
+                        },
+                        "recommendations": query_analysis.recommendations,
+                        "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
+                    }
+
                 return json.dumps(response, indent=2)
             else:
                 # Return all results for small result sets
@@ -1284,10 +1348,126 @@ class DatabaseManager:
                     },
                     "data": json.loads(df.to_json(orient="records"))
                 }
+                
+                # Add analysis results to metadata for small results too
+                if query_analysis:
+                    response["analysis"] = {
+                        "estimated_rows": query_analysis.estimated_rows,
+                        "actual_rows": len(df),
+                        "row_estimate_accuracy": f"{(1 - abs(query_analysis.estimated_rows - len(df)) / max(len(df), 1)) * 100:.1f}%",
+                        "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
+                        "estimated_tokens": query_analysis.estimated_total_tokens,
+                        "complexity_score": query_analysis.complexity_score,
+                        "risk_levels": {
+                            "memory": query_analysis.memory_risk_level,
+                            "tokens": query_analysis.token_risk_level,
+                            "timeout": query_analysis.timeout_risk_level
+                        },
+                        "recommendations": query_analysis.recommendations,
+                        "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
+                    }
+                
                 return json.dumps(response, indent=2)
 
         except Exception as e:
             return f"An error occurred while executing the query: {e}"
+    
+    @mcp.tool
+    def analyze_query_preview(self, name: str, query: str) -> str:
+        """
+        Analyze a SQL query without executing it to preview resource requirements.
+        
+        This tool performs the same pre-query analysis as execute_query but without
+        actually running the main query. Useful for understanding query complexity,
+        estimated resource usage, and getting recommendations before execution.
+
+        Args:
+            name: The name of the database connection.
+            query: The SQL query to analyze.
+        """
+        try:
+            # Security validation: Only allow SELECT queries
+            try:
+                validated_query = parse_and_validate_sql(query)
+                logger.info(f"SQL query validation passed for preview analysis on database '{name}'")
+            except SQLSecurityError as e:
+                logger.warning(f"SQL query blocked for preview analysis on database '{name}': {e}")
+                return f"Security Error: {e}"
+            except Exception as e:
+                logger.error(f"Query validation error for preview analysis on database '{name}': {e}")
+                return f"Query validation failed: {e}"
+
+            engine = self._get_connection(name)
+            
+            # Perform query analysis
+            try:
+                logger.info(f"Performing query preview analysis for database '{name}'")
+                query_analysis = analyze_query(validated_query, engine, name)
+                
+                # Build comprehensive analysis response
+                response = {
+                    "query_info": {
+                        "query_hash": query_analysis.query_hash,
+                        "complexity_score": query_analysis.complexity_score,
+                        "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
+                    },
+                    "estimates": {
+                        "rows": query_analysis.estimated_rows,
+                        "memory_mb": query_analysis.estimated_total_memory_mb,
+                        "tokens": query_analysis.estimated_total_tokens,
+                        "execution_time_seconds": query_analysis.estimated_execution_time_seconds,
+                        "row_size_bytes": query_analysis.estimated_row_size_bytes
+                    },
+                    "query_features": {
+                        "has_joins": query_analysis.has_joins,
+                        "has_aggregations": query_analysis.has_aggregations,
+                        "has_subqueries": query_analysis.has_subqueries,
+                        "has_window_functions": query_analysis.has_window_functions,
+                        "column_count": query_analysis.column_count,
+                        "column_types": query_analysis.column_types
+                    },
+                    "risk_assessment": {
+                        "memory": query_analysis.memory_risk_level,
+                        "tokens": query_analysis.token_risk_level,
+                        "timeout": query_analysis.timeout_risk_level,
+                        "overall_risk": max([
+                            ['low', 'medium', 'high', 'critical'].index(query_analysis.memory_risk_level),
+                            ['low', 'medium', 'high', 'critical'].index(query_analysis.token_risk_level),
+                            ['low', 'medium', 'high', 'critical'].index(query_analysis.timeout_risk_level)
+                        ])
+                    },
+                    "recommendations": {
+                        "messages": query_analysis.recommendations,
+                        "should_chunk": query_analysis.should_chunk,
+                        "recommended_chunk_size": query_analysis.recommended_chunk_size
+                    },
+                    "sampling_info": {
+                        "count_query_time": f"{query_analysis.count_query_time:.3f}s",
+                        "sample_query_time": f"{query_analysis.sample_query_time:.3f}s",
+                        "has_sample_data": query_analysis.sample_row is not None
+                    }
+                }
+                
+                # Convert overall risk index back to string
+                risk_levels = ['low', 'medium', 'high', 'critical']
+                response["risk_assessment"]["overall_risk"] = risk_levels[response["risk_assessment"]["overall_risk"]]
+                
+                logger.info(f"Query preview analysis completed for database '{name}': "
+                           f"{query_analysis.estimated_rows} rows, {query_analysis.estimated_total_memory_mb:.1f}MB, "
+                           f"overall risk: {response['risk_assessment']['overall_risk']}")
+                
+                return json.dumps(response, indent=2)
+                
+            except Exception as e:
+                logger.error(f"Query preview analysis failed for database '{name}': {e}")
+                return f"Analysis failed: {e}"
+                
+        except ValueError as e:
+            logger.error(f"Database '{name}' not found for preview analysis: {e}")
+            return str(e)
+        except Exception as e:
+            logger.error(f"Unexpected error during query preview analysis: {e}")
+            return f"An unexpected error occurred: {e}"
 
     @mcp.tool
     def next_chunk(self, query_id: str, start_row: int, chunk_size: str) -> str:
