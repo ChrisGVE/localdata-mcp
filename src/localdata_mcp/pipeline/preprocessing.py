@@ -20,13 +20,18 @@ import warnings
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder, RobustScaler, MinMaxScaler
-from sklearn.impute import SimpleImputer, KNNImputer
-from sklearn.ensemble import IsolationForest
+# Enable experimental IterativeImputer
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
+from sklearn.ensemble import IsolationForest, RandomForestRegressor, ExtraTreesRegressor
 from sklearn.neighbors import LocalOutlierFactor
+from sklearn.model_selection import cross_val_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sklearn.cluster import DBSCAN
 from difflib import SequenceMatcher
 from fuzzywuzzy import fuzz
 import re
+from scipy import stats
 
 from .base import (
     AnalysisPipelineBase,
@@ -36,6 +41,7 @@ from .base import (
     ErrorClassification
 )
 from ..logging_manager import get_logger
+from .missing_value_handler import MissingValueHandler, MissingValuePattern, ImputationQuality, ImputationMetadata
 
 logger = get_logger(__name__)
 
@@ -1271,3 +1277,4 @@ class DataCleaningPipeline(AnalysisPipelineBase):
             return False
         
         return self._quality_metrics_after.overall_quality_score >= self.quality_thresholds['overall_threshold']
+

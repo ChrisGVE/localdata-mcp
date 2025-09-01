@@ -24,6 +24,7 @@ except ImportError:
     fuzz = None
 
 from ..logging_manager import get_logger
+from .missing_value_handler import MissingValueHandler
 
 logger = get_logger(__name__)
 
@@ -171,59 +172,82 @@ def _handle_basic_missing_values(self, data: pd.DataFrame) -> Tuple[pd.DataFrame
     return result_data, metadata
 
 def _intelligent_missing_value_handling(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-    """Intelligent missing value handling using advanced sklearn methods."""
-    result_data = data.copy()
-    imputation_log = {}
-    records_affected = 0
+    """Intelligent missing value handling using the sophisticated MissingValueHandler."""
     
-    # Advanced imputation for numeric columns
-    numeric_cols = data.select_dtypes(include=['number']).columns
-    if len(numeric_cols) > 1 and any(data[col].isnull().sum() > 0 for col in numeric_cols):
-        try:
-            # Use KNN imputation for numeric columns
-            knn_imputer = KNNImputer(n_neighbors=min(5, len(data)//10 + 1))
-            numeric_data = data[numeric_cols]
-            imputed_numeric = knn_imputer.fit_transform(numeric_data)
-            
-            for i, col in enumerate(numeric_cols):
-                if numeric_data[col].isnull().sum() > 0:
-                    result_data[col] = imputed_numeric[:, i]
-                    imputation_log[col] = {'method': 'knn', 'n_neighbors': knn_imputer.n_neighbors}
-                    records_affected += numeric_data[col].isnull().sum()
-        except Exception as e:
-            # Fallback to median imputation
-            for col in numeric_cols:
-                if data[col].isnull().sum() > 0:
-                    median_val = data[col].median()
-                    result_data[col].fillna(median_val, inplace=True)
-                    imputation_log[col] = {'method': 'median_fallback', 'value': median_val}
-                    records_affected += data[col].isnull().sum()
+    # Determine complexity level based on cleaning intensity
+    if self.cleaning_intensity == "minimal":
+        complexity = "minimal"
+    elif self.cleaning_intensity == "auto":
+        complexity = "auto"
+    elif self.cleaning_intensity == "comprehensive":
+        complexity = "comprehensive"
+    else:
+        complexity = "auto"
     
-    # Mode imputation for categorical with frequency-based selection
-    categorical_cols = data.select_dtypes(include=['object', 'category']).columns
-    for col in categorical_cols:
-        if data[col].isnull().sum() > 0:
-            # Use the most frequent value, but if it's very rare, use 'unknown'
-            value_counts = data[col].value_counts()
-            if len(value_counts) > 0 and value_counts.iloc[0] / len(data) > 0.05:
-                mode_val = value_counts.index[0]
-                method = 'mode'
-            else:
-                mode_val = 'unknown'
-                method = 'unknown_substitution'
-            
-            result_data[col].fillna(mode_val, inplace=True)
-            imputation_log[col] = {'method': method, 'value': mode_val}
-            records_affected += data[col].isnull().sum()
+    # Initialize MissingValueHandler with appropriate configuration
+    missing_handler = MissingValueHandler(
+        analytical_intention=f"Handle missing values for {self.analytical_intention}",
+        strategy="auto",  # Let handler decide optimal strategy
+        complexity=complexity,
+        cross_validation=complexity in ["auto", "comprehensive"],
+        metadata_tracking=True,
+        streaming_config=self.streaming_config,
+        custom_parameters={
+            'quality_thresholds': {
+                'min_accuracy': 0.7,
+                'max_mse_increase': 0.2,
+                'min_correlation_preservation': 0.8,
+                'max_distribution_deviation': 0.1
+            }
+        }
+    )
     
-    metadata = {
-        "parameters": {"strategy": "intelligent"},
-        "records_affected": records_affected,
-        "imputation_log": imputation_log,
-        "reversibility_data": {"missing_positions": data.isnull().to_dict()}
-    }
-    
-    return result_data, metadata
+    try:
+        # Execute sophisticated missing value handling
+        result_data, handler_metadata = missing_handler.analyze(data)
+        
+        # Extract key metrics for integration with cleaning pipeline
+        imputation_results = handler_metadata.get('imputation_results', {})
+        missing_analysis = handler_metadata.get('missing_value_analysis', {})
+        
+        records_affected = imputation_results.get('original_missing_values', 0) - imputation_results.get('final_missing_values', 0)
+        
+        # Build metadata compatible with cleaning pipeline format
+        metadata = {
+            "parameters": {
+                "strategy": "sophisticated_sklearn",
+                "complexity": complexity,
+                "pattern_detected": missing_analysis.get('pattern_type', 'unknown'),
+                "pattern_confidence": missing_analysis.get('pattern_confidence', 0.0)
+            },
+            "records_affected": records_affected,
+            "imputation_log": {
+                "missing_pattern": missing_analysis.get('pattern_type', 'unknown'),
+                "strategy_used": handler_metadata.get('imputation_pipeline', {}).get('strategy', 'auto'),
+                "cross_validation": handler_metadata.get('imputation_pipeline', {}).get('cross_validation', False),
+                "imputation_complete": imputation_results.get('imputation_complete', False),
+                "columns_imputed": imputation_results.get('columns_imputed', 0)
+            },
+            "quality_assessment": handler_metadata.get('quality_assessment', {}),
+            "reversibility_data": {
+                "missing_positions": data.isnull().to_dict(),
+                "imputation_artifacts": handler_metadata.get('composition_context', {}).get('imputation_artifacts', {})
+            },
+            "sophisticated_handler_metadata": handler_metadata  # Full metadata for advanced use
+        }
+        
+        logger.info("Sophisticated missing value handling completed",
+                   pattern_type=missing_analysis.get('pattern_type'),
+                   records_affected=records_affected,
+                   imputation_complete=imputation_results.get('imputation_complete', False))
+        
+        return result_data, metadata
+        
+    except Exception as e:
+        logger.error(f"Sophisticated missing value handling failed: {e}")
+        
+        # Fallback to basic missing value handling
+        return _handle_basic_missing_values(self, data)
 
 def _advanced_outlier_detection(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """Advanced outlier detection using sklearn IsolationForest and LocalOutlierFactor."""
