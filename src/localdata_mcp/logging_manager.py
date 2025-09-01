@@ -30,6 +30,7 @@ class LogContext:
     session_id: Optional[str] = None
     user_id: Optional[str] = None
     operation: Optional[str] = None
+    component: Optional[str] = None
     database_name: Optional[str] = None
     query_hash: Optional[str] = None
     start_time: Optional[float] = None
