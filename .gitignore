@@ -171,5 +171,12 @@ submission-instructions.md.local
 stress_testing/
 benchmark_results/
 iot_test_data/
+iot_data/
+memory_test_results/
+financial_test_data/
+ecommerce_data/
+ecommerce_test_data/
+csv_test_data/
+concurrent_test_results/
 scripts/run_benchmarks.py
 scripts/test_benchmarks.py
