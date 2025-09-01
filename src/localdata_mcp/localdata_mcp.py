@@ -1169,7 +1169,6 @@ class DatabaseManager:
     # Requested Tools
     # =========================================================
 
-    @mcp.tool
     def connect_database(self, name: str, db_type: str, conn_string: str, sheet_name: Optional[str] = None):
         """
         Open a connection to a database.
@@ -2390,7 +2389,6 @@ class DatabaseManager:
             logger.error(f"Error checking compatibility: {e}")
             return f"Error checking compatibility: {e}"
 
-    @mcp.tool
     def profile_table(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None, 
                      sample_size: int = 10000, include_distributions: bool = True) -> str:
         """
@@ -2419,8 +2417,7 @@ class DatabaseManager:
             if name not in self.connections:
                 return f"Database '{name}' is not connected. Use connect_database first."
             
-            conn_info = self.connections[name]
-            engine = conn_info['engine']
+            engine = self._get_connection(name)
             
             # Build the profiling query
             if table_name:
@@ -2690,7 +2687,6 @@ class DatabaseManager:
         
         return metrics
 
-    @mcp.tool
     def detect_data_types(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                          sample_size: int = 5000, confidence_threshold: float = 0.8) -> str:
         """
@@ -2720,8 +2716,7 @@ class DatabaseManager:
             if name not in self.connections:
                 return f"Database '{name}' is not connected. Use connect_database first."
             
-            conn_info = self.connections[name]
-            engine = conn_info['engine']
+            engine = self._get_connection(name)
             
             # Build the analysis query
             if table_name:
@@ -3084,7 +3079,6 @@ class DatabaseManager:
         
         return feasibility
 
-    @mcp.tool
     def analyze_distributions(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                              columns: Optional[str] = None, sample_size: int = 10000, 
                              bins: int = 20, percentiles: Optional[str] = None) -> str:
@@ -3116,8 +3110,7 @@ class DatabaseManager:
             if name not in self.connections:
                 return f"Database '{name}' is not connected. Use connect_database first."
             
-            conn_info = self.connections[name]
-            engine = conn_info['engine']
+            engine = self._get_connection(name)
             
             # Build the analysis query
             if table_name:
@@ -3461,6 +3454,95 @@ class DatabaseManager:
             return "strong"
 
 
+# Global DatabaseManager instance for MCP tool binding
+# This fixes the MCP interface compatibility issue identified in validation
+_db_manager = None
+
+# MCP tool wrappers - bind instance methods to global MCP server
+# This fixes the MCP interface compatibility issue identified in validation
+
+# Essential MCP tool wrapper - needed for test compatibility
+@mcp.tool
+def connect_database(name: str, db_type: str, conn_string: str, sheet_name: Optional[str] = None):
+    """
+    Open a connection to a database.
+
+    Args:
+        name: A unique name to identify the connection (e.g., "analytics_db", "user_data").
+        db_type: The type of the database ("sqlite", "postgresql", "mysql", "duckdb", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5").
+        conn_string: The connection string or file path for the database.
+        sheet_name: Optional sheet name to load from Excel/ODS/Numbers files, or dataset name for HDF5 files. If not specified, all sheets/datasets are loaded.
+    """
+    return _db_manager.connect_database(name, db_type, conn_string, sheet_name)
+
+@mcp.tool
+def profile_table(name: str, table_name: Optional[str] = None, query: Optional[str] = None, 
+                 sample_size: int = 10000, include_distributions: bool = True) -> str:
+    """
+    Generate comprehensive data profile with statistics, data quality metrics, and distribution analysis.
+    
+    This tool provides industry-standard data profiling including completeness, uniqueness, validity,
+    and consistency analysis. Optimized for large datasets using streaming architecture.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table to profile (mutually exclusive with query)
+        query: Custom SQL query to profile (mutually exclusive with table_name)
+        sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
+        include_distributions: Whether to include distribution analysis for numeric columns
+        
+    Returns:
+        Comprehensive data profile in JSON format with statistics and quality metrics
+    """
+    return _db_manager.profile_table(name, table_name, query, sample_size, include_distributions)
+
+@mcp.tool
+def detect_data_types(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                     sample_size: int = 5000, confidence_threshold: float = 0.8) -> str:
+    """
+    Intelligent data type detection beyond schema inference with pattern recognition and semantic analysis.
+    
+    Performs advanced data type detection including pattern matching for emails, URLs, dates, IDs,
+    and semantic analysis for addresses, phone numbers. Provides confidence scoring and conversion
+    recommendations.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table to analyze (mutually exclusive with query)
+        query: Custom SQL query to analyze (mutually exclusive with table_name)
+        sample_size: Number of rows to sample for analysis (default: 5000, 0 = all rows)
+        confidence_threshold: Minimum confidence level for suggestions (0.0-1.0)
+        
+    Returns:
+        Data type detection results with confidence scores and conversion recommendations
+    """
+    return _db_manager.detect_data_types(name, table_name, query, sample_size, confidence_threshold)
+
+@mcp.tool
+def analyze_distributions(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                         columns: Optional[str] = None, sample_size: int = 10000, 
+                         bins: int = 20, percentiles: Optional[str] = None) -> str:
+    """
+    Column-wise distribution analysis with histograms, percentiles, and statistical pattern detection.
+    
+    Provides comprehensive distribution analysis including histogram generation, percentile analysis,
+    statistical moments, and distribution pattern detection for data exploration insights.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table to analyze (mutually exclusive with query)
+        query: Custom SQL query to analyze (mutually exclusive with table_name)
+        columns: Comma-separated list of columns to analyze (default: all numeric columns)
+        sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
+        bins: Number of bins for histogram generation (default: 20)
+        percentiles: Comma-separated percentiles to calculate (e.g., "10,25,50,75,90")
+        
+    Returns:
+        Detailed distribution analysis with histograms and statistical measures in JSON format
+    """
+    return _db_manager.analyze_distributions(name, table_name, query, columns, sample_size, bins, percentiles)
+
+
 def main():
     """Main entry point with structured logging initialization."""
     try:
@@ -3476,7 +3558,9 @@ def main():
                       security_logging_enabled=logging_config.enable_security_logging)
         
         # Initialize database manager
-        manager = DatabaseManager()
+        global _db_manager
+        _db_manager = DatabaseManager()
+        manager = _db_manager  # Keep existing variable for backward compatibility
         
         # Log successful initialization
         with logging_manager.context(
