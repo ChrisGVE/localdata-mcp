@@ -3084,6 +3084,382 @@ class DatabaseManager:
         
         return feasibility
 
+    @mcp.tool
+    def analyze_distributions(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                             columns: Optional[str] = None, sample_size: int = 10000, 
+                             bins: int = 20, percentiles: Optional[str] = None) -> str:
+        """
+        Column-wise distribution analysis with histograms, percentiles, and statistical pattern detection.
+        
+        Provides comprehensive distribution analysis including histogram generation, percentile analysis,
+        statistical moments, and distribution pattern detection for data exploration insights.
+        
+        Args:
+            name: Database connection name
+            table_name: Name of the table to analyze (mutually exclusive with query)
+            query: Custom SQL query to analyze (mutually exclusive with table_name)
+            columns: Comma-separated list of columns to analyze (default: all numeric columns)
+            sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
+            bins: Number of bins for histogram generation (default: 20)
+            percentiles: Comma-separated percentiles to calculate (e.g., "10,25,50,75,90")
+            
+        Returns:
+            Detailed distribution analysis with histograms and statistical measures in JSON format
+        """
+        try:
+            if not table_name and not query:
+                return "Error: Either table_name or query must be provided"
+            
+            if table_name and query:
+                return "Error: Provide either table_name or query, not both"
+                
+            if name not in self.connections:
+                return f"Database '{name}' is not connected. Use connect_database first."
+            
+            conn_info = self.connections[name]
+            engine = conn_info['engine']
+            
+            # Build the analysis query
+            if table_name:
+                if sample_size > 0:
+                    dist_query = f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}"
+                else:
+                    dist_query = f"SELECT * FROM {table_name}"
+            else:
+                if sample_size > 0:
+                    dist_query = f"SELECT * FROM ({query}) AS subquery ORDER BY RANDOM() LIMIT {sample_size}"
+                else:
+                    dist_query = query
+            
+            # Execute query to get data for distribution analysis
+            with engine.connect() as connection:
+                try:
+                    result = connection.execute(text(dist_query))
+                    
+                    # Convert to pandas DataFrame for analysis
+                    df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                    
+                    if df.empty:
+                        return json.dumps({"error": "No data returned from query"}, indent=2)
+                    
+                    # Determine columns to analyze
+                    if columns:
+                        analyze_columns = [col.strip() for col in columns.split(',')]
+                        # Validate columns exist
+                        missing_cols = [col for col in analyze_columns if col not in df.columns]
+                        if missing_cols:
+                            return json.dumps({"error": f"Columns not found: {missing_cols}"}, indent=2)
+                    else:
+                        # Default to numeric columns only
+                        analyze_columns = df.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns.tolist()
+                    
+                    if not analyze_columns:
+                        return json.dumps({"error": "No numeric columns found for distribution analysis"}, indent=2)
+                    
+                    # Parse percentiles
+                    if percentiles:
+                        try:
+                            percentile_list = [float(p.strip()) / 100 for p in percentiles.split(',')]
+                            percentile_list = [p for p in percentile_list if 0 <= p <= 1]
+                        except ValueError:
+                            return json.dumps({"error": "Invalid percentiles format. Use comma-separated numbers (e.g., '10,25,50,75,90')"}, indent=2)
+                    else:
+                        percentile_list = [0.05, 0.10, 0.25, 0.5, 0.75, 0.90, 0.95]
+                    
+                    # Perform distribution analysis
+                    distribution_analysis = self._analyze_column_distributions(
+                        df, analyze_columns, bins, percentile_list
+                    )
+                    
+                    # Add metadata
+                    distribution_analysis['metadata'] = {
+                        'source_database': name,
+                        'source_table': table_name,
+                        'custom_query': query is not None,
+                        'columns_analyzed': analyze_columns,
+                        'sample_size': sample_size,
+                        'actual_rows_analyzed': len(df),
+                        'histogram_bins': bins,
+                        'percentiles': [p * 100 for p in percentile_list],
+                        'analysis_timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                    
+                    return json.dumps(distribution_analysis, indent=2, default=str)
+                    
+                except Exception as e:
+                    logger.error(f"Error executing distribution analysis query: {e}")
+                    return f"Error executing distribution analysis query: {e}"
+                    
+        except Exception as e:
+            logger.error(f"Error analyzing distributions: {e}")
+            return f"Error analyzing distributions: {e}"
+    
+    def _analyze_column_distributions(self, df: pd.DataFrame, columns: List[str], 
+                                    bins: int, percentiles: List[float]) -> Dict[str, Any]:
+        """
+        Analyze distributions for specified columns.
+        
+        Args:
+            df: Pandas DataFrame to analyze
+            columns: List of column names to analyze
+            bins: Number of histogram bins
+            percentiles: List of percentiles to calculate (as decimals 0-1)
+            
+        Returns:
+            Dictionary containing distribution analysis for each column
+        """
+        analysis = {
+            'summary': {
+                'columns_analyzed': len(columns),
+                'total_data_points': len(df),
+                'analysis_type': 'distribution_analysis'
+            },
+            'columns': {},
+            'cross_column_analysis': {}
+        }
+        
+        # Analyze each column individually
+        for column in columns:
+            try:
+                col_data = df[column].dropna()
+                
+                if len(col_data) == 0:
+                    analysis['columns'][column] = {
+                        'error': 'No non-null data available for analysis'
+                    }
+                    continue
+                
+                # Basic statistics
+                col_analysis = {
+                    'basic_stats': {
+                        'count': int(len(col_data)),
+                        'mean': float(col_data.mean()),
+                        'median': float(col_data.median()),
+                        'std': float(col_data.std()) if len(col_data) > 1 else 0,
+                        'variance': float(col_data.var()) if len(col_data) > 1 else 0,
+                        'min': float(col_data.min()),
+                        'max': float(col_data.max()),
+                        'range': float(col_data.max() - col_data.min())
+                    }
+                }
+                
+                # Statistical moments
+                if len(col_data) > 2:
+                    col_analysis['moments'] = {
+                        'skewness': float(col_data.skew()),
+                        'kurtosis': float(col_data.kurtosis()),
+                        'skewness_interpretation': self._interpret_skewness(col_data.skew()),
+                        'kurtosis_interpretation': self._interpret_kurtosis(col_data.kurtosis())
+                    }
+                
+                # Percentile analysis
+                percentile_values = col_data.quantile(percentiles)
+                col_analysis['percentiles'] = {
+                    f'p{int(p*100)}': float(percentile_values[p]) for p in percentiles
+                }
+                
+                # Histogram generation
+                try:
+                    hist_data, bin_edges = self._generate_histogram(col_data, bins)
+                    col_analysis['histogram'] = {
+                        'bins': [float(x) for x in bin_edges],
+                        'frequencies': [int(x) for x in hist_data],
+                        'bin_width': float((col_data.max() - col_data.min()) / bins) if bins > 0 else 0
+                    }
+                except Exception as e:
+                    col_analysis['histogram'] = {'error': f'Histogram generation failed: {e}'}
+                
+                # Outlier analysis using IQR method
+                try:
+                    q1, q3 = col_data.quantile([0.25, 0.75])
+                    iqr = q3 - q1
+                    lower_bound = q1 - 1.5 * iqr
+                    upper_bound = q3 + 1.5 * iqr
+                    
+                    outliers = col_data[(col_data < lower_bound) | (col_data > upper_bound)]
+                    col_analysis['outliers'] = {
+                        'count': int(len(outliers)),
+                        'percentage': float((len(outliers) / len(col_data)) * 100),
+                        'lower_bound': float(lower_bound),
+                        'upper_bound': float(upper_bound),
+                        'outlier_values': outliers.head(10).tolist()  # Sample of outliers
+                    }
+                except Exception as e:
+                    col_analysis['outliers'] = {'error': f'Outlier analysis failed: {e}'}
+                
+                # Distribution pattern detection
+                col_analysis['distribution_patterns'] = self._detect_distribution_patterns(col_data)
+                
+                # Normality testing
+                try:
+                    from scipy import stats
+                    if len(col_data) >= 3:
+                        shapiro_stat, shapiro_p = stats.shapiro(col_data.head(5000))  # Limit for performance
+                        _, normaltest_p = stats.normaltest(col_data)
+                        
+                        col_analysis['normality_tests'] = {
+                            'shapiro_wilk': {
+                                'statistic': float(shapiro_stat),
+                                'p_value': float(shapiro_p),
+                                'is_normal': bool(shapiro_p > 0.05)
+                            },
+                            'd_agostino_pearson': {
+                                'p_value': float(normaltest_p),
+                                'is_normal': bool(normaltest_p > 0.05)
+                            },
+                            'interpretation': 'Normal distribution' if shapiro_p > 0.05 and normaltest_p > 0.05 else 'Non-normal distribution'
+                        }
+                except ImportError:
+                    col_analysis['normality_tests'] = {'note': 'Advanced normality testing requires scipy'}
+                except Exception as e:
+                    col_analysis['normality_tests'] = {'error': f'Normality testing failed: {e}'}
+                
+                analysis['columns'][column] = col_analysis
+                
+            except Exception as e:
+                analysis['columns'][column] = {'error': f'Column analysis failed: {e}'}
+        
+        # Cross-column correlation analysis
+        if len(columns) > 1:
+            try:
+                numeric_df = df[columns].select_dtypes(include=['int64', 'float64', 'int32', 'float32'])
+                if len(numeric_df.columns) > 1:
+                    correlation_matrix = numeric_df.corr()
+                    
+                    # Find high correlations
+                    high_correlations = []
+                    for i, col1 in enumerate(correlation_matrix.columns):
+                        for j, col2 in enumerate(correlation_matrix.columns):
+                            if i < j:  # Avoid duplicates
+                                corr_value = correlation_matrix.loc[col1, col2]
+                                if abs(corr_value) > 0.5:
+                                    high_correlations.append({
+                                        'column_1': col1,
+                                        'column_2': col2,
+                                        'correlation': float(corr_value),
+                                        'strength': self._interpret_correlation(abs(corr_value))
+                                    })
+                    
+                    analysis['cross_column_analysis'] = {
+                        'correlation_matrix': correlation_matrix.to_dict(),
+                        'high_correlations': high_correlations,
+                        'correlation_summary': f"Found {len(high_correlations)} high correlations (|r| > 0.5)"
+                    }
+            except Exception as e:
+                analysis['cross_column_analysis'] = {'error': f'Correlation analysis failed: {e}'}
+        
+        return analysis
+    
+    def _generate_histogram(self, data: pd.Series, bins: int) -> tuple:
+        """Generate histogram data for a numeric series."""
+        # Use pandas cut for consistent binning
+        hist, bin_edges = pd.cut(data, bins=bins, retbins=True, duplicates='drop')
+        frequencies = hist.value_counts().sort_index()
+        
+        # Convert to arrays
+        hist_data = frequencies.values
+        
+        return hist_data, bin_edges
+    
+    def _detect_distribution_patterns(self, data: pd.Series) -> Dict[str, Any]:
+        """Detect common distribution patterns in the data."""
+        patterns = {
+            'pattern_detected': [],
+            'confidence_scores': {},
+            'characteristics': []
+        }
+        
+        # Basic pattern detection based on statistical measures
+        try:
+            mean_val = data.mean()
+            median_val = data.median()
+            std_val = data.std()
+            skew_val = data.skew()
+            kurt_val = data.kurtosis()
+            
+            # Uniform distribution detection
+            cv = std_val / mean_val if mean_val != 0 else float('inf')
+            if abs(skew_val) < 0.5 and abs(kurt_val) < 0.5 and cv < 0.5:
+                patterns['pattern_detected'].append('uniform-like')
+                patterns['confidence_scores']['uniform-like'] = 0.7
+            
+            # Normal distribution detection
+            if abs(skew_val) < 0.5 and -0.5 < kurt_val < 0.5:
+                patterns['pattern_detected'].append('normal-like')
+                patterns['confidence_scores']['normal-like'] = 0.8
+            
+            # Right-skewed distribution
+            if skew_val > 1:
+                patterns['pattern_detected'].append('right-skewed')
+                patterns['confidence_scores']['right-skewed'] = min(0.9, skew_val / 2)
+            
+            # Left-skewed distribution
+            if skew_val < -1:
+                patterns['pattern_detected'].append('left-skewed')
+                patterns['confidence_scores']['left-skewed'] = min(0.9, abs(skew_val) / 2)
+            
+            # Heavy-tailed distribution
+            if kurt_val > 3:
+                patterns['pattern_detected'].append('heavy-tailed')
+                patterns['confidence_scores']['heavy-tailed'] = min(0.9, kurt_val / 5)
+            
+            # Bimodal detection (simplified)
+            # Check for valleys in the distribution
+            try:
+                hist_data, _ = self._generate_histogram(data, 20)
+                if len(hist_data) > 5:
+                    # Simple bimodal detection: look for local minima between peaks
+                    local_mins = 0
+                    for i in range(1, len(hist_data) - 1):
+                        if hist_data[i] < hist_data[i-1] and hist_data[i] < hist_data[i+1]:
+                            local_mins += 1
+                    
+                    if local_mins >= 1 and max(hist_data) > 2 * min(hist_data[hist_data > 0]):
+                        patterns['pattern_detected'].append('potentially-bimodal')
+                        patterns['confidence_scores']['potentially-bimodal'] = 0.6
+            except:
+                pass
+            
+            # Add characteristics
+            if not patterns['pattern_detected']:
+                patterns['characteristics'].append('No clear pattern detected')
+            else:
+                patterns['characteristics'].append(f"Skewness: {skew_val:.3f}")
+                patterns['characteristics'].append(f"Kurtosis: {kurt_val:.3f}")
+                patterns['characteristics'].append(f"Coefficient of variation: {cv:.3f}")
+        
+        except Exception as e:
+            patterns['error'] = f'Pattern detection failed: {e}'
+        
+        return patterns
+    
+    def _interpret_skewness(self, skewness: float) -> str:
+        """Interpret skewness value."""
+        if abs(skewness) < 0.5:
+            return "Approximately symmetric"
+        elif skewness > 0.5:
+            return "Right-skewed (positive skew)"
+        else:
+            return "Left-skewed (negative skew)"
+    
+    def _interpret_kurtosis(self, kurtosis: float) -> str:
+        """Interpret kurtosis value."""
+        if abs(kurtosis) < 0.5:
+            return "Approximately mesokurtic (normal-like tails)"
+        elif kurtosis > 0.5:
+            return "Leptokurtic (heavy tails)"
+        else:
+            return "Platykurtic (light tails)"
+    
+    def _interpret_correlation(self, correlation: float) -> str:
+        """Interpret correlation strength."""
+        if correlation < 0.3:
+            return "weak"
+        elif correlation < 0.7:
+            return "moderate"
+        else:
+            return "strong"
+
 
 def main():
     """Main entry point with structured logging initialization."""
