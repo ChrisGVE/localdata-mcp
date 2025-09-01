@@ -1,0 +1,76 @@
+{
+  "benchmark": {
+    "timeout_seconds": 7200,
+    "retry_attempts": 3,
+    "parallel_datasets": 2,
+    "cleanup_temp_files": true,
+    "generate_html_report": true,
+    "generate_json_report": true,
+    "establish_baseline": true,
+    "detect_regressions": true
+  },
+  "datasets": {
+    "ecommerce": {
+      "enabled": true,
+      "size_gb": 5,
+      "description": "E-commerce dataset with products, customers, orders, reviews"
+    },
+    "iot": {
+      "enabled": true,
+      "size_gb": 12,
+      "description": "IoT dataset with devices, sensors, readings, telemetry"
+    },
+    "social_media": {
+      "enabled": true,
+      "size_gb": 6,
+      "description": "Social media dataset with users, posts, interactions"
+    },
+    "financial": {
+      "enabled": false,
+      "size_gb": 8,
+      "description": "Financial dataset (generator not implemented yet)"
+    }
+  },
+  "performance_testing": {
+    "memory_testing": {
+      "enabled": true,
+      "max_memory_gb": 16,
+      "streaming_threshold_mb": 1024,
+      "leak_detection": true
+    },
+    "concurrent_testing": {
+      "enabled": true,
+      "max_threads": 50,
+      "test_duration_minutes": 10,
+      "deadlock_detection": true
+    },
+    "stress_duration_minutes": 30
+  },
+  "reporting": {
+    "include_visualizations": true,
+    "include_raw_data": false,
+    "include_system_info": true,
+    "include_recommendations": true,
+    "chart_theme": "default",
+    "export_formats": ["html", "json"],
+    "comparison_thresholds": {
+      "memory_increase_warning": 20,
+      "performance_degradation_warning": 15,
+      "failure_rate_warning": 5
+    }
+  },
+  "regression_detection": {
+    "critical_threshold": 0.30,
+    "high_threshold": 0.15,
+    "medium_threshold": 0.05,
+    "low_threshold": 0.02,
+    "confidence_threshold": 0.70,
+    "trend_window_days": 30,
+    "min_samples_for_trend": 5
+  },
+  "baseline_management": {
+    "auto_create_baseline": true,
+    "baseline_retention_days": 365,
+    "baseline_types": ["development", "staging", "production"]
+  }
+}

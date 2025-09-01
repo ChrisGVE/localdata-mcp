@@ -16,18 +16,31 @@ Components:
 __version__ = "1.0.0"
 __author__ = "LocalData MCP Team"
 
-from .benchmark_orchestrator import BenchmarkOrchestrator
-from .dataset_benchmark import DatasetBenchmark
-from .performance_collector import PerformanceCollector
-from .report_generator import ReportGenerator
-from .baseline_establisher import BaselineEstablisher
-from .regression_detector import RegressionDetector
+from .benchmark_orchestrator import BenchmarkOrchestrator, BenchmarkResult, DatasetSpec
+from .dataset_benchmark import DatasetBenchmark, DatasetBenchmarkResult, QueryBenchmark
+from .performance_collector import PerformanceCollector, PerformanceReport, PerformanceMetric
+from .report_generator import ReportGenerator, ReportConfiguration
+from .baseline_establisher import BaselineEstablisher, BaselineData, BaselineComparison, BaselineType
+from .regression_detector import RegressionDetector, RegressionReport, RegressionAlert, RegressionSeverity
 
 __all__ = [
     "BenchmarkOrchestrator",
+    "BenchmarkResult",
+    "DatasetSpec",
     "DatasetBenchmark", 
+    "DatasetBenchmarkResult",
+    "QueryBenchmark",
     "PerformanceCollector",
+    "PerformanceReport",
+    "PerformanceMetric",
     "ReportGenerator",
+    "ReportConfiguration",
     "BaselineEstablisher",
-    "RegressionDetector"
+    "BaselineData",
+    "BaselineComparison", 
+    "BaselineType",
+    "RegressionDetector",
+    "RegressionReport",
+    "RegressionAlert",
+    "RegressionSeverity"
 ]
