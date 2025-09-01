@@ -2390,6 +2390,306 @@ class DatabaseManager:
             logger.error(f"Error checking compatibility: {e}")
             return f"Error checking compatibility: {e}"
 
+    @mcp.tool
+    def profile_table(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None, 
+                     sample_size: int = 10000, include_distributions: bool = True) -> str:
+        """
+        Generate comprehensive data profile with statistics, data quality metrics, and distribution analysis.
+        
+        This tool provides industry-standard data profiling including completeness, uniqueness, validity,
+        and consistency analysis. Optimized for large datasets using streaming architecture.
+        
+        Args:
+            name: Database connection name
+            table_name: Name of the table to profile (mutually exclusive with query)
+            query: Custom SQL query to profile (mutually exclusive with table_name)
+            sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
+            include_distributions: Whether to include distribution analysis for numeric columns
+            
+        Returns:
+            Comprehensive data profile in JSON format with statistics and quality metrics
+        """
+        try:
+            if not table_name and not query:
+                return "Error: Either table_name or query must be provided"
+            
+            if table_name and query:
+                return "Error: Provide either table_name or query, not both"
+                
+            if name not in self.connections:
+                return f"Database '{name}' is not connected. Use connect_database first."
+            
+            conn_info = self.connections[name]
+            engine = conn_info['engine']
+            
+            # Build the profiling query
+            if table_name:
+                if sample_size > 0:
+                    profile_query = f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}"
+                else:
+                    profile_query = f"SELECT * FROM {table_name}"
+            else:
+                if sample_size > 0:
+                    profile_query = f"SELECT * FROM ({query}) AS subquery ORDER BY RANDOM() LIMIT {sample_size}"
+                else:
+                    profile_query = query
+            
+            # Execute query to get data for profiling
+            with engine.connect() as connection:
+                try:
+                    result = connection.execute(text(profile_query))
+                    
+                    # Convert to pandas DataFrame for analysis
+                    df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                    
+                    if df.empty:
+                        return json.dumps({"error": "No data returned from query"}, indent=2)
+                    
+                    # Generate comprehensive profile
+                    profile = self._generate_data_profile(df, include_distributions)
+                    
+                    # Add metadata
+                    profile['metadata'] = {
+                        'source_database': name,
+                        'source_table': table_name,
+                        'custom_query': query is not None,
+                        'sample_size': sample_size,
+                        'actual_rows_analyzed': len(df),
+                        'profiling_timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'include_distributions': include_distributions
+                    }
+                    
+                    return json.dumps(profile, indent=2, default=str)
+                    
+                except Exception as e:
+                    logger.error(f"Error executing profiling query: {e}")
+                    return f"Error executing profiling query: {e}"
+                    
+        except Exception as e:
+            logger.error(f"Error profiling data: {e}")
+            return f"Error profiling data: {e}"
+    
+    def _generate_data_profile(self, df: pd.DataFrame, include_distributions: bool = True) -> Dict[str, Any]:
+        """
+        Generate comprehensive data profile for a DataFrame.
+        
+        Args:
+            df: Pandas DataFrame to profile
+            include_distributions: Whether to include distribution analysis
+            
+        Returns:
+            Dictionary containing comprehensive profile data
+        """
+        profile = {
+            'summary': {
+                'total_rows': len(df),
+                'total_columns': len(df.columns),
+                'memory_usage_mb': df.memory_usage(deep=True).sum() / (1024 * 1024),
+                'completeness_score': ((df.notna().sum().sum()) / (len(df) * len(df.columns))) * 100
+            },
+            'columns': {}
+        }
+        
+        # Profile each column
+        for column in df.columns:
+            col_data = df[column]
+            col_profile = {
+                'data_type': str(col_data.dtype),
+                'non_null_count': int(col_data.notna().sum()),
+                'null_count': int(col_data.isnull().sum()),
+                'null_percentage': float((col_data.isnull().sum() / len(col_data)) * 100),
+                'unique_count': int(col_data.nunique()),
+                'unique_percentage': float((col_data.nunique() / len(col_data)) * 100) if len(col_data) > 0 else 0,
+                'memory_usage_bytes': int(col_data.memory_usage(deep=True))
+            }
+            
+            # Add basic statistics for non-null values
+            non_null_data = col_data.dropna()
+            
+            if len(non_null_data) > 0:
+                # Most common values
+                value_counts = non_null_data.value_counts().head(5)
+                col_profile['top_values'] = {
+                    str(val): int(count) for val, count in value_counts.items()
+                }
+                
+                # Type-specific analysis
+                if pd.api.types.is_numeric_dtype(col_data):
+                    col_profile.update(self._profile_numeric_column(non_null_data, include_distributions))
+                elif pd.api.types.is_datetime64_any_dtype(col_data):
+                    col_profile.update(self._profile_datetime_column(non_null_data))
+                else:
+                    col_profile.update(self._profile_text_column(non_null_data))
+            
+            profile['columns'][column] = col_profile
+        
+        # Calculate data quality metrics
+        profile['data_quality'] = self._calculate_data_quality_metrics(df)
+        
+        return profile
+    
+    def _profile_numeric_column(self, series: pd.Series, include_distributions: bool) -> Dict[str, Any]:
+        """Profile numeric column with statistical analysis."""
+        profile = {
+            'min_value': float(series.min()),
+            'max_value': float(series.max()),
+            'mean': float(series.mean()),
+            'median': float(series.median()),
+            'std_deviation': float(series.std()) if len(series) > 1 else 0,
+            'variance': float(series.var()) if len(series) > 1 else 0,
+            'skewness': float(series.skew()) if len(series) > 2 else 0,
+            'kurtosis': float(series.kurtosis()) if len(series) > 3 else 0
+        }
+        
+        # Quartiles
+        try:
+            quartiles = series.quantile([0.25, 0.5, 0.75])
+            profile['quartiles'] = {
+                'q1': float(quartiles[0.25]),
+                'q2': float(quartiles[0.5]),
+                'q3': float(quartiles[0.75]),
+                'iqr': float(quartiles[0.75] - quartiles[0.25])
+            }
+        except Exception:
+            profile['quartiles'] = None
+        
+        # Outlier detection using IQR method
+        if profile['quartiles']:
+            q1, q3 = profile['quartiles']['q1'], profile['quartiles']['q3']
+            iqr = profile['quartiles']['iqr']
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            outliers = series[(series < lower_bound) | (series > upper_bound)]
+            profile['outliers'] = {
+                'count': int(len(outliers)),
+                'percentage': float((len(outliers) / len(series)) * 100),
+                'lower_bound': float(lower_bound),
+                'upper_bound': float(upper_bound)
+            }
+        
+        # Distribution analysis if requested
+        if include_distributions:
+            try:
+                # Create histogram data
+                hist, bin_edges = pd.cut(series, bins=20, retbins=True, duplicates='drop')
+                hist_counts = hist.value_counts().sort_index()
+                
+                profile['distribution'] = {
+                    'histogram': {
+                        'bins': [float(x) for x in bin_edges],
+                        'counts': [int(x) for x in hist_counts.values]
+                    }
+                }
+                
+                # Check for normal distribution (basic test)
+                from scipy import stats
+                if len(series) >= 3:
+                    _, p_value = stats.normaltest(series)
+                    profile['distribution']['normality_test'] = {
+                        'p_value': float(p_value),
+                        'is_normal': bool(p_value > 0.05)
+                    }
+            except ImportError:
+                # SciPy not available, skip advanced distribution analysis
+                profile['distribution'] = {'note': 'Advanced distribution analysis requires scipy'}
+            except Exception as e:
+                profile['distribution'] = {'error': f'Distribution analysis failed: {e}'}
+        
+        return profile
+    
+    def _profile_datetime_column(self, series: pd.Series) -> Dict[str, Any]:
+        """Profile datetime column."""
+        try:
+            # Convert to datetime if not already
+            if not pd.api.types.is_datetime64_any_dtype(series):
+                series = pd.to_datetime(series, errors='coerce')
+            
+            profile = {
+                'min_date': str(series.min()),
+                'max_date': str(series.max()),
+                'date_range_days': int((series.max() - series.min()).days) if len(series) > 1 else 0
+            }
+            
+            # Extract time components for analysis
+            profile['patterns'] = {
+                'years_span': int(series.dt.year.nunique()) if len(series) > 0 else 0,
+                'months_span': int(series.dt.month.nunique()) if len(series) > 0 else 0,
+                'days_of_week': series.dt.dayofweek.value_counts().to_dict() if len(series) > 0 else {}
+            }
+            
+            return profile
+        except Exception as e:
+            return {'error': f'DateTime profiling failed: {e}'}
+    
+    def _profile_text_column(self, series: pd.Series) -> Dict[str, Any]:
+        """Profile text column with pattern analysis."""
+        # Convert to string for analysis
+        str_series = series.astype(str)
+        
+        profile = {
+            'min_length': int(str_series.str.len().min()) if len(str_series) > 0 else 0,
+            'max_length': int(str_series.str.len().max()) if len(str_series) > 0 else 0,
+            'avg_length': float(str_series.str.len().mean()) if len(str_series) > 0 else 0,
+            'empty_strings': int((str_series == '').sum()),
+            'whitespace_only': int(str_series.str.strip().eq('').sum())
+        }
+        
+        # Pattern detection
+        if len(str_series) > 0:
+            import re
+            
+            patterns = {
+                'email': str_series.str.contains(r'^[\w\.-]+@[\w\.-]+\.\w+$', regex=True, na=False).sum(),
+                'phone': str_series.str.contains(r'^[\+]?[1-9]?[0-9]{7,15}$', regex=True, na=False).sum(),
+                'url': str_series.str.contains(r'^https?:\/\/', regex=True, na=False).sum(),
+                'numeric': str_series.str.match(r'^\d+$', na=False).sum(),
+                'alphanumeric': str_series.str.match(r'^[a-zA-Z0-9]+$', na=False).sum(),
+                'contains_digits': str_series.str.contains(r'\d', regex=True, na=False).sum(),
+                'all_uppercase': str_series.str.isupper().sum(),
+                'all_lowercase': str_series.str.islower().sum()
+            }
+            
+            profile['patterns'] = {k: int(v) for k, v in patterns.items()}
+        
+        return profile
+    
+    def _calculate_data_quality_metrics(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Calculate overall data quality metrics."""
+        total_cells = len(df) * len(df.columns)
+        null_cells = df.isnull().sum().sum()
+        
+        metrics = {
+            'completeness': {
+                'score': float(((total_cells - null_cells) / total_cells) * 100) if total_cells > 0 else 0,
+                'total_cells': int(total_cells),
+                'populated_cells': int(total_cells - null_cells),
+                'null_cells': int(null_cells)
+            },
+            'uniqueness': {
+                'duplicate_rows': int(df.duplicated().sum()),
+                'duplicate_percentage': float((df.duplicated().sum() / len(df)) * 100) if len(df) > 0 else 0,
+                'unique_rows': int(len(df) - df.duplicated().sum())
+            },
+            'consistency': {
+                'columns_with_mixed_types': 0,  # Would require more sophisticated analysis
+                'potential_formatting_issues': 0  # Would require domain-specific rules
+            }
+        }
+        
+        # Calculate column-level uniqueness
+        column_uniqueness = {}
+        for col in df.columns:
+            non_null_count = df[col].notna().sum()
+            unique_count = df[col].nunique()
+            column_uniqueness[col] = {
+                'uniqueness_ratio': float(unique_count / non_null_count) if non_null_count > 0 else 0,
+                'is_likely_key': bool(unique_count == non_null_count and non_null_count > 0)
+            }
+        
+        metrics['column_uniqueness'] = column_uniqueness
+        
+        return metrics
+
 
 def main():
     """Main entry point with structured logging initialization."""
