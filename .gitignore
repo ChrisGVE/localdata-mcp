@@ -146,3 +146,30 @@ validate_test_fixes.py
 # Task files
 # tasks.json
 # tasks/ 
+
+# Project-related files (research, benchmarks, test development)
+# Keep these files on disk but don't track in git
+ARCHITECTURE.md
+CLAUDE.md
+TASK3_COORDINATION.md
+REAL_WORLD_VALIDATION_REPORT.md
+VALIDATION_SUMMARY.md
+fuzzy-logic-ml-integration-strategy.md
+dynamic-tooling-architecture.md
+localdata-mcp-v*.txt
+*.prd.txt
+demo_token_manager.py
+llm_integration_*.py
+llm_integration_*.txt
+llm_integration_*.json
+test_phase1_*.py
+docker-mcp-submission.yaml.local
+submission-instructions.md.local
+.mcp.json
+
+# Development and testing directories
+stress_testing/
+benchmark_results/
+iot_test_data/
+scripts/run_benchmarks.py
+scripts/test_benchmarks.py
