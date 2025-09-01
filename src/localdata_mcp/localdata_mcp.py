@@ -2690,6 +2690,400 @@ class DatabaseManager:
         
         return metrics
 
+    @mcp.tool
+    def detect_data_types(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                         sample_size: int = 5000, confidence_threshold: float = 0.8) -> str:
+        """
+        Intelligent data type detection beyond schema inference with pattern recognition and semantic analysis.
+        
+        Performs advanced data type detection including pattern matching for emails, URLs, dates, IDs,
+        and semantic analysis for addresses, phone numbers. Provides confidence scoring and conversion
+        recommendations.
+        
+        Args:
+            name: Database connection name
+            table_name: Name of the table to analyze (mutually exclusive with query)
+            query: Custom SQL query to analyze (mutually exclusive with table_name)
+            sample_size: Number of rows to sample for analysis (default: 5000, 0 = all rows)
+            confidence_threshold: Minimum confidence score for type suggestions (0.0-1.0)
+            
+        Returns:
+            Detailed data type analysis with confidence scores and recommendations in JSON format
+        """
+        try:
+            if not table_name and not query:
+                return "Error: Either table_name or query must be provided"
+            
+            if table_name and query:
+                return "Error: Provide either table_name or query, not both"
+                
+            if name not in self.connections:
+                return f"Database '{name}' is not connected. Use connect_database first."
+            
+            conn_info = self.connections[name]
+            engine = conn_info['engine']
+            
+            # Build the analysis query
+            if table_name:
+                if sample_size > 0:
+                    analysis_query = f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}"
+                else:
+                    analysis_query = f"SELECT * FROM {table_name}"
+            else:
+                if sample_size > 0:
+                    analysis_query = f"SELECT * FROM ({query}) AS subquery ORDER BY RANDOM() LIMIT {sample_size}"
+                else:
+                    analysis_query = query
+            
+            # Execute query to get data for type analysis
+            with engine.connect() as connection:
+                try:
+                    result = connection.execute(text(analysis_query))
+                    
+                    # Convert to pandas DataFrame for analysis
+                    df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                    
+                    if df.empty:
+                        return json.dumps({"error": "No data returned from query"}, indent=2)
+                    
+                    # Perform intelligent type detection
+                    type_analysis = self._detect_intelligent_types(df, confidence_threshold)
+                    
+                    # Add metadata
+                    type_analysis['metadata'] = {
+                        'source_database': name,
+                        'source_table': table_name,
+                        'custom_query': query is not None,
+                        'sample_size': sample_size,
+                        'actual_rows_analyzed': len(df),
+                        'analysis_timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'confidence_threshold': confidence_threshold
+                    }
+                    
+                    return json.dumps(type_analysis, indent=2, default=str)
+                    
+                except Exception as e:
+                    logger.error(f"Error executing type analysis query: {e}")
+                    return f"Error executing type analysis query: {e}"
+                    
+        except Exception as e:
+            logger.error(f"Error detecting data types: {e}")
+            return f"Error detecting data types: {e}"
+    
+    def _detect_intelligent_types(self, df: pd.DataFrame, confidence_threshold: float) -> Dict[str, Any]:
+        """
+        Perform intelligent data type detection with pattern recognition and semantic analysis.
+        
+        Args:
+            df: Pandas DataFrame to analyze
+            confidence_threshold: Minimum confidence score for suggestions
+            
+        Returns:
+            Dictionary containing detailed type analysis for each column
+        """
+        import re
+        from datetime import datetime
+        
+        analysis = {
+            'summary': {
+                'total_columns': len(df.columns),
+                'columns_analyzed': len(df.columns),
+                'high_confidence_suggestions': 0,
+                'potential_type_conflicts': 0
+            },
+            'columns': {}
+        }
+        
+        for column in df.columns:
+            col_data = df[column]
+            non_null_data = col_data.dropna()
+            
+            if len(non_null_data) == 0:
+                analysis['columns'][column] = {
+                    'current_type': str(col_data.dtype),
+                    'suggested_type': 'null',
+                    'confidence': 0.0,
+                    'analysis': 'Column contains only null values'
+                }
+                continue
+            
+            # Convert to string for pattern analysis
+            str_data = non_null_data.astype(str)
+            total_values = len(non_null_data)
+            
+            # Perform comprehensive type detection
+            type_scores = self._calculate_type_scores(str_data, non_null_data)
+            
+            # Find the best type suggestion
+            best_type = max(type_scores.items(), key=lambda x: x[1]['confidence'])
+            suggested_type, type_info = best_type
+            
+            # Additional analysis
+            column_analysis = {
+                'current_type': str(col_data.dtype),
+                'suggested_type': suggested_type,
+                'confidence': type_info['confidence'],
+                'matches': type_info['matches'],
+                'total_values': total_values,
+                'match_percentage': (type_info['matches'] / total_values) * 100,
+                'pattern_details': type_info.get('details', {}),
+                'conversion_feasibility': self._assess_conversion_feasibility(non_null_data, suggested_type),
+                'all_type_scores': {k: v['confidence'] for k, v in type_scores.items()}
+            }
+            
+            # Add recommendations
+            if type_info['confidence'] >= confidence_threshold:
+                column_analysis['recommendation'] = f"Consider converting to {suggested_type}"
+                analysis['summary']['high_confidence_suggestions'] += 1
+            else:
+                column_analysis['recommendation'] = "Current type appears appropriate"
+            
+            # Check for type conflicts
+            if str(col_data.dtype) != 'object' and suggested_type != 'numeric':
+                analysis['summary']['potential_type_conflicts'] += 1
+                column_analysis['type_conflict'] = True
+            
+            analysis['columns'][column] = column_analysis
+        
+        return analysis
+    
+    def _calculate_type_scores(self, str_data: pd.Series, original_data: pd.Series) -> Dict[str, Dict[str, Any]]:
+        """
+        Calculate confidence scores for different data type possibilities.
+        
+        Args:
+            str_data: String representation of the data
+            original_data: Original data series
+            
+        Returns:
+            Dictionary with type scores and match details
+        """
+        import re
+        
+        total_count = len(str_data)
+        type_scores = {}
+        
+        # Email detection
+        email_pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+        email_matches = str_data.str.match(email_pattern, na=False).sum()
+        type_scores['email'] = {
+            'confidence': email_matches / total_count,
+            'matches': email_matches,
+            'details': {'pattern': 'Valid email format'}
+        }
+        
+        # Phone number detection (various formats)
+        phone_patterns = [
+            r'^\+?1?[\s-]?\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}$',  # US format
+            r'^\+?\d{1,4}[\s-]?\(?\d{1,4}\)?[\s-]?\d{1,4}[\s-]?\d{1,9}$'  # International
+        ]
+        phone_matches = 0
+        for pattern in phone_patterns:
+            phone_matches = max(phone_matches, str_data.str.match(pattern, na=False).sum())
+        
+        type_scores['phone'] = {
+            'confidence': phone_matches / total_count,
+            'matches': phone_matches,
+            'details': {'patterns': ['US format', 'International format']}
+        }
+        
+        # URL detection
+        url_pattern = r'^https?://'
+        url_matches = str_data.str.match(url_pattern, na=False).sum()
+        type_scores['url'] = {
+            'confidence': url_matches / total_count,
+            'matches': url_matches,
+            'details': {'pattern': 'HTTP/HTTPS URL'}
+        }
+        
+        # Date/DateTime detection
+        date_matches = 0
+        date_formats = [
+            '%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S',
+            '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M', '%d-%m-%Y'
+        ]
+        
+        for date_str in str_data.head(100):  # Sample for performance
+            for fmt in date_formats:
+                try:
+                    datetime.strptime(str(date_str), fmt)
+                    date_matches += 1
+                    break
+                except ValueError:
+                    continue
+        
+        # Extrapolate to full dataset
+        if len(str_data) > 100:
+            date_matches = int((date_matches / 100) * total_count)
+        
+        type_scores['datetime'] = {
+            'confidence': date_matches / total_count,
+            'matches': date_matches,
+            'details': {'formats_checked': len(date_formats)}
+        }
+        
+        # Numeric type detection (integer vs float)
+        if pd.api.types.is_numeric_dtype(original_data):
+            # Check if all values are whole numbers
+            if original_data.apply(lambda x: float(x).is_integer() if pd.notna(x) else True).all():
+                type_scores['integer'] = {
+                    'confidence': 1.0,
+                    'matches': total_count,
+                    'details': {'precision': 'All values are whole numbers'}
+                }
+                type_scores['float'] = {
+                    'confidence': 0.5,
+                    'matches': total_count,
+                    'details': {'note': 'Could be float but all values are integers'}
+                }
+            else:
+                type_scores['float'] = {
+                    'confidence': 1.0,
+                    'matches': total_count,
+                    'details': {'precision': 'Contains decimal values'}
+                }
+                type_scores['integer'] = {
+                    'confidence': 0.0,
+                    'matches': 0,
+                    'details': {'note': 'Contains non-integer values'}
+                }
+        else:
+            # Try to convert to numeric
+            numeric_convertible = pd.to_numeric(str_data, errors='coerce').notna().sum()
+            type_scores['numeric'] = {
+                'confidence': numeric_convertible / total_count,
+                'matches': numeric_convertible,
+                'details': {'convertible_values': numeric_convertible}
+            }
+        
+        # ID pattern detection
+        id_patterns = [
+            r'^\d+$',  # Simple numeric ID
+            r'^[A-Z]{2,4}\d+$',  # Alphanumeric with prefix
+            r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$',  # UUID
+            r'^[A-Za-z0-9]{8,}$'  # General alphanumeric ID
+        ]
+        
+        id_matches = 0
+        matched_pattern = None
+        for i, pattern in enumerate(id_patterns):
+            pattern_matches = str_data.str.match(pattern, na=False).sum()
+            if pattern_matches > id_matches:
+                id_matches = pattern_matches
+                matched_pattern = f"Pattern {i+1}"
+        
+        type_scores['identifier'] = {
+            'confidence': id_matches / total_count,
+            'matches': id_matches,
+            'details': {'matched_pattern': matched_pattern} if matched_pattern else {}
+        }
+        
+        # Boolean detection
+        boolean_values = set(['true', 'false', '1', '0', 'yes', 'no', 'y', 'n', 't', 'f'])
+        boolean_matches = str_data.str.lower().isin(boolean_values).sum()
+        type_scores['boolean'] = {
+            'confidence': boolean_matches / total_count,
+            'matches': boolean_matches,
+            'details': {'recognized_values': list(boolean_values)}
+        }
+        
+        # JSON detection
+        json_matches = 0
+        for val in str_data.head(100):  # Sample for performance
+            try:
+                json.loads(str(val))
+                json_matches += 1
+            except (json.JSONDecodeError, TypeError):
+                continue
+        
+        if len(str_data) > 100:
+            json_matches = int((json_matches / 100) * total_count)
+        
+        type_scores['json'] = {
+            'confidence': json_matches / total_count,
+            'matches': json_matches,
+            'details': {'valid_json_objects': json_matches}
+        }
+        
+        # Text/String (default fallback)
+        type_scores['text'] = {
+            'confidence': 0.1,  # Low baseline confidence
+            'matches': total_count,
+            'details': {'note': 'Default text classification'}
+        }
+        
+        return type_scores
+    
+    def _assess_conversion_feasibility(self, data: pd.Series, suggested_type: str) -> Dict[str, Any]:
+        """
+        Assess the feasibility of converting data to the suggested type.
+        
+        Args:
+            data: Original data series
+            suggested_type: Suggested data type
+            
+        Returns:
+            Dictionary with conversion feasibility assessment
+        """
+        feasibility = {
+            'is_feasible': False,
+            'estimated_success_rate': 0.0,
+            'potential_issues': [],
+            'recommendations': []
+        }
+        
+        if suggested_type == 'numeric':
+            try:
+                converted = pd.to_numeric(data.astype(str), errors='coerce')
+                success_rate = converted.notna().sum() / len(data)
+                feasibility['is_feasible'] = success_rate > 0.8
+                feasibility['estimated_success_rate'] = success_rate
+                
+                if success_rate < 1.0:
+                    feasibility['potential_issues'].append('Some values cannot be converted to numeric')
+                    feasibility['recommendations'].append('Review non-convertible values before conversion')
+            except Exception as e:
+                feasibility['potential_issues'].append(f'Conversion test failed: {e}')
+        
+        elif suggested_type == 'datetime':
+            # Test with common datetime formats
+            success_count = 0
+            for val in data.head(100):
+                try:
+                    pd.to_datetime(str(val))
+                    success_count += 1
+                except:
+                    continue
+            
+            success_rate = success_count / min(100, len(data))
+            feasibility['is_feasible'] = success_rate > 0.8
+            feasibility['estimated_success_rate'] = success_rate
+            
+            if success_rate < 1.0:
+                feasibility['potential_issues'].append('Some values may not parse as dates')
+                feasibility['recommendations'].append('Specify date format for reliable conversion')
+        
+        elif suggested_type == 'boolean':
+            # Check if values can be mapped to boolean
+            boolean_mapping = {'true': True, 'false': False, '1': True, '0': False, 
+                             'yes': True, 'no': False, 'y': True, 'n': False}
+            
+            str_data = data.astype(str).str.lower()
+            mappable_count = str_data.isin(boolean_mapping.keys()).sum()
+            success_rate = mappable_count / len(data)
+            
+            feasibility['is_feasible'] = success_rate > 0.8
+            feasibility['estimated_success_rate'] = success_rate
+            feasibility['recommendations'].append('Use mapping dictionary for consistent boolean conversion')
+        
+        else:
+            # For other types, assume conversion is feasible but may require validation
+            feasibility['is_feasible'] = True
+            feasibility['estimated_success_rate'] = 0.9
+            feasibility['recommendations'].append(f'Validate {suggested_type} format after conversion')
+        
+        return feasibility
+
 
 def main():
     """Main entry point with structured logging initialization."""
