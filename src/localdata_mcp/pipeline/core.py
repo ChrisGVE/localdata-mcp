@@ -170,14 +170,13 @@ class DataSciencePipeline(Pipeline):
         self._request_id = self._logging_manager.log_query_start(
             database_name="pipeline",
             query=f"fit_{self._pipeline_id}",
-            query_type="pipeline_fit"
+            database_type="pipeline_fit"
         )
         
         with self._logging_manager.context(
             request_id=self._request_id,
             operation="pipeline_fit",
-            component="data_science_pipeline",
-            pipeline_id=self._pipeline_id
+            component="data_science_pipeline"
         ):
             try:
                 # Convert input to pandas DataFrame if needed for analysis
@@ -211,8 +210,8 @@ class DataSciencePipeline(Pipeline):
                 self._logging_manager.log_query_complete(
                     request_id=self._request_id,
                     database_name="pipeline", 
-                    query_type="pipeline_fit",
-                    execution_time=self._fit_time,
+                    database_type="pipeline_fit",
+                    duration=self._fit_time,
                     success=True
                 )
                 
@@ -238,8 +237,8 @@ class DataSciencePipeline(Pipeline):
                 self._logging_manager.log_query_complete(
                     request_id=self._request_id,
                     database_name="pipeline",
-                    query_type="pipeline_fit", 
-                    execution_time=fit_time,
+                    database_type="pipeline_fit", 
+                    duration=fit_time,
                     success=False
                 )
                 
@@ -279,14 +278,13 @@ class DataSciencePipeline(Pipeline):
         request_id = self._logging_manager.log_query_start(
             database_name="pipeline",
             query=f"transform_{self._pipeline_id}",
-            query_type="pipeline_transform"
+            database_type="pipeline_transform"
         )
         
         with self._logging_manager.context(
             request_id=request_id,
             operation="pipeline_transform", 
-            component="data_science_pipeline",
-            pipeline_id=self._pipeline_id
+            component="data_science_pipeline"
         ):
             try:
                 # Convert input to pandas DataFrame if needed for analysis
@@ -312,8 +310,8 @@ class DataSciencePipeline(Pipeline):
                 self._logging_manager.log_query_complete(
                     request_id=request_id,
                     database_name="pipeline",
-                    query_type="pipeline_transform",
-                    execution_time=self._transform_time,
+                    database_type="pipeline_transform",
+                    duration=self._transform_time,
                     success=True
                 )
                 
@@ -341,8 +339,8 @@ class DataSciencePipeline(Pipeline):
                 self._logging_manager.log_query_complete(
                     request_id=request_id,
                     database_name="pipeline",
-                    query_type="pipeline_transform",
-                    execution_time=transform_time,
+                    database_type="pipeline_transform",
+                    duration=transform_time,
                     success=False
                 )
                 

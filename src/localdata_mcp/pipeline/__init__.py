@@ -23,35 +23,41 @@ from .base import (
     CompositionMetadata
 )
 
+from .core import (
+    DataSciencePipeline
+)
+
 from .input import (
     DataInputPipeline,
     DataSourceType,
     StreamingConfig
 )
 
-from .preprocessing import (
-    DataPreprocessingPipeline,  
-    PreprocessingIntent,
-    TransformationStrategy
-)
+# Note: Other pipeline modules may require additional dependencies
+# Import them separately when needed
+# from .preprocessing import (
+#     DataPreprocessingPipeline,  
+#     PreprocessingIntent,
+#     TransformationStrategy
+# )
 
-from .output import (
-    AnalysisOutputStandardizer,
-    StandardizedResult,
-    ResultQuality
-)
+# from .output import (
+#     AnalysisOutputStandardizer,
+#     StandardizedResult,
+#     ResultQuality
+# )
 
-from .error_handling import (
-    PipelineErrorHandler,
-    ErrorClassification,
-    RecoveryStrategy
-)
+# from .error_handling import (
+#     PipelineErrorHandler,
+#     ErrorClassification,
+#     RecoveryStrategy
+# )
 
-from .factory import (
-    PipelineFactory,
-    create_analysis_pipeline,
-    register_domain_pipeline
-)
+# from .factory import (
+#     PipelineFactory,
+#     create_analysis_pipeline,
+#     register_domain_pipeline
+# )
 
 __all__ = [
     # Base classes
@@ -60,30 +66,27 @@ __all__ = [
     "PipelineState",
     "CompositionMetadata",
     
+    # Core DataSciencePipeline
+    "DataSciencePipeline",
+    
     # Input pipeline
     "DataInputPipeline",
     "DataSourceType",
-    "StreamingConfig",
+    "StreamingConfig"
     
-    # Preprocessing pipeline
-    "DataPreprocessingPipeline",
-    "PreprocessingIntent", 
-    "TransformationStrategy",
-    
-    # Output standardization
-    "AnalysisOutputStandardizer",
-    "StandardizedResult",
-    "ResultQuality",
-    
-    # Error handling
-    "PipelineErrorHandler",
-    "ErrorClassification",
-    "RecoveryStrategy",
-    
-    # Pipeline factory
-    "PipelineFactory",
-    "create_analysis_pipeline",
-    "register_domain_pipeline"
+    # Additional components available when dependencies are installed
+    # "DataPreprocessingPipeline",
+    # "PreprocessingIntent", 
+    # "TransformationStrategy",
+    # "AnalysisOutputStandardizer",
+    # "StandardizedResult",
+    # "ResultQuality",
+    # "PipelineErrorHandler",
+    # "ErrorClassification",
+    # "RecoveryStrategy",
+    # "PipelineFactory",
+    # "create_analysis_pipeline",
+    # "register_domain_pipeline"
 ]
 
 # Version info

@@ -147,6 +147,9 @@ validate_test_fixes.py
 # tasks.json
 # tasks/ 
 
+# Strategic planning documents (keep local, don't track)
+DS_DOMAINS.md
+
 # Project-related files (research, benchmarks, test development)
 # Keep these files on disk but don't track in git
 ARCHITECTURE.md

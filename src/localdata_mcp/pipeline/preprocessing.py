@@ -13,12 +13,20 @@ Key Features:
 """
 
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+import warnings
 
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
-from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder, RobustScaler, MinMaxScaler
+from sklearn.impute import SimpleImputer, KNNImputer
+from sklearn.ensemble import IsolationForest
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.cluster import DBSCAN
+from difflib import SequenceMatcher
+from fuzzywuzzy import fuzz
+import re
 
 from .base import (
     AnalysisPipelineBase,
@@ -31,6 +39,62 @@ from ..logging_manager import get_logger
 
 logger = get_logger(__name__)
 
+# Suppress sklearn warnings for cleaner output
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+
+
+@dataclass
+class DataQualityMetrics:
+    """Comprehensive data quality assessment metrics."""
+    
+    # Completeness metrics
+    completeness_score: float = 0.0
+    missing_value_percentage: float = 0.0
+    
+    # Consistency metrics
+    consistency_score: float = 0.0
+    duplicate_percentage: float = 0.0
+    
+    # Validity metrics
+    validity_score: float = 0.0
+    type_conformity_percentage: float = 0.0
+    
+    # Accuracy metrics (outlier detection)
+    accuracy_score: float = 0.0
+    outlier_percentage: float = 0.0
+    
+    # Overall quality score
+    overall_quality_score: float = 0.0
+    
+    # Business rules compliance
+    business_rules_compliance: float = 0.0
+    
+    # Data profile summary
+    data_profile: Dict[str, Any] = field(default_factory=dict)
+    
+    def calculate_overall_score(self) -> float:
+        """Calculate overall data quality score from component metrics."""
+        scores = [self.completeness_score, self.consistency_score, 
+                 self.validity_score, self.accuracy_score, self.business_rules_compliance]
+        self.overall_quality_score = np.mean([s for s in scores if s > 0])
+        return self.overall_quality_score
+
+
+@dataclass
+class CleaningOperation:
+    """Record of a data cleaning operation for transparency and reversibility."""
+    
+    operation_type: str
+    column: Optional[str] = None
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    records_affected: int = 0
+    execution_time: float = 0.0
+    success: bool = True
+    error_message: Optional[str] = None
+    before_stats: Dict[str, Any] = field(default_factory=dict)
+    after_stats: Dict[str, Any] = field(default_factory=dict)
+    reversibility_data: Dict[str, Any] = field(default_factory=dict)
+    
 
 class TransformationStrategy:
     """Strategies for different preprocessing transformations."""
@@ -84,6 +148,51 @@ class TransformationStrategy:
         
         # Return most common strategy
         return max(set(strategies), key=strategies.count) if strategies else "none"
+    
+    @staticmethod
+    def duplicate_detection_strategy(data: pd.DataFrame) -> str:
+        """Automatically determine duplicate detection strategy."""
+        # For small datasets, use exact matching
+        if len(data) < 1000:
+            return "exact"
+        # For larger datasets, use hash-based detection for efficiency
+        elif len(data) < 50000:
+            return "hash_based"
+        else:
+            return "sampling_based"
+    
+    @staticmethod
+    def data_type_inference_strategy(data: pd.DataFrame) -> Dict[str, str]:
+        """Automatically determine data type inference strategies per column."""
+        strategies = {}
+        
+        for col in data.columns:
+            if data[col].dtype == 'object':
+                # Check if it might be datetime
+                sample_values = data[col].dropna().astype(str).head(100)
+                if len(sample_values) > 0:
+                    datetime_patterns = [
+                        r'\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
+                        r'\d{2}/\d{2}/\d{4}',  # MM/DD/YYYY
+                        r'\d{2}-\d{2}-\d{4}',  # MM-DD-YYYY
+                    ]
+                    is_datetime = any(re.search(pattern, str(val)) for val in sample_values[:10] for pattern in datetime_patterns)
+                    
+                    if is_datetime:
+                        strategies[col] = "datetime"
+                    else:
+                        # Try numeric conversion
+                        try:
+                            pd.to_numeric(sample_values, errors='raise')
+                            strategies[col] = "numeric"
+                        except:
+                            strategies[col] = "categorical"
+                else:
+                    strategies[col] = "categorical"
+            else:
+                strategies[col] = "preserve"
+                
+        return strategies
 
 
 class DataPreprocessingPipeline(AnalysisPipelineBase):
