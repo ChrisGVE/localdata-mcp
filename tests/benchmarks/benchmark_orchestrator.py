@@ -33,8 +33,9 @@ sys.path.insert(0, str(project_root))
 
 from stress_testing.dataset_generators.ecommerce_generator import EcommerceDataGenerator
 from stress_testing.dataset_generators.iot_generator import IoTDataGenerator
+from stress_testing.dataset_generators.financial_generator import FinancialDataGenerator
 from tests.datasets.social_media_generator import SocialMediaGenerator
-from stress_testing.performance_testing.memory_safety_framework import MemoryTestingFramework
+from stress_testing.performance_testing.memory_safety_framework import MemorySafetyTestFramework
 from stress_testing.performance_testing.concurrent_testing_framework import ConcurrentTestingFramework
 
 
@@ -149,7 +150,7 @@ class BenchmarkOrchestrator:
                 "ecommerce": {"enabled": True, "size_gb": 5},
                 "iot": {"enabled": True, "size_gb": 12}, 
                 "social_media": {"enabled": True, "size_gb": 6},
-                "financial": {"enabled": False, "size_gb": 8}  # Missing generator
+                "financial": {"enabled": True, "size_gb": 8}
             },
             "performance_testing": {
                 "memory_testing": {"enabled": True, "max_memory_gb": 16},
@@ -237,6 +238,23 @@ class BenchmarkOrchestrator:
                     "SELECT COUNT(*) FROM interactions WHERE interaction_type = 'like'"
                 ],
                 complexity_rating=7
+            ))
+        
+        # Financial Dataset (8GB)
+        if self.config["datasets"]["financial"]["enabled"]:
+            specs.append(DatasetSpec(
+                name="financial",
+                generator_class=FinancialDataGenerator,
+                target_size_gb=8.0,
+                description="Financial dataset with bank accounts, transactions, investments, market data",
+                generator_args={},
+                test_queries=[
+                    "SELECT COUNT(*) FROM transactions WHERE amount > 10000",
+                    "SELECT AVG(balance) FROM accounts WHERE account_type = 'checking'",
+                    "SELECT customer_id, COUNT(*) as transaction_count FROM transactions GROUP BY customer_id ORDER BY transaction_count DESC LIMIT 100",
+                    "SELECT asset_type, SUM(market_value) FROM investments GROUP BY asset_type ORDER BY SUM(market_value) DESC"
+                ],
+                complexity_rating=9
             ))
         
         self.logger.info(f"Initialized {len(specs)} dataset specifications")

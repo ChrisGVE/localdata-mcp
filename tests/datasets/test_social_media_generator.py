@@ -12,7 +12,7 @@ from pathlib import Path
 import time
 import json
 
-from social_media_generator import SocialMediaGenerator
+from tests.datasets.social_media_generator import SocialMediaGenerator
 
 class TestSocialMediaGenerator(unittest.TestCase):
     """Test suite for social media dataset generator."""
