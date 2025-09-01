@@ -2541,14 +2541,23 @@ class DatabaseManager:
         # Quartiles
         try:
             quartiles = series.quantile([0.25, 0.5, 0.75])
+            q25_val = float(quartiles[0.25])
+            q75_val = float(quartiles[0.75])
+            
+            # Add quartiles both as top-level values for easy access and nested for detail
+            profile['q25'] = q25_val  # 25th percentile (Q1)
+            profile['q75'] = q75_val  # 75th percentile (Q3)
+            
             profile['quartiles'] = {
-                'q1': float(quartiles[0.25]),
+                'q1': q25_val,
                 'q2': float(quartiles[0.5]),
-                'q3': float(quartiles[0.75]),
-                'iqr': float(quartiles[0.75] - quartiles[0.25])
+                'q3': q75_val,
+                'iqr': float(q75_val - q25_val)
             }
         except Exception:
             profile['quartiles'] = None
+            profile['q25'] = None
+            profile['q75'] = None
         
         # Outlier detection using IQR method
         if profile['quartiles']:
