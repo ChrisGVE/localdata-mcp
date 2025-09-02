@@ -638,6 +638,526 @@ def create_spatial_dataframe(data: pd.DataFrame,
     )
 
 
+@dataclass
+class CoordinateTransformation:
+    """Container for coordinate transformation operations."""
+    source_crs: str
+    target_crs: str
+    transformation_accuracy: Optional[float] = None
+    transformation_method: Optional[str] = None
+    is_valid: bool = True
+    error_message: Optional[str] = None
+
+
+class CoordinateReferenceSystem:
+    """
+    Coordinate Reference System handler with pyproj integration.
+    
+    Provides CRS validation, conversion, and transformation capabilities
+    with fallback mechanisms when pyproj is not available.
+    """
+    
+    # Common CRS definitions for fallback mode
+    COMMON_CRS = {
+        'EPSG:4326': {
+            'name': 'WGS 84',
+            'type': 'geographic',
+            'unit': 'degree',
+            'authority': 'EPSG',
+            'code': '4326'
+        },
+        'EPSG:3857': {
+            'name': 'WGS 84 / Pseudo-Mercator',
+            'type': 'projected',
+            'unit': 'metre',
+            'authority': 'EPSG',
+            'code': '3857'
+        },
+        'EPSG:4269': {
+            'name': 'NAD83',
+            'type': 'geographic',
+            'unit': 'degree',
+            'authority': 'EPSG',
+            'code': '4269'
+        },
+        'EPSG:32633': {
+            'name': 'WGS 84 / UTM zone 33N',
+            'type': 'projected',
+            'unit': 'metre',
+            'authority': 'EPSG',
+            'code': '32633'
+        }
+    }
+    
+    def __init__(self):
+        """Initialize CRS handler."""
+        self.pyproj_available = _dependency_status.is_available(GeospatialLibrary.PYPROJ)
+        self._crs_cache = {}
+        
+        if self.pyproj_available:
+            try:
+                import pyproj
+                self.pyproj = pyproj
+                logger.debug("PyProj available for CRS operations")
+            except ImportError:
+                self.pyproj_available = False
+                logger.warning("PyProj import failed, using fallback CRS handling")
+    
+    def validate_crs(self, crs_string: str) -> Dict[str, Any]:
+        """
+        Validate a coordinate reference system specification.
+        
+        Parameters
+        ----------
+        crs_string : str
+            CRS specification (EPSG code, proj4 string, WKT, etc.)
+            
+        Returns
+        -------
+        validation_result : dict
+            Validation results including validity, type, and metadata.
+        """
+        result = {
+            'valid': False,
+            'crs_string': crs_string,
+            'crs_type': None,
+            'authority': None,
+            'code': None,
+            'name': None,
+            'unit': None,
+            'area_of_use': None,
+            'warnings': []
+        }
+        
+        if not crs_string:
+            result['warnings'].append("Empty CRS specification")
+            return result
+        
+        if self.pyproj_available:
+            try:
+                crs = self.pyproj.CRS.from_string(crs_string)
+                result['valid'] = True
+                result['crs_type'] = crs.type_name
+                result['name'] = crs.name
+                
+                # Get authority information
+                if crs.to_authority():
+                    result['authority'] = crs.to_authority()[0]
+                    result['code'] = crs.to_authority()[1]
+                
+                # Get unit information
+                if hasattr(crs, 'axis_info') and crs.axis_info:
+                    result['unit'] = crs.axis_info[0].unit_name
+                
+                # Get area of use
+                if hasattr(crs, 'area_of_use') and crs.area_of_use:
+                    result['area_of_use'] = {
+                        'name': crs.area_of_use.name,
+                        'bounds': [crs.area_of_use.west, crs.area_of_use.south,
+                                 crs.area_of_use.east, crs.area_of_use.north]
+                    }
+                
+                self._crs_cache[crs_string] = crs
+                
+            except Exception as e:
+                result['warnings'].append(f"PyProj CRS validation failed: {e}")
+                # Try fallback validation
+                result.update(self._fallback_crs_validation(crs_string))
+        else:
+            # Use fallback validation
+            result.update(self._fallback_crs_validation(crs_string))
+        
+        return result
+    
+    def _fallback_crs_validation(self, crs_string: str) -> Dict[str, Any]:
+        """Fallback CRS validation without pyproj."""
+        result = {'valid': False, 'warnings': []}
+        
+        # Normalize CRS string
+        crs_upper = crs_string.upper().strip()
+        
+        # Check against common CRS definitions
+        if crs_upper in self.COMMON_CRS:
+            crs_info = self.COMMON_CRS[crs_upper]
+            result.update({
+                'valid': True,
+                'crs_type': crs_info['type'],
+                'authority': crs_info['authority'],
+                'code': crs_info['code'],
+                'name': crs_info['name'],
+                'unit': crs_info['unit']
+            })
+        elif any(common in crs_upper for common in ['WGS84', 'WGS:84', 'WGS 84']):
+            result.update({
+                'valid': True,
+                'crs_type': 'geographic',
+                'authority': 'EPSG',
+                'code': '4326',
+                'name': 'WGS 84',
+                'unit': 'degree'
+            })
+            result['warnings'].append("CRS assumed to be WGS84 (EPSG:4326)")
+        else:
+            result['warnings'].append("Cannot validate CRS without pyproj library")
+            # Still mark as potentially valid for basic operations
+            if 'EPSG:' in crs_upper or '+proj=' in crs_upper:
+                result['valid'] = True
+                result['warnings'].append("CRS format recognized but not validated")
+        
+        return result
+    
+    def get_transformation(self, source_crs: str, target_crs: str) -> CoordinateTransformation:
+        """
+        Create coordinate transformation between two CRS.
+        
+        Parameters
+        ----------
+        source_crs : str
+            Source coordinate reference system.
+        target_crs : str  
+            Target coordinate reference system.
+            
+        Returns
+        -------
+        transformation : CoordinateTransformation
+            Transformation object with metadata.
+        """
+        transformation = CoordinateTransformation(
+            source_crs=source_crs,
+            target_crs=target_crs
+        )
+        
+        if self.pyproj_available:
+            try:
+                # Validate both CRS
+                source_validation = self.validate_crs(source_crs)
+                target_validation = self.validate_crs(target_crs)
+                
+                if not source_validation['valid']:
+                    transformation.is_valid = False
+                    transformation.error_message = f"Invalid source CRS: {source_crs}"
+                    return transformation
+                
+                if not target_validation['valid']:
+                    transformation.is_valid = False
+                    transformation.error_message = f"Invalid target CRS: {target_crs}"
+                    return transformation
+                
+                # Create transformer
+                source_crs_obj = self._crs_cache.get(source_crs) or self.pyproj.CRS.from_string(source_crs)
+                target_crs_obj = self._crs_cache.get(target_crs) or self.pyproj.CRS.from_string(target_crs)
+                
+                transformer = self.pyproj.Transformer.from_crs(
+                    source_crs_obj, target_crs_obj, always_xy=True
+                )
+                
+                transformation.transformation_accuracy = getattr(transformer, 'accuracy', None)
+                transformation.transformation_method = str(transformer.description) if hasattr(transformer, 'description') else None
+                
+                # Cache the transformer for reuse
+                cache_key = f"{source_crs}_{target_crs}"
+                if not hasattr(self, '_transformer_cache'):
+                    self._transformer_cache = {}
+                self._transformer_cache[cache_key] = transformer
+                
+            except Exception as e:
+                transformation.is_valid = False
+                transformation.error_message = f"Transformation creation failed: {e}"
+        else:
+            # Basic validation without pyproj
+            if source_crs == target_crs:
+                transformation.transformation_method = "identity"
+            elif self._is_geographic_crs(source_crs) and self._is_geographic_crs(target_crs):
+                transformation.transformation_method = "geographic_fallback"
+            else:
+                transformation.is_valid = False
+                transformation.error_message = "Cannot create transformation without pyproj library"
+        
+        return transformation
+    
+    def transform_coordinates(self, 
+                            coordinates: Union[List[Tuple[float, float]], np.ndarray],
+                            source_crs: str,
+                            target_crs: str) -> Tuple[np.ndarray, List[str]]:
+        """
+        Transform coordinates between coordinate reference systems.
+        
+        Parameters
+        ----------
+        coordinates : list of tuples or ndarray
+            Input coordinates as [(x, y), ...] or array.
+        source_crs : str
+            Source coordinate reference system.
+        target_crs : str
+            Target coordinate reference system.
+            
+        Returns
+        -------
+        transformed_coords : ndarray
+            Transformed coordinates.
+        warnings : list
+            Any transformation warnings.
+        """
+        warnings = []
+        
+        # Convert coordinates to numpy array
+        if isinstance(coordinates, list):
+            coords_array = np.array(coordinates)
+        else:
+            coords_array = np.asarray(coordinates)
+        
+        if coords_array.shape[1] < 2:
+            raise ValueError("Coordinates must have at least 2 dimensions (x, y)")
+        
+        # Handle identity transformation
+        if source_crs == target_crs:
+            warnings.append("Source and target CRS are identical - no transformation needed")
+            return coords_array, warnings
+        
+        if self.pyproj_available:
+            try:
+                # Get or create transformer
+                cache_key = f"{source_crs}_{target_crs}"
+                if hasattr(self, '_transformer_cache') and cache_key in self._transformer_cache:
+                    transformer = self._transformer_cache[cache_key]
+                else:
+                    transformation = self.get_transformation(source_crs, target_crs)
+                    if not transformation.is_valid:
+                        raise ValueError(transformation.error_message)
+                    transformer = self._transformer_cache[cache_key]
+                
+                # Transform coordinates
+                x_coords = coords_array[:, 0]
+                y_coords = coords_array[:, 1]
+                
+                transformed_x, transformed_y = transformer.transform(x_coords, y_coords)
+                
+                # Create result array
+                result_coords = np.column_stack([transformed_x, transformed_y])
+                
+                # Add z-coordinates if present
+                if coords_array.shape[1] > 2:
+                    result_coords = np.column_stack([result_coords, coords_array[:, 2:]])
+                
+                return result_coords, warnings
+                
+            except Exception as e:
+                warnings.append(f"PyProj transformation failed: {e}")
+                # Fall through to fallback method
+        
+        # Fallback transformation method
+        if self._is_geographic_crs(source_crs) and self._is_geographic_crs(target_crs):
+            warnings.append("Using fallback geographic transformation - may be inaccurate")
+            # For now, return original coordinates with warning
+            # In a more complete implementation, we might do simple datum shifts
+            return coords_array, warnings
+        else:
+            raise ValueError(f"Cannot transform coordinates from {source_crs} to {target_crs} without pyproj library")
+    
+    def _is_geographic_crs(self, crs_string: str) -> bool:
+        """Check if CRS is geographic (latitude/longitude)."""
+        crs_upper = crs_string.upper()
+        geographic_indicators = ['4326', 'WGS84', 'WGS:84', 'WGS 84', '4269', 'NAD83']
+        return any(indicator in crs_upper for indicator in geographic_indicators)
+    
+    def get_crs_info(self, crs_string: str) -> Dict[str, Any]:
+        """Get detailed information about a CRS."""
+        validation = self.validate_crs(crs_string)
+        
+        info = {
+            'crs_string': crs_string,
+            'is_valid': validation['valid'],
+            'name': validation.get('name', 'Unknown'),
+            'type': validation.get('crs_type', 'Unknown'),
+            'authority': validation.get('authority'),
+            'code': validation.get('code'),
+            'unit': validation.get('unit'),
+            'area_of_use': validation.get('area_of_use'),
+            'is_geographic': self._is_geographic_crs(crs_string),
+            'warnings': validation.get('warnings', [])
+        }
+        
+        return info
+    
+    def list_common_crs(self) -> Dict[str, Dict[str, str]]:
+        """List commonly used coordinate reference systems."""
+        return self.COMMON_CRS.copy()
+
+
+class SpatialCoordinateTransformer(BaseEstimator, TransformerMixin):
+    """
+    Sklearn-compatible transformer for coordinate reference system transformations.
+    
+    This transformer handles CRS transformations within the sklearn pipeline framework,
+    with support for both pyproj-based and fallback transformation methods.
+    """
+    
+    def __init__(self, 
+                 target_crs: str = 'EPSG:4326',
+                 source_crs: Optional[str] = None,
+                 validate_crs: bool = True,
+                 coordinate_columns: Optional[List[str]] = None):
+        """
+        Initialize coordinate transformer.
+        
+        Parameters
+        ----------
+        target_crs : str, default 'EPSG:4326'
+            Target coordinate reference system.
+        source_crs : str, optional
+            Source CRS. If None, will attempt to detect from data.
+        validate_crs : bool, default True
+            Whether to validate CRS specifications.
+        coordinate_columns : list of str, optional
+            Names of coordinate columns. If None, assumes ['x', 'y'].
+        """
+        self.target_crs = target_crs
+        self.source_crs = source_crs
+        self.validate_crs = validate_crs
+        self.coordinate_columns = coordinate_columns or ['x', 'y']
+        
+        self.crs_handler_ = None
+        self.transformation_ = None
+        self.fitted_source_crs_ = None
+        
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Any = None) -> 'SpatialCoordinateTransformer':
+        """
+        Fit the transformer by validating CRS and preparing transformation.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input data with spatial coordinates.
+        y : ignored
+            Not used, present for API consistency.
+            
+        Returns
+        -------
+        self : object
+            Returns the instance itself.
+        """
+        logger.info("Fitting spatial coordinate transformer")
+        
+        # Initialize CRS handler
+        self.crs_handler_ = CoordinateReferenceSystem()
+        
+        # Determine source CRS
+        if self.source_crs is None:
+            # Try to detect CRS from data
+            if isinstance(X, pd.DataFrame) and 'crs' in X.columns:
+                unique_crs = X['crs'].dropna().unique()
+                if len(unique_crs) == 1:
+                    self.fitted_source_crs_ = unique_crs[0]
+                    logger.info(f"Detected source CRS from data: {self.fitted_source_crs_}")
+                elif len(unique_crs) > 1:
+                    raise ValueError(f"Multiple CRS found in data: {unique_crs}")
+                else:
+                    raise ValueError("No CRS information found in data and source_crs not specified")
+            else:
+                # Assume WGS84 for latitude/longitude data
+                self.fitted_source_crs_ = 'EPSG:4326'
+                logger.warning("No CRS specified, assuming WGS84 (EPSG:4326)")
+        else:
+            self.fitted_source_crs_ = self.source_crs
+        
+        # Validate CRS if requested
+        if self.validate_crs:
+            source_validation = self.crs_handler_.validate_crs(self.fitted_source_crs_)
+            target_validation = self.crs_handler_.validate_crs(self.target_crs)
+            
+            if not source_validation['valid']:
+                raise ValueError(f"Invalid source CRS: {self.fitted_source_crs_}")
+            if not target_validation['valid']:
+                raise ValueError(f"Invalid target CRS: {self.target_crs}")
+            
+            for warning in source_validation.get('warnings', []):
+                logger.warning(f"Source CRS warning: {warning}")
+            for warning in target_validation.get('warnings', []):
+                logger.warning(f"Target CRS warning: {warning}")
+        
+        # Prepare transformation
+        self.transformation_ = self.crs_handler_.get_transformation(
+            self.fitted_source_crs_, self.target_crs
+        )
+        
+        if not self.transformation_.is_valid:
+            raise ValueError(f"Cannot create transformation: {self.transformation_.error_message}")
+        
+        logger.info(f"Prepared CRS transformation: {self.fitted_source_crs_} -> {self.target_crs}")
+        
+        return self
+    
+    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> Union[pd.DataFrame, np.ndarray]:
+        """
+        Transform coordinates to target CRS.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input data with spatial coordinates.
+            
+        Returns
+        -------
+        X_transformed : DataFrame or array-like
+            Data with transformed coordinates.
+        """
+        check_is_fitted(self, 'transformation_')
+        
+        if isinstance(X, pd.DataFrame):
+            X_transformed = X.copy()
+            
+            # Extract coordinates
+            if all(col in X.columns for col in self.coordinate_columns):
+                coords = X[self.coordinate_columns].values
+            else:
+                raise ValueError(f"Coordinate columns {self.coordinate_columns} not found in DataFrame")
+            
+            # Transform coordinates
+            transformed_coords, warnings = self.crs_handler_.transform_coordinates(
+                coords, self.fitted_source_crs_, self.target_crs
+            )
+            
+            # Update DataFrame with transformed coordinates
+            for i, col in enumerate(self.coordinate_columns):
+                if i < transformed_coords.shape[1]:
+                    X_transformed[col] = transformed_coords[:, i]
+            
+            # Update CRS information if present
+            if 'crs' in X_transformed.columns:
+                X_transformed['crs'] = self.target_crs
+            
+            # Log any warnings
+            for warning in warnings:
+                logger.warning(f"Coordinate transformation warning: {warning}")
+            
+            return X_transformed
+            
+        else:
+            # Handle array input
+            coords = np.asarray(X)
+            transformed_coords, warnings = self.crs_handler_.transform_coordinates(
+                coords, self.fitted_source_crs_, self.target_crs
+            )
+            
+            for warning in warnings:
+                logger.warning(f"Coordinate transformation warning: {warning}")
+            
+            return transformed_coords
+    
+    def get_transformation_info(self) -> Dict[str, Any]:
+        """Get information about the fitted transformation."""
+        check_is_fitted(self, 'transformation_')
+        
+        return {
+            'source_crs': self.fitted_source_crs_,
+            'target_crs': self.target_crs,
+            'transformation_valid': self.transformation_.is_valid,
+            'transformation_accuracy': self.transformation_.transformation_accuracy,
+            'transformation_method': self.transformation_.transformation_method,
+            'coordinate_columns': self.coordinate_columns
+        }
+
+
 # Initialize dependency checking on module import
 logger.info("Initializing geospatial analysis module")
 logger.info(f"Available geospatial libraries: "
