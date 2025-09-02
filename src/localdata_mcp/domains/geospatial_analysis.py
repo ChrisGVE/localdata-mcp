@@ -1158,6 +1158,523 @@ class SpatialCoordinateTransformer(BaseEstimator, TransformerMixin):
         }
 
 
+class SpatialDistanceCalculator:
+    """
+    Comprehensive spatial distance calculation tools.
+    
+    Provides various distance metrics for spatial data including great circle
+    distances, euclidean distances, and optimized batch calculations.
+    """
+    
+    def __init__(self, default_crs: str = 'EPSG:4326'):
+        """
+        Initialize distance calculator.
+        
+        Parameters
+        ----------
+        default_crs : str, default 'EPSG:4326'
+            Default coordinate reference system for calculations.
+        """
+        self.default_crs = default_crs
+        self.crs_handler = CoordinateReferenceSystem()
+        
+    def haversine_distance(self, 
+                          lat1: Union[float, np.ndarray], 
+                          lon1: Union[float, np.ndarray],
+                          lat2: Union[float, np.ndarray], 
+                          lon2: Union[float, np.ndarray],
+                          unit: str = 'km') -> Union[float, np.ndarray]:
+        """
+        Calculate great circle distance using haversine formula.
+        
+        Parameters
+        ----------
+        lat1, lon1 : float or array-like
+            Latitude and longitude of first point(s) in decimal degrees.
+        lat2, lon2 : float or array-like
+            Latitude and longitude of second point(s) in decimal degrees.
+        unit : str, default 'km'
+            Distance unit ('km', 'm', 'mi', 'nmi').
+            
+        Returns
+        -------
+        distance : float or array
+            Great circle distance(s) in specified unit.
+        """
+        # Convert to numpy arrays for vectorization
+        lat1, lon1, lat2, lon2 = np.asarray(lat1), np.asarray(lon1), np.asarray(lat2), np.asarray(lon2)
+        
+        # Convert decimal degrees to radians
+        lat1_rad, lon1_rad = np.radians(lat1), np.radians(lon1)
+        lat2_rad, lon2_rad = np.radians(lat2), np.radians(lon2)
+        
+        # Haversine formula
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+        
+        a = (np.sin(dlat/2)**2 + 
+             np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon/2)**2)
+        c = 2 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))  # Clip to avoid numerical errors
+        
+        # Earth radius in different units
+        radius = {
+            'km': 6371.0,
+            'm': 6371000.0,
+            'mi': 3959.0,
+            'nmi': 3440.0
+        }
+        
+        if unit not in radius:
+            raise ValueError(f"Unsupported unit: {unit}. Use 'km', 'm', 'mi', or 'nmi'")
+        
+        distance = c * radius[unit]
+        
+        # Return scalar if input was scalar
+        if distance.ndim == 0:
+            return float(distance)
+        return distance
+    
+    def euclidean_distance(self, 
+                          x1: Union[float, np.ndarray], 
+                          y1: Union[float, np.ndarray],
+                          x2: Union[float, np.ndarray], 
+                          y2: Union[float, np.ndarray],
+                          z1: Optional[Union[float, np.ndarray]] = None,
+                          z2: Optional[Union[float, np.ndarray]] = None) -> Union[float, np.ndarray]:
+        """
+        Calculate euclidean distance between points.
+        
+        Parameters
+        ----------
+        x1, y1 : float or array-like
+            X and Y coordinates of first point(s).
+        x2, y2 : float or array-like
+            X and Y coordinates of second point(s).
+        z1, z2 : float or array-like, optional
+            Z coordinates for 3D distance calculation.
+            
+        Returns
+        -------
+        distance : float or array
+            Euclidean distance(s).
+        """
+        x1, y1, x2, y2 = np.asarray(x1), np.asarray(y1), np.asarray(x2), np.asarray(y2)
+        
+        dx = x2 - x1
+        dy = y2 - y1
+        
+        if z1 is not None and z2 is not None:
+            z1, z2 = np.asarray(z1), np.asarray(z2)
+            dz = z2 - z1
+            distance = np.sqrt(dx*dx + dy*dy + dz*dz)
+        else:
+            distance = np.sqrt(dx*dx + dy*dy)
+        
+        # Return scalar if input was scalar
+        if distance.ndim == 0:
+            return float(distance)
+        return distance
+    
+    def manhattan_distance(self, 
+                          x1: Union[float, np.ndarray], 
+                          y1: Union[float, np.ndarray],
+                          x2: Union[float, np.ndarray], 
+                          y2: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+        """
+        Calculate Manhattan (taxicab) distance between points.
+        
+        Parameters
+        ----------
+        x1, y1 : float or array-like
+            X and Y coordinates of first point(s).
+        x2, y2 : float or array-like
+            X and Y coordinates of second point(s).
+            
+        Returns
+        -------
+        distance : float or array
+            Manhattan distance(s).
+        """
+        x1, y1, x2, y2 = np.asarray(x1), np.asarray(y1), np.asarray(x2), np.asarray(y2)
+        
+        distance = np.abs(x2 - x1) + np.abs(y2 - y1)
+        
+        # Return scalar if input was scalar
+        if distance.ndim == 0:
+            return float(distance)
+        return distance
+    
+    def calculate_distance(self,
+                          point1: Union[SpatialPoint, Tuple[float, float]],
+                          point2: Union[SpatialPoint, Tuple[float, float]],
+                          method: str = 'auto',
+                          crs: Optional[str] = None) -> float:
+        """
+        Calculate distance between two spatial points using appropriate method.
+        
+        Parameters
+        ----------
+        point1, point2 : SpatialPoint or tuple
+            Spatial points to calculate distance between.
+        method : str, default 'auto'
+            Distance calculation method ('auto', 'haversine', 'euclidean', 'manhattan').
+        crs : str, optional
+            Coordinate reference system. If None, uses default or point CRS.
+            
+        Returns
+        -------
+        distance : float
+            Distance between points.
+        """
+        # Convert tuples to SpatialPoint objects
+        if isinstance(point1, tuple):
+            point1 = SpatialPoint(x=point1[0], y=point1[1], crs=crs)
+        if isinstance(point2, tuple):
+            point2 = SpatialPoint(x=point2[0], y=point2[1], crs=crs)
+        
+        # Determine CRS
+        effective_crs = crs or point1.crs or point2.crs or self.default_crs
+        
+        # Auto-select method based on CRS
+        if method == 'auto':
+            if self.crs_handler._is_geographic_crs(effective_crs):
+                method = 'haversine'
+            else:
+                method = 'euclidean'
+        
+        # Calculate distance
+        if method == 'haversine':
+            return self.haversine_distance(point1.y, point1.x, point2.y, point2.x)
+        elif method == 'euclidean':
+            return self.euclidean_distance(point1.x, point1.y, point2.x, point2.y)
+        elif method == 'manhattan':
+            return self.manhattan_distance(point1.x, point1.y, point2.x, point2.y)
+        else:
+            raise ValueError(f"Unsupported distance method: {method}")
+    
+    def distance_matrix(self,
+                       points1: List[Union[SpatialPoint, Tuple[float, float]]],
+                       points2: Optional[List[Union[SpatialPoint, Tuple[float, float]]]] = None,
+                       method: str = 'auto',
+                       crs: Optional[str] = None,
+                       symmetric: bool = True) -> np.ndarray:
+        """
+        Calculate distance matrix between sets of points.
+        
+        Parameters
+        ----------
+        points1 : list of SpatialPoint or tuples
+            First set of points.
+        points2 : list of SpatialPoint or tuples, optional
+            Second set of points. If None, uses points1 for symmetric matrix.
+        method : str, default 'auto'
+            Distance calculation method.
+        crs : str, optional
+            Coordinate reference system.
+        symmetric : bool, default True
+            Whether to optimize for symmetric matrix calculation.
+            
+        Returns
+        -------
+        distance_matrix : ndarray
+            Distance matrix of shape (len(points1), len(points2)).
+        """
+        # Use points1 for both sets if points2 not provided
+        if points2 is None:
+            points2 = points1
+            is_self_distance = True
+        else:
+            is_self_distance = False
+        
+        # Convert to coordinate arrays
+        coords1 = self._extract_coordinates(points1, crs)
+        coords2 = self._extract_coordinates(points2, crs)
+        
+        # Determine method
+        effective_crs = crs or self.default_crs
+        if method == 'auto':
+            if self.crs_handler._is_geographic_crs(effective_crs):
+                method = 'haversine'
+            else:
+                method = 'euclidean'
+        
+        # Calculate distance matrix
+        n1, n2 = len(coords1), len(coords2)
+        distances = np.zeros((n1, n2))
+        
+        if method == 'haversine':
+            # Vectorized haversine calculation
+            lat1 = coords1[:, 1:2]  # Shape (n1, 1)
+            lon1 = coords1[:, 0:1]  # Shape (n1, 1)
+            lat2 = coords2[:, 1].reshape(1, -1)  # Shape (1, n2)
+            lon2 = coords2[:, 0].reshape(1, -1)  # Shape (1, n2)
+            
+            distances = self.haversine_distance(lat1, lon1, lat2, lon2)
+            
+        elif method == 'euclidean':
+            # Vectorized euclidean calculation
+            x1 = coords1[:, 0:1]  # Shape (n1, 1)
+            y1 = coords1[:, 1:2]  # Shape (n1, 1)
+            x2 = coords2[:, 0].reshape(1, -1)  # Shape (1, n2)
+            y2 = coords2[:, 1].reshape(1, -1)  # Shape (1, n2)
+            
+            distances = self.euclidean_distance(x1, y1, x2, y2)
+            
+        elif method == 'manhattan':
+            # Vectorized manhattan calculation
+            x1 = coords1[:, 0:1]
+            y1 = coords1[:, 1:2]
+            x2 = coords2[:, 0].reshape(1, -1)
+            y2 = coords2[:, 1].reshape(1, -1)
+            
+            distances = self.manhattan_distance(x1, y1, x2, y2)
+        
+        # Optimize symmetric case
+        if is_self_distance and symmetric:
+            # Fill upper triangle from lower triangle
+            i_upper = np.triu_indices(n1, k=1)
+            distances[i_upper] = distances.T[i_upper]
+        
+        return distances
+    
+    def _extract_coordinates(self, 
+                           points: List[Union[SpatialPoint, Tuple[float, float]]],
+                           crs: Optional[str] = None) -> np.ndarray:
+        """Extract coordinate array from points list."""
+        coords = []
+        for point in points:
+            if isinstance(point, tuple):
+                coords.append(point)
+            elif isinstance(point, SpatialPoint):
+                coords.append((point.x, point.y))
+            else:
+                raise ValueError(f"Unsupported point type: {type(point)}")
+        
+        return np.array(coords)
+    
+    def nearest_neighbors(self,
+                         query_points: List[Union[SpatialPoint, Tuple[float, float]]],
+                         reference_points: List[Union[SpatialPoint, Tuple[float, float]]],
+                         k: int = 1,
+                         method: str = 'auto',
+                         crs: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Find k nearest neighbors for each query point.
+        
+        Parameters
+        ----------
+        query_points : list
+            Points to find neighbors for.
+        reference_points : list
+            Points to search within.
+        k : int, default 1
+            Number of nearest neighbors to find.
+        method : str, default 'auto'
+            Distance calculation method.
+        crs : str, optional
+            Coordinate reference system.
+            
+        Returns
+        -------
+        distances : ndarray
+            Distances to k nearest neighbors for each query point.
+        indices : ndarray
+            Indices of k nearest neighbors for each query point.
+        """
+        # Calculate distance matrix
+        dist_matrix = self.distance_matrix(
+            query_points, reference_points, method=method, crs=crs
+        )
+        
+        # Find k nearest neighbors
+        if k >= dist_matrix.shape[1]:
+            # If k is larger than available points, return all
+            k = dist_matrix.shape[1]
+        
+        # Get indices of k smallest distances for each query point
+        indices = np.argpartition(dist_matrix, k-1, axis=1)[:, :k]
+        
+        # Get corresponding distances
+        distances = np.take_along_axis(dist_matrix, indices, axis=1)
+        
+        # Sort by distance
+        sort_indices = np.argsort(distances, axis=1)
+        distances = np.take_along_axis(distances, sort_indices, axis=1)
+        indices = np.take_along_axis(indices, sort_indices, axis=1)
+        
+        return distances, indices
+
+
+class SpatialDistanceTransformer(BaseEstimator, TransformerMixin):
+    """
+    Sklearn-compatible transformer for spatial distance calculations.
+    
+    This transformer calculates distances from points to reference locations
+    and can be used within sklearn pipelines for spatial feature engineering.
+    """
+    
+    def __init__(self,
+                 reference_points: Optional[List[Union[SpatialPoint, Tuple[float, float]]]] = None,
+                 method: str = 'auto',
+                 crs: Optional[str] = None,
+                 coordinate_columns: Optional[List[str]] = None,
+                 output_columns: Optional[List[str]] = None,
+                 k_nearest: Optional[int] = None):
+        """
+        Initialize spatial distance transformer.
+        
+        Parameters
+        ----------
+        reference_points : list, optional
+            Reference points to calculate distances to. If None, uses centroids.
+        method : str, default 'auto'
+            Distance calculation method.
+        crs : str, optional
+            Coordinate reference system.
+        coordinate_columns : list of str, optional
+            Names of coordinate columns. If None, assumes ['x', 'y'].
+        output_columns : list of str, optional
+            Names for output distance columns.
+        k_nearest : int, optional
+            If specified, calculates distances to k nearest reference points.
+        """
+        self.reference_points = reference_points
+        self.method = method
+        self.crs = crs
+        self.coordinate_columns = coordinate_columns or ['x', 'y']
+        self.output_columns = output_columns
+        self.k_nearest = k_nearest
+        
+        self.distance_calculator_ = None
+        self.fitted_reference_points_ = None
+        self.feature_names_out_ = None
+    
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Any = None) -> 'SpatialDistanceTransformer':
+        """
+        Fit the transformer by determining reference points.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input spatial data.
+        y : ignored
+            Not used, present for API consistency.
+            
+        Returns
+        -------
+        self : object
+            Returns the instance itself.
+        """
+        logger.info("Fitting spatial distance transformer")
+        
+        self.distance_calculator_ = SpatialDistanceCalculator(self.crs or 'EPSG:4326')
+        
+        # Determine reference points
+        if self.reference_points is not None:
+            self.fitted_reference_points_ = self.reference_points
+            logger.info(f"Using {len(self.fitted_reference_points_)} provided reference points")
+        else:
+            # Extract reference points from training data
+            if isinstance(X, pd.DataFrame):
+                if all(col in X.columns for col in self.coordinate_columns):
+                    coords = X[self.coordinate_columns].values
+                else:
+                    raise ValueError(f"Coordinate columns {self.coordinate_columns} not found")
+            else:
+                coords = np.asarray(X)
+            
+            # Use data centroids as reference points
+            if coords.shape[1] >= 2:
+                centroid = np.mean(coords, axis=0)
+                self.fitted_reference_points_ = [(centroid[0], centroid[1])]
+                logger.info("Using data centroid as reference point")
+            else:
+                raise ValueError("Input data must have at least 2 coordinate dimensions")
+        
+        # Determine output feature names
+        n_ref = len(self.fitted_reference_points_)
+        if self.k_nearest:
+            n_features = min(self.k_nearest, n_ref)
+        else:
+            n_features = n_ref
+        
+        if self.output_columns:
+            if len(self.output_columns) != n_features:
+                raise ValueError(f"Number of output columns ({len(self.output_columns)}) "
+                               f"must match number of features ({n_features})")
+            self.feature_names_out_ = self.output_columns
+        else:
+            if self.k_nearest:
+                self.feature_names_out_ = [f'distance_to_nearest_{i+1}' for i in range(n_features)]
+            else:
+                self.feature_names_out_ = [f'distance_to_ref_{i}' for i in range(n_features)]
+        
+        logger.info(f"Configured {n_features} distance features: {self.feature_names_out_}")
+        
+        return self
+    
+    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> Union[pd.DataFrame, np.ndarray]:
+        """
+        Transform data by calculating distances to reference points.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input spatial data.
+            
+        Returns
+        -------
+        X_transformed : DataFrame or array-like
+            Data with distance features added.
+        """
+        check_is_fitted(self, 'fitted_reference_points_')
+        
+        # Extract coordinates
+        if isinstance(X, pd.DataFrame):
+            if all(col in X.columns for col in self.coordinate_columns):
+                coords = X[self.coordinate_columns].values
+                query_points = [(row[0], row[1]) for row in coords]
+            else:
+                raise ValueError(f"Coordinate columns {self.coordinate_columns} not found")
+        else:
+            coords = np.asarray(X)
+            query_points = [(row[0], row[1]) for row in coords]
+        
+        # Calculate distances
+        if self.k_nearest:
+            # Find k nearest reference points
+            distances, indices = self.distance_calculator_.nearest_neighbors(
+                query_points, self.fitted_reference_points_, 
+                k=self.k_nearest, method=self.method, crs=self.crs
+            )
+            distance_features = distances
+        else:
+            # Calculate distances to all reference points
+            distance_matrix = self.distance_calculator_.distance_matrix(
+                query_points, self.fitted_reference_points_,
+                method=self.method, crs=self.crs, symmetric=False
+            )
+            distance_features = distance_matrix
+        
+        # Create output
+        if isinstance(X, pd.DataFrame):
+            X_transformed = X.copy()
+            for i, col_name in enumerate(self.feature_names_out_):
+                if distance_features.ndim == 1:
+                    X_transformed[col_name] = distance_features
+                else:
+                    X_transformed[col_name] = distance_features[:, i]
+            return X_transformed
+        else:
+            # For array input, return distance features only
+            return distance_features
+    
+    def get_feature_names_out(self, input_features: Optional[List[str]] = None) -> List[str]:
+        """Get output feature names."""
+        check_is_fitted(self, 'feature_names_out_')
+        return self.feature_names_out_.copy()
+
+
 # Initialize dependency checking on module import
 logger.info("Initializing geospatial analysis module")
 logger.info(f"Available geospatial libraries: "
