@@ -3499,7 +3499,7 @@ class DatabaseManager:
     
     def perform_clustering(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                           algorithm: str = 'kmeans', n_clusters: Optional[int] = None,
-                          sample_size: int = 10000, **kwargs) -> str:
+                          sample_size: int = 10000) -> str:
         """Perform comprehensive clustering analysis on data."""
         try:
             if not table_name and not query:
@@ -3525,7 +3525,7 @@ class DatabaseManager:
             
             # Perform clustering using the domain function
             from .domains.pattern_recognition import perform_clustering as domain_perform_clustering
-            result = domain_perform_clustering(X, algorithm, n_clusters, **kwargs)
+            result = domain_perform_clustering(X, algorithm, n_clusters)
             
             # Add metadata about the data
             result['data_info'] = {
@@ -3543,7 +3543,7 @@ class DatabaseManager:
     
     def reduce_dimensions(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                          algorithm: str = 'pca', n_components: Optional[int] = None,
-                         sample_size: int = 10000, **kwargs) -> str:
+                         sample_size: int = 10000) -> str:
         """Perform comprehensive dimensionality reduction on data."""
         try:
             if not table_name and not query:
@@ -3580,7 +3580,7 @@ class DatabaseManager:
             
             # Perform dimensionality reduction using the domain function
             from .domains.pattern_recognition import reduce_dimensions as domain_reduce_dimensions
-            result = domain_reduce_dimensions(X, algorithm, n_components, y, **kwargs)
+            result = domain_reduce_dimensions(X, algorithm, n_components, y)
             
             # Add metadata about the data
             result['data_info'] = {
@@ -3599,7 +3599,7 @@ class DatabaseManager:
     
     def detect_anomalies(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                         algorithm: str = 'isolation_forest', contamination: Optional[float] = None,
-                        sample_size: int = 10000, **kwargs) -> str:
+                        sample_size: int = 10000) -> str:
         """Perform comprehensive anomaly detection on data."""
         try:
             if not table_name and not query:
@@ -3625,7 +3625,7 @@ class DatabaseManager:
             
             # Perform anomaly detection using the domain function
             from .domains.pattern_recognition import detect_anomalies as domain_detect_anomalies
-            result = domain_detect_anomalies(X, algorithm, contamination, **kwargs)
+            result = domain_detect_anomalies(X, algorithm, contamination)
             
             # Add metadata about the data and anomalies
             anomaly_indices = result.get('anomaly_statistics', {}).get('anomaly_indices', [])
@@ -3840,7 +3840,7 @@ def analyze_distributions(name: str, table_name: Optional[str] = None, query: Op
 @mcp.tool
 def perform_clustering(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                       algorithm: str = 'kmeans', n_clusters: Optional[int] = None,
-                      sample_size: int = 10000, **kwargs) -> str:
+                      sample_size: int = 10000) -> str:
     """
     Perform comprehensive clustering analysis on data using advanced pattern recognition algorithms.
     
@@ -3859,13 +3859,13 @@ def perform_clustering(name: str, table_name: Optional[str] = None, query: Optio
     Returns:
         Comprehensive clustering results with labels, quality metrics, and recommendations in JSON format
     """
-    return _db_manager.perform_clustering(name, table_name, query, algorithm, n_clusters, sample_size, **kwargs)
+    return _db_manager.perform_clustering(name, table_name, query, algorithm, n_clusters, sample_size)
 
 
 @mcp.tool
 def reduce_dimensions(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                      algorithm: str = 'pca', n_components: Optional[int] = None,
-                     sample_size: int = 10000, **kwargs) -> str:
+                     sample_size: int = 10000) -> str:
     """
     Perform comprehensive dimensionality reduction on data for visualization and analysis.
     
@@ -3884,13 +3884,13 @@ def reduce_dimensions(name: str, table_name: Optional[str] = None, query: Option
     Returns:
         Dimensionality reduction results with transformed data and quality metrics in JSON format
     """
-    return _db_manager.reduce_dimensions(name, table_name, query, algorithm, n_components, sample_size, **kwargs)
+    return _db_manager.reduce_dimensions(name, table_name, query, algorithm, n_components, sample_size)
 
 
 @mcp.tool
 def detect_anomalies(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                     algorithm: str = 'isolation_forest', contamination: Optional[float] = None,
-                    sample_size: int = 10000, **kwargs) -> str:
+                    sample_size: int = 10000) -> str:
     """
     Perform comprehensive anomaly detection on data using advanced algorithms.
     
@@ -3909,7 +3909,7 @@ def detect_anomalies(name: str, table_name: Optional[str] = None, query: Optiona
     Returns:
         Anomaly detection results with labels, scores, and quality assessment in JSON format
     """
-    return _db_manager.detect_anomalies(name, table_name, query, algorithm, contamination, sample_size, **kwargs)
+    return _db_manager.detect_anomalies(name, table_name, query, algorithm, contamination, sample_size)
 
 
 @mcp.tool
