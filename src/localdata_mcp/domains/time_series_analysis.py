@@ -2207,6 +2207,647 @@ class LagSelectionTransformer(TimeSeriesTransformer):
         }
 
 
+class TimeSeriesDecompositionTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for time series decomposition analysis.
+    
+    Performs seasonal decomposition to separate time series into trend, seasonal, 
+    and residual components using various decomposition methods.
+    
+    Parameters:
+    -----------
+    model : str, default='additive'
+        Type of decomposition: 'additive' or 'multiplicative'
+    period : int, optional
+        Period for seasonal decomposition. If None, attempts to detect automatically
+    extrapolate_trend : str or int, default='freq'
+        How to extrapolate trend at ends: 'freq', integer, or None
+    two_sided : bool, default=True
+        Whether to use centered moving average for trend estimation
+    method : str, default='seasonal_decompose'
+        Decomposition method: 'seasonal_decompose', 'stl', 'x13' (if available)
+    """
+    
+    def __init__(self, model='additive', period=None, extrapolate_trend='freq',
+                 two_sided=True, method='seasonal_decompose', **kwargs):
+        super().__init__(**kwargs)
+        self.model = model
+        self.period = period
+        self.extrapolate_trend = extrapolate_trend
+        self.two_sided = two_sided
+        self.method = method
+        self.decomposition_result_ = None
+        self.detected_period_ = None
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the decomposition transformer."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Perform time series decomposition analysis.
+        
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Decomposition results with trend, seasonal, and residual components
+        """
+        start_time = time.time()
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        try:
+            # Use first column for decomposition
+            if len(X.columns) == 0:
+                raise ValueError("No columns found in time series data")
+                
+            series = X.iloc[:, 0].dropna()
+            if len(series) < 20:
+                raise ValueError("Insufficient data points for decomposition (need at least 20)")
+            
+            # Detect period if not provided
+            detected_period = self.period
+            if detected_period is None:
+                detected_period = self._detect_seasonal_period(series)
+                
+            if detected_period is None or detected_period < 2:
+                # Fallback to simple trend extraction without seasonality
+                decomp_result = self._simple_trend_decomposition(series)
+                interpretation = "No clear seasonal pattern detected - performed trend-only decomposition"
+                has_seasonality = False
+            else:
+                # Perform full seasonal decomposition
+                if self.method == 'stl':
+                    decomp_result = self._stl_decomposition(series, detected_period)
+                elif self.method == 'x13':
+                    decomp_result = self._x13_decomposition(series, detected_period)
+                else:
+                    decomp_result = self._seasonal_decomposition(series, detected_period)
+                
+                interpretation = f"Decomposition completed with period {detected_period}"
+                has_seasonality = True
+                
+            self.decomposition_result_ = decomp_result
+            self.detected_period_ = detected_period
+            
+            # Analyze decomposition components
+            component_analysis = self._analyze_components(decomp_result, has_seasonality)
+            
+            # Generate recommendations
+            recommendations = []
+            warnings_list = []
+            
+            if has_seasonality:
+                recommendations.append(f"Strong seasonal pattern detected with period {detected_period}")
+                recommendations.append("Consider seasonal ARIMA or seasonal forecasting models")
+            else:
+                recommendations.append("No significant seasonal pattern - focus on trend modeling")
+                recommendations.append("Consider non-seasonal ARIMA or trend-based forecasting")
+            
+            # Add component-specific recommendations
+            recommendations.extend(component_analysis.get('recommendations', []))
+            warnings_list.extend(component_analysis.get('warnings', []))
+            
+            result = TimeSeriesAnalysisResult(
+                analysis_type="time_series_decomposition",
+                interpretation=interpretation,
+                trend_component=decomp_result.get('trend'),
+                seasonal_component=decomp_result.get('seasonal'),
+                residual_component=decomp_result.get('resid'),
+                seasonality_period=detected_period,
+                model_diagnostics={
+                    'decomposition_method': self.method,
+                    'model_type': self.model,
+                    'detected_period': detected_period,
+                    'has_seasonality': has_seasonality,
+                    'component_analysis': component_analysis,
+                    'series_length': len(series)
+                },
+                recommendations=recommendations,
+                warnings=warnings_list,
+                processing_time=time.time() - start_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in time series decomposition: {e}")
+            return TimeSeriesAnalysisResult(
+                analysis_type="decomposition_error",
+                interpretation=f"Error during time series decomposition: {str(e)}",
+                warnings=[str(e)],
+                processing_time=time.time() - start_time
+            )
+    
+    def _detect_seasonal_period(self, series: pd.Series) -> Optional[int]:
+        """Detect seasonal period using autocorrelation analysis."""
+        try:
+            # Use the seasonality detection from base class
+            seasonality_info = self._detect_seasonality(series)
+            
+            if seasonality_info['has_seasonality']:
+                return seasonality_info['dominant_period']
+            
+            # Fallback: try common periods based on data frequency
+            freq = self._infer_frequency(pd.DataFrame(index=series.index))
+            
+            if freq == 'D':  # Daily data
+                test_periods = [7, 30, 365]
+            elif freq in ['H', 'T']:  # Hourly or minutely
+                test_periods = [24, 168]  # Daily, weekly
+            elif freq == 'M':  # Monthly
+                test_periods = [12]
+            else:
+                test_periods = [4, 7, 12, 24]
+                
+            # Test periods with sufficient data
+            for period in test_periods:
+                if len(series) >= 3 * period:
+                    # Simple test: check autocorrelation at the period
+                    try:
+                        autocorr_at_period = series.autocorr(lag=period)
+                        if not pd.isna(autocorr_at_period) and abs(autocorr_at_period) > 0.3:
+                            return period
+                    except Exception:
+                        continue
+                        
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error detecting seasonal period: {e}")
+            return None
+    
+    def _seasonal_decomposition(self, series: pd.Series, period: int) -> Dict[str, pd.Series]:
+        """Perform seasonal decomposition using statsmodels."""
+        try:
+            decomp = seasonal_decompose(
+                series, 
+                model=self.model,
+                period=period,
+                extrapolate_trend=self.extrapolate_trend,
+                two_sided=self.two_sided
+            )
+            
+            return {
+                'trend': decomp.trend,
+                'seasonal': decomp.seasonal,
+                'resid': decomp.resid,
+                'observed': series
+            }
+            
+        except Exception as e:
+            logger.error(f"Seasonal decomposition failed: {e}")
+            # Fallback to simple trend extraction
+            return self._simple_trend_decomposition(series)
+    
+    def _stl_decomposition(self, series: pd.Series, period: int) -> Dict[str, pd.Series]:
+        """Perform STL decomposition for robust trend/seasonal extraction."""
+        try:
+            from statsmodels.tsa.seasonal import STL
+            
+            # STL parameters
+            stl = STL(
+                series,
+                seasonal=7,  # Seasonal smoothing parameter
+                trend=None,   # Trend smoothing (auto)
+                period=period,
+                robust=True   # Robust to outliers
+            )
+            
+            result = stl.fit()
+            
+            return {
+                'trend': result.trend,
+                'seasonal': result.seasonal,
+                'resid': result.resid,
+                'observed': series
+            }
+            
+        except Exception as e:
+            logger.warning(f"STL decomposition failed: {e}, falling back to seasonal_decompose")
+            return self._seasonal_decomposition(series, period)
+    
+    def _x13_decomposition(self, series: pd.Series, period: int) -> Dict[str, pd.Series]:
+        """Perform X-13ARIMA-SEATS decomposition if available."""
+        try:
+            from statsmodels.tsa.x13 import x13_arima_analysis
+            
+            # X-13 requires specific frequency
+            x13_result = x13_arima_analysis(series)
+            
+            return {
+                'trend': x13_result.trend,
+                'seasonal': x13_result.seasonal,
+                'resid': x13_result.irregular,
+                'observed': series
+            }
+            
+        except Exception as e:
+            logger.warning(f"X-13 decomposition not available: {e}, falling back to seasonal_decompose")
+            return self._seasonal_decomposition(series, period)
+    
+    def _simple_trend_decomposition(self, series: pd.Series) -> Dict[str, pd.Series]:
+        """Simple trend extraction without seasonal component."""
+        try:
+            # Use rolling mean as trend
+            window_size = max(3, len(series) // 20)  # Adaptive window size
+            trend = series.rolling(window=window_size, center=True, min_periods=1).mean()
+            residual = series - trend
+            
+            # No seasonal component
+            seasonal = pd.Series(0, index=series.index)
+            
+            return {
+                'trend': trend,
+                'seasonal': seasonal,
+                'resid': residual,
+                'observed': series
+            }
+            
+        except Exception as e:
+            logger.error(f"Simple trend decomposition failed: {e}")
+            # Ultimate fallback
+            return {
+                'trend': pd.Series(series.mean(), index=series.index),
+                'seasonal': pd.Series(0, index=series.index),
+                'resid': series - series.mean(),
+                'observed': series
+            }
+    
+    def _analyze_components(self, decomp_result: Dict[str, pd.Series], has_seasonality: bool) -> Dict[str, Any]:
+        """Analyze decomposition components for insights."""
+        analysis = {
+            'trend_strength': 0.0,
+            'seasonal_strength': 0.0,
+            'residual_variance': 0.0,
+            'decomposition_quality': 0.0,
+            'recommendations': [],
+            'warnings': []
+        }
+        
+        try:
+            observed = decomp_result['observed']
+            trend = decomp_result['trend'].dropna()
+            seasonal = decomp_result['seasonal']
+            residual = decomp_result['resid'].dropna()
+            
+            # Calculate component strengths
+            if len(trend) > 0:
+                trend_var = trend.var()
+                total_var = observed.var()
+                if total_var > 0:
+                    analysis['trend_strength'] = min(1.0, trend_var / total_var)
+            
+            if has_seasonality and len(seasonal) > 0:
+                seasonal_var = seasonal.var()
+                total_var = observed.var()
+                if total_var > 0:
+                    analysis['seasonal_strength'] = min(1.0, seasonal_var / total_var)
+            
+            # Residual analysis
+            if len(residual) > 0:
+                analysis['residual_variance'] = residual.var()
+                
+                # Check residual properties
+                if analysis['residual_variance'] < 0.1 * observed.var():
+                    analysis['recommendations'].append("Low residual variance - good decomposition quality")
+                else:
+                    analysis['warnings'].append("High residual variance - decomposition may be incomplete")
+            
+            # Overall decomposition quality
+            explained_variance = analysis['trend_strength'] + analysis['seasonal_strength']
+            analysis['decomposition_quality'] = min(1.0, explained_variance)
+            
+            # Generate insights
+            if analysis['trend_strength'] > 0.7:
+                analysis['recommendations'].append("Strong trend component - trend modeling is important")
+            elif analysis['trend_strength'] < 0.2:
+                analysis['recommendations'].append("Weak trend component - focus on seasonal/residual patterns")
+                
+            if has_seasonality:
+                if analysis['seasonal_strength'] > 0.5:
+                    analysis['recommendations'].append("Strong seasonal component - seasonal modeling essential")
+                elif analysis['seasonal_strength'] < 0.2:
+                    analysis['warnings'].append("Weak seasonal pattern - verify seasonal period")
+                    
+        except Exception as e:
+            analysis['warnings'].append(f"Error in component analysis: {e}")
+            
+        return analysis
+
+
+class TrendAnalysisTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for trend analysis and extraction.
+    
+    Analyzes trend characteristics including direction, strength, and changepoints
+    using various trend detection methods.
+    
+    Parameters:
+    -----------
+    method : str, default='linear'
+        Trend detection method: 'linear', 'polynomial', 'lowess', 'hodrick_prescott'
+    degree : int, default=1
+        Polynomial degree (for polynomial method)
+    alpha : float, default=0.05
+        Significance level for trend tests
+    changepoint_detection : bool, default=True
+        Whether to detect trend changepoints
+    min_segment_length : int, default=10
+        Minimum segment length for changepoint detection
+    """
+    
+    def __init__(self, method='linear', degree=1, alpha=0.05, 
+                 changepoint_detection=True, min_segment_length=10, **kwargs):
+        super().__init__(**kwargs)
+        self.method = method
+        self.degree = degree
+        self.alpha = alpha
+        self.changepoint_detection = changepoint_detection
+        self.min_segment_length = min_segment_length
+        self.trend_parameters_ = {}
+        self.changepoints_ = []
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the trend analysis transformer."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Perform trend analysis on time series data.
+        
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Trend analysis results with direction, strength, and changepoints
+        """
+        start_time = time.time()
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        try:
+            # Use first column for analysis
+            if len(X.columns) == 0:
+                raise ValueError("No columns found in time series data")
+                
+            series = X.iloc[:, 0].dropna()
+            if len(series) < 10:
+                raise ValueError("Insufficient data points for trend analysis")
+            
+            # Extract trend using specified method
+            trend_result = self._extract_trend(series)
+            
+            # Analyze trend properties
+            trend_analysis = self._analyze_trend_properties(series, trend_result['trend'])
+            
+            # Detect changepoints if requested
+            changepoints = []
+            if self.changepoint_detection:
+                changepoints = self._detect_changepoints(series)
+                
+            self.trend_parameters_ = trend_result
+            self.changepoints_ = changepoints
+            
+            # Generate interpretation
+            trend_direction = trend_analysis['direction']
+            trend_strength = trend_analysis['strength']
+            
+            if trend_strength < 0.1:
+                interpretation = "No significant trend detected - series appears stationary around mean"
+            elif trend_strength < 0.3:
+                interpretation = f"Weak {trend_direction} trend detected (strength: {trend_strength:.2f})"
+            elif trend_strength < 0.7:
+                interpretation = f"Moderate {trend_direction} trend detected (strength: {trend_strength:.2f})"
+            else:
+                interpretation = f"Strong {trend_direction} trend detected (strength: {trend_strength:.2f})"
+            
+            if len(changepoints) > 0:
+                interpretation += f" with {len(changepoints)} trend changepoint(s)"
+            
+            # Generate recommendations
+            recommendations = []
+            warnings_list = []
+            
+            if trend_strength > 0.5:
+                recommendations.append("Strong trend detected - detrending may be necessary for stationary modeling")
+                recommendations.append("Consider trend-aware forecasting methods")
+            else:
+                recommendations.append("Weak or no trend - focus on seasonal or residual patterns")
+            
+            if len(changepoints) > 0:
+                recommendations.append(f"Trend changepoints detected - consider structural break models")
+                for i, cp in enumerate(changepoints[:3]):  # Show first 3
+                    cp_date = series.index[cp] if cp < len(series.index) else "unknown"
+                    recommendations.append(f"Changepoint {i+1} at position {cp} ({cp_date})")
+            
+            # Add analysis-specific recommendations
+            recommendations.extend(trend_analysis.get('recommendations', []))
+            warnings_list.extend(trend_analysis.get('warnings', []))
+            
+            result = TimeSeriesAnalysisResult(
+                analysis_type="trend_analysis",
+                interpretation=interpretation,
+                trend_component=trend_result['trend'],
+                model_diagnostics={
+                    'trend_method': self.method,
+                    'trend_direction': trend_direction,
+                    'trend_strength': trend_strength,
+                    'trend_parameters': trend_result.get('parameters', {}),
+                    'changepoints': changepoints,
+                    'trend_analysis': trend_analysis,
+                    'series_length': len(series)
+                },
+                recommendations=recommendations,
+                warnings=warnings_list,
+                processing_time=time.time() - start_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in trend analysis: {e}")
+            return TimeSeriesAnalysisResult(
+                analysis_type="trend_analysis_error",
+                interpretation=f"Error during trend analysis: {str(e)}",
+                warnings=[str(e)],
+                processing_time=time.time() - start_time
+            )
+    
+    def _extract_trend(self, series: pd.Series) -> Dict[str, Any]:
+        """Extract trend using the specified method."""
+        try:
+            x = np.arange(len(series))
+            y = series.values
+            
+            if self.method == 'linear':
+                # Linear regression
+                coeffs = np.polyfit(x, y, 1)
+                trend_values = np.polyval(coeffs, x)
+                
+                return {
+                    'trend': pd.Series(trend_values, index=series.index),
+                    'parameters': {'slope': coeffs[0], 'intercept': coeffs[1]},
+                    'method': 'linear'
+                }
+                
+            elif self.method == 'polynomial':
+                # Polynomial regression
+                coeffs = np.polyfit(x, y, self.degree)
+                trend_values = np.polyval(coeffs, x)
+                
+                return {
+                    'trend': pd.Series(trend_values, index=series.index),
+                    'parameters': {'coefficients': coeffs.tolist(), 'degree': self.degree},
+                    'method': 'polynomial'
+                }
+                
+            elif self.method == 'lowess':
+                # LOWESS smoothing
+                from statsmodels.nonparametric.smoothers_lowess import lowess
+                
+                smoothed = lowess(y, x, frac=0.3, return_sorted=False)
+                
+                return {
+                    'trend': pd.Series(smoothed, index=series.index),
+                    'parameters': {'method': 'lowess', 'frac': 0.3},
+                    'method': 'lowess'
+                }
+                
+            elif self.method == 'hodrick_prescott':
+                # Hodrick-Prescott filter
+                try:
+                    from statsmodels.tsa.filters.hp_filter import hpfilter
+                    
+                    cycle, trend_values = hpfilter(series, lamb=1600)  # Standard lambda for monthly data
+                    
+                    return {
+                        'trend': trend_values,
+                        'cycle': cycle,
+                        'parameters': {'lambda': 1600},
+                        'method': 'hodrick_prescott'
+                    }
+                except ImportError:
+                    logger.warning("Hodrick-Prescott filter not available, using linear trend")
+                    return self._extract_trend_linear(series)
+                    
+            else:
+                raise ValueError(f"Unknown trend method: {self.method}")
+                
+        except Exception as e:
+            logger.error(f"Error extracting trend: {e}")
+            # Fallback to linear trend
+            return self._extract_trend_linear(series)
+    
+    def _extract_trend_linear(self, series: pd.Series) -> Dict[str, Any]:
+        """Fallback linear trend extraction."""
+        x = np.arange(len(series))
+        y = series.values
+        coeffs = np.polyfit(x, y, 1)
+        trend_values = np.polyval(coeffs, x)
+        
+        return {
+            'trend': pd.Series(trend_values, index=series.index),
+            'parameters': {'slope': coeffs[0], 'intercept': coeffs[1]},
+            'method': 'linear_fallback'
+        }
+    
+    def _analyze_trend_properties(self, series: pd.Series, trend: pd.Series) -> Dict[str, Any]:
+        """Analyze properties of the extracted trend."""
+        analysis = {
+            'direction': 'unknown',
+            'strength': 0.0,
+            'significance': 0.0,
+            'recommendations': [],
+            'warnings': []
+        }
+        
+        try:
+            # Determine trend direction
+            if len(trend) > 1:
+                overall_change = trend.iloc[-1] - trend.iloc[0]
+                if overall_change > 0:
+                    analysis['direction'] = 'upward'
+                elif overall_change < 0:
+                    analysis['direction'] = 'downward'
+                else:
+                    analysis['direction'] = 'flat'
+            
+            # Calculate trend strength (correlation with time)
+            if len(series) > 2:
+                time_index = np.arange(len(series))
+                correlation = np.corrcoef(series.values, time_index)[0, 1]
+                analysis['strength'] = abs(correlation) if not np.isnan(correlation) else 0.0
+            
+            # Statistical significance test (simple t-test on slope)
+            if self.method in ['linear', 'polynomial'] and 'slope' in self.trend_parameters_.get('parameters', {}):
+                try:
+                    from scipy import stats
+                    
+                    x = np.arange(len(series))
+                    y = series.values
+                    
+                    # Simple linear regression t-test
+                    slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+                    analysis['significance'] = 1.0 - p_value  # Convert to significance measure
+                    
+                    if p_value <= self.alpha:
+                        analysis['recommendations'].append(f"Trend is statistically significant (p={p_value:.4f})")
+                    else:
+                        analysis['warnings'].append(f"Trend is not statistically significant (p={p_value:.4f})")
+                        
+                except Exception as e:
+                    analysis['warnings'].append(f"Could not test trend significance: {e}")
+                    
+        except Exception as e:
+            analysis['warnings'].append(f"Error in trend property analysis: {e}")
+            
+        return analysis
+    
+    def _detect_changepoints(self, series: pd.Series) -> List[int]:
+        """Detect trend changepoints using simple methods."""
+        changepoints = []
+        
+        try:
+            # Simple changepoint detection using moving averages
+            window_size = max(5, len(series) // 20)
+            
+            if len(series) < 2 * window_size:
+                return changepoints  # Not enough data
+                
+            # Calculate moving averages
+            ma_short = series.rolling(window=window_size, center=True).mean()
+            ma_long = series.rolling(window=window_size * 2, center=True).mean()
+            
+            # Find crossover points
+            diff = ma_short - ma_long
+            sign_changes = np.diff(np.sign(diff.dropna()))
+            
+            # Get changepoint indices
+            change_indices = np.where(sign_changes != 0)[0]
+            
+            # Filter changepoints by minimum segment length
+            filtered_changepoints = []
+            last_cp = 0
+            
+            for cp in change_indices:
+                if cp - last_cp >= self.min_segment_length:
+                    filtered_changepoints.append(cp)
+                    last_cp = cp
+                    
+            changepoints = filtered_changepoints
+            
+        except Exception as e:
+            logger.debug(f"Error in changepoint detection: {e}")
+            
+        return changepoints
+
+
 def validate_time_series_continuity(data: Union[pd.DataFrame, pd.Series],
                                    max_gap_tolerance: Optional[str] = None) -> Dict[str, Any]:
     """
