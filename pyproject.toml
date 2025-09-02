@@ -49,6 +49,7 @@ dependencies = [
   "scikit-learn>=1.1.0", # Machine learning and pipeline framework
   "statsmodels>=0.13.0", # Statistical models and tests
   "numpy>=1.21.0",      # Numerical computing foundation
+  "networkx>=2.8.0",    # Network analysis and graph algorithms
 ]
 
 [project.optional-dependencies]
