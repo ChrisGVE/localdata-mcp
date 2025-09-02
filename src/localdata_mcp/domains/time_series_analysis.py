@@ -1514,6 +1514,699 @@ class UnitRootTestTransformer(TimeSeriesTransformer):
             )
 
 
+class AutocorrelationAnalysisTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for autocorrelation function (ACF) analysis.
+    
+    Computes and analyzes the autocorrelation function of time series data,
+    including significance testing and lag selection recommendations.
+    
+    Parameters:
+    -----------
+    max_lags : int, optional
+        Maximum number of lags to compute. If None, uses min(40, len(series)//4)
+    alpha : float, default=0.05
+        Significance level for correlation tests
+    fft : bool, default=True
+        Whether to use FFT for computation (faster for long series)
+    missing : str, default='none'
+        How to handle missing values: 'none', 'drop', 'conservative'
+    """
+    
+    def __init__(self, max_lags=None, alpha=0.05, fft=True, missing='none', **kwargs):
+        super().__init__(**kwargs)
+        self.max_lags = max_lags
+        self.alpha = alpha
+        self.fft = fft
+        self.missing = missing
+        self.acf_values_ = None
+        self.confidence_intervals_ = None
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the ACF analysis transformer."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Compute autocorrelation function analysis.
+        
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            ACF analysis results with lag recommendations
+        """
+        start_time = time.time()
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        try:
+            # Use first column for analysis
+            if len(X.columns) == 0:
+                raise ValueError("No columns found in time series data")
+                
+            series = X.iloc[:, 0].dropna()
+            if len(series) < 10:
+                raise ValueError("Insufficient data points for autocorrelation analysis")
+            
+            # Determine number of lags
+            if self.max_lags is None:
+                nlags = min(40, len(series) // 4)
+            else:
+                nlags = min(self.max_lags, len(series) - 1)
+            
+            # Compute ACF
+            acf_values, confint = acf(series, nlags=nlags, alpha=self.alpha, 
+                                     fft=self.fft, missing=self.missing)
+            
+            self.acf_values_ = acf_values
+            self.confidence_intervals_ = confint
+            
+            # Find significant lags
+            significant_lags = []
+            for lag in range(1, len(acf_values)):  # Skip lag 0 (always 1.0)
+                if abs(acf_values[lag]) > abs(confint[lag, 1] - acf_values[lag]):
+                    significant_lags.append({
+                        'lag': lag,
+                        'correlation': acf_values[lag],
+                        'is_significant': True,
+                        'confidence_lower': confint[lag, 0],
+                        'confidence_upper': confint[lag, 1]
+                    })
+                else:
+                    significant_lags.append({
+                        'lag': lag,
+                        'correlation': acf_values[lag],
+                        'is_significant': False,
+                        'confidence_lower': confint[lag, 0],
+                        'confidence_upper': confint[lag, 1]
+                    })
+            
+            # Identify patterns and generate recommendations
+            recommendations = []
+            warnings_list = []
+            pattern_analysis = self._analyze_acf_patterns(acf_values, significant_lags)
+            
+            # Generate interpretation
+            num_significant = sum(1 for lag_info in significant_lags if lag_info['is_significant'])
+            
+            if num_significant == 0:
+                interpretation = "No significant autocorrelations detected - series appears to be white noise"
+                recommendations.append("Series may be suitable for simple forecasting methods")
+            elif num_significant <= 3:
+                interpretation = f"Few significant autocorrelations detected ({num_significant} lags)"
+                recommendations.append("Consider MA or low-order ARMA models")
+            else:
+                interpretation = f"Multiple significant autocorrelations detected ({num_significant} lags)"
+                recommendations.append("Consider higher-order ARMA models or seasonal patterns")
+            
+            # Add pattern-specific recommendations
+            recommendations.extend(pattern_analysis['recommendations'])
+            warnings_list.extend(pattern_analysis.get('warnings', []))
+            
+            result = TimeSeriesAnalysisResult(
+                analysis_type="autocorrelation_analysis",
+                interpretation=interpretation,
+                model_diagnostics={
+                    'acf_values': acf_values.tolist(),
+                    'confidence_intervals': confint.tolist(),
+                    'significant_lags': significant_lags,
+                    'pattern_analysis': pattern_analysis,
+                    'max_lags_computed': nlags,
+                    'series_length': len(series)
+                },
+                recommendations=recommendations,
+                warnings=warnings_list,
+                processing_time=time.time() - start_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in autocorrelation analysis: {e}")
+            return TimeSeriesAnalysisResult(
+                analysis_type="autocorrelation_analysis_error",
+                interpretation=f"Error during autocorrelation analysis: {str(e)}",
+                warnings=[str(e)],
+                processing_time=time.time() - start_time
+            )
+    
+    def _analyze_acf_patterns(self, acf_values: np.ndarray, significant_lags: List[Dict]) -> Dict[str, Any]:
+        """
+        Analyze patterns in autocorrelation function.
+        
+        Parameters:
+        -----------
+        acf_values : np.ndarray
+            Autocorrelation function values
+        significant_lags : list of dict
+            Information about significant lags
+            
+        Returns:
+        --------
+        pattern_info : dict
+            Analysis of ACF patterns and recommendations
+        """
+        analysis = {
+            'pattern_type': 'unknown',
+            'decay_rate': 'unknown',
+            'seasonal_pattern': False,
+            'seasonal_period': None,
+            'recommendations': [],
+            'warnings': []
+        }
+        
+        try:
+            # Analyze decay pattern
+            sig_correlations = [lag['correlation'] for lag in significant_lags if lag['is_significant']]
+            
+            if len(sig_correlations) == 0:
+                analysis['pattern_type'] = 'white_noise'
+                analysis['decay_rate'] = 'immediate'
+                analysis['recommendations'].append("Series appears to be white noise - no temporal dependence")
+                
+            elif len(sig_correlations) <= 2:
+                analysis['pattern_type'] = 'short_memory'
+                analysis['decay_rate'] = 'fast'
+                analysis['recommendations'].append("Short-term temporal dependence - consider MA(1) or MA(2) model")
+                
+            else:
+                # Check for exponential decay (AR pattern)
+                if self._has_exponential_decay(acf_values[1:6]):  # Check first 5 lags
+                    analysis['pattern_type'] = 'autoregressive'
+                    analysis['decay_rate'] = 'exponential'
+                    analysis['recommendations'].append("Exponential decay pattern - consider AR model")
+                else:
+                    analysis['pattern_type'] = 'complex'
+                    analysis['decay_rate'] = 'slow'
+                    analysis['recommendations'].append("Complex autocorrelation pattern - consider ARMA model")
+            
+            # Check for seasonal patterns
+            seasonal_info = self._detect_seasonal_acf(acf_values, significant_lags)
+            if seasonal_info['has_seasonal']:
+                analysis['seasonal_pattern'] = True
+                analysis['seasonal_period'] = seasonal_info['period']
+                analysis['recommendations'].append(f"Seasonal pattern detected (period ≈ {seasonal_info['period']}) - consider seasonal ARIMA")
+            
+            # Check for problematic patterns
+            if max(abs(acf_values[1:6])) > 0.9:
+                analysis['warnings'].append("Very high autocorrelations suggest possible non-stationarity")
+                analysis['recommendations'].append("Consider differencing the series")
+                
+        except Exception as e:
+            analysis['warnings'].append(f"Error in pattern analysis: {e}")
+            
+        return analysis
+    
+    def _has_exponential_decay(self, correlations: np.ndarray) -> bool:
+        """Check if correlations show exponential decay pattern."""
+        if len(correlations) < 3:
+            return False
+            
+        try:
+            # Fit exponential decay: y = a * exp(-b * x)
+            # Use log transformation: log(|y|) = log(a) - b * x
+            x = np.arange(1, len(correlations) + 1)
+            y = np.abs(correlations)
+            
+            # Filter out very small values to avoid log issues
+            valid_mask = y > 0.01
+            if np.sum(valid_mask) < 3:
+                return False
+                
+            x_valid = x[valid_mask]
+            y_valid = y[valid_mask]
+            
+            log_y = np.log(y_valid)
+            
+            # Simple linear regression on log scale
+            slope = np.polyfit(x_valid, log_y, 1)[0]
+            
+            # Exponential decay should have negative slope and good fit
+            return slope < -0.1  # Threshold for significant decay
+            
+        except Exception:
+            return False
+    
+    def _detect_seasonal_acf(self, acf_values: np.ndarray, significant_lags: List[Dict]) -> Dict[str, Any]:
+        """Detect seasonal patterns in autocorrelation function."""
+        seasonal_info = {'has_seasonal': False, 'period': None, 'strength': 0.0}
+        
+        try:
+            # Look for periodic peaks in significant lags
+            sig_lags = [lag['lag'] for lag in significant_lags if lag['is_significant']]
+            
+            if len(sig_lags) >= 3:
+                # Check for regular spacing (seasonal periods)
+                for period in [4, 7, 12, 24, 52]:  # Common seasonal periods
+                    if period >= len(acf_values):
+                        continue
+                        
+                    # Check if there are significant correlations at multiples of this period
+                    seasonal_lags = [lag for lag in sig_lags if lag % period == 0 and lag > 0]
+                    
+                    if len(seasonal_lags) >= 2:
+                        # Calculate average correlation at seasonal lags
+                        seasonal_correlations = [abs(acf_values[lag]) for lag in seasonal_lags if lag < len(acf_values)]
+                        avg_seasonal_corr = np.mean(seasonal_correlations)
+                        
+                        if avg_seasonal_corr > 0.2:  # Threshold for seasonal strength
+                            seasonal_info['has_seasonal'] = True
+                            seasonal_info['period'] = period
+                            seasonal_info['strength'] = avg_seasonal_corr
+                            break
+                            
+        except Exception as e:
+            logger.debug(f"Error in seasonal ACF detection: {e}")
+            
+        return seasonal_info
+
+
+class PartialAutocorrelationAnalysisTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for partial autocorrelation function (PACF) analysis.
+    
+    Computes and analyzes the partial autocorrelation function of time series data,
+    useful for identifying the order of autoregressive models.
+    
+    Parameters:
+    -----------
+    max_lags : int, optional
+        Maximum number of lags to compute. If None, uses min(40, len(series)//4)
+    alpha : float, default=0.05
+        Significance level for correlation tests
+    method : str, default='ywmle'
+        Method for PACF computation: 'ywmle', 'ols'
+    """
+    
+    def __init__(self, max_lags=None, alpha=0.05, method='ywmle', **kwargs):
+        super().__init__(**kwargs)
+        self.max_lags = max_lags
+        self.alpha = alpha
+        self.method = method
+        self.pacf_values_ = None
+        self.confidence_intervals_ = None
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the PACF analysis transformer."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Compute partial autocorrelation function analysis.
+        
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            PACF analysis results with AR order recommendations
+        """
+        start_time = time.time()
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        try:
+            # Use first column for analysis
+            if len(X.columns) == 0:
+                raise ValueError("No columns found in time series data")
+                
+            series = X.iloc[:, 0].dropna()
+            if len(series) < 10:
+                raise ValueError("Insufficient data points for partial autocorrelation analysis")
+            
+            # Determine number of lags
+            if self.max_lags is None:
+                nlags = min(40, len(series) // 4)
+            else:
+                nlags = min(self.max_lags, len(series) - 1)
+            
+            # Compute PACF
+            pacf_values, confint = pacf(series, nlags=nlags, alpha=self.alpha, method=self.method)
+            
+            self.pacf_values_ = pacf_values
+            self.confidence_intervals_ = confint
+            
+            # Find significant lags
+            significant_lags = []
+            for lag in range(1, len(pacf_values)):  # Skip lag 0 (always 1.0)
+                is_significant = abs(pacf_values[lag]) > abs(confint[lag, 1] - pacf_values[lag])
+                significant_lags.append({
+                    'lag': lag,
+                    'partial_correlation': pacf_values[lag],
+                    'is_significant': is_significant,
+                    'confidence_lower': confint[lag, 0],
+                    'confidence_upper': confint[lag, 1]
+                })
+            
+            # Analyze PACF for AR order suggestion
+            ar_order_analysis = self._analyze_ar_order(pacf_values, significant_lags)
+            
+            # Generate recommendations
+            recommendations = []
+            warnings_list = []
+            
+            if ar_order_analysis['suggested_order'] == 0:
+                interpretation = "No significant partial autocorrelations - series may be MA or white noise"
+                recommendations.append("Consider MA model or simple forecasting methods")
+            else:
+                interpretation = f"Significant partial autocorrelations up to lag {ar_order_analysis['suggested_order']}"
+                recommendations.append(f"Consider AR({ar_order_analysis['suggested_order']}) model")
+                
+                if ar_order_analysis['seasonal_order'] > 0:
+                    recommendations.append(f"Seasonal AR component suggested: P={ar_order_analysis['seasonal_order']}")
+            
+            # Add analysis-specific recommendations
+            recommendations.extend(ar_order_analysis.get('recommendations', []))
+            warnings_list.extend(ar_order_analysis.get('warnings', []))
+            
+            result = TimeSeriesAnalysisResult(
+                analysis_type="partial_autocorrelation_analysis",
+                interpretation=interpretation,
+                model_diagnostics={
+                    'pacf_values': pacf_values.tolist(),
+                    'confidence_intervals': confint.tolist(),
+                    'significant_lags': significant_lags,
+                    'ar_order_analysis': ar_order_analysis,
+                    'max_lags_computed': nlags,
+                    'series_length': len(series)
+                },
+                recommendations=recommendations,
+                warnings=warnings_list,
+                processing_time=time.time() - start_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in partial autocorrelation analysis: {e}")
+            return TimeSeriesAnalysisResult(
+                analysis_type="partial_autocorrelation_analysis_error",
+                interpretation=f"Error during partial autocorrelation analysis: {str(e)}",
+                warnings=[str(e)],
+                processing_time=time.time() - start_time
+            )
+    
+    def _analyze_ar_order(self, pacf_values: np.ndarray, significant_lags: List[Dict]) -> Dict[str, Any]:
+        """
+        Analyze PACF to suggest AR model order.
+        
+        Parameters:
+        -----------
+        pacf_values : np.ndarray
+            Partial autocorrelation function values
+        significant_lags : list of dict
+            Information about significant lags
+            
+        Returns:
+        --------
+        ar_analysis : dict
+            AR order analysis and recommendations
+        """
+        analysis = {
+            'suggested_order': 0,
+            'seasonal_order': 0,
+            'cutoff_pattern': 'none',
+            'recommendations': [],
+            'warnings': []
+        }
+        
+        try:
+            # Find the last significant lag (AR order suggestion)
+            significant_lag_numbers = [lag['lag'] for lag in significant_lags if lag['is_significant']]
+            
+            if len(significant_lag_numbers) == 0:
+                analysis['suggested_order'] = 0
+                analysis['cutoff_pattern'] = 'immediate'
+                analysis['recommendations'].append("No AR component suggested")
+            else:
+                # Traditional approach: find where PACF cuts off
+                # Look for clear cutoff pattern
+                last_significant = max(significant_lag_numbers)
+                
+                # Check if there's a clear cutoff (most recent significant lags)
+                recent_significant = [lag for lag in significant_lag_numbers if lag <= 10]
+                
+                if len(recent_significant) > 0:
+                    # Suggest order based on last consecutive significant lag
+                    consecutive_order = self._find_consecutive_cutoff(significant_lags)
+                    analysis['suggested_order'] = consecutive_order
+                    
+                    if consecutive_order <= 3:
+                        analysis['cutoff_pattern'] = 'clear'
+                        analysis['recommendations'].append(f"Clear PACF cutoff suggests AR({consecutive_order})")
+                    else:
+                        analysis['cutoff_pattern'] = 'gradual'
+                        analysis['recommendations'].append("Gradual PACF decay - consider ARMA model")
+                        analysis['suggested_order'] = min(3, consecutive_order)  # Cap at reasonable order
+                else:
+                    analysis['suggested_order'] = last_significant
+                    analysis['cutoff_pattern'] = 'unclear'
+                    analysis['warnings'].append("PACF pattern unclear - validate model selection")
+                
+                # Check for seasonal patterns
+                seasonal_lags = [lag for lag in significant_lag_numbers if lag >= 4]
+                seasonal_periods = self._detect_seasonal_pacf_periods(seasonal_lags)
+                
+                if seasonal_periods:
+                    analysis['seasonal_order'] = 1
+                    analysis['recommendations'].append(f"Seasonal patterns detected at lags: {seasonal_periods}")
+                    
+        except Exception as e:
+            analysis['warnings'].append(f"Error in AR order analysis: {e}")
+            
+        return analysis
+    
+    def _find_consecutive_cutoff(self, significant_lags: List[Dict]) -> int:
+        """Find the order where PACF cuts off based on consecutive significant lags."""
+        # Find the longest sequence of consecutive significant lags starting from lag 1
+        order = 0
+        
+        for lag_info in sorted(significant_lags, key=lambda x: x['lag']):
+            if lag_info['lag'] == order + 1 and lag_info['is_significant']:
+                order = lag_info['lag']
+            else:
+                break
+                
+        return order
+    
+    def _detect_seasonal_pacf_periods(self, seasonal_lags: List[int]) -> List[int]:
+        """Detect seasonal periods in PACF significant lags."""
+        periods = []
+        
+        for period in [4, 7, 12, 24, 52]:
+            seasonal_matches = [lag for lag in seasonal_lags if lag % period == 0]
+            if len(seasonal_matches) >= 1:
+                periods.append(period)
+                
+        return periods
+
+
+class LagSelectionTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for automated lag selection using information criteria.
+    
+    Determines optimal lag structures for time series models using AIC, BIC, and
+    other information criteria, combining ACF/PACF analysis with statistical tests.
+    
+    Parameters:
+    -----------
+    max_ar_order : int, default=5
+        Maximum AR order to consider
+    max_ma_order : int, default=5
+        Maximum MA order to consider
+    information_criteria : list of str, default=['aic', 'bic']
+        Information criteria to use: 'aic', 'bic', 'hqic'
+    seasonal : bool, default=False
+        Whether to consider seasonal components
+    seasonal_periods : list of int, optional
+        Seasonal periods to test if seasonal=True
+    """
+    
+    def __init__(self, max_ar_order=5, max_ma_order=5, 
+                 information_criteria=['aic', 'bic'], seasonal=False,
+                 seasonal_periods=None, **kwargs):
+        super().__init__(**kwargs)
+        self.max_ar_order = max_ar_order
+        self.max_ma_order = max_ma_order
+        self.information_criteria = information_criteria
+        self.seasonal = seasonal
+        self.seasonal_periods = seasonal_periods or []
+        self.best_orders_ = {}
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the lag selection transformer."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Perform automated lag selection analysis.
+        
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Lag selection results with optimal model orders
+        """
+        start_time = time.time()
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        try:
+            # Use first column for analysis
+            if len(X.columns) == 0:
+                raise ValueError("No columns found in time series data")
+                
+            series = X.iloc[:, 0].dropna()
+            if len(series) < 20:
+                raise ValueError("Insufficient data points for lag selection (need at least 20)")
+            
+            # Grid search over model orders
+            results_grid = self._grid_search_orders(series)
+            
+            # Select best models for each criterion
+            best_models = {}
+            for criterion in self.information_criteria:
+                if criterion in results_grid and len(results_grid[criterion]) > 0:
+                    best_model = min(results_grid[criterion], key=lambda x: x[criterion])
+                    best_models[criterion] = {
+                        'ar_order': best_model['ar_order'],
+                        'ma_order': best_model['ma_order'],
+                        'criterion_value': best_model[criterion],
+                        'seasonal_order': best_model.get('seasonal_order', 0)
+                    }
+            
+            self.best_orders_ = best_models
+            
+            # Generate recommendations
+            recommendations = []
+            warnings_list = []
+            
+            if len(best_models) == 0:
+                interpretation = "Could not determine optimal model orders"
+                recommendations.append("Use default ARIMA(1,0,1) or consult domain expert")
+                warnings_list.append("Model selection failed - check data quality")
+            else:
+                # Get consensus recommendation
+                consensus = self._get_consensus_recommendation(best_models)
+                
+                interpretation = f"Optimal model orders determined: ARIMA({consensus['ar']},{consensus['d']},{consensus['ma']})"
+                recommendations.append(f"Recommended model: ARIMA({consensus['ar']},{consensus['d']},{consensus['ma']})")
+                
+                if consensus.get('seasonal_order', 0) > 0:
+                    recommendations.append(f"Seasonal component suggested: ({consensus['seasonal_order']},{consensus['seasonal_d']},{consensus['seasonal_ma']})")
+                
+                # Add criterion-specific information
+                for criterion, model_info in best_models.items():
+                    recommendations.append(f"{criterion.upper()} suggests: AR({model_info['ar_order']}) MA({model_info['ma_order']})")
+            
+            result = TimeSeriesAnalysisResult(
+                analysis_type="lag_selection",
+                interpretation=interpretation,
+                model_diagnostics={
+                    'best_models': best_models,
+                    'grid_search_results': results_grid,
+                    'consensus_recommendation': consensus if len(best_models) > 0 else None,
+                    'series_length': len(series)
+                },
+                recommendations=recommendations,
+                warnings=warnings_list,
+                processing_time=time.time() - start_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in lag selection: {e}")
+            return TimeSeriesAnalysisResult(
+                analysis_type="lag_selection_error",
+                interpretation=f"Error during lag selection: {str(e)}",
+                warnings=[str(e)],
+                processing_time=time.time() - start_time
+            )
+    
+    def _grid_search_orders(self, series: pd.Series) -> Dict[str, List[Dict]]:
+        """
+        Perform grid search over ARIMA orders.
+        
+        Parameters:
+        -----------
+        series : pd.Series
+            Time series data
+            
+        Returns:
+        --------
+        results : dict
+            Dictionary of results for each information criterion
+        """
+        results = {criterion: [] for criterion in self.information_criteria}
+        
+        try:
+            from statsmodels.tsa.arima.model import ARIMA
+            
+            # Test different AR and MA orders
+            for ar_order in range(self.max_ar_order + 1):
+                for ma_order in range(self.max_ma_order + 1):
+                    if ar_order == 0 and ma_order == 0:
+                        continue  # Skip (0,0,0) model
+                        
+                    try:
+                        # Fit ARIMA model
+                        model = ARIMA(series, order=(ar_order, 0, ma_order))
+                        fitted_model = model.fit()
+                        
+                        # Collect information criteria
+                        model_result = {
+                            'ar_order': ar_order,
+                            'ma_order': ma_order,
+                            'aic': fitted_model.aic,
+                            'bic': fitted_model.bic,
+                            'hqic': fitted_model.hqic,
+                            'converged': fitted_model.mle_retvals['converged'] if hasattr(fitted_model, 'mle_retvals') else True
+                        }
+                        
+                        # Add to results for each criterion
+                        for criterion in self.information_criteria:
+                            if criterion in model_result:
+                                results[criterion].append(model_result)
+                                
+                    except Exception as e:
+                        logger.debug(f"ARIMA({ar_order},0,{ma_order}) failed: {e}")
+                        continue
+                        
+        except ImportError:
+            logger.warning("statsmodels ARIMA not available - using simplified lag selection")
+            
+        return results
+    
+    def _get_consensus_recommendation(self, best_models: Dict[str, Dict]) -> Dict[str, int]:
+        """Get consensus recommendation from different information criteria."""
+        if len(best_models) == 0:
+            return {'ar': 1, 'd': 0, 'ma': 1, 'seasonal_order': 0, 'seasonal_d': 0, 'seasonal_ma': 0}
+        
+        # Get the most common orders
+        ar_orders = [model['ar_order'] for model in best_models.values()]
+        ma_orders = [model['ma_order'] for model in best_models.values()]
+        
+        # Use mode or median
+        consensus_ar = int(np.round(np.median(ar_orders)))
+        consensus_ma = int(np.round(np.median(ma_orders)))
+        
+        return {
+            'ar': consensus_ar,
+            'd': 0,  # Differencing order (would be determined by stationarity tests)
+            'ma': consensus_ma,
+            'seasonal_order': 0,  # Simplified for now
+            'seasonal_d': 0,
+            'seasonal_ma': 0
+        }
+
+
 def validate_time_series_continuity(data: Union[pd.DataFrame, pd.Series],
                                    max_gap_tolerance: Optional[str] = None) -> Dict[str, Any]:
     """
