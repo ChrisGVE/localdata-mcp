@@ -33,6 +33,12 @@ from .input import (
     StreamingConfig
 )
 
+from .phase1_transformers import (
+    ProfileTableTransformer,
+    DataTypeDetectorTransformer,
+    DistributionAnalyzerTransformer
+)
+
 # Note: Other pipeline modules may require additional dependencies
 # Import them separately when needed
 # from .preprocessing import (
@@ -72,7 +78,12 @@ __all__ = [
     # Input pipeline
     "DataInputPipeline",
     "DataSourceType",
-    "StreamingConfig"
+    "StreamingConfig",
+    
+    # Phase 1 sklearn-compatible transformers
+    "ProfileTableTransformer",
+    "DataTypeDetectorTransformer",
+    "DistributionAnalyzerTransformer"
     
     # Additional components available when dependencies are installed
     # "DataPreprocessingPipeline",
