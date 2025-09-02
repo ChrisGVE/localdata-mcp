@@ -3185,6 +3185,675 @@ class SpatialAutocorrelationTransformer(BaseEstimator, TransformerMixin):
         return self.feature_names_out_.copy()
 
 
+@dataclass
+class InterpolationResult:
+    """Container for spatial interpolation results."""
+    method: str
+    interpolated_values: np.ndarray
+    prediction_variance: Optional[np.ndarray] = None
+    cross_validation_score: Optional[float] = None
+    variogram_model: Optional[Dict[str, Any]] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
+
+
+class VariogramModel:
+    """
+    Variogram modeling for kriging interpolation.
+    
+    Provides variogram calculation, fitting, and model selection
+    for spatial interpolation with fallback methods when
+    scikit-gstat is not available.
+    """
+    
+    # Available variogram models
+    VARIOGRAM_MODELS = {
+        'spherical': lambda h, nugget, sill, range_param: nugget + (sill - nugget) * (
+            1.5 * h / range_param - 0.5 * (h / range_param) ** 3
+        ) if h <= range_param else sill,
+        'exponential': lambda h, nugget, sill, range_param: nugget + (sill - nugget) * (
+            1 - np.exp(-3 * h / range_param)
+        ),
+        'gaussian': lambda h, nugget, sill, range_param: nugget + (sill - nugget) * (
+            1 - np.exp(-3 * (h / range_param) ** 2)
+        ),
+        'linear': lambda h, nugget, sill, range_param: nugget + (sill - nugget) * h / range_param if h <= range_param else sill
+    }
+    
+    def __init__(self, model_type: str = 'spherical'):
+        """
+        Initialize variogram model.
+        
+        Parameters
+        ----------
+        model_type : str, default 'spherical'
+            Type of variogram model ('spherical', 'exponential', 'gaussian', 'linear').
+        """
+        self.model_type = model_type
+        self.parameters = None
+        self.empirical_variogram = None
+        self.scikit_gstat_available = _dependency_status.is_available(GeospatialLibrary.SCIKIT_GSTAT)
+        
+        if self.scikit_gstat_available:
+            try:
+                import skgstat as skg
+                self.skg = skg
+                logger.debug("scikit-gstat available for advanced variogram modeling")
+            except ImportError:
+                self.scikit_gstat_available = False
+                logger.warning("scikit-gstat import failed, using fallback variogram methods")
+    
+    def fit(self, 
+           points: List[Union[SpatialPoint, Tuple[float, float]]],
+           values: np.ndarray,
+           max_distance: Optional[float] = None,
+           n_lags: int = 15) -> Dict[str, Any]:
+        """
+        Fit variogram model to data.
+        
+        Parameters
+        ----------
+        points : list of SpatialPoint or tuples
+            Spatial locations.
+        values : array-like
+            Values at each location.
+        max_distance : float, optional
+            Maximum distance for variogram calculation.
+        n_lags : int, default 15
+            Number of distance lags for variogram.
+            
+        Returns
+        -------
+        variogram_info : dict
+            Variogram model parameters and fit information.
+        """
+        if self.scikit_gstat_available:
+            return self._fit_scikit_gstat(points, values, max_distance, n_lags)
+        else:
+            return self._fit_fallback(points, values, max_distance, n_lags)
+    
+    def _fit_scikit_gstat(self, points, values, max_distance, n_lags):
+        """Fit variogram using scikit-gstat."""
+        try:
+            # Convert points to coordinate array
+            coords = []
+            for point in points:
+                if isinstance(point, tuple):
+                    coords.append(point)
+                elif isinstance(point, SpatialPoint):
+                    coords.append((point.x, point.y))
+            
+            coords = np.array(coords)
+            values = np.asarray(values)
+            
+            # Create variogram
+            vario = self.skg.Variogram(
+                coordinates=coords,
+                values=values,
+                model=self.model_type,
+                maxlag=max_distance,
+                n_lags=n_lags,
+                normalize=False
+            )
+            
+            # Fit the model
+            self.parameters = {
+                'nugget': vario.parameters[0],
+                'sill': vario.parameters[1],
+                'range': vario.parameters[2],
+                'model_type': self.model_type
+            }
+            
+            self.empirical_variogram = {
+                'lags': vario.bins,
+                'semivariance': vario.experimental,
+                'counts': vario.bin_count
+            }
+            
+            return {
+                'parameters': self.parameters,
+                'empirical_variogram': self.empirical_variogram,
+                'model_rmse': vario.rmse,
+                'r_squared': getattr(vario, 'r_squared', None),
+                'method': 'scikit_gstat'
+            }
+            
+        except Exception as e:
+            logger.warning(f"scikit-gstat variogram fitting failed: {e}")
+            return self._fit_fallback(points, values, max_distance, n_lags)
+    
+    def _fit_fallback(self, points, values, max_distance, n_lags):
+        """Fallback variogram fitting without scikit-gstat."""
+        # Convert points and calculate distances
+        distance_calc = SpatialDistanceCalculator()
+        coords = []
+        for point in points:
+            if isinstance(point, tuple):
+                coords.append(point)
+            elif isinstance(point, SpatialPoint):
+                coords.append((point.x, point.y))
+        
+        values = np.asarray(values)
+        
+        # Calculate distance matrix
+        distance_matrix = distance_calc.distance_matrix(coords, coords)
+        
+        # Determine max distance if not provided
+        if max_distance is None:
+            max_distance = np.max(distance_matrix) / 2
+        
+        # Calculate empirical variogram
+        lag_width = max_distance / n_lags
+        lags = np.arange(lag_width, max_distance + lag_width, lag_width)
+        semivariances = []
+        counts = []
+        
+        for i, lag in enumerate(lags):
+            lag_min = i * lag_width
+            lag_max = (i + 1) * lag_width
+            
+            # Find pairs within this lag distance
+            mask = (distance_matrix >= lag_min) & (distance_matrix < lag_max)
+            i_indices, j_indices = np.where(mask)
+            
+            if len(i_indices) > 0:
+                # Calculate semivariance for this lag
+                squared_diffs = (values[i_indices] - values[j_indices]) ** 2
+                semivariance = np.mean(squared_diffs) / 2
+                semivariances.append(semivariance)
+                counts.append(len(i_indices))
+            else:
+                semivariances.append(0)
+                counts.append(0)
+        
+        self.empirical_variogram = {
+            'lags': lags,
+            'semivariance': np.array(semivariances),
+            'counts': np.array(counts)
+        }
+        
+        # Simple parameter estimation
+        valid_idx = np.array(counts) > 0
+        if np.any(valid_idx):
+            nugget = min(semivariances) if semivariances else 0
+            sill = max(semivariances) if semivariances else np.var(values)
+            # Estimate range as distance where semivariance reaches ~95% of sill
+            range_est = max_distance / 3  # Simple heuristic
+            
+            self.parameters = {
+                'nugget': nugget,
+                'sill': sill,
+                'range': range_est,
+                'model_type': self.model_type
+            }
+        else:
+            # Default parameters if no valid lags
+            self.parameters = {
+                'nugget': 0,
+                'sill': np.var(values),
+                'range': max_distance / 3,
+                'model_type': self.model_type
+            }
+        
+        return {
+            'parameters': self.parameters,
+            'empirical_variogram': self.empirical_variogram,
+            'model_rmse': None,
+            'r_squared': None,
+            'method': 'fallback'
+        }
+    
+    def predict_semivariance(self, distances: np.ndarray) -> np.ndarray:
+        """
+        Predict semivariance at given distances using fitted model.
+        
+        Parameters
+        ----------
+        distances : array-like
+            Distances at which to predict semivariance.
+            
+        Returns
+        -------
+        semivariances : ndarray
+            Predicted semivariances.
+        """
+        if self.parameters is None:
+            raise ValueError("Variogram model must be fitted before prediction")
+        
+        distances = np.asarray(distances)
+        model_func = self.VARIOGRAM_MODELS[self.model_type]
+        
+        # Vectorize the model function
+        vectorized_model = np.vectorize(
+            lambda h: model_func(h, 
+                                self.parameters['nugget'],
+                                self.parameters['sill'],
+                                self.parameters['range'])
+        )
+        
+        return vectorized_model(distances)
+
+
+class SpatialInterpolator:
+    """
+    Comprehensive spatial interpolation tools.
+    
+    Implements kriging interpolation with variogram modeling,
+    inverse distance weighting, and other spatial interpolation methods.
+    """
+    
+    def __init__(self):
+        """Initialize spatial interpolator."""
+        self.distance_calculator = SpatialDistanceCalculator()
+        self.last_variogram_model = None
+        
+    def ordinary_kriging(self,
+                        train_points: List[Union[SpatialPoint, Tuple[float, float]]],
+                        train_values: np.ndarray,
+                        predict_points: List[Union[SpatialPoint, Tuple[float, float]]],
+                        variogram_model: str = 'spherical',
+                        **variogram_params) -> InterpolationResult:
+        """
+        Perform ordinary kriging interpolation.
+        
+        Parameters
+        ----------
+        train_points : list of SpatialPoint or tuples
+            Known data locations.
+        train_values : array-like
+            Known values at training locations.
+        predict_points : list of SpatialPoint or tuples
+            Locations where values should be predicted.
+        variogram_model : str, default 'spherical'
+            Variogram model type.
+        **variogram_params : additional parameters
+            Parameters for variogram fitting.
+            
+        Returns
+        -------
+        result : InterpolationResult
+            Interpolation results with predictions and variance.
+        """
+        train_values = np.asarray(train_values)
+        warnings = []
+        
+        try:
+            # Fit variogram model
+            vario_model = VariogramModel(variogram_model)
+            vario_info = vario_model.fit(train_points, train_values, **variogram_params)
+            self.last_variogram_model = vario_model
+            
+            # Perform kriging
+            n_train = len(train_points)
+            n_predict = len(predict_points)
+            
+            # Calculate distance matrices
+            train_coords = self._extract_coordinates(train_points)
+            predict_coords = self._extract_coordinates(predict_points)
+            
+            # Distance matrix between training points
+            train_distances = self.distance_calculator.distance_matrix(train_points, train_points)
+            
+            # Distance matrix from prediction to training points
+            pred_to_train_distances = self.distance_calculator.distance_matrix(
+                predict_points, train_points, symmetric=False
+            )
+            
+            # Build kriging system
+            # Covariance matrix (training points)
+            C = self._distances_to_covariances(train_distances, vario_model)
+            
+            # Add Lagrange multiplier row/column
+            C_extended = np.zeros((n_train + 1, n_train + 1))
+            C_extended[:n_train, :n_train] = C
+            C_extended[n_train, :n_train] = 1
+            C_extended[:n_train, n_train] = 1
+            C_extended[n_train, n_train] = 0
+            
+            # Solve kriging system for each prediction point
+            predictions = np.zeros(n_predict)
+            variances = np.zeros(n_predict)
+            
+            for i in range(n_predict):
+                # Covariance vector (prediction to training points)
+                c = self._distances_to_covariances(pred_to_train_distances[i], vario_model)
+                
+                # Extended right-hand side
+                rhs = np.zeros(n_train + 1)
+                rhs[:n_train] = c
+                rhs[n_train] = 1
+                
+                # Solve system
+                try:
+                    weights = np.linalg.solve(C_extended, rhs)
+                    
+                    # Prediction
+                    predictions[i] = np.dot(weights[:n_train], train_values)
+                    
+                    # Prediction variance
+                    variances[i] = vario_model.parameters['sill'] - np.dot(weights[:n_train], c) - weights[n_train]
+                    
+                except np.linalg.LinAlgError:
+                    warnings.append(f"Singular kriging system at prediction point {i}")
+                    # Fallback to inverse distance weighting
+                    distances = pred_to_train_distances[i]
+                    weights = 1 / (distances + 1e-10)  # Avoid division by zero
+                    weights /= np.sum(weights)
+                    predictions[i] = np.dot(weights, train_values)
+                    variances[i] = np.nan
+            
+            return InterpolationResult(
+                method='ordinary_kriging',
+                interpolated_values=predictions,
+                prediction_variance=variances,
+                variogram_model=vario_info,
+                metadata={
+                    'n_training_points': n_train,
+                    'n_prediction_points': n_predict,
+                    'variogram_method': vario_info.get('method', 'unknown')
+                },
+                warnings=warnings
+            )
+            
+        except Exception as e:
+            warnings.append(f"Kriging failed: {e}")
+            logger.warning(f"Ordinary kriging failed, falling back to IDW: {e}")
+            return self.inverse_distance_weighting(train_points, train_values, predict_points)
+    
+    def inverse_distance_weighting(self,
+                                  train_points: List[Union[SpatialPoint, Tuple[float, float]]],
+                                  train_values: np.ndarray,
+                                  predict_points: List[Union[SpatialPoint, Tuple[float, float]]],
+                                  power: float = 2.0,
+                                  max_distance: Optional[float] = None) -> InterpolationResult:
+        """
+        Perform inverse distance weighting interpolation.
+        
+        Parameters
+        ----------
+        train_points : list of SpatialPoint or tuples
+            Known data locations.
+        train_values : array-like
+            Known values at training locations.
+        predict_points : list of SpatialPoint or tuples
+            Locations where values should be predicted.
+        power : float, default 2.0
+            Power parameter for distance weighting.
+        max_distance : float, optional
+            Maximum distance for considering points.
+            
+        Returns
+        -------
+        result : InterpolationResult
+            Interpolation results.
+        """
+        train_values = np.asarray(train_values)
+        
+        # Calculate distances from prediction to training points
+        distance_matrix = self.distance_calculator.distance_matrix(
+            predict_points, train_points, symmetric=False
+        )
+        
+        # Apply maximum distance constraint
+        if max_distance is not None:
+            distance_matrix = np.where(distance_matrix > max_distance, np.inf, distance_matrix)
+        
+        # Calculate weights (inverse distance)
+        # Add small epsilon to avoid division by zero
+        weights = 1.0 / (distance_matrix + 1e-10) ** power
+        
+        # Handle points that are exactly at training locations
+        exact_matches = distance_matrix < 1e-10
+        
+        predictions = np.zeros(len(predict_points))
+        
+        for i in range(len(predict_points)):
+            if np.any(exact_matches[i]):
+                # Use exact value if prediction point matches training point
+                exact_idx = np.where(exact_matches[i])[0][0]
+                predictions[i] = train_values[exact_idx]
+            else:
+                # Normalize weights and calculate weighted average
+                valid_weights = weights[i][np.isfinite(weights[i])]
+                valid_values = train_values[np.isfinite(weights[i])]
+                
+                if len(valid_weights) > 0:
+                    weight_sum = np.sum(valid_weights)
+                    if weight_sum > 0:
+                        predictions[i] = np.sum(valid_weights * valid_values) / weight_sum
+                    else:
+                        predictions[i] = np.mean(train_values)
+                else:
+                    predictions[i] = np.mean(train_values)
+        
+        return InterpolationResult(
+            method='inverse_distance_weighting',
+            interpolated_values=predictions,
+            metadata={
+                'power': power,
+                'max_distance': max_distance,
+                'n_training_points': len(train_points),
+                'n_prediction_points': len(predict_points)
+            }
+        )
+    
+    def cross_validate_kriging(self,
+                              points: List[Union[SpatialPoint, Tuple[float, float]]],
+                              values: np.ndarray,
+                              n_folds: int = 5,
+                              variogram_model: str = 'spherical') -> Dict[str, float]:
+        """
+        Perform cross-validation for kriging parameters.
+        
+        Parameters
+        ----------
+        points : list of SpatialPoint or tuples
+            Data locations.
+        values : array-like
+            Values at each location.
+        n_folds : int, default 5
+            Number of cross-validation folds.
+        variogram_model : str, default 'spherical'
+            Variogram model type.
+            
+        Returns
+        -------
+        cv_results : dict
+            Cross-validation metrics.
+        """
+        values = np.asarray(values)
+        n_points = len(points)
+        
+        # Create cross-validation folds
+        fold_size = n_points // n_folds
+        indices = np.arange(n_points)
+        np.random.shuffle(indices)
+        
+        predictions = np.zeros(n_points)
+        fold_scores = []
+        
+        for fold in range(n_folds):
+            # Split data
+            start_idx = fold * fold_size
+            end_idx = start_idx + fold_size if fold < n_folds - 1 else n_points
+            
+            test_indices = indices[start_idx:end_idx]
+            train_indices = np.setdiff1d(indices, test_indices)
+            
+            train_points = [points[i] for i in train_indices]
+            train_values = values[train_indices]
+            test_points = [points[i] for i in test_indices]
+            test_values = values[test_indices]
+            
+            # Perform kriging
+            result = self.ordinary_kriging(train_points, train_values, test_points, variogram_model)
+            
+            # Store predictions
+            predictions[test_indices] = result.interpolated_values
+            
+            # Calculate fold score (RMSE)
+            fold_rmse = np.sqrt(np.mean((result.interpolated_values - test_values) ** 2))
+            fold_scores.append(fold_rmse)
+        
+        # Calculate overall metrics
+        rmse = np.sqrt(np.mean((predictions - values) ** 2))
+        mae = np.mean(np.abs(predictions - values))
+        r2 = 1 - np.sum((values - predictions) ** 2) / np.sum((values - np.mean(values)) ** 2)
+        
+        return {
+            'rmse': rmse,
+            'mae': mae,
+            'r2_score': r2,
+            'fold_rmse_mean': np.mean(fold_scores),
+            'fold_rmse_std': np.std(fold_scores),
+            'n_folds': n_folds
+        }
+    
+    def _extract_coordinates(self, points: List[Union[SpatialPoint, Tuple[float, float]]]) -> np.ndarray:
+        """Extract coordinate array from points list."""
+        coords = []
+        for point in points:
+            if isinstance(point, tuple):
+                coords.append(point)
+            elif isinstance(point, SpatialPoint):
+                coords.append((point.x, point.y))
+        return np.array(coords)
+    
+    def _distances_to_covariances(self, distances: np.ndarray, variogram_model: VariogramModel) -> np.ndarray:
+        """Convert distances to covariances using variogram model."""
+        # Covariance = Sill - Semivariance
+        semivariances = variogram_model.predict_semivariance(distances)
+        covariances = variogram_model.parameters['sill'] - semivariances
+        return covariances
+
+
+class SpatialInterpolationTransformer(BaseEstimator, TransformerMixin):
+    """
+    Sklearn-compatible transformer for spatial interpolation.
+    
+    This transformer performs spatial interpolation on test data based on
+    training data and can be used within sklearn pipelines.
+    """
+    
+    def __init__(self,
+                 method: str = 'kriging',
+                 coordinate_columns: Optional[List[str]] = None,
+                 value_column: str = 'value',
+                 **method_params):
+        """
+        Initialize spatial interpolation transformer.
+        
+        Parameters
+        ----------
+        method : str, default 'kriging'
+            Interpolation method ('kriging', 'idw').
+        coordinate_columns : list of str, optional
+            Names of coordinate columns.
+        value_column : str, default 'value'
+            Name of value column.
+        **method_params : additional parameters
+            Method-specific parameters.
+        """
+        self.method = method
+        self.coordinate_columns = coordinate_columns or ['x', 'y']
+        self.value_column = value_column
+        self.method_params = method_params
+        
+        self.interpolator_ = None
+        self.train_points_ = None
+        self.train_values_ = None
+    
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Any = None) -> 'SpatialInterpolationTransformer':
+        """
+        Fit the interpolation model.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Training spatial data.
+        y : ignored
+            Not used, present for API consistency.
+            
+        Returns
+        -------
+        self : object
+            Returns the instance itself.
+        """
+        self.interpolator_ = SpatialInterpolator()
+        
+        # Extract training data
+        if isinstance(X, pd.DataFrame):
+            if all(col in X.columns for col in self.coordinate_columns):
+                coords = X[self.coordinate_columns].values
+                self.train_points_ = [(row[0], row[1]) for row in coords]
+            else:
+                raise ValueError(f"Coordinate columns {self.coordinate_columns} not found")
+            
+            if self.value_column in X.columns:
+                self.train_values_ = X[self.value_column].values
+            else:
+                raise ValueError(f"Value column {self.value_column} not found")
+        else:
+            # Assume array format: [x, y, value, ...]
+            coords = X[:, :2]
+            self.train_points_ = [(row[0], row[1]) for row in coords]
+            self.train_values_ = X[:, 2] if X.shape[1] > 2 else np.ones(len(self.train_points_))
+        
+        return self
+    
+    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> Union[pd.DataFrame, np.ndarray]:
+        """
+        Interpolate values at new locations.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Test locations for interpolation.
+            
+        Returns
+        -------
+        X_transformed : DataFrame or array-like
+            Data with interpolated values added.
+        """
+        check_is_fitted(self, 'train_points_')
+        
+        # Extract prediction points
+        if isinstance(X, pd.DataFrame):
+            if all(col in X.columns for col in self.coordinate_columns):
+                coords = X[self.coordinate_columns].values
+                predict_points = [(row[0], row[1]) for row in coords]
+            else:
+                raise ValueError(f"Coordinate columns {self.coordinate_columns} not found")
+        else:
+            coords = X[:, :2]
+            predict_points = [(row[0], row[1]) for row in coords]
+        
+        # Perform interpolation
+        if self.method == 'kriging':
+            result = self.interpolator_.ordinary_kriging(
+                self.train_points_, self.train_values_, predict_points, **self.method_params
+            )
+        elif self.method == 'idw':
+            result = self.interpolator_.inverse_distance_weighting(
+                self.train_points_, self.train_values_, predict_points, **self.method_params
+            )
+        else:
+            raise ValueError(f"Unsupported interpolation method: {self.method}")
+        
+        # Create output
+        if isinstance(X, pd.DataFrame):
+            X_transformed = X.copy()
+            X_transformed[f'{self.value_column}_interpolated'] = result.interpolated_values
+            if result.prediction_variance is not None:
+                X_transformed[f'{self.value_column}_variance'] = result.prediction_variance
+            return X_transformed
+        else:
+            if result.prediction_variance is not None:
+                return np.column_stack([X, result.interpolated_values, result.prediction_variance])
+            else:
+                return np.column_stack([X, result.interpolated_values])
+
+
 # Initialize dependency checking on module import
 logger.info("Initializing geospatial analysis module")
 logger.info(f"Available geospatial libraries: "
