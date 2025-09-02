@@ -2442,19 +2442,31 @@ class DatabaseManager:
                     if df.empty:
                         return json.dumps({"error": "No data returned from query"}, indent=2)
                     
-                    # Generate comprehensive profile
-                    profile = self._generate_data_profile(df, include_distributions)
+                    # Use the new ProfileTableTransformer for analysis
+                    from .pipeline.phase1_transformers import ProfileTableTransformer
                     
-                    # Add metadata
-                    profile['metadata'] = {
+                    profiler = ProfileTableTransformer(
+                        sample_size=0,  # Already sampled in query
+                        include_distributions=include_distributions,
+                        connection_name=name,
+                        table_name=table_name,
+                        query=query
+                    )
+                    
+                    # Fit the transformer and get the profile
+                    profiler.fit(df)
+                    profile = profiler.get_profile()
+                    
+                    # Update metadata with database-specific information
+                    if 'metadata' not in profile:
+                        profile['metadata'] = {}
+                    profile['metadata'].update({
                         'source_database': name,
                         'source_table': table_name,
                         'custom_query': query is not None,
                         'sample_size': sample_size,
-                        'actual_rows_analyzed': len(df),
-                        'profiling_timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-                        'include_distributions': include_distributions
-                    }
+                        'actual_rows_analyzed': len(df)
+                    })
                     
                     return json.dumps(profile, indent=2, default=str)
                     
