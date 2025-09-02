@@ -581,6 +581,289 @@ class CohortAnalysisTransformer(BaseEstimator, TransformerMixin):
         return period_summary
 
 
+class CLVCalculator(BaseEstimator, TransformerMixin):
+    """
+    sklearn-compatible transformer for Customer Lifetime Value (CLV) calculation.
+    
+    Calculates CLV using various methods including historical average,
+    predictive modeling, and cohort-based approaches.
+    
+    Parameters:
+    -----------
+    method : str, default='historical'
+        CLV calculation method: 'historical', 'predictive', 'cohort'
+    prediction_periods : int, default=12
+        Number of periods to predict for CLV calculation
+    model_type : str, default='random_forest'
+        Machine learning model for predictive CLV: 'random_forest', 'gradient_boosting'
+    """
+    
+    def __init__(self, method='historical', prediction_periods=12, model_type='random_forest'):
+        self.method = method
+        self.prediction_periods = prediction_periods
+        self.model_type = model_type
+        
+    def fit(self, X, y=None):
+        """Fit the CLV calculator to the data."""
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("Input must be a pandas DataFrame")
+            
+        self.is_fitted_ = True
+        return self
+        
+    def transform(self, X):
+        """Calculate CLV for customers."""
+        check_is_fitted(self, 'is_fitted_')
+        
+        if self.method == 'historical':
+            return self._calculate_historical_clv(X)
+        elif self.method == 'predictive':
+            return self._calculate_predictive_clv(X)
+        elif self.method == 'cohort':
+            return self._calculate_cohort_clv(X)
+        else:
+            raise ValueError(f"Unsupported CLV method: {self.method}")
+            
+    def _calculate_historical_clv(self, X):
+        """Calculate CLV based on historical data."""
+        # Implementation for historical CLV
+        logger.info("Calculating historical CLV")
+        
+        # Simple CLV = Average Order Value * Purchase Frequency * Gross Margin * Lifespan
+        customer_metrics = X.groupby('customer_id').agg({
+            'amount': ['sum', 'mean', 'count'],
+            'date': ['min', 'max']
+        }).round(2)
+        
+        customer_metrics.columns = ['total_spent', 'avg_order_value', 'order_count', 'first_purchase', 'last_purchase']
+        
+        # Calculate customer lifespan in days
+        customer_metrics['lifespan_days'] = (customer_metrics['last_purchase'] - customer_metrics['first_purchase']).dt.days
+        customer_metrics['lifespan_days'] = customer_metrics['lifespan_days'].fillna(0)
+        
+        # Calculate purchase frequency (orders per day)
+        customer_metrics['purchase_frequency'] = customer_metrics['order_count'] / (customer_metrics['lifespan_days'] + 1)
+        
+        # Simple CLV calculation (assuming 20% gross margin)
+        gross_margin = 0.2
+        customer_metrics['clv_estimate'] = (
+            customer_metrics['avg_order_value'] * 
+            customer_metrics['purchase_frequency'] * 
+            gross_margin * 
+            365  # annualize
+        )
+        
+        # Distribution statistics
+        clv_distribution = {
+            'mean': customer_metrics['clv_estimate'].mean(),
+            'median': customer_metrics['clv_estimate'].median(),
+            'std': customer_metrics['clv_estimate'].std(),
+            'min': customer_metrics['clv_estimate'].min(),
+            'max': customer_metrics['clv_estimate'].max()
+        }
+        
+        return CLVResult(
+            clv_scores=customer_metrics.reset_index(),
+            model_metrics={'method': 'historical', 'gross_margin_assumed': gross_margin},
+            clv_distribution=clv_distribution,
+            segment_clv={}
+        )
+
+
+class ABTestAnalyzer(BaseEstimator, TransformerMixin):
+    """
+    sklearn-compatible transformer for A/B test analysis and statistical testing.
+    
+    Performs comprehensive A/B test analysis including statistical significance,
+    effect size calculation, confidence intervals, and power analysis.
+    
+    Parameters:
+    -----------
+    alpha : float, default=0.05
+        Significance level for hypothesis testing
+    alternative : str, default='two-sided'
+        Alternative hypothesis: 'two-sided', 'greater', 'less'
+    test_type : str, default='proportion'
+        Type of test: 'proportion', 'mean', 'conversion'
+    """
+    
+    def __init__(self, alpha=0.05, alternative='two-sided', test_type='proportion'):
+        self.alpha = alpha
+        self.alternative = alternative
+        self.test_type = test_type
+        
+    def fit(self, X, y=None):
+        """Fit the A/B test analyzer."""
+        self.is_fitted_ = True
+        return self
+        
+    def transform(self, X):
+        """Perform A/B test analysis."""
+        check_is_fitted(self, 'is_fitted_')
+        
+        logger.info(f"Performing A/B test analysis with {self.test_type} test")
+        
+        if self.test_type == 'proportion':
+            return self._analyze_proportion_test(X)
+        elif self.test_type == 'mean':
+            return self._analyze_mean_test(X)
+        elif self.test_type == 'conversion':
+            return self._analyze_conversion_test(X)
+        else:
+            raise ValueError(f"Unsupported test type: {self.test_type}")
+            
+    def _analyze_proportion_test(self, X):
+        """Analyze A/B test for proportions (e.g., conversion rates)."""
+        # Expect columns: 'group', 'converted'
+        if 'group' not in X.columns or 'converted' not in X.columns:
+            raise ValueError("For proportion test, data must have 'group' and 'converted' columns")
+            
+        # Calculate conversion rates by group
+        summary_stats = X.groupby('group').agg({
+            'converted': ['count', 'sum', 'mean']
+        }).round(4)
+        
+        summary_stats.columns = ['total', 'conversions', 'conversion_rate']
+        
+        # Extract data for statistical test
+        groups = summary_stats.index.tolist()
+        if len(groups) != 2:
+            raise ValueError("Currently supports only 2-group A/B tests")
+            
+        group_a, group_b = groups[0], groups[1]
+        
+        n_a = summary_stats.loc[group_a, 'total']
+        x_a = summary_stats.loc[group_a, 'conversions']
+        n_b = summary_stats.loc[group_b, 'total']
+        x_b = summary_stats.loc[group_b, 'conversions']
+        
+        p_a = x_a / n_a
+        p_b = x_b / n_b
+        
+        # Perform z-test for proportions
+        counts = np.array([x_a, x_b])
+        nobs = np.array([n_a, n_b])
+        
+        z_stat, p_value = proportions_ztest(counts, nobs, alternative=self.alternative)
+        
+        # Calculate confidence interval for difference
+        p_diff = p_b - p_a
+        se_diff = np.sqrt((p_a * (1 - p_a) / n_a) + (p_b * (1 - p_b) / n_b))
+        z_critical = stats.norm.ppf(1 - self.alpha/2)
+        ci_lower = p_diff - z_critical * se_diff
+        ci_upper = p_diff + z_critical * se_diff
+        
+        # Effect size (Cohen's h for proportions)
+        h = 2 * (np.arcsin(np.sqrt(p_b)) - np.arcsin(np.sqrt(p_a)))
+        
+        # Power analysis
+        pooled_p = (x_a + x_b) / (n_a + n_b)
+        power = self._calculate_power_proportion(n_a, n_b, p_a, p_b, self.alpha)
+        
+        # Generate conclusion
+        conclusion = self._generate_conclusion(p_value, p_diff, self.alpha)
+        
+        return ABTestResult(
+            test_name=f"Proportion A/B Test ({group_a} vs {group_b})",
+            test_statistic=z_stat,
+            p_value=p_value,
+            confidence_interval=(ci_lower, ci_upper),
+            effect_size=h,
+            power=power,
+            conclusion=conclusion,
+            sample_sizes={group_a: n_a, group_b: n_b},
+            conversion_rates={group_a: p_a, group_b: p_b}
+        )
+        
+    def _calculate_power_proportion(self, n1, n2, p1, p2, alpha):
+        """Calculate statistical power for proportion test."""
+        # Simplified power calculation
+        pooled_p = ((n1 * p1) + (n2 * p2)) / (n1 + n2)
+        pooled_se = np.sqrt(pooled_p * (1 - pooled_p) * (1/n1 + 1/n2))
+        
+        if pooled_se == 0:
+            return 1.0
+            
+        z_alpha = stats.norm.ppf(1 - alpha/2)
+        z_beta = abs(p2 - p1) / pooled_se - z_alpha
+        power = stats.norm.cdf(z_beta)
+        
+        return max(0.0, min(1.0, power))
+        
+    def _generate_conclusion(self, p_value, effect, alpha):
+        """Generate human-readable conclusion."""
+        if p_value < alpha:
+            significance = "statistically significant"
+            direction = "positive" if effect > 0 else "negative"
+        else:
+            significance = "not statistically significant"
+            direction = "inconclusive"
+            
+        return f"Result is {significance} (p={p_value:.4f}). Effect direction: {direction}."
+
+
+class PowerAnalysisTransformer(BaseEstimator, TransformerMixin):
+    """
+    sklearn-compatible transformer for statistical power analysis and experiment design.
+    
+    Calculates required sample sizes, detectable effect sizes, and power for
+    experimental design planning.
+    
+    Parameters:
+    -----------
+    power : float, default=0.8
+        Desired statistical power (1 - β)
+    alpha : float, default=0.05
+        Type I error rate (significance level)
+    effect_size : float, optional
+        Expected effect size (Cohen's d for means, Cohen's h for proportions)
+    """
+    
+    def __init__(self, power=0.8, alpha=0.05, effect_size=None):
+        self.power = power
+        self.alpha = alpha
+        self.effect_size = effect_size
+        
+    def fit(self, X, y=None):
+        """Fit the power analysis transformer."""
+        self.is_fitted_ = True
+        return self
+        
+    def transform(self, X):
+        """Perform power analysis calculations."""
+        check_is_fitted(self, 'is_fitted_')
+        
+        logger.info("Performing statistical power analysis for experiment design")
+        
+        # For demonstration, calculate sample size requirements for different effect sizes
+        effect_sizes = [0.1, 0.2, 0.3, 0.5, 0.8] if self.effect_size is None else [self.effect_size]
+        
+        results = []
+        for es in effect_sizes:
+            try:
+                # Calculate required sample size per group
+                n_required = tt_solve_power(effect_size=es, power=self.power, alpha=self.alpha)
+                
+                results.append({
+                    'effect_size': es,
+                    'required_n_per_group': int(np.ceil(n_required)),
+                    'total_required_n': int(np.ceil(n_required * 2)),
+                    'power': self.power,
+                    'alpha': self.alpha
+                })
+            except:
+                # Handle edge cases
+                results.append({
+                    'effect_size': es,
+                    'required_n_per_group': 'Unable to calculate',
+                    'total_required_n': 'Unable to calculate', 
+                    'power': self.power,
+                    'alpha': self.alpha
+                })
+                
+        return pd.DataFrame(results)
+
+
 # High-level convenience functions
 def analyze_rfm(data: pd.DataFrame, 
                 customer_column: str = 'customer_id',
@@ -648,5 +931,456 @@ def perform_cohort_analysis(data: pd.DataFrame,
         period_type=period_type
     )
     
+    transformer.fit(data)
+    return transformer.transform(data)
+
+
+def calculate_clv(data: pd.DataFrame,
+                  customer_column: str = 'customer_id',
+                  date_column: str = 'date',
+                  amount_column: str = 'amount',
+                  method: str = 'historical') -> CLVResult:
+    """
+    Calculate Customer Lifetime Value for customers.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        Transaction data containing customer, date, and amount information
+    customer_column : str, default='customer_id'
+        Name of the customer identifier column
+    date_column : str, default='date'
+        Name of the date column
+    amount_column : str, default='amount'
+        Name of the transaction amount column
+    method : str, default='historical'
+        CLV calculation method
+        
+    Returns:
+    --------
+    result : CLVResult
+        Complete CLV analysis results
+    """
+    # Ensure required columns are present and properly formatted
+    required_columns = [customer_column, date_column, amount_column]
+    missing_columns = [col for col in required_columns if col not in data.columns]
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {missing_columns}")
+        
+    transformer = CLVCalculator(method=method)
+    transformer.fit(data)
+    return transformer.transform(data)
+
+
+def perform_ab_test(data: pd.DataFrame,
+                   group_column: str = 'group',
+                   outcome_column: str = 'converted',
+                   test_type: str = 'proportion',
+                   alpha: float = 0.05) -> ABTestResult:
+    """
+    Perform A/B test statistical analysis.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        A/B test data with group assignments and outcomes
+    group_column : str, default='group'
+        Name of the group assignment column
+    outcome_column : str, default='converted'
+        Name of the outcome/conversion column
+    test_type : str, default='proportion'
+        Type of statistical test to perform
+    alpha : float, default=0.05
+        Significance level for hypothesis testing
+        
+    Returns:
+    --------
+    result : ABTestResult
+        Complete A/B test analysis results
+    """
+    # Rename columns to match expected format
+    data_renamed = data.rename(columns={
+        group_column: 'group',
+        outcome_column: 'converted'
+    })
+    
+    transformer = ABTestAnalyzer(alpha=alpha, test_type=test_type)
+    transformer.fit(data_renamed)
+    return transformer.transform(data_renamed)
+
+
+class AttributionAnalyzer(BaseEstimator, TransformerMixin):
+    """
+    sklearn-compatible transformer for marketing attribution analysis.
+    
+    Analyzes customer conversion paths and assigns attribution weights to
+    different marketing touchpoints using various attribution models.
+    
+    Parameters:
+    -----------
+    attribution_model : AttributionModel or str, default='last_touch'
+        Attribution model to use for analysis
+    lookback_window : int, default=30
+        Number of days to look back for touchpoints
+    """
+    
+    def __init__(self, attribution_model='last_touch', lookback_window=30):
+        if isinstance(attribution_model, str):
+            self.attribution_model = AttributionModel(attribution_model)
+        else:
+            self.attribution_model = attribution_model
+        self.lookback_window = lookback_window
+        
+    def fit(self, X, y=None):
+        """Fit the attribution analyzer."""
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("Input must be a pandas DataFrame")
+            
+        # Expect columns: customer_id, channel, timestamp, converted
+        required_columns = ['customer_id', 'channel', 'timestamp']
+        missing_columns = [col for col in required_columns if col not in X.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
+            
+        self.is_fitted_ = True
+        return self
+        
+    def transform(self, X):
+        """Perform attribution analysis."""
+        check_is_fitted(self, 'is_fitted_')
+        
+        logger.info(f"Performing {self.attribution_model.value} attribution analysis")
+        
+        # Prepare conversion paths
+        conversion_paths = self._prepare_conversion_paths(X)
+        
+        # Apply attribution model
+        if self.attribution_model == AttributionModel.FIRST_TOUCH:
+            attribution_weights = self._first_touch_attribution(conversion_paths)
+        elif self.attribution_model == AttributionModel.LAST_TOUCH:
+            attribution_weights = self._last_touch_attribution(conversion_paths)
+        elif self.attribution_model == AttributionModel.LINEAR:
+            attribution_weights = self._linear_attribution(conversion_paths)
+        elif self.attribution_model == AttributionModel.TIME_DECAY:
+            attribution_weights = self._time_decay_attribution(conversion_paths)
+        elif self.attribution_model == AttributionModel.POSITION_BASED:
+            attribution_weights = self._position_based_attribution(conversion_paths)
+        else:
+            raise ValueError(f"Unsupported attribution model: {self.attribution_model}")
+            
+        # Calculate channel-level attribution
+        channel_attribution = self._calculate_channel_attribution(attribution_weights)
+        
+        # Create model comparison
+        model_comparison = self._compare_attribution_models(conversion_paths)
+        
+        return AttributionResult(
+            attribution_weights=attribution_weights,
+            channel_attribution=channel_attribution,
+            model_comparison=model_comparison,
+            conversion_paths=conversion_paths
+        )
+        
+    def _prepare_conversion_paths(self, X):
+        """Prepare customer conversion paths from touchpoint data."""
+        # Sort by customer and timestamp
+        X_sorted = X.sort_values(['customer_id', 'timestamp'])
+        
+        # Group by customer to create paths
+        paths = []
+        for customer_id, group in X_sorted.groupby('customer_id'):
+            path_data = {
+                'customer_id': customer_id,
+                'touchpoints': group['channel'].tolist(),
+                'timestamps': group['timestamp'].tolist(),
+                'converted': group.get('converted', [False] * len(group)).iloc[-1]
+            }
+            paths.append(path_data)
+            
+        return pd.DataFrame(paths)
+        
+    def _first_touch_attribution(self, conversion_paths):
+        """Apply first-touch attribution model."""
+        attribution_data = []
+        
+        for _, path in conversion_paths.iterrows():
+            if path['converted'] and len(path['touchpoints']) > 0:
+                # First touchpoint gets 100% credit
+                first_channel = path['touchpoints'][0]
+                attribution_data.append({
+                    'customer_id': path['customer_id'],
+                    'channel': first_channel,
+                    'attribution_weight': 1.0,
+                    'model': 'first_touch'
+                })
+                
+        return pd.DataFrame(attribution_data)
+        
+    def _last_touch_attribution(self, conversion_paths):
+        """Apply last-touch attribution model."""
+        attribution_data = []
+        
+        for _, path in conversion_paths.iterrows():
+            if path['converted'] and len(path['touchpoints']) > 0:
+                # Last touchpoint gets 100% credit
+                last_channel = path['touchpoints'][-1]
+                attribution_data.append({
+                    'customer_id': path['customer_id'],
+                    'channel': last_channel,
+                    'attribution_weight': 1.0,
+                    'model': 'last_touch'
+                })
+                
+        return pd.DataFrame(attribution_data)
+        
+    def _linear_attribution(self, conversion_paths):
+        """Apply linear attribution model."""
+        attribution_data = []
+        
+        for _, path in conversion_paths.iterrows():
+            if path['converted'] and len(path['touchpoints']) > 0:
+                # Each touchpoint gets equal credit
+                weight_per_touchpoint = 1.0 / len(path['touchpoints'])
+                
+                for channel in path['touchpoints']:
+                    attribution_data.append({
+                        'customer_id': path['customer_id'],
+                        'channel': channel,
+                        'attribution_weight': weight_per_touchpoint,
+                        'model': 'linear'
+                    })
+                    
+        return pd.DataFrame(attribution_data)
+        
+    def _time_decay_attribution(self, conversion_paths):
+        """Apply time-decay attribution model (placeholder)."""
+        # For now, fallback to linear attribution
+        return self._linear_attribution(conversion_paths)
+        
+    def _position_based_attribution(self, conversion_paths):
+        """Apply position-based attribution model (placeholder)."""
+        # For now, fallback to linear attribution
+        return self._linear_attribution(conversion_paths)
+        
+    def _calculate_channel_attribution(self, attribution_weights):
+        """Calculate total attribution by channel."""
+        if attribution_weights.empty:
+            return pd.DataFrame(columns=['channel', 'total_attribution', 'conversions'])
+            
+        channel_totals = attribution_weights.groupby('channel').agg({
+            'attribution_weight': 'sum',
+            'customer_id': 'count'
+        }).reset_index()
+        
+        channel_totals.columns = ['channel', 'total_attribution', 'conversions']
+        channel_totals = channel_totals.sort_values('total_attribution', ascending=False)
+        
+        return channel_totals
+        
+    def _compare_attribution_models(self, conversion_paths):
+        """Compare results across different attribution models."""
+        models = [AttributionModel.FIRST_TOUCH, AttributionModel.LAST_TOUCH, AttributionModel.LINEAR]
+        comparison = {}
+        
+        for model in models:
+            temp_analyzer = AttributionAnalyzer(attribution_model=model)
+            temp_analyzer.is_fitted_ = True
+            
+            if model == AttributionModel.FIRST_TOUCH:
+                weights = temp_analyzer._first_touch_attribution(conversion_paths)
+            elif model == AttributionModel.LAST_TOUCH:
+                weights = temp_analyzer._last_touch_attribution(conversion_paths)
+            elif model == AttributionModel.LINEAR:
+                weights = temp_analyzer._linear_attribution(conversion_paths)
+                
+            if not weights.empty:
+                channel_totals = weights.groupby('channel')['attribution_weight'].sum().to_dict()
+            else:
+                channel_totals = {}
+                
+            comparison[model.value] = channel_totals
+            
+        return comparison
+
+
+class FunnelAnalyzer(BaseEstimator, TransformerMixin):
+    """
+    sklearn-compatible transformer for marketing funnel analysis.
+    
+    Analyzes conversion funnels to identify bottlenecks and optimization
+    opportunities in the customer journey.
+    
+    Parameters:
+    -----------
+    steps : list of str
+        Ordered list of funnel step names
+    """
+    
+    def __init__(self, steps=None):
+        self.steps = steps or ['awareness', 'interest', 'consideration', 'purchase']
+        
+    def fit(self, X, y=None):
+        """Fit the funnel analyzer."""
+        self.is_fitted_ = True
+        return self
+        
+    def transform(self, X):
+        """Perform funnel analysis."""
+        check_is_fitted(self, 'is_fitted_')
+        
+        logger.info("Performing marketing funnel analysis")
+        
+        # Calculate funnel metrics
+        funnel_steps = self._calculate_funnel_steps(X)
+        conversion_rates = self._calculate_conversion_rates(funnel_steps)
+        drop_off_rates = self._calculate_drop_off_rates(funnel_steps)
+        bottlenecks = self._identify_bottlenecks(drop_off_rates)
+        recommendations = self._generate_recommendations(bottlenecks, drop_off_rates)
+        
+        return FunnelAnalysisResult(
+            funnel_steps=funnel_steps,
+            conversion_rates=conversion_rates,
+            drop_off_rates=drop_off_rates,
+            bottlenecks=bottlenecks,
+            optimization_recommendations=recommendations
+        )
+        
+    def _calculate_funnel_steps(self, X):
+        """Calculate user counts at each funnel step."""
+        # Expect data with columns for each step (boolean values)
+        step_counts = []
+        
+        for i, step in enumerate(self.steps):
+            if step in X.columns:
+                count = X[step].sum()
+            else:
+                # If step column doesn't exist, assume 0
+                count = 0
+                
+            step_counts.append({
+                'step': step,
+                'step_number': i + 1,
+                'users': count
+            })
+            
+        return pd.DataFrame(step_counts)
+        
+    def _calculate_conversion_rates(self, funnel_steps):
+        """Calculate conversion rates between steps."""
+        conversion_rates = {}
+        
+        for i in range(len(funnel_steps) - 1):
+            current_step = funnel_steps.iloc[i]
+            next_step = funnel_steps.iloc[i + 1]
+            
+            if current_step['users'] > 0:
+                rate = next_step['users'] / current_step['users']
+            else:
+                rate = 0
+                
+            conversion_rates[f"{current_step['step']}_to_{next_step['step']}"] = rate
+            
+        return conversion_rates
+        
+    def _calculate_drop_off_rates(self, funnel_steps):
+        """Calculate drop-off rates between steps."""
+        drop_off_rates = {}
+        
+        for i in range(len(funnel_steps) - 1):
+            current_step = funnel_steps.iloc[i]
+            next_step = funnel_steps.iloc[i + 1]
+            
+            if current_step['users'] > 0:
+                rate = (current_step['users'] - next_step['users']) / current_step['users']
+            else:
+                rate = 1
+                
+            drop_off_rates[f"{current_step['step']}_to_{next_step['step']}"] = rate
+            
+        return drop_off_rates
+        
+    def _identify_bottlenecks(self, drop_off_rates):
+        """Identify funnel bottlenecks with high drop-off rates."""
+        # Sort drop-off rates and identify top bottlenecks
+        sorted_drops = sorted(drop_off_rates.items(), key=lambda x: x[1], reverse=True)
+        
+        # Consider bottlenecks as steps with >50% drop-off
+        bottlenecks = [step for step, rate in sorted_drops if rate > 0.5]
+        
+        return bottlenecks
+        
+    def _generate_recommendations(self, bottlenecks, drop_off_rates):
+        """Generate optimization recommendations."""
+        recommendations = []
+        
+        for bottleneck in bottlenecks:
+            rate = drop_off_rates[bottleneck]
+            recommendations.append(
+                f"High drop-off at {bottleneck} ({rate:.1%}). Consider improving user experience or reducing friction."
+            )
+            
+        if not recommendations:
+            recommendations.append("Funnel performance looks good. Focus on incremental improvements.")
+            
+        return recommendations
+
+
+# Additional high-level convenience functions
+def analyze_attribution(data: pd.DataFrame,
+                       customer_column: str = 'customer_id',
+                       channel_column: str = 'channel',
+                       timestamp_column: str = 'timestamp',
+                       model: str = 'last_touch') -> AttributionResult:
+    """
+    Perform marketing attribution analysis.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        Touchpoint data with customer, channel, and timestamp information
+    customer_column : str, default='customer_id'
+        Name of the customer identifier column
+    channel_column : str, default='channel'
+        Name of the marketing channel column
+    timestamp_column : str, default='timestamp'
+        Name of the timestamp column
+    model : str, default='last_touch'
+        Attribution model to use
+        
+    Returns:
+    --------
+    result : AttributionResult
+        Complete attribution analysis results
+    """
+    # Rename columns to match expected format
+    data_renamed = data.rename(columns={
+        customer_column: 'customer_id',
+        channel_column: 'channel',
+        timestamp_column: 'timestamp'
+    })
+    
+    transformer = AttributionAnalyzer(attribution_model=model)
+    transformer.fit(data_renamed)
+    return transformer.transform(data_renamed)
+
+
+def analyze_funnel(data: pd.DataFrame,
+                  steps: Optional[List[str]] = None) -> FunnelAnalysisResult:
+    """
+    Perform marketing funnel analysis.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        Funnel data with columns for each step (boolean values)
+    steps : list of str, optional
+        Ordered list of funnel step names
+        
+    Returns:
+    --------
+    result : FunnelAnalysisResult
+        Complete funnel analysis results
+    """
+    transformer = FunnelAnalyzer(steps=steps)
     transformer.fit(data)
     return transformer.transform(data)
