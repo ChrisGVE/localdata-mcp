@@ -2587,3 +2587,679 @@ class StreamingDataPipeline(DataSciencePipeline):
                 self._streaming_executor.clear_buffer(query_id)
         
         logger.info("Streaming cache cleared", pipeline_id=self._pipeline_id)
+
+
+class SklearnStreamingAdapter:
+    """
+    Adapter that bridges sklearn pipelines with StreamingQueryExecutor for seamless integration.
+    
+    This adapter enables any sklearn Pipeline (including DataSciencePipeline) to work
+    seamlessly with the existing StreamingQueryExecutor infrastructure, providing
+    memory-bounded processing capabilities while maintaining full sklearn API compatibility.
+    
+    Key Features:
+    - Sklearn pipeline execution within streaming chunks
+    - Partial fitting support for incremental learning algorithms
+    - Result aggregation across streaming chunks with memory management
+    - Memory monitoring integration with adaptive chunk sizing
+    - Error handling and recovery in streaming context
+    - Performance monitoring and optimization
+    
+    Usage:
+        # Create adapter for any sklearn pipeline
+        adapter = SklearnStreamingAdapter(pipeline, streaming_executor)
+        
+        # Execute with memory-bounded streaming
+        results = adapter.execute_streaming(data, operation='transform')
+        
+        # Or use for fitting with streaming
+        adapter.execute_streaming(X_train, y_train, operation='fit')
+    """
+    
+    def __init__(self,
+                 sklearn_pipeline: Pipeline,
+                 streaming_executor: Optional[StreamingQueryExecutor] = None,
+                 memory_monitoring: bool = True,
+                 adaptive_chunking: bool = True,
+                 performance_tracking: bool = True):
+        """
+        Initialize SklearnStreamingAdapter.
+        
+        Args:
+            sklearn_pipeline: Any sklearn Pipeline (or DataSciencePipeline)
+            streaming_executor: StreamingQueryExecutor instance (auto-created if None)
+            memory_monitoring: Enable real-time memory monitoring
+            adaptive_chunking: Enable adaptive chunk size optimization
+            performance_tracking: Enable performance metrics tracking
+        """
+        self.sklearn_pipeline = sklearn_pipeline
+        self.streaming_executor = streaming_executor or StreamingQueryExecutor()
+        self.memory_monitoring = memory_monitoring
+        self.adaptive_chunking = adaptive_chunking
+        self.performance_tracking = performance_tracking
+        
+        # Adapter state
+        self.adapter_id = str(uuid.uuid4())[:8]
+        self.execution_history: List[Dict[str, Any]] = []
+        self.performance_metrics: Dict[str, Any] = {}
+        self._chunk_results_cache: Dict[str, List[Any]] = {}
+        
+        logger.info("SklearnStreamingAdapter initialized",
+                   adapter_id=self.adapter_id,
+                   pipeline_type=type(sklearn_pipeline).__name__,
+                   memory_monitoring=memory_monitoring,
+                   adaptive_chunking=adaptive_chunking)
+    
+    def execute_streaming(self,
+                         X,
+                         y=None,
+                         operation: str = 'transform',
+                         initial_chunk_size: Optional[int] = None,
+                         **operation_params) -> Tuple[Any, Dict[str, Any]]:
+        """
+        Execute sklearn pipeline operation with streaming support.
+        
+        Args:
+            X: Input data (DataFrame, array, or streaming source)
+            y: Target data for fitting (optional)
+            operation: Operation to perform ('fit', 'transform', 'fit_transform', 'predict')
+            initial_chunk_size: Initial chunk size (adaptive if None)
+            **operation_params: Additional parameters for the operation
+            
+        Returns:
+            Tuple of (operation_results, execution_metadata)
+        """
+        execution_id = f"{operation}_{self.adapter_id}_{int(time.time())}"
+        start_time = time.time()
+        
+        logger.info(f"Starting streaming {operation} execution",
+                   adapter_id=self.adapter_id,
+                   execution_id=execution_id,
+                   operation=operation)
+        
+        try:
+            # Convert input to streaming source
+            if isinstance(X, pd.DataFrame):
+                data_source = DataFrameStreamingSource(X)
+            elif hasattr(X, 'get_chunk_iterator'):
+                data_source = X  # Already a streaming source
+            else:
+                # Convert array-like to DataFrame
+                X_df = pd.DataFrame(X) if not isinstance(X, pd.DataFrame) else X
+                data_source = DataFrameStreamingSource(X_df)
+            
+            # Get initial memory status
+            memory_status = self.streaming_executor._get_memory_status()
+            chunk_size = self._calculate_initial_chunk_size(data_source, memory_status, initial_chunk_size)
+            
+            # Execute streaming operation
+            operation_results, chunk_metadata = self._execute_operation_streaming(
+                data_source, y, operation, chunk_size, **operation_params
+            )
+            
+            # Calculate execution metadata
+            execution_time = time.time() - start_time
+            execution_metadata = self._build_execution_metadata(
+                execution_id, operation, execution_time, chunk_metadata
+            )
+            
+            # Store execution history
+            if self.performance_tracking:
+                self.execution_history.append(execution_metadata)
+                self._update_performance_metrics(execution_metadata)
+            
+            logger.info(f"Streaming {operation} execution completed",
+                       adapter_id=self.adapter_id,
+                       execution_id=execution_id,
+                       execution_time=execution_time,
+                       chunks_processed=chunk_metadata.get('total_chunks', 0))
+            
+            return operation_results, execution_metadata
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            error_metadata = {
+                'execution_id': execution_id,
+                'operation': operation,
+                'execution_time': execution_time,
+                'error_type': type(e).__name__,
+                'error_message': str(e),
+                'adapter_id': self.adapter_id,
+                'success': False
+            }
+            
+            logger.error(f"Streaming {operation} execution failed",
+                        adapter_id=self.adapter_id,
+                        execution_id=execution_id,
+                        error=str(e))
+            
+            raise PipelineError(
+                f"SklearnStreamingAdapter {operation} failed: {str(e)}",
+                classification=ErrorClassification.STREAMING_ERROR,
+                context=error_metadata
+            ) from e
+    
+    def _execute_operation_streaming(self,
+                                   data_source: StreamingDataSource,
+                                   y,
+                                   operation: str,
+                                   chunk_size: int,
+                                   **operation_params) -> Tuple[Any, Dict[str, Any]]:
+        """
+        Execute the specific sklearn operation in streaming mode.
+        
+        Args:
+            data_source: Streaming data source
+            y: Target data (for fitting operations)
+            operation: Operation to perform
+            chunk_size: Size of chunks to process
+            **operation_params: Additional parameters
+            
+        Returns:
+            Tuple of (operation_results, chunk_processing_metadata)
+        """
+        chunk_results = []
+        chunk_metadata = {
+            'total_chunks': 0,
+            'successful_chunks': 0,
+            'failed_chunks': 0,
+            'processing_times': [],
+            'memory_snapshots': [],
+            'chunk_sizes': []
+        }
+        
+        try:
+            # Process data in chunks
+            chunk_number = 0
+            current_chunk_size = chunk_size
+            
+            for chunk in data_source.get_chunk_iterator(current_chunk_size):
+                chunk_start_time = time.time()
+                chunk_number += 1
+                chunk_metadata['total_chunks'] = chunk_number
+                
+                # Monitor memory if enabled
+                if self.memory_monitoring:
+                    memory_status = self.streaming_executor._get_memory_status()
+                    chunk_metadata['memory_snapshots'].append({
+                        'chunk_number': chunk_number,
+                        'memory_used_percent': memory_status.used_percent,
+                        'available_gb': memory_status.available_gb,
+                        'is_low_memory': memory_status.is_low_memory
+                    })
+                    
+                    # Adapt chunk size if needed
+                    if self.adaptive_chunking and memory_status.is_low_memory:
+                        current_chunk_size = min(current_chunk_size, memory_status.recommended_chunk_size)
+                        logger.warning(f"Reducing chunk size due to memory pressure: {current_chunk_size}")
+                
+                try:
+                    # Get corresponding y chunk if provided
+                    if y is not None:
+                        start_idx = (chunk_number - 1) * current_chunk_size
+                        end_idx = start_idx + len(chunk)
+                        if hasattr(y, 'iloc'):
+                            y_chunk = y.iloc[start_idx:end_idx]
+                        else:
+                            y_chunk = y[start_idx:end_idx] if hasattr(y, '__getitem__') else None
+                    else:
+                        y_chunk = None
+                    
+                    # Execute operation on chunk
+                    chunk_result = self._execute_chunk_operation(
+                        chunk, y_chunk, operation, chunk_number, **operation_params
+                    )
+                    
+                    chunk_results.append(chunk_result)
+                    chunk_metadata['successful_chunks'] += 1
+                    
+                    # Track chunk processing time
+                    chunk_time = time.time() - chunk_start_time
+                    chunk_metadata['processing_times'].append(chunk_time)
+                    chunk_metadata['chunk_sizes'].append(len(chunk))
+                    
+                    logger.debug(f"Processed chunk {chunk_number}: {len(chunk)} samples, {chunk_time:.3f}s")
+                    
+                    # Adaptive chunk sizing based on performance
+                    if self.adaptive_chunking and chunk_number > 1:
+                        current_chunk_size = self._adapt_chunk_size(
+                            current_chunk_size, chunk_time,
+                            memory_status if self.memory_monitoring else None
+                        )
+                
+                except Exception as chunk_error:
+                    chunk_metadata['failed_chunks'] += 1
+                    logger.error(f"Chunk {chunk_number} processing failed: {chunk_error}")
+                    
+                    # For transform operations, continue with next chunk
+                    if operation in ['transform', 'predict']:
+                        chunk_results.append(None)  # Placeholder for failed chunk
+                        continue
+                    else:
+                        # For fit operations, chunk failures are more serious
+                        raise chunk_error
+            
+            # Aggregate results based on operation type
+            final_result = self._aggregate_chunk_results(chunk_results, operation)
+            
+            return final_result, chunk_metadata
+            
+        except Exception as e:
+            logger.error(f"Streaming operation {operation} failed: {e}")
+            raise
+    
+    def _execute_chunk_operation(self,
+                               chunk,
+                               y_chunk,
+                               operation: str,
+                               chunk_number: int,
+                               **operation_params) -> Any:
+        """
+        Execute sklearn operation on a single chunk.
+        
+        Args:
+            chunk: Data chunk
+            y_chunk: Target chunk (for fitting)
+            operation: Operation to perform
+            chunk_number: Sequential chunk number
+            **operation_params: Additional operation parameters
+            
+        Returns:
+            Operation result for this chunk
+        """
+        try:
+            if operation == 'fit':
+                if chunk_number == 1:
+                    # Initial fit on first chunk
+                    result = self.sklearn_pipeline.fit(chunk, y_chunk, **operation_params)
+                else:
+                    # Try partial_fit for subsequent chunks if supported
+                    if hasattr(self.sklearn_pipeline, 'partial_fit'):
+                        result = self.sklearn_pipeline.partial_fit(chunk, y_chunk)
+                    else:
+                        # Check if individual steps support partial fitting
+                        self._partial_fit_steps(chunk, y_chunk)
+                        result = self.sklearn_pipeline
+                        
+            elif operation == 'transform':
+                result = self.sklearn_pipeline.transform(chunk)
+                
+            elif operation == 'fit_transform':
+                if chunk_number == 1:
+                    result = self.sklearn_pipeline.fit_transform(chunk, y_chunk, **operation_params)
+                else:
+                    # For subsequent chunks: partial fit + transform
+                    if hasattr(self.sklearn_pipeline, 'partial_fit'):
+                        self.sklearn_pipeline.partial_fit(chunk, y_chunk)
+                    else:
+                        self._partial_fit_steps(chunk, y_chunk)
+                    result = self.sklearn_pipeline.transform(chunk)
+                    
+            elif operation == 'predict':
+                result = self.sklearn_pipeline.predict(chunk)
+                
+            else:
+                # Generic operation - try to call the method
+                if hasattr(self.sklearn_pipeline, operation):
+                    method = getattr(self.sklearn_pipeline, operation)
+                    result = method(chunk, y_chunk, **operation_params) if y_chunk is not None else method(chunk, **operation_params)
+                else:
+                    raise ValueError(f"Unknown operation: {operation}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Chunk operation {operation} failed on chunk {chunk_number}: {e}")
+            raise
+    
+    def _partial_fit_steps(self, chunk, y_chunk):
+        """
+        Apply partial_fit to individual pipeline steps that support it.
+        
+        Args:
+            chunk: Data chunk
+            y_chunk: Target chunk
+        """
+        # Transform data through the pipeline up to each step
+        current_data = chunk
+        
+        for step_name, step_estimator in self.sklearn_pipeline.steps:
+            if hasattr(step_estimator, 'partial_fit'):
+                # Apply partial fit on this step
+                step_estimator.partial_fit(current_data, y_chunk)
+            
+            # Transform data for next step
+            if hasattr(step_estimator, 'transform'):
+                current_data = step_estimator.transform(current_data)
+    
+    def _aggregate_chunk_results(self, chunk_results: List[Any], operation: str) -> Any:
+        """
+        Aggregate results from all chunks based on operation type.
+        
+        Args:
+            chunk_results: List of results from each chunk
+            operation: Operation that was performed
+            
+        Returns:
+            Aggregated result
+        """
+        # Filter out None results from failed chunks
+        valid_results = [r for r in chunk_results if r is not None]
+        
+        if not valid_results:
+            logger.warning("No valid chunk results to aggregate")
+            return None
+        
+        try:
+            if operation in ['fit', 'fit_transform'] and len(valid_results) > 0:
+                # For fit operations, return the fitted pipeline (last valid result)
+                if operation == 'fit':
+                    return self.sklearn_pipeline  # Return the fitted pipeline
+                else:
+                    # For fit_transform, aggregate the transformed results
+                    return self._concatenate_results(valid_results)
+            
+            elif operation in ['transform', 'predict']:
+                # Concatenate transformation/prediction results
+                return self._concatenate_results(valid_results)
+            
+            else:
+                # For other operations, try to concatenate or return list
+                try:
+                    return self._concatenate_results(valid_results)
+                except:
+                    return valid_results  # Return as list if concatenation fails
+                    
+        except Exception as e:
+            logger.error(f"Failed to aggregate {operation} results: {e}")
+            return valid_results[0] if valid_results else None
+    
+    def _concatenate_results(self, results: List[Any]) -> Any:
+        """
+        Concatenate results intelligently based on their type.
+        
+        Args:
+            results: List of results to concatenate
+            
+        Returns:
+            Concatenated result
+        """
+        if not results:
+            return None
+        
+        first_result = results[0]
+        
+        if isinstance(first_result, pd.DataFrame):
+            return pd.concat(results, ignore_index=True)
+        elif isinstance(first_result, np.ndarray):
+            return np.concatenate(results, axis=0)
+        elif isinstance(first_result, list):
+            return [item for result in results for item in result]
+        else:
+            # Fallback: return as list
+            return results
+    
+    def _calculate_initial_chunk_size(self,
+                                    data_source: StreamingDataSource,
+                                    memory_status: MemoryStatus,
+                                    provided_chunk_size: Optional[int]) -> int:
+        """
+        Calculate initial chunk size based on data characteristics and memory.
+        
+        Args:
+            data_source: Streaming data source
+            memory_status: Current memory status
+            provided_chunk_size: User-provided chunk size (takes precedence)
+            
+        Returns:
+            Calculated chunk size
+        """
+        if provided_chunk_size is not None:
+            return provided_chunk_size
+        
+        # Use memory-based calculation
+        if memory_status.is_low_memory:
+            chunk_size = memory_status.recommended_chunk_size
+        else:
+            # Conservative default based on available memory
+            available_gb = memory_status.available_gb
+            if available_gb > 8:
+                chunk_size = 5000  # Large chunks for high-memory systems
+            elif available_gb > 4:
+                chunk_size = 2000  # Medium chunks
+            else:
+                chunk_size = 1000  # Small chunks for constrained systems
+        
+        # Estimate memory per row if possible
+        try:
+            memory_per_row = data_source.estimate_memory_per_row()
+            if memory_per_row > 0:
+                # Target 100MB per chunk max
+                target_memory_mb = 100
+                calculated_chunk_size = int((target_memory_mb * 1024 * 1024) / memory_per_row)
+                chunk_size = min(chunk_size, max(calculated_chunk_size, 100))
+        except:
+            pass  # Use default chunk size if estimation fails
+        
+        logger.info(f"Calculated initial chunk size: {chunk_size} (memory: {memory_status.used_percent:.1f}% used)")
+        return chunk_size
+    
+    def _adapt_chunk_size(self,
+                         current_chunk_size: int,
+                         processing_time: float,
+                         memory_status: Optional[MemoryStatus]) -> int:
+        """
+        Adapt chunk size based on performance feedback.
+        
+        Args:
+            current_chunk_size: Current chunk size
+            processing_time: Time taken for last chunk
+            memory_status: Current memory status (optional)
+            
+        Returns:
+            Adapted chunk size
+        """
+        new_chunk_size = current_chunk_size
+        
+        # Adapt based on processing time
+        if processing_time > 10.0:  # Very slow (>10 seconds)
+            new_chunk_size = max(current_chunk_size // 4, 50)
+        elif processing_time > 5.0:  # Slow (>5 seconds)
+            new_chunk_size = max(current_chunk_size // 2, 100)
+        elif processing_time < 0.5 and (not memory_status or not memory_status.is_low_memory):
+            # Fast processing and good memory - increase chunk size
+            new_chunk_size = min(current_chunk_size * 2, 10000)
+        
+        # Apply memory constraints
+        if memory_status and memory_status.is_low_memory:
+            new_chunk_size = min(new_chunk_size, memory_status.recommended_chunk_size)
+        
+        # Ensure reasonable bounds
+        new_chunk_size = max(min(new_chunk_size, 50000), 10)
+        
+        if new_chunk_size != current_chunk_size:
+            logger.debug(f"Adapted chunk size: {current_chunk_size} -> {new_chunk_size} (time: {processing_time:.3f}s)")
+        
+        return new_chunk_size
+    
+    def _build_execution_metadata(self,
+                                execution_id: str,
+                                operation: str,
+                                execution_time: float,
+                                chunk_metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build comprehensive execution metadata.
+        
+        Args:
+            execution_id: Unique execution identifier
+            operation: Operation that was performed
+            execution_time: Total execution time
+            chunk_metadata: Metadata from chunk processing
+            
+        Returns:
+            Comprehensive execution metadata
+        """
+        total_chunks = chunk_metadata.get('total_chunks', 0)
+        successful_chunks = chunk_metadata.get('successful_chunks', 0)
+        processing_times = chunk_metadata.get('processing_times', [])
+        chunk_sizes = chunk_metadata.get('chunk_sizes', [])
+        
+        metadata = {
+            'execution_id': execution_id,
+            'adapter_id': self.adapter_id,
+            'operation': operation,
+            'execution_time_seconds': execution_time,
+            'success': True,
+            'timestamp': time.time(),
+            
+            # Chunk processing statistics
+            'chunk_statistics': {
+                'total_chunks': total_chunks,
+                'successful_chunks': successful_chunks,
+                'failed_chunks': chunk_metadata.get('failed_chunks', 0),
+                'success_rate': successful_chunks / total_chunks if total_chunks > 0 else 0,
+                'average_chunk_processing_time': sum(processing_times) / len(processing_times) if processing_times else 0,
+                'total_samples_processed': sum(chunk_sizes),
+                'average_chunk_size': sum(chunk_sizes) / len(chunk_sizes) if chunk_sizes else 0
+            },
+            
+            # Performance metrics
+            'performance_metrics': {
+                'samples_per_second': sum(chunk_sizes) / execution_time if execution_time > 0 else 0,
+                'chunks_per_second': total_chunks / execution_time if execution_time > 0 else 0,
+                'memory_efficiency': self._calculate_memory_efficiency(chunk_metadata)
+            },
+            
+            # Pipeline information
+            'pipeline_info': {
+                'pipeline_type': type(self.sklearn_pipeline).__name__,
+                'pipeline_steps': [step_name for step_name, _ in self.sklearn_pipeline.steps] if hasattr(self.sklearn_pipeline, 'steps') else [],
+                'supports_partial_fit': self._check_partial_fit_support()
+            }
+        }
+        
+        return metadata
+    
+    def _calculate_memory_efficiency(self, chunk_metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Calculate memory efficiency metrics from chunk processing.
+        
+        Args:
+            chunk_metadata: Metadata from chunk processing
+            
+        Returns:
+            Memory efficiency metrics
+        """
+        memory_snapshots = chunk_metadata.get('memory_snapshots', [])
+        
+        if not memory_snapshots:
+            return {'memory_monitoring_enabled': False}
+        
+        memory_usage_percentages = [s['memory_used_percent'] for s in memory_snapshots]
+        available_gb_values = [s['available_gb'] for s in memory_snapshots]
+        low_memory_count = sum(1 for s in memory_snapshots if s['is_low_memory'])
+        
+        return {
+            'memory_monitoring_enabled': True,
+            'peak_memory_usage_percent': max(memory_usage_percentages) if memory_usage_percentages else 0,
+            'average_memory_usage_percent': sum(memory_usage_percentages) / len(memory_usage_percentages) if memory_usage_percentages else 0,
+            'minimum_available_gb': min(available_gb_values) if available_gb_values else 0,
+            'memory_pressure_chunks': low_memory_count,
+            'memory_stability': (len(memory_snapshots) - low_memory_count) / len(memory_snapshots) if memory_snapshots else 1.0
+        }
+    
+    def _check_partial_fit_support(self) -> bool:
+        """
+        Check if the pipeline supports partial fitting.
+        
+        Returns:
+            True if partial fitting is supported
+        """
+        if hasattr(self.sklearn_pipeline, 'partial_fit'):
+            return True
+        
+        if hasattr(self.sklearn_pipeline, 'steps'):
+            # Check if any steps support partial_fit
+            for step_name, step_estimator in self.sklearn_pipeline.steps:
+                if hasattr(step_estimator, 'partial_fit'):
+                    return True
+        
+        return False
+    
+    def _update_performance_metrics(self, execution_metadata: Dict[str, Any]):
+        """
+        Update internal performance metrics with execution data.
+        
+        Args:
+            execution_metadata: Metadata from execution
+        """
+        operation = execution_metadata['operation']
+        
+        if operation not in self.performance_metrics:
+            self.performance_metrics[operation] = {
+                'execution_count': 0,
+                'total_execution_time': 0,
+                'total_samples_processed': 0,
+                'average_samples_per_second': 0,
+                'success_rate': 0,
+                'memory_efficiency_scores': []
+            }
+        
+        metrics = self.performance_metrics[operation]
+        metrics['execution_count'] += 1
+        metrics['total_execution_time'] += execution_metadata['execution_time_seconds']
+        
+        chunk_stats = execution_metadata.get('chunk_statistics', {})
+        metrics['total_samples_processed'] += chunk_stats.get('total_samples_processed', 0)
+        metrics['success_rate'] = (
+            (metrics['success_rate'] * (metrics['execution_count'] - 1) + 
+             (1.0 if execution_metadata['success'] else 0.0)) / metrics['execution_count']
+        )
+        
+        # Update samples per second average
+        if metrics['total_execution_time'] > 0:
+            metrics['average_samples_per_second'] = metrics['total_samples_processed'] / metrics['total_execution_time']
+        
+        # Track memory efficiency
+        perf_metrics = execution_metadata.get('performance_metrics', {})
+        memory_efficiency = perf_metrics.get('memory_efficiency', {})
+        if memory_efficiency.get('memory_monitoring_enabled', False):
+            stability_score = memory_efficiency.get('memory_stability', 0)
+            metrics['memory_efficiency_scores'].append(stability_score)
+    
+    # Public utility methods
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """
+        Get comprehensive performance summary across all operations.
+        
+        Returns:
+            Performance summary dictionary
+        """
+        return {
+            'adapter_id': self.adapter_id,
+            'pipeline_type': type(self.sklearn_pipeline).__name__,
+            'total_executions': len(self.execution_history),
+            'operations_performed': list(self.performance_metrics.keys()),
+            'performance_by_operation': self.performance_metrics,
+            'configuration': {
+                'memory_monitoring': self.memory_monitoring,
+                'adaptive_chunking': self.adaptive_chunking,
+                'performance_tracking': self.performance_tracking
+            }
+        }
+    
+    def clear_performance_history(self):
+        """
+        Clear performance history and metrics.
+        
+        Useful for starting fresh performance tracking.
+        """
+        self.execution_history.clear()
+        self.performance_metrics.clear()
+        self._chunk_results_cache.clear()
+        
+        logger.info("Performance history cleared", adapter_id=self.adapter_id)
+
+
+# Update the exports
+__all__ = ['DataSciencePipeline', 'PipelineComposer', 'StreamingDataPipeline', 'SklearnStreamingAdapter']

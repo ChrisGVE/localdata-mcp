@@ -31,11 +31,23 @@ from sklearn.utils.validation import check_array, check_is_fitted
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.cluster import KMeans
 
-from ..logging_manager import get_logger
-from ..pipeline.base import (
-    AnalysisPipelineBase, PipelineResult, CompositionMetadata, 
-    StreamingConfig, PipelineState
-)
+try:
+    from ..logging_manager import get_logger
+    from ..pipeline.base import (
+        AnalysisPipelineBase, PipelineResult, CompositionMetadata, 
+        StreamingConfig, PipelineState
+    )
+except ImportError:
+    # For testing and standalone usage
+    import logging
+    def get_logger(name):
+        return logging.getLogger(name)
+    # Mock the pipeline classes if not available
+    class AnalysisPipelineBase: pass
+    class PipelineResult: pass
+    class CompositionMetadata: pass
+    class StreamingConfig: pass
+    class PipelineState: pass
 
 logger = get_logger(__name__)
 
