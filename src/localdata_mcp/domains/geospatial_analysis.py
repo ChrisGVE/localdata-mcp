@@ -26,6 +26,7 @@ from enum import Enum
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_array, check_is_fitted
 from sklearn.neighbors import NearestNeighbors
@@ -2503,6 +2504,680 @@ class SpatialGeometryTransformer(BaseEstimator, TransformerMixin):
             return X_transformed
         else:
             return feature_array
+    
+    def get_feature_names_out(self, input_features: Optional[List[str]] = None) -> List[str]:
+        """Get output feature names."""
+        check_is_fitted(self, 'feature_names_out_')
+        return self.feature_names_out_.copy()
+
+
+@dataclass
+class SpatialStatisticsResult:
+    """Container for spatial statistics results."""
+    statistic: str
+    value: float
+    p_value: Optional[float] = None
+    z_score: Optional[float] = None
+    expected_value: Optional[float] = None
+    variance: Optional[float] = None
+    interpretation: Optional[str] = None
+    significance_level: float = 0.05
+    is_significant: Optional[bool] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        """Calculate significance after initialization."""
+        if self.p_value is not None:
+            self.is_significant = self.p_value < self.significance_level
+
+
+class SpatialWeightsMatrix:
+    """
+    Spatial weights matrix for spatial statistics calculations.
+    
+    Provides various methods for constructing spatial weights matrices
+    including distance-based, contiguity-based, and k-nearest neighbor weights.
+    """
+    
+    def __init__(self, method: str = 'distance', **kwargs):
+        """
+        Initialize spatial weights matrix.
+        
+        Parameters
+        ----------
+        method : str, default 'distance'
+            Weighting method ('distance', 'knn', 'queen', 'rook').
+        **kwargs : additional parameters
+            Method-specific parameters.
+        """
+        self.method = method
+        self.params = kwargs
+        self.weights = None
+        self.n_observations = 0
+        
+    def build_weights(self, 
+                     points: List[Union[SpatialPoint, Tuple[float, float]]],
+                     values: Optional[np.ndarray] = None) -> np.ndarray:
+        """
+        Build spatial weights matrix.
+        
+        Parameters
+        ----------
+        points : list of SpatialPoint or tuples
+            Spatial locations.
+        values : array-like, optional
+            Associated values (for some weight methods).
+            
+        Returns
+        -------
+        weights : ndarray
+            Spatial weights matrix.
+        """
+        self.n_observations = len(points)
+        
+        if self.method == 'distance':
+            self.weights = self._build_distance_weights(points)
+        elif self.method == 'knn':
+            k = self.params.get('k', 8)
+            self.weights = self._build_knn_weights(points, k)
+        elif self.method == 'inverse_distance':
+            power = self.params.get('power', 1.0)
+            self.weights = self._build_inverse_distance_weights(points, power)
+        else:
+            raise ValueError(f"Unsupported weights method: {self.method}")
+        
+        return self.weights
+    
+    def _build_distance_weights(self, points: List[Union[SpatialPoint, Tuple[float, float]]]) -> np.ndarray:
+        """Build distance-based weights matrix."""
+        distance_calc = SpatialDistanceCalculator()
+        distance_matrix = distance_calc.distance_matrix(points, points)
+        
+        # Use threshold distance for connectivity
+        threshold = self.params.get('threshold', np.percentile(distance_matrix[distance_matrix > 0], 25))
+        
+        weights = np.where(distance_matrix <= threshold, 1.0, 0.0)
+        np.fill_diagonal(weights, 0)  # No self-weights
+        
+        # Row-normalize weights
+        row_sums = np.sum(weights, axis=1)
+        row_sums[row_sums == 0] = 1  # Avoid division by zero
+        weights = weights / row_sums[:, np.newaxis]
+        
+        return weights
+    
+    def _build_knn_weights(self, points: List[Union[SpatialPoint, Tuple[float, float]]], k: int) -> np.ndarray:
+        """Build k-nearest neighbor weights matrix."""
+        distance_calc = SpatialDistanceCalculator()
+        
+        weights = np.zeros((len(points), len(points)))
+        
+        for i in range(len(points)):
+            query_point = [points[i]]
+            distances, indices = distance_calc.nearest_neighbors(
+                query_point, points, k=k+1  # +1 to exclude self
+            )
+            
+            # Skip the first neighbor (self)
+            neighbor_indices = indices[0][1:k+1] if len(indices[0]) > 1 else []
+            
+            for j in neighbor_indices:
+                weights[i, j] = 1.0
+        
+        # Row-normalize weights
+        row_sums = np.sum(weights, axis=1)
+        row_sums[row_sums == 0] = 1
+        weights = weights / row_sums[:, np.newaxis]
+        
+        return weights
+    
+    def _build_inverse_distance_weights(self, 
+                                       points: List[Union[SpatialPoint, Tuple[float, float]]], 
+                                       power: float) -> np.ndarray:
+        """Build inverse distance weights matrix."""
+        distance_calc = SpatialDistanceCalculator()
+        distance_matrix = distance_calc.distance_matrix(points, points)
+        
+        # Avoid division by zero
+        distance_matrix[distance_matrix == 0] = np.inf
+        
+        # Inverse distance weighting
+        weights = 1.0 / (distance_matrix ** power)
+        weights[np.isinf(weights)] = 0  # Set diagonal to 0
+        
+        # Row-normalize weights
+        row_sums = np.sum(weights, axis=1)
+        row_sums[row_sums == 0] = 1
+        weights = weights / row_sums[:, np.newaxis]
+        
+        return weights
+
+
+class SpatialStatistics:
+    """
+    Comprehensive spatial statistics analysis tools.
+    
+    Implements Moran's I, Geary's C, spatial clustering detection,
+    and other spatial statistical measures with significance testing.
+    """
+    
+    def __init__(self):
+        """Initialize spatial statistics analyzer."""
+        self.distance_calculator = SpatialDistanceCalculator()
+        
+    def morans_i(self, 
+                values: np.ndarray,
+                points: List[Union[SpatialPoint, Tuple[float, float]]],
+                weights_method: str = 'knn',
+                **weights_params) -> SpatialStatisticsResult:
+        """
+        Calculate Moran's I spatial autocorrelation statistic.
+        
+        Parameters
+        ----------
+        values : array-like
+            Attribute values at each location.
+        points : list of SpatialPoint or tuples
+            Spatial locations.
+        weights_method : str, default 'knn'
+            Spatial weights method.
+        **weights_params : additional parameters
+            Parameters for weights matrix construction.
+            
+        Returns
+        -------
+        result : SpatialStatisticsResult
+            Moran's I statistic and significance test results.
+        """
+        values = np.asarray(values)
+        n = len(values)
+        
+        if n != len(points):
+            raise ValueError("Number of values must match number of points")
+        
+        # Build spatial weights matrix
+        weights_matrix = SpatialWeightsMatrix(weights_method, **weights_params)
+        W = weights_matrix.build_weights(points)
+        
+        # Calculate Moran's I
+        y = values - np.mean(values)  # Center the values
+        
+        # Sum of all weights
+        S0 = np.sum(W)
+        if S0 == 0:
+            return SpatialStatisticsResult(
+                statistic="morans_i",
+                value=0.0,
+                interpretation="No spatial connectivity detected"
+            )
+        
+        # Moran's I calculation
+        numerator = np.sum(np.outer(y, y) * W)
+        denominator = np.sum(y * y)
+        
+        if denominator == 0:
+            morans_i = 0.0
+        else:
+            morans_i = (n / S0) * (numerator / denominator)
+        
+        # Expected value and variance for significance testing
+        expected_i = -1.0 / (n - 1)
+        
+        # Calculate variance (simplified version)
+        S1 = 0.5 * np.sum((W + W.T) ** 2)
+        S2 = np.sum(np.sum(W, axis=1) ** 2)
+        
+        b2 = n * np.sum(y ** 4) / (np.sum(y ** 2) ** 2)
+        
+        variance_i = ((n - 1) * S1 - 2 * S2 + S0 ** 2) / ((n - 1) * (n - 2) * (n - 3) * S0 ** 2)
+        variance_i -= (b2 - 3) * (n * S1 - S0 ** 2) / ((n - 1) * (n - 2) * (n - 3) * S0 ** 2)
+        variance_i += expected_i ** 2
+        
+        # Z-score and p-value
+        if variance_i > 0:
+            z_score = (morans_i - expected_i) / np.sqrt(variance_i)
+            # Two-tailed p-value
+            p_value = 2 * (1 - stats.norm.cdf(abs(z_score)))
+        else:
+            z_score = None
+            p_value = None
+        
+        # Interpretation
+        if p_value is not None:
+            if p_value < 0.05:
+                if morans_i > expected_i:
+                    interpretation = "Significant positive spatial autocorrelation (clustering)"
+                else:
+                    interpretation = "Significant negative spatial autocorrelation (dispersion)"
+            else:
+                interpretation = "No significant spatial autocorrelation"
+        else:
+            interpretation = "Unable to determine significance"
+        
+        return SpatialStatisticsResult(
+            statistic="morans_i",
+            value=morans_i,
+            p_value=p_value,
+            z_score=z_score,
+            expected_value=expected_i,
+            variance=variance_i,
+            interpretation=interpretation,
+            metadata={
+                'n_observations': n,
+                'sum_weights': S0,
+                'weights_method': weights_method,
+                'weights_params': weights_params
+            }
+        )
+    
+    def gearys_c(self, 
+                values: np.ndarray,
+                points: List[Union[SpatialPoint, Tuple[float, float]]],
+                weights_method: str = 'knn',
+                **weights_params) -> SpatialStatisticsResult:
+        """
+        Calculate Geary's C spatial autocorrelation statistic.
+        
+        Parameters
+        ----------
+        values : array-like
+            Attribute values at each location.
+        points : list of SpatialPoint or tuples
+            Spatial locations.
+        weights_method : str, default 'knn'
+            Spatial weights method.
+        **weights_params : additional parameters
+            Parameters for weights matrix construction.
+            
+        Returns
+        -------
+        result : SpatialStatisticsResult
+            Geary's C statistic and significance test results.
+        """
+        values = np.asarray(values)
+        n = len(values)
+        
+        if n != len(points):
+            raise ValueError("Number of values must match number of points")
+        
+        # Build spatial weights matrix
+        weights_matrix = SpatialWeightsMatrix(weights_method, **weights_params)
+        W = weights_matrix.build_weights(points)
+        
+        # Calculate Geary's C
+        S0 = np.sum(W)
+        if S0 == 0:
+            return SpatialStatisticsResult(
+                statistic="gearys_c",
+                value=1.0,
+                interpretation="No spatial connectivity detected"
+            )
+        
+        # Numerator: sum of squared differences weighted by spatial weights
+        numerator = 0.0
+        for i in range(n):
+            for j in range(n):
+                numerator += W[i, j] * (values[i] - values[j]) ** 2
+        
+        # Denominator: variance term
+        mean_val = np.mean(values)
+        denominator = 2 * S0 * np.sum((values - mean_val) ** 2)
+        
+        if denominator == 0:
+            gearys_c = 1.0
+        else:
+            gearys_c = ((n - 1) / S0) * (numerator / denominator)
+        
+        # Expected value
+        expected_c = 1.0
+        
+        # Variance calculation (simplified)
+        S1 = 0.5 * np.sum((W + W.T) ** 2)
+        S2 = np.sum(np.sum(W, axis=1) ** 2)
+        
+        variance_c = ((2 * S1 + S2) * (n - 1) - 4 * S0 ** 2) / (2 * (n + 1) * S0 ** 2)
+        
+        # Z-score and p-value
+        if variance_c > 0:
+            z_score = (gearys_c - expected_c) / np.sqrt(variance_c)
+            p_value = 2 * (1 - stats.norm.cdf(abs(z_score)))
+        else:
+            z_score = None
+            p_value = None
+        
+        # Interpretation
+        if p_value is not None:
+            if p_value < 0.05:
+                if gearys_c < expected_c:
+                    interpretation = "Significant positive spatial autocorrelation (clustering)"
+                else:
+                    interpretation = "Significant negative spatial autocorrelation (dispersion)"
+            else:
+                interpretation = "No significant spatial autocorrelation"
+        else:
+            interpretation = "Unable to determine significance"
+        
+        return SpatialStatisticsResult(
+            statistic="gearys_c",
+            value=gearys_c,
+            p_value=p_value,
+            z_score=z_score,
+            expected_value=expected_c,
+            variance=variance_c,
+            interpretation=interpretation,
+            metadata={
+                'n_observations': n,
+                'sum_weights': S0,
+                'weights_method': weights_method,
+                'weights_params': weights_params
+            }
+        )
+    
+    def local_morans_i(self, 
+                      values: np.ndarray,
+                      points: List[Union[SpatialPoint, Tuple[float, float]]],
+                      weights_method: str = 'knn',
+                      **weights_params) -> Dict[str, np.ndarray]:
+        """
+        Calculate Local Indicators of Spatial Association (LISA) using local Moran's I.
+        
+        Parameters
+        ----------
+        values : array-like
+            Attribute values at each location.
+        points : list of SpatialPoint or tuples
+            Spatial locations.
+        weights_method : str, default 'knn'
+            Spatial weights method.
+        **weights_params : additional parameters
+            Parameters for weights matrix construction.
+            
+        Returns
+        -------
+        lisa_results : dict
+            Dictionary containing local Moran's I values, p-values, and cluster types.
+        """
+        values = np.asarray(values)
+        n = len(values)
+        
+        # Build spatial weights matrix
+        weights_matrix = SpatialWeightsMatrix(weights_method, **weights_params)
+        W = weights_matrix.build_weights(points)
+        
+        # Standardize values
+        y = (values - np.mean(values)) / np.std(values)
+        
+        # Calculate local Moran's I for each location
+        local_i = np.zeros(n)
+        for i in range(n):
+            neighbors = W[i, :] > 0
+            if np.any(neighbors):
+                local_i[i] = y[i] * np.sum(W[i, neighbors] * y[neighbors])
+        
+        # Determine cluster types
+        cluster_types = np.full(n, 'Not significant', dtype='<U20')
+        mean_y = np.mean(y)
+        
+        for i in range(n):
+            neighbors = W[i, :] > 0
+            if np.any(neighbors):
+                neighbor_mean = np.mean(y[neighbors])
+                
+                if y[i] > mean_y and neighbor_mean > mean_y:
+                    cluster_types[i] = 'High-High'
+                elif y[i] < mean_y and neighbor_mean < mean_y:
+                    cluster_types[i] = 'Low-Low'
+                elif y[i] > mean_y and neighbor_mean < mean_y:
+                    cluster_types[i] = 'High-Low'
+                elif y[i] < mean_y and neighbor_mean > mean_y:
+                    cluster_types[i] = 'Low-High'
+        
+        return {
+            'local_morans_i': local_i,
+            'cluster_types': cluster_types,
+            'standardized_values': y,
+            'weights_matrix': W
+        }
+    
+    def spatial_clustering_analysis(self,
+                                  values: np.ndarray,
+                                  points: List[Union[SpatialPoint, Tuple[float, float]]],
+                                  method: str = 'hotspot',
+                                  **params) -> Dict[str, Any]:
+        """
+        Perform spatial clustering analysis (hot spot analysis).
+        
+        Parameters
+        ----------
+        values : array-like
+            Attribute values at each location.
+        points : list of SpatialPoint or tuples
+            Spatial locations.
+        method : str, default 'hotspot'
+            Clustering method ('hotspot', 'getis_ord').
+        **params : additional parameters
+            Method-specific parameters.
+            
+        Returns
+        -------
+        clustering_results : dict
+            Clustering analysis results.
+        """
+        if method == 'hotspot':
+            return self._getis_ord_gi(values, points, **params)
+        elif method == 'getis_ord':
+            return self._getis_ord_gi(values, points, **params)
+        else:
+            raise ValueError(f"Unsupported clustering method: {method}")
+    
+    def _getis_ord_gi(self,
+                     values: np.ndarray,
+                     points: List[Union[SpatialPoint, Tuple[float, float]]],
+                     weights_method: str = 'distance',
+                     **weights_params) -> Dict[str, Any]:
+        """Calculate Getis-Ord Gi* statistic for hot spot analysis."""
+        values = np.asarray(values)
+        n = len(values)
+        
+        # Build spatial weights matrix (include self-weights for Gi*)
+        weights_matrix = SpatialWeightsMatrix(weights_method, **weights_params)
+        W = weights_matrix.build_weights(points)
+        
+        # Add self-weights (diagonal = 1 for Gi*)
+        np.fill_diagonal(W, 1.0)
+        
+        # Calculate Gi* for each location
+        mean_val = np.mean(values)
+        std_val = np.std(values)
+        
+        gi_star = np.zeros(n)
+        z_scores = np.zeros(n)
+        p_values = np.zeros(n)
+        
+        for i in range(n):
+            # Sum of weights for location i
+            wi_sum = np.sum(W[i, :])
+            
+            if wi_sum > 0:
+                # Gi* calculation
+                weighted_sum = np.sum(W[i, :] * values)
+                gi_star[i] = weighted_sum
+                
+                # Expected value and variance
+                expected_gi = wi_sum * mean_val
+                
+                # Variance calculation
+                wi_squared_sum = np.sum(W[i, :] ** 2)
+                variance_gi = wi_sum * std_val ** 2 - (wi_sum * mean_val) ** 2 / (n - 1)
+                variance_gi = variance_gi * (n - 1 - wi_squared_sum) / (n - 2)
+                
+                # Z-score
+                if variance_gi > 0:
+                    z_scores[i] = (gi_star[i] - expected_gi) / np.sqrt(variance_gi)
+                    p_values[i] = 2 * (1 - stats.norm.cdf(abs(z_scores[i])))
+        
+        # Classify hot spots and cold spots
+        significance_level = params.get('significance_level', 0.05)
+        hotspots = (z_scores > 0) & (p_values < significance_level)
+        coldspots = (z_scores < 0) & (p_values < significance_level)
+        
+        cluster_labels = np.full(n, 'Not significant', dtype='<U20')
+        cluster_labels[hotspots] = 'Hot spot'
+        cluster_labels[coldspots] = 'Cold spot'
+        
+        return {
+            'gi_star': gi_star,
+            'z_scores': z_scores,
+            'p_values': p_values,
+            'cluster_labels': cluster_labels,
+            'hotspots': hotspots,
+            'coldspots': coldspots,
+            'n_hotspots': np.sum(hotspots),
+            'n_coldspots': np.sum(coldspots),
+            'significance_level': significance_level
+        }
+
+
+class SpatialAutocorrelationTransformer(BaseEstimator, TransformerMixin):
+    """
+    Sklearn-compatible transformer for spatial autocorrelation analysis.
+    
+    This transformer calculates spatial autocorrelation statistics and
+    can be used within sklearn pipelines for spatial feature engineering.
+    """
+    
+    def __init__(self,
+                 statistics: List[str] = ['morans_i', 'gearys_c'],
+                 weights_method: str = 'knn',
+                 coordinate_columns: Optional[List[str]] = None,
+                 value_column: str = 'value',
+                 **weights_params):
+        """
+        Initialize spatial autocorrelation transformer.
+        
+        Parameters
+        ----------
+        statistics : list of str, default ['morans_i', 'gearys_c']
+            Spatial statistics to calculate.
+        weights_method : str, default 'knn'
+            Spatial weights method.
+        coordinate_columns : list of str, optional
+            Names of coordinate columns.
+        value_column : str, default 'value'
+            Name of value column for analysis.
+        **weights_params : additional parameters
+            Parameters for spatial weights construction.
+        """
+        self.statistics = statistics
+        self.weights_method = weights_method
+        self.coordinate_columns = coordinate_columns or ['x', 'y']
+        self.value_column = value_column
+        self.weights_params = weights_params
+        
+        self.spatial_stats_ = None
+        self.feature_names_out_ = None
+    
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Any = None) -> 'SpatialAutocorrelationTransformer':
+        """
+        Fit the transformer.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input spatial data.
+        y : ignored
+            Not used, present for API consistency.
+            
+        Returns
+        -------
+        self : object
+            Returns the instance itself.
+        """
+        self.spatial_stats_ = SpatialStatistics()
+        
+        # Determine output feature names
+        self.feature_names_out_ = []
+        for stat in self.statistics:
+            if stat == 'morans_i':
+                self.feature_names_out_.extend([
+                    'morans_i', 'morans_i_pvalue', 'morans_i_zscore'
+                ])
+            elif stat == 'gearys_c':
+                self.feature_names_out_.extend([
+                    'gearys_c', 'gearys_c_pvalue', 'gearys_c_zscore'
+                ])
+        
+        return self
+    
+    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> Union[pd.DataFrame, np.ndarray]:
+        """
+        Transform data with spatial autocorrelation statistics.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input spatial data.
+            
+        Returns
+        -------
+        X_transformed : DataFrame or array-like
+            Data with spatial autocorrelation features added.
+        """
+        check_is_fitted(self, 'spatial_stats_')
+        
+        # Extract coordinates and values
+        if isinstance(X, pd.DataFrame):
+            if all(col in X.columns for col in self.coordinate_columns):
+                coords = X[self.coordinate_columns].values
+                points = [(row[0], row[1]) for row in coords]
+            else:
+                raise ValueError(f"Coordinate columns {self.coordinate_columns} not found")
+            
+            if self.value_column in X.columns:
+                values = X[self.value_column].values
+            else:
+                raise ValueError(f"Value column {self.value_column} not found")
+        else:
+            # Assume array format: [x, y, value, ...]
+            coords = X[:, :2]
+            points = [(row[0], row[1]) for row in coords]
+            values = X[:, 2] if X.shape[1] > 2 else np.ones(len(points))
+        
+        # Calculate spatial statistics
+        features = []
+        
+        for stat in self.statistics:
+            if stat == 'morans_i':
+                result = self.spatial_stats_.morans_i(
+                    values, points, self.weights_method, **self.weights_params
+                )
+                features.extend([
+                    result.value,
+                    result.p_value or np.nan,
+                    result.z_score or np.nan
+                ])
+            
+            elif stat == 'gearys_c':
+                result = self.spatial_stats_.gearys_c(
+                    values, points, self.weights_method, **self.weights_params
+                )
+                features.extend([
+                    result.value,
+                    result.p_value or np.nan,
+                    result.z_score or np.nan
+                ])
+        
+        # Create output - these are global statistics, so replicate for all rows
+        n_rows = len(points)
+        feature_matrix = np.array([features] * n_rows)
+        
+        if isinstance(X, pd.DataFrame):
+            X_transformed = X.copy()
+            for i, col_name in enumerate(self.feature_names_out_):
+                X_transformed[col_name] = feature_matrix[:, i]
+            return X_transformed
+        else:
+            return np.column_stack([X, feature_matrix])
     
     def get_feature_names_out(self, input_features: Optional[List[str]] = None) -> List[str]:
         """Get output feature names."""
