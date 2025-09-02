@@ -30,7 +30,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_array, check_is_fitted
 import statsmodels.api as sm
-from statsmodels.tsa.stattools import adfuller, kpss, acf, pacf
+from statsmodels.tsa.stattools import adfuller, kpss, acf, pacf, pp_test
 from statsmodels.tsa.seasonal import seasonal_decompose
 
 from ..logging_manager import get_logger
@@ -1138,6 +1138,377 @@ class TimeSeriesQualityValidator(TimeSeriesTransformer):
             return TimeSeriesAnalysisResult(
                 analysis_type="quality_validation_error",
                 interpretation=f"Error during quality validation: {str(e)}",
+                warnings=[str(e)],
+                processing_time=time.time() - start_time
+            )
+
+
+class StationarityTestTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for time series stationarity testing.
+    
+    Performs multiple stationarity tests including Augmented Dickey-Fuller (ADF),
+    Kwiatkowski-Phillips-Schmidt-Shin (KPSS), and Phillips-Perron tests to 
+    assess whether a time series is stationary.
+    
+    Parameters:
+    -----------
+    tests : list of str, default=['adf', 'kpss', 'pp']
+        List of tests to perform: 'adf', 'kpss', 'pp' (Phillips-Perron)
+    alpha : float, default=0.05
+        Significance level for hypothesis tests
+    auto_differencing : bool, default=False
+        Whether to automatically suggest differencing for non-stationary series
+    max_diff_order : int, default=2
+        Maximum order of differencing to test if auto_differencing is True
+    """
+    
+    def __init__(self, tests=['adf', 'kpss', 'pp'], alpha=0.05, 
+                 auto_differencing=False, max_diff_order=2, **kwargs):
+        super().__init__(**kwargs)
+        self.tests = tests
+        self.alpha = alpha
+        self.auto_differencing = auto_differencing
+        self.max_diff_order = max_diff_order
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the stationarity test transformer."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Perform stationarity tests on time series data.
+        
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Stationarity test results and recommendations
+        """
+        start_time = time.time()
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        try:
+            # Use first column for testing (can be extended for multivariate)
+            if len(X.columns) == 0:
+                raise ValueError("No columns found in time series data")
+                
+            series = X.iloc[:, 0].dropna()
+            if len(series) < 10:
+                raise ValueError("Insufficient data points for stationarity testing")
+            
+            test_results = {}
+            overall_stationary = True
+            recommendations = []
+            warnings_list = []
+            
+            # Perform Augmented Dickey-Fuller test
+            if 'adf' in self.tests:
+                try:
+                    adf_result = adfuller(series, autolag='AIC')
+                    test_results['adf'] = {
+                        'statistic': adf_result[0],
+                        'p_value': adf_result[1],
+                        'critical_values': adf_result[4],
+                        'used_lag': adf_result[2],
+                        'n_observations': adf_result[3],
+                        'is_stationary': adf_result[1] <= self.alpha,
+                        'interpretation': 'Stationary' if adf_result[1] <= self.alpha else 'Non-stationary'
+                    }
+                    if not test_results['adf']['is_stationary']:
+                        overall_stationary = False
+                except Exception as e:
+                    warnings_list.append(f"ADF test failed: {e}")
+                    
+            # Perform KPSS test
+            if 'kpss' in self.tests:
+                try:
+                    kpss_result = kpss(series, regression='c', nlags='auto')
+                    test_results['kpss'] = {
+                        'statistic': kpss_result[0],
+                        'p_value': kpss_result[1],
+                        'critical_values': kpss_result[3],
+                        'used_lag': kpss_result[2],
+                        'is_stationary': kpss_result[1] > self.alpha,  # Note: KPSS null hypothesis is stationarity
+                        'interpretation': 'Stationary' if kpss_result[1] > self.alpha else 'Non-stationary'
+                    }
+                    if not test_results['kpss']['is_stationary']:
+                        overall_stationary = False
+                except Exception as e:
+                    warnings_list.append(f"KPSS test failed: {e}")
+                    
+            # Perform Phillips-Perron test
+            if 'pp' in self.tests:
+                try:
+                    pp_result = pp_test(series, lags='auto')
+                    test_results['pp'] = {
+                        'statistic': pp_result[0],
+                        'p_value': pp_result[1],
+                        'used_lag': pp_result[2],
+                        'n_observations': pp_result[3],
+                        'critical_values': pp_result[4],
+                        'is_stationary': pp_result[1] <= self.alpha,
+                        'interpretation': 'Stationary' if pp_result[1] <= self.alpha else 'Non-stationary'
+                    }
+                    if not test_results['pp']['is_stationary']:
+                        overall_stationary = False
+                except Exception as e:
+                    warnings_list.append(f"Phillips-Perron test failed: {e}")
+            
+            # Generate recommendations
+            if not overall_stationary:
+                recommendations.append("Time series appears to be non-stationary")
+                recommendations.append("Consider applying differencing or transformation")
+                
+                if self.auto_differencing:
+                    diff_recommendations = self._suggest_differencing(series)
+                    recommendations.extend(diff_recommendations)
+            else:
+                recommendations.append("Time series appears to be stationary")
+                recommendations.append("Suitable for ARMA modeling without differencing")
+            
+            # Generate interpretation summary
+            stationary_tests = sum([result.get('is_stationary', False) for result in test_results.values()])
+            total_tests = len(test_results)
+            
+            if total_tests == 0:
+                interpretation = "No stationarity tests could be performed"
+            elif stationary_tests == total_tests:
+                interpretation = f"All {total_tests} stationarity tests indicate STATIONARY series"
+            elif stationary_tests == 0:
+                interpretation = f"All {total_tests} stationarity tests indicate NON-STATIONARY series"
+            else:
+                interpretation = f"Mixed results: {stationary_tests}/{total_tests} tests indicate stationarity"
+            
+            result = TimeSeriesAnalysisResult(
+                analysis_type="stationarity_testing",
+                interpretation=interpretation,
+                model_diagnostics=test_results,
+                recommendations=recommendations,
+                warnings=warnings_list,
+                processing_time=time.time() - start_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in stationarity testing: {e}")
+            return TimeSeriesAnalysisResult(
+                analysis_type="stationarity_testing_error",
+                interpretation=f"Error during stationarity testing: {str(e)}",
+                warnings=[str(e)],
+                processing_time=time.time() - start_time
+            )
+    
+    def _suggest_differencing(self, series: pd.Series) -> List[str]:
+        """
+        Suggest appropriate differencing order for non-stationary series.
+        
+        Parameters:
+        -----------
+        series : pd.Series
+            Time series data
+            
+        Returns:
+        --------
+        suggestions : list of str
+            List of differencing recommendations
+        """
+        suggestions = []
+        
+        try:
+            for diff_order in range(1, self.max_diff_order + 1):
+                # Apply differencing
+                diff_series = series.diff(diff_order).dropna()
+                
+                if len(diff_series) < 10:
+                    break
+                    
+                # Test stationarity of differenced series
+                try:
+                    adf_result = adfuller(diff_series, autolag='AIC')
+                    if adf_result[1] <= self.alpha:
+                        suggestions.append(f"First-order differencing (d={diff_order}) achieves stationarity")
+                        break
+                except Exception:
+                    continue
+            
+            if not suggestions:
+                suggestions.append("Consider seasonal differencing or transformation (log, sqrt)")
+                
+        except Exception as e:
+            suggestions.append(f"Could not test differencing: {e}")
+            
+        return suggestions
+
+
+class UnitRootTestTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for comprehensive unit root testing.
+    
+    Performs various unit root tests to detect the presence of unit roots
+    in time series data, which is essential for determining integration order.
+    
+    Parameters:
+    -----------
+    test_type : str, default='adf'
+        Primary test type: 'adf', 'kpss', 'pp', or 'dfgls'
+    regression_type : str, default='c'
+        Regression type: 'c' (constant), 'ct' (constant and trend), 'ctt' (constant, trend, and trend^2), 'nc' (no constant)
+    max_lags : int, optional
+        Maximum number of lags to use in the test
+    autolag : str, default='AIC'
+        Method to automatically determine lag length: 'AIC', 'BIC', 't-stat', or None
+    """
+    
+    def __init__(self, test_type='adf', regression_type='c', max_lags=None, autolag='AIC', **kwargs):
+        super().__init__(**kwargs)
+        self.test_type = test_type
+        self.regression_type = regression_type
+        self.max_lags = max_lags
+        self.autolag = autolag
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the unit root test transformer."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Perform unit root tests on time series data.
+        
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Unit root test results and integration order recommendations
+        """
+        start_time = time.time()
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        try:
+            # Use first column for testing
+            if len(X.columns) == 0:
+                raise ValueError("No columns found in time series data")
+                
+            series = X.iloc[:, 0].dropna()
+            if len(series) < 10:
+                raise ValueError("Insufficient data points for unit root testing")
+            
+            test_results = {}
+            recommendations = []
+            warnings_list = []
+            
+            # Prepare test parameters
+            test_kwargs = {'regression': self.regression_type}
+            if self.max_lags is not None:
+                test_kwargs['maxlag'] = self.max_lags
+            if self.autolag is not None:
+                test_kwargs['autolag'] = self.autolag
+                
+            # Perform the specified unit root test
+            if self.test_type == 'adf':
+                try:
+                    result = adfuller(series, **test_kwargs)
+                    test_results['adf'] = {
+                        'test_statistic': result[0],
+                        'p_value': result[1],
+                        'lags_used': result[2],
+                        'n_observations': result[3],
+                        'critical_values': result[4],
+                        'ic_best': result[5] if len(result) > 5 else None
+                    }
+                    
+                    has_unit_root = result[1] > 0.05
+                    interpretation = "Series has unit root (non-stationary)" if has_unit_root else "Series does not have unit root (stationary)"
+                    
+                except Exception as e:
+                    warnings_list.append(f"ADF test failed: {e}")
+                    interpretation = "Unit root test failed"
+                    
+            elif self.test_type == 'kpss':
+                try:
+                    result = kpss(series, regression=self.regression_type, nlags=self.autolag)
+                    test_results['kpss'] = {
+                        'test_statistic': result[0],
+                        'p_value': result[1],
+                        'lags_used': result[2],
+                        'critical_values': result[3]
+                    }
+                    
+                    has_unit_root = result[1] <= 0.05  # KPSS null hypothesis is stationarity
+                    interpretation = "Series has unit root (non-stationary)" if has_unit_root else "Series does not have unit root (stationary)"
+                    
+                except Exception as e:
+                    warnings_list.append(f"KPSS test failed: {e}")
+                    interpretation = "Unit root test failed"
+                    
+            elif self.test_type == 'pp':
+                try:
+                    result = pp_test(series, lags=self.autolag, regression=self.regression_type)
+                    test_results['pp'] = {
+                        'test_statistic': result[0],
+                        'p_value': result[1],
+                        'lags_used': result[2],
+                        'n_observations': result[3],
+                        'critical_values': result[4]
+                    }
+                    
+                    has_unit_root = result[1] > 0.05
+                    interpretation = "Series has unit root (non-stationary)" if has_unit_root else "Series does not have unit root (stationary)"
+                    
+                except Exception as e:
+                    warnings_list.append(f"Phillips-Perron test failed: {e}")
+                    interpretation = "Unit root test failed"
+            else:
+                raise ValueError(f"Unsupported test type: {self.test_type}")
+            
+            # Generate recommendations based on results
+            if 'has_unit_root' in locals() and has_unit_root:
+                recommendations.extend([
+                    "Series contains unit root - requires differencing",
+                    "Consider first differencing: y(t) - y(t-1)",
+                    "Test differenced series for stationarity"
+                ])
+                
+                # Test if first differencing makes it stationary
+                try:
+                    diff_series = series.diff().dropna()
+                    if len(diff_series) >= 10:
+                        diff_result = adfuller(diff_series)
+                        if diff_result[1] <= 0.05:
+                            recommendations.append("First differencing should achieve stationarity (I(1) process)")
+                        else:
+                            recommendations.append("May require second differencing or seasonal differencing (I(2) or seasonal process)")
+                except Exception:
+                    pass
+            else:
+                recommendations.extend([
+                    "Series appears stationary - suitable for ARMA modeling",
+                    "No differencing required"
+                ])
+            
+            result = TimeSeriesAnalysisResult(
+                analysis_type="unit_root_testing",
+                interpretation=interpretation,
+                model_diagnostics=test_results,
+                recommendations=recommendations,
+                warnings=warnings_list,
+                processing_time=time.time() - start_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in unit root testing: {e}")
+            return TimeSeriesAnalysisResult(
+                analysis_type="unit_root_testing_error",
+                interpretation=f"Error during unit root testing: {str(e)}",
                 warnings=[str(e)],
                 processing_time=time.time() - start_time
             )
