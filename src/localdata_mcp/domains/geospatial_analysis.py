@@ -1675,6 +1675,841 @@ class SpatialDistanceTransformer(BaseEstimator, TransformerMixin):
         return self.feature_names_out_.copy()
 
 
+@dataclass
+class GeometricResult:
+    """Container for geometric operation results."""
+    operation: str
+    result: Any
+    geometry_type: Optional[str] = None
+    properties: Dict[str, Any] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
+
+
+class GeometricOperations:
+    """
+    Comprehensive geometric operations with Shapely integration.
+    
+    Provides point-in-polygon testing, buffer analysis, convex hulls,
+    bounding boxes, and other spatial geometric computations with
+    fallback mechanisms when Shapely is not available.
+    """
+    
+    def __init__(self):
+        """Initialize geometric operations handler."""
+        self.shapely_available = _dependency_status.is_available(GeospatialLibrary.SHAPELY)
+        self._geometry_cache = {}
+        
+        if self.shapely_available:
+            try:
+                from shapely.geometry import Point, Polygon, LineString, MultiPoint, MultiPolygon
+                from shapely.ops import cascaded_union, unary_union
+                from shapely import affinity, validation
+                import shapely.speedups
+                
+                # Enable speedups if available
+                if shapely.speedups.available:
+                    shapely.speedups.enable()
+                    
+                self.shapely_geom = {
+                    'Point': Point,
+                    'Polygon': Polygon,
+                    'LineString': LineString,
+                    'MultiPoint': MultiPoint,
+                    'MultiPolygon': MultiPolygon
+                }
+                self.shapely_ops = {
+                    'unary_union': unary_union,
+                    'cascaded_union': cascaded_union if hasattr(shapely.ops, 'cascaded_union') else unary_union
+                }
+                self.shapely_affinity = affinity
+                self.shapely_validation = validation
+                
+                logger.debug("Shapely available for geometric operations")
+            except ImportError:
+                self.shapely_available = False
+                logger.warning("Shapely import failed, using fallback geometric operations")
+    
+    def create_point(self, x: float, y: float, z: Optional[float] = None) -> Any:
+        """
+        Create a point geometry.
+        
+        Parameters
+        ----------
+        x, y : float
+            Point coordinates.
+        z : float, optional
+            Z coordinate for 3D point.
+            
+        Returns
+        -------
+        point : Shapely Point or SpatialPoint
+            Point geometry object.
+        """
+        if self.shapely_available:
+            if z is not None:
+                return self.shapely_geom['Point'](x, y, z)
+            return self.shapely_geom['Point'](x, y)
+        else:
+            return SpatialPoint(x=x, y=y, z=z)
+    
+    def create_polygon(self, coordinates: List[Tuple[float, float]]) -> Any:
+        """
+        Create a polygon geometry.
+        
+        Parameters
+        ----------
+        coordinates : list of tuples
+            Polygon boundary coordinates.
+            
+        Returns
+        -------
+        polygon : Shapely Polygon or dict
+            Polygon geometry object.
+        """
+        if self.shapely_available:
+            return self.shapely_geom['Polygon'](coordinates)
+        else:
+            # Fallback: store as coordinate list with basic properties
+            return {
+                'type': 'polygon',
+                'coordinates': coordinates,
+                'bounds': self._calculate_bounds(coordinates)
+            }
+    
+    def point_in_polygon(self, 
+                        point: Union[SpatialPoint, Tuple[float, float]], 
+                        polygon: Any) -> bool:
+        """
+        Test if point is inside polygon.
+        
+        Parameters
+        ----------
+        point : SpatialPoint or tuple
+            Point to test.
+        polygon : Shapely Polygon or dict
+            Polygon to test against.
+            
+        Returns
+        -------
+        inside : bool
+            True if point is inside polygon.
+        """
+        # Convert point to coordinates
+        if isinstance(point, tuple):
+            px, py = point
+        elif isinstance(point, SpatialPoint):
+            px, py = point.x, point.y
+        else:
+            raise ValueError("Point must be tuple or SpatialPoint")
+        
+        if self.shapely_available:
+            # Use Shapely for accurate point-in-polygon test
+            if hasattr(polygon, 'contains'):
+                test_point = self.create_point(px, py)
+                return polygon.contains(test_point)
+            elif hasattr(polygon, 'coords'):
+                # LineString or similar
+                return False
+            else:
+                raise ValueError("Invalid polygon object for Shapely")
+        else:
+            # Fallback: ray casting algorithm
+            if isinstance(polygon, dict) and polygon.get('type') == 'polygon':
+                coords = polygon['coordinates']
+                return self._point_in_polygon_raycast(px, py, coords)
+            else:
+                raise ValueError("Invalid polygon object for fallback method")
+    
+    def _point_in_polygon_raycast(self, x: float, y: float, 
+                                 polygon_coords: List[Tuple[float, float]]) -> bool:
+        """Ray casting algorithm for point-in-polygon test."""
+        n = len(polygon_coords)
+        inside = False
+        
+        p1x, p1y = polygon_coords[0]
+        for i in range(1, n + 1):
+            p2x, p2y = polygon_coords[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        
+        return inside
+    
+    def buffer_analysis(self, 
+                       geometry: Any, 
+                       distance: float,
+                       resolution: int = 16) -> GeometricResult:
+        """
+        Create buffer around geometry.
+        
+        Parameters
+        ----------
+        geometry : Shapely geometry or SpatialPoint
+            Input geometry.
+        distance : float
+            Buffer distance.
+        resolution : int, default 16
+            Number of points in circular arcs.
+            
+        Returns
+        -------
+        result : GeometricResult
+            Buffer geometry and properties.
+        """
+        if self.shapely_available:
+            try:
+                if isinstance(geometry, SpatialPoint):
+                    geometry = self.create_point(geometry.x, geometry.y)
+                
+                buffered = geometry.buffer(distance, resolution=resolution)
+                
+                return GeometricResult(
+                    operation='buffer',
+                    result=buffered,
+                    geometry_type=buffered.geom_type,
+                    properties={
+                        'original_area': getattr(geometry, 'area', 0),
+                        'buffer_area': buffered.area,
+                        'buffer_distance': distance,
+                        'resolution': resolution
+                    }
+                )
+            except Exception as e:
+                return GeometricResult(
+                    operation='buffer',
+                    result=None,
+                    warnings=[f"Shapely buffer failed: {e}"]
+                )
+        else:
+            # Fallback: approximate circular buffer for points
+            if isinstance(geometry, SpatialPoint):
+                # Create approximate circular polygon
+                import math
+                points = []
+                for i in range(resolution):
+                    angle = 2 * math.pi * i / resolution
+                    x = geometry.x + distance * math.cos(angle)
+                    y = geometry.y + distance * math.sin(angle)
+                    points.append((x, y))
+                points.append(points[0])  # Close the polygon
+                
+                buffer_poly = self.create_polygon(points)
+                
+                return GeometricResult(
+                    operation='buffer',
+                    result=buffer_poly,
+                    geometry_type='polygon',
+                    properties={
+                        'buffer_distance': distance,
+                        'resolution': resolution,
+                        'approximated': True
+                    },
+                    warnings=['Using approximate circular buffer (Shapely not available)']
+                )
+            else:
+                return GeometricResult(
+                    operation='buffer',
+                    result=None,
+                    warnings=['Buffer analysis not available for this geometry type without Shapely']
+                )
+    
+    def convex_hull(self, points: List[Union[SpatialPoint, Tuple[float, float]]]) -> GeometricResult:
+        """
+        Calculate convex hull of point set.
+        
+        Parameters
+        ----------
+        points : list of SpatialPoint or tuples
+            Input points.
+            
+        Returns
+        -------
+        result : GeometricResult
+            Convex hull geometry and properties.
+        """
+        if not points:
+            return GeometricResult(
+                operation='convex_hull',
+                result=None,
+                warnings=['No points provided']
+            )
+        
+        if self.shapely_available:
+            try:
+                # Convert to Shapely points
+                shapely_points = []
+                for point in points:
+                    if isinstance(point, tuple):
+                        shapely_points.append(self.create_point(point[0], point[1]))
+                    elif isinstance(point, SpatialPoint):
+                        shapely_points.append(self.create_point(point.x, point.y))
+                
+                multipoint = self.shapely_geom['MultiPoint'](shapely_points)
+                hull = multipoint.convex_hull
+                
+                return GeometricResult(
+                    operation='convex_hull',
+                    result=hull,
+                    geometry_type=hull.geom_type,
+                    properties={
+                        'input_points': len(points),
+                        'hull_area': getattr(hull, 'area', 0),
+                        'hull_length': getattr(hull, 'length', 0)
+                    }
+                )
+            except Exception as e:
+                # Fall through to fallback method
+                logger.warning(f"Shapely convex hull failed: {e}")
+        
+        # Fallback: Graham scan algorithm
+        coords = []
+        for point in points:
+            if isinstance(point, tuple):
+                coords.append(point)
+            elif isinstance(point, SpatialPoint):
+                coords.append((point.x, point.y))
+        
+        hull_coords = self._graham_scan(coords)
+        hull_polygon = self.create_polygon(hull_coords)
+        
+        return GeometricResult(
+            operation='convex_hull',
+            result=hull_polygon,
+            geometry_type='polygon',
+            properties={
+                'input_points': len(points),
+                'hull_vertices': len(hull_coords),
+                'approximated': not self.shapely_available
+            },
+            warnings=['Using Graham scan algorithm (Shapely not available)'] if not self.shapely_available else []
+        )
+    
+    def _graham_scan(self, points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        """Graham scan algorithm for convex hull."""
+        def cross_product(o, a, b):
+            return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+        
+        points = sorted(set(points))
+        if len(points) <= 3:
+            return points + [points[0]] if points else []
+        
+        # Build lower hull
+        lower = []
+        for p in points:
+            while len(lower) >= 2 and cross_product(lower[-2], lower[-1], p) <= 0:
+                lower.pop()
+            lower.append(p)
+        
+        # Build upper hull
+        upper = []
+        for p in reversed(points):
+            while len(upper) >= 2 and cross_product(upper[-2], upper[-1], p) <= 0:
+                upper.pop()
+            upper.append(p)
+        
+        # Remove last point of each half because it's repeated
+        hull = lower[:-1] + upper[:-1]
+        if hull:
+            hull.append(hull[0])  # Close the polygon
+        
+        return hull
+    
+    def bounding_box(self, 
+                    geometry: Union[Any, List[Union[SpatialPoint, Tuple[float, float]]]]) -> GeometricResult:
+        """
+        Calculate bounding box (minimum bounding rectangle).
+        
+        Parameters
+        ----------
+        geometry : Shapely geometry or list of points
+            Input geometry or point set.
+            
+        Returns
+        -------
+        result : GeometricResult
+            Bounding box geometry and properties.
+        """
+        if self.shapely_available and hasattr(geometry, 'bounds'):
+            # Use Shapely bounds
+            bounds = geometry.bounds
+            minx, miny, maxx, maxy = bounds
+            
+            # Create bounding box polygon
+            bbox_coords = [
+                (minx, miny), (maxx, miny), 
+                (maxx, maxy), (minx, maxy), 
+                (minx, miny)
+            ]
+            bbox_polygon = self.create_polygon(bbox_coords)
+            
+            return GeometricResult(
+                operation='bounding_box',
+                result=bbox_polygon,
+                geometry_type='polygon',
+                properties={
+                    'bounds': bounds,
+                    'width': maxx - minx,
+                    'height': maxy - miny,
+                    'area': (maxx - minx) * (maxy - miny),
+                    'center': ((minx + maxx) / 2, (miny + maxy) / 2)
+                }
+            )
+        else:
+            # Handle list of points or fallback
+            if isinstance(geometry, list):
+                coords = []
+                for point in geometry:
+                    if isinstance(point, tuple):
+                        coords.append(point)
+                    elif isinstance(point, SpatialPoint):
+                        coords.append((point.x, point.y))
+            else:
+                return GeometricResult(
+                    operation='bounding_box',
+                    result=None,
+                    warnings=['Cannot calculate bounding box for this geometry type']
+                )
+            
+            if not coords:
+                return GeometricResult(
+                    operation='bounding_box',
+                    result=None,
+                    warnings=['No coordinates found']
+                )
+            
+            bounds = self._calculate_bounds(coords)
+            minx, miny, maxx, maxy = bounds
+            
+            bbox_coords = [
+                (minx, miny), (maxx, miny), 
+                (maxx, maxy), (minx, maxy), 
+                (minx, miny)
+            ]
+            bbox_polygon = self.create_polygon(bbox_coords)
+            
+            return GeometricResult(
+                operation='bounding_box',
+                result=bbox_polygon,
+                geometry_type='polygon',
+                properties={
+                    'bounds': bounds,
+                    'width': maxx - minx,
+                    'height': maxy - miny,
+                    'area': (maxx - minx) * (maxy - miny),
+                    'center': ((minx + maxx) / 2, (miny + maxy) / 2)
+                }
+            )
+    
+    def _calculate_bounds(self, coords: List[Tuple[float, float]]) -> Tuple[float, float, float, float]:
+        """Calculate bounding box from coordinate list."""
+        if not coords:
+            return (0, 0, 0, 0)
+        
+        xs, ys = zip(*coords)
+        return (min(xs), min(ys), max(xs), max(ys))
+    
+    def intersection(self, geom1: Any, geom2: Any) -> GeometricResult:
+        """
+        Calculate intersection of two geometries.
+        
+        Parameters
+        ----------
+        geom1, geom2 : Shapely geometries
+            Input geometries.
+            
+        Returns
+        -------
+        result : GeometricResult
+            Intersection geometry and properties.
+        """
+        if self.shapely_available:
+            try:
+                intersection = geom1.intersection(geom2)
+                
+                return GeometricResult(
+                    operation='intersection',
+                    result=intersection,
+                    geometry_type=intersection.geom_type,
+                    properties={
+                        'is_empty': intersection.is_empty,
+                        'area': getattr(intersection, 'area', 0),
+                        'length': getattr(intersection, 'length', 0)
+                    }
+                )
+            except Exception as e:
+                return GeometricResult(
+                    operation='intersection',
+                    result=None,
+                    warnings=[f"Shapely intersection failed: {e}"]
+                )
+        else:
+            return GeometricResult(
+                operation='intersection',
+                result=None,
+                warnings=['Intersection operation requires Shapely library']
+            )
+    
+    def union(self, geometries: List[Any]) -> GeometricResult:
+        """
+        Calculate union of multiple geometries.
+        
+        Parameters
+        ----------
+        geometries : list of Shapely geometries
+            Input geometries.
+            
+        Returns
+        -------
+        result : GeometricResult
+            Union geometry and properties.
+        """
+        if self.shapely_available:
+            try:
+                if len(geometries) == 1:
+                    union_result = geometries[0]
+                else:
+                    union_result = self.shapely_ops['unary_union'](geometries)
+                
+                return GeometricResult(
+                    operation='union',
+                    result=union_result,
+                    geometry_type=union_result.geom_type,
+                    properties={
+                        'input_count': len(geometries),
+                        'area': getattr(union_result, 'area', 0),
+                        'length': getattr(union_result, 'length', 0)
+                    }
+                )
+            except Exception as e:
+                return GeometricResult(
+                    operation='union',
+                    result=None,
+                    warnings=[f"Shapely union failed: {e}"]
+                )
+        else:
+            return GeometricResult(
+                operation='union',
+                result=None,
+                warnings=['Union operation requires Shapely library']
+            )
+
+
+class SpatialIndexer:
+    """
+    Spatial indexing for performance optimization.
+    
+    Provides spatial indexing capabilities using R-tree or grid-based methods
+    to accelerate spatial queries on large datasets.
+    """
+    
+    def __init__(self, method: str = 'grid'):
+        """
+        Initialize spatial indexer.
+        
+        Parameters
+        ----------
+        method : str, default 'grid'
+            Indexing method ('grid', 'quadtree', 'rtree').
+        """
+        self.method = method
+        self.index = None
+        self.geometries = {}
+        self.bounds = None
+        
+        # Try to use rtree if available
+        if method == 'rtree':
+            try:
+                from rtree import index as rtree_index
+                self.rtree_index = rtree_index
+                self.rtree_available = True
+            except ImportError:
+                logger.warning("R-tree not available, falling back to grid indexing")
+                self.method = 'grid'
+                self.rtree_available = False
+        else:
+            self.rtree_available = False
+    
+    def build_index(self, geometries: Dict[int, Any]):
+        """
+        Build spatial index from geometries.
+        
+        Parameters
+        ----------
+        geometries : dict
+            Dictionary mapping IDs to geometry objects.
+        """
+        self.geometries = geometries.copy()
+        
+        if self.method == 'rtree' and self.rtree_available:
+            self._build_rtree_index()
+        elif self.method == 'grid':
+            self._build_grid_index()
+        else:
+            raise ValueError(f"Unsupported indexing method: {self.method}")
+    
+    def _build_rtree_index(self):
+        """Build R-tree spatial index."""
+        self.index = self.rtree_index.Index()
+        
+        for geom_id, geometry in self.geometries.items():
+            if hasattr(geometry, 'bounds'):
+                bounds = geometry.bounds
+                self.index.insert(geom_id, bounds)
+    
+    def _build_grid_index(self):
+        """Build grid-based spatial index."""
+        if not self.geometries:
+            return
+        
+        # Calculate overall bounds
+        all_bounds = []
+        for geometry in self.geometries.values():
+            if hasattr(geometry, 'bounds'):
+                all_bounds.append(geometry.bounds)
+            elif isinstance(geometry, SpatialPoint):
+                all_bounds.append((geometry.x, geometry.y, geometry.x, geometry.y))
+        
+        if not all_bounds:
+            return
+        
+        minx = min(b[0] for b in all_bounds)
+        miny = min(b[1] for b in all_bounds)
+        maxx = max(b[2] for b in all_bounds)
+        maxy = max(b[3] for b in all_bounds)
+        
+        self.bounds = (minx, miny, maxx, maxy)
+        
+        # Create grid
+        grid_size = int(np.sqrt(len(self.geometries))) + 1
+        self.grid_size = max(grid_size, 10)
+        self.cell_width = (maxx - minx) / self.grid_size
+        self.cell_height = (maxy - miny) / self.grid_size
+        
+        # Initialize grid
+        self.index = {}
+        for i in range(self.grid_size):
+            for j in range(self.grid_size):
+                self.index[(i, j)] = []
+        
+        # Populate grid
+        for geom_id, geometry in self.geometries.items():
+            bounds = self._get_geometry_bounds(geometry)
+            if bounds:
+                cells = self._get_intersecting_cells(bounds)
+                for cell in cells:
+                    if cell in self.index:
+                        self.index[cell].append(geom_id)
+    
+    def _get_geometry_bounds(self, geometry):
+        """Get bounds for any geometry type."""
+        if hasattr(geometry, 'bounds'):
+            return geometry.bounds
+        elif isinstance(geometry, SpatialPoint):
+            return (geometry.x, geometry.y, geometry.x, geometry.y)
+        elif isinstance(geometry, dict) and 'bounds' in geometry:
+            return geometry['bounds']
+        return None
+    
+    def _get_intersecting_cells(self, bounds):
+        """Get grid cells that intersect with bounds."""
+        if not self.bounds:
+            return []
+        
+        minx, miny, maxx, maxy = bounds
+        base_minx, base_miny, base_maxx, base_maxy = self.bounds
+        
+        # Calculate cell ranges
+        min_i = max(0, int((minx - base_minx) / self.cell_width))
+        max_i = min(self.grid_size - 1, int((maxx - base_minx) / self.cell_width))
+        min_j = max(0, int((miny - base_miny) / self.cell_height))
+        max_j = min(self.grid_size - 1, int((maxy - base_miny) / self.cell_height))
+        
+        cells = []
+        for i in range(min_i, max_i + 1):
+            for j in range(min_j, max_j + 1):
+                cells.append((i, j))
+        
+        return cells
+    
+    def query(self, bounds: Tuple[float, float, float, float]) -> List[int]:
+        """
+        Query spatial index for intersecting geometries.
+        
+        Parameters
+        ----------
+        bounds : tuple
+            Query bounds (minx, miny, maxx, maxy).
+            
+        Returns
+        -------
+        geometry_ids : list
+            IDs of potentially intersecting geometries.
+        """
+        if self.index is None:
+            return list(self.geometries.keys())
+        
+        if self.method == 'rtree' and self.rtree_available:
+            return list(self.index.intersection(bounds))
+        elif self.method == 'grid':
+            cells = self._get_intersecting_cells(bounds)
+            candidates = set()
+            for cell in cells:
+                if cell in self.index:
+                    candidates.update(self.index[cell])
+            return list(candidates)
+        else:
+            return list(self.geometries.keys())
+
+
+class SpatialGeometryTransformer(BaseEstimator, TransformerMixin):
+    """
+    Sklearn-compatible transformer for spatial geometric operations.
+    
+    This transformer performs geometric operations on spatial data
+    and can be used within sklearn pipelines for spatial feature engineering.
+    """
+    
+    def __init__(self,
+                 operations: List[str] = ['buffer', 'convex_hull'],
+                 buffer_distance: float = 1.0,
+                 coordinate_columns: Optional[List[str]] = None):
+        """
+        Initialize spatial geometry transformer.
+        
+        Parameters
+        ----------
+        operations : list of str, default ['buffer', 'convex_hull']
+            Geometric operations to perform.
+        buffer_distance : float, default 1.0
+            Distance for buffer operations.
+        coordinate_columns : list of str, optional
+            Names of coordinate columns.
+        """
+        self.operations = operations
+        self.buffer_distance = buffer_distance
+        self.coordinate_columns = coordinate_columns or ['x', 'y']
+        
+        self.geometric_ops_ = None
+        self.feature_names_out_ = None
+    
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Any = None) -> 'SpatialGeometryTransformer':
+        """
+        Fit the transformer.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input spatial data.
+        y : ignored
+            Not used, present for API consistency.
+            
+        Returns
+        -------
+        self : object
+            Returns the instance itself.
+        """
+        self.geometric_ops_ = GeometricOperations()
+        
+        # Determine output feature names
+        self.feature_names_out_ = []
+        for op in self.operations:
+            if op == 'buffer':
+                self.feature_names_out_.extend([f'buffer_{self.buffer_distance}_area'])
+            elif op == 'convex_hull':
+                self.feature_names_out_.extend(['convex_hull_area'])
+            elif op == 'bounding_box':
+                self.feature_names_out_.extend(['bbox_area', 'bbox_width', 'bbox_height'])
+        
+        return self
+    
+    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> Union[pd.DataFrame, np.ndarray]:
+        """
+        Transform data with geometric operations.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input spatial data.
+            
+        Returns
+        -------
+        X_transformed : DataFrame or array-like
+            Data with geometric features added.
+        """
+        check_is_fitted(self, 'geometric_ops_')
+        
+        # Extract coordinates
+        if isinstance(X, pd.DataFrame):
+            if all(col in X.columns for col in self.coordinate_columns):
+                coords = X[self.coordinate_columns].values
+                points = [SpatialPoint(x=row[0], y=row[1]) for row in coords]
+            else:
+                raise ValueError(f"Coordinate columns {self.coordinate_columns} not found")
+        else:
+            coords = np.asarray(X)
+            points = [SpatialPoint(x=row[0], y=row[1]) for row in coords]
+        
+        # Perform geometric operations
+        features = []
+        
+        for op in self.operations:
+            if op == 'buffer':
+                # Individual point buffers
+                buffer_areas = []
+                for point in points:
+                    result = self.geometric_ops_.buffer_analysis(point, self.buffer_distance)
+                    if result.result and hasattr(result.result, 'area'):
+                        buffer_areas.append(result.result.area)
+                    elif result.properties.get('approximated'):
+                        # Approximate area for circular buffer
+                        buffer_areas.append(np.pi * self.buffer_distance ** 2)
+                    else:
+                        buffer_areas.append(0)
+                features.append(buffer_areas)
+            
+            elif op == 'convex_hull':
+                # Convex hull for all points
+                hull_result = self.geometric_ops_.convex_hull(points)
+                hull_area = hull_result.properties.get('hull_area', 0)
+                features.append([hull_area] * len(points))
+            
+            elif op == 'bounding_box':
+                # Bounding box for all points
+                bbox_result = self.geometric_ops_.bounding_box(points)
+                bbox_props = bbox_result.properties
+                bbox_area = bbox_props.get('area', 0)
+                bbox_width = bbox_props.get('width', 0)
+                bbox_height = bbox_props.get('height', 0)
+                
+                features.extend([
+                    [bbox_area] * len(points),
+                    [bbox_width] * len(points),
+                    [bbox_height] * len(points)
+                ])
+        
+        # Create output
+        feature_array = np.column_stack(features) if features else np.empty((len(points), 0))
+        
+        if isinstance(X, pd.DataFrame):
+            X_transformed = X.copy()
+            for i, col_name in enumerate(self.feature_names_out_):
+                if i < feature_array.shape[1]:
+                    X_transformed[col_name] = feature_array[:, i]
+            return X_transformed
+        else:
+            return feature_array
+    
+    def get_feature_names_out(self, input_features: Optional[List[str]] = None) -> List[str]:
+        """Get output feature names."""
+        check_is_fitted(self, 'feature_names_out_')
+        return self.feature_names_out_.copy()
+
+
 # Initialize dependency checking on module import
 logger.info("Initializing geospatial analysis module")
 logger.info(f"Available geospatial libraries: "
