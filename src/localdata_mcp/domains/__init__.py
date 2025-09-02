@@ -87,6 +87,60 @@ from .optimization import (
     AssignmentResult
 )
 
+from .geospatial_analysis import (
+    # Core transformers
+    GeospatialDependencyChecker,
+    SpatialCoordinateTransformer,
+    SpatialDistanceTransformer,
+    SpatialGeometryTransformer,
+    SpatialAutocorrelationTransformer,
+    SpatialInterpolationTransformer,
+    SpatialJoinTransformer,
+    SpatialOverlayTransformer,
+    SpatialNetworkTransformer,
+    
+    # Spatial data structures
+    SpatialPoint,
+    SpatialDataFrame,
+    
+    # Analysis engines
+    SpatialJoinEngine,
+    SpatialOverlayEngine,
+    SpatialAggregator,
+    SpatialNetwork,
+    NetworkRouter,
+    AccessibilityAnalyzer,
+    IsochroneGenerator,
+    
+    # High-level functions
+    analyze_spatial_autocorrelation,
+    perform_spatial_clustering,
+    calculate_spatial_distance,
+    optimize_route,
+    optimize_routes,
+    analyze_accessibility,
+    generate_service_isochrones,
+    perform_spatial_join,
+    perform_spatial_overlay,
+    aggregate_points_in_polygons,
+    
+    # Result classes
+    SpatialJoinResult,
+    OverlayResult,
+    RouteResult,
+    AccessibilityResult,
+    IsochroneResult,
+    
+    # Pipeline
+    GeospatialAnalysisPipeline,
+    
+    # Enums
+    GeospatialLibrary,
+    SpatialJoinType,
+    OverlayOperation,
+    NetworkAnalysisType
+)
+
 __all__ = [
     # Statistical Analysis Domain
     "HypothesisTestingTransformer",
@@ -140,5 +194,45 @@ __all__ = [
     "LinearProgramResult",
     "ConstrainedOptResult",
     "NetworkAnalysisResult",
-    "AssignmentResult"
+    "AssignmentResult",
+    
+    # Geospatial Analysis Domain
+    "GeospatialDependencyChecker",
+    "SpatialCoordinateTransformer",
+    "SpatialDistanceTransformer",
+    "SpatialGeometryTransformer",
+    "SpatialAutocorrelationTransformer",
+    "SpatialInterpolationTransformer",
+    "SpatialJoinTransformer",
+    "SpatialOverlayTransformer",
+    "SpatialNetworkTransformer",
+    "SpatialPoint",
+    "SpatialDataFrame",
+    "SpatialJoinEngine",
+    "SpatialOverlayEngine",
+    "SpatialAggregator",
+    "SpatialNetwork",
+    "NetworkRouter",
+    "AccessibilityAnalyzer",
+    "IsochroneGenerator",
+    "analyze_spatial_autocorrelation",
+    "perform_spatial_clustering",
+    "calculate_spatial_distance",
+    "optimize_route",
+    "optimize_routes",
+    "analyze_accessibility",
+    "generate_service_isochrones",
+    "perform_spatial_join",
+    "perform_spatial_overlay",
+    "aggregate_points_in_polygons",
+    "SpatialJoinResult",
+    "OverlayResult",
+    "RouteResult",
+    "AccessibilityResult",
+    "IsochroneResult",
+    "GeospatialAnalysisPipeline",
+    "GeospatialLibrary",
+    "SpatialJoinType",
+    "OverlayOperation",
+    "NetworkAnalysisType"
 ]

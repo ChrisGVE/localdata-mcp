@@ -5653,6 +5653,408 @@ def generate_service_isochrones(network_data: Dict,
     return generator.generate_isochrones(service_locations, time_bands, resolution)
 
 
+# =============================================================================
+# Unified Geospatial Analysis Tools (High-Level Interface)
+# =============================================================================
+
+def analyze_spatial_autocorrelation(data: pd.DataFrame, 
+                                   value_column: str,
+                                   coordinate_columns: List[str] = ['x', 'y'],
+                                   method: str = 'moran',
+                                   k_neighbors: int = 8) -> Dict[str, Any]:
+    """
+    Analyze spatial autocorrelation in dataset.
+    
+    Parameters
+    ----------
+    data : DataFrame
+        Dataset with coordinates and values.
+    value_column : str
+        Column containing values to analyze.
+    coordinate_columns : list
+        Column names for spatial coordinates.
+    method : str
+        Autocorrelation method ('moran', 'geary', 'lisa').
+    k_neighbors : int
+        Number of neighbors for spatial weights.
+        
+    Returns
+    -------
+    dict
+        Autocorrelation analysis results.
+    """
+    # Create spatial autocorrelation transformer
+    transformer = SpatialAutocorrelationTransformer(
+        coordinate_columns=coordinate_columns,
+        value_column=value_column,
+        test_type=method,
+        k_neighbors=k_neighbors
+    )
+    
+    # Fit and transform
+    transformer.fit(data)
+    result = transformer.transform(data)
+    
+    # Extract results
+    if hasattr(transformer, 'statistics_'):
+        return {
+            'method': method,
+            'statistic': transformer.statistics_.statistic,
+            'p_value': transformer.statistics_.p_value,
+            'expected_value': transformer.statistics_.expected_value,
+            'variance': transformer.statistics_.variance,
+            'z_score': transformer.statistics_.z_score,
+            'interpretation': 'significant spatial autocorrelation' if transformer.statistics_.p_value < 0.05 else 'no significant spatial autocorrelation',
+            'local_statistics': transformer.statistics_.local_statistics if hasattr(transformer.statistics_, 'local_statistics') else None
+        }
+    else:
+        return {'error': 'Analysis failed', 'method': method}
+
+
+def perform_spatial_clustering(data: pd.DataFrame,
+                              coordinate_columns: List[str] = ['x', 'y'],
+                              method: str = 'hotspot',
+                              significance_level: float = 0.05) -> pd.DataFrame:
+    """
+    Identify spatial clusters and hot spots in data.
+    
+    Parameters
+    ----------
+    data : DataFrame
+        Dataset with coordinates and values.
+    coordinate_columns : list
+        Column names for spatial coordinates.
+    method : str
+        Clustering method ('hotspot', 'getis_ord').
+    significance_level : float
+        Statistical significance threshold.
+        
+    Returns
+    -------
+    DataFrame
+        Data with cluster identification.
+    """
+    # Use spatial statistics for hot spot analysis
+    stats = SpatialStatistics()
+    
+    # Extract coordinates and create spatial weights
+    coordinates = [(row[coordinate_columns[0]], row[coordinate_columns[1]]) for _, row in data.iterrows()]
+    spatial_weights = SpatialWeightsMatrix(coordinates)
+    weights_matrix = spatial_weights.create_knn_weights(k=8)
+    
+    # Perform hot spot analysis if value column exists
+    value_columns = [col for col in data.columns if col not in coordinate_columns and data[col].dtype in [np.float64, np.int64]]
+    
+    if not value_columns:
+        logger.warning("No numeric value columns found for clustering analysis")
+        result_data = data.copy()
+        result_data['cluster_id'] = 0
+        result_data['is_hotspot'] = False
+        return result_data
+        
+    # Use first numeric column for analysis
+    value_column = value_columns[0]
+    values = data[value_column].values
+    
+    try:
+        hotspot_result = stats.getis_ord_gi_star(coordinates, values, weights_matrix)
+        
+        result_data = data.copy()
+        result_data['gi_star_statistic'] = hotspot_result.gi_star_values
+        result_data['gi_star_p_value'] = hotspot_result.p_values
+        result_data['is_hotspot'] = hotspot_result.p_values < significance_level
+        result_data['is_coldspot'] = (hotspot_result.gi_star_values < 0) & (hotspot_result.p_values < significance_level)
+        
+        # Simple cluster assignment based on significance
+        cluster_ids = np.zeros(len(data))
+        cluster_ids[result_data['is_hotspot']] = 1  # Hot spots
+        cluster_ids[result_data['is_coldspot']] = -1  # Cold spots
+        result_data['cluster_id'] = cluster_ids
+        
+        return result_data
+        
+    except Exception as e:
+        logger.warning(f"Spatial clustering failed: {e}")
+        result_data = data.copy()
+        result_data['cluster_id'] = 0
+        result_data['is_hotspot'] = False
+        return result_data
+
+
+def calculate_spatial_distance(data1: pd.DataFrame,
+                             data2: pd.DataFrame = None,
+                             coordinate_columns: List[str] = ['x', 'y'],
+                             distance_type: str = 'euclidean',
+                             output_format: str = 'matrix') -> Union[np.ndarray, pd.DataFrame]:
+    """
+    Calculate spatial distances between points.
+    
+    Parameters
+    ----------
+    data1 : DataFrame
+        First dataset with coordinates.
+    data2 : DataFrame, optional
+        Second dataset with coordinates. If None, calculates distances within data1.
+    coordinate_columns : list
+        Column names for spatial coordinates.
+    distance_type : str
+        Type of distance ('euclidean', 'haversine', 'manhattan').
+    output_format : str
+        Output format ('matrix', 'pairs', 'nearest').
+        
+    Returns
+    -------
+    array or DataFrame
+        Distance calculations.
+    """
+    # Create distance calculator transformer
+    transformer = SpatialDistanceTransformer(
+        coordinate_columns=coordinate_columns,
+        distance_metrics=[distance_type],
+        output_format='matrix' if output_format == 'matrix' else 'dataframe'
+    )
+    
+    # Fit and transform
+    transformer.fit(data1)
+    
+    if data2 is not None:
+        # Calculate distances between two datasets
+        coords1 = [(row[coordinate_columns[0]], row[coordinate_columns[1]]) for _, row in data1.iterrows()]
+        coords2 = [(row[coordinate_columns[0]], row[coordinate_columns[1]]) for _, row in data2.iterrows()]
+        
+        distance_calc = SpatialDistanceCalculator()
+        if distance_type == 'euclidean':
+            distances = distance_calc.euclidean_distance_matrix(coords1, coords2)
+        elif distance_type == 'haversine':
+            distances = distance_calc.haversine_distance_matrix(coords1, coords2)
+        elif distance_type == 'manhattan':
+            distances = distance_calc.manhattan_distance_matrix(coords1, coords2)
+        else:
+            raise ValueError(f"Unknown distance type: {distance_type}")
+            
+        if output_format == 'matrix':
+            return distances
+        elif output_format == 'pairs':
+            # Convert to pairwise format
+            pairs = []
+            for i, coord1 in enumerate(coords1):
+                for j, coord2 in enumerate(coords2):
+                    pairs.append({
+                        'point1_index': i,
+                        'point2_index': j,
+                        'distance': distances[i, j]
+                    })
+            return pd.DataFrame(pairs)
+        else:
+            return distances
+    else:
+        # Calculate distances within single dataset
+        result = transformer.transform(data1)
+        
+        if output_format == 'matrix':
+            # Extract distance matrix from result
+            distance_columns = [col for col in result.columns if col.startswith(distance_type)]
+            if distance_columns:
+                return result[distance_columns].values
+            else:
+                return np.array([])
+        else:
+            return result
+
+
+def optimize_routes(network_data: Dict,
+                   waypoint_sets: List[List[Any]],
+                   optimization_method: str = 'greedy',
+                   return_to_start: bool = False) -> List[RouteResult]:
+    """
+    Optimize multiple route sets on a spatial network.
+    
+    Parameters
+    ----------
+    network_data : dict
+        Network definition with 'nodes' and 'edges' keys.
+    waypoint_sets : list
+        List of waypoint lists to optimize.
+    optimization_method : str
+        Route optimization method.
+    return_to_start : bool
+        Whether routes should return to start.
+        
+    Returns
+    -------
+    list
+        List of route optimization results.
+    """
+    results = []
+    
+    for waypoints in waypoint_sets:
+        try:
+            result = optimize_route(
+                network_data=network_data,
+                waypoints=waypoints,
+                return_to_start=return_to_start,
+                optimization_method=optimization_method
+            )
+            results.append(result)
+        except Exception as e:
+            logger.warning(f"Route optimization failed for waypoints {waypoints}: {e}")
+            # Create failed result
+            failed_result = RouteResult(
+                route_path=[],
+                route_coordinates=[],
+                total_distance=float('inf'),
+                total_time=None,
+                waypoints=waypoints,
+                path_geometry=None,
+                execution_time=0.0
+            )
+            results.append(failed_result)
+            
+    return results
+
+
+# =============================================================================
+# Geospatial Analysis Pipeline Integration
+# =============================================================================
+
+class GeospatialAnalysisPipeline:
+    """
+    Unified pipeline for comprehensive geospatial analysis workflows.
+    """
+    
+    def __init__(self, 
+                 coordinate_columns: List[str] = ['x', 'y'],
+                 value_column: str = None,
+                 network_data: Dict = None):
+        """
+        Initialize geospatial analysis pipeline.
+        
+        Parameters
+        ----------
+        coordinate_columns : list
+            Column names for spatial coordinates.
+        value_column : str, optional
+            Column name for analysis values.
+        network_data : dict, optional
+            Network definition for network analysis.
+        """
+        self.coordinate_columns = coordinate_columns
+        self.value_column = value_column
+        self.network_data = network_data
+        self.transformers = []
+        self.results = {}
+        
+    def add_autocorrelation_analysis(self, method: str = 'moran', k_neighbors: int = 8):
+        """Add spatial autocorrelation analysis to pipeline."""
+        if self.value_column:
+            transformer = SpatialAutocorrelationTransformer(
+                coordinate_columns=self.coordinate_columns,
+                value_column=self.value_column,
+                test_type=method,
+                k_neighbors=k_neighbors
+            )
+            self.transformers.append(('autocorrelation', transformer))
+        else:
+            logger.warning("No value column specified for autocorrelation analysis")
+            
+    def add_distance_analysis(self, distance_metrics: List[str] = ['euclidean']):
+        """Add spatial distance analysis to pipeline."""
+        transformer = SpatialDistanceTransformer(
+            coordinate_columns=self.coordinate_columns,
+            distance_metrics=distance_metrics,
+            output_format='dataframe'
+        )
+        self.transformers.append(('distance', transformer))
+        
+    def add_geometry_analysis(self, operations: List[str] = ['convex_hull', 'bounding_box']):
+        """Add geometric analysis to pipeline."""
+        transformer = SpatialGeometryTransformer(
+            coordinate_columns=self.coordinate_columns,
+            operations=operations
+        )
+        self.transformers.append(('geometry', transformer))
+        
+    def add_interpolation_analysis(self, method: str = 'kriging'):
+        """Add spatial interpolation to pipeline."""
+        if self.value_column:
+            transformer = SpatialInterpolationTransformer(
+                coordinate_columns=self.coordinate_columns,
+                value_column=self.value_column,
+                method=method
+            )
+            self.transformers.append(('interpolation', transformer))
+        else:
+            logger.warning("No value column specified for interpolation analysis")
+            
+    def add_network_analysis(self, analysis_type: str = 'accessibility', service_locations: List[Any] = None):
+        """Add network analysis to pipeline."""
+        if self.network_data:
+            transformer = SpatialNetworkTransformer(
+                analysis_type=NetworkAnalysisType(analysis_type),
+                network_data=self.network_data,
+                service_locations=service_locations or []
+            )
+            self.transformers.append(('network', transformer))
+        else:
+            logger.warning("No network data specified for network analysis")
+            
+    def fit_transform(self, data: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+        """
+        Execute the complete geospatial analysis pipeline.
+        
+        Parameters
+        ----------
+        data : DataFrame
+            Input dataset with spatial coordinates.
+            
+        Returns
+        -------
+        dict
+            Results from each analysis step.
+        """
+        results = {}
+        current_data = data.copy()
+        
+        for name, transformer in self.transformers:
+            try:
+                logger.info(f"Executing {name} analysis...")
+                transformer.fit(current_data)
+                result = transformer.transform(current_data)
+                results[name] = result
+                
+                # Update current_data with results for chaining
+                if isinstance(result, pd.DataFrame) and len(result) == len(current_data):
+                    # Merge results back to maintain pipeline flow
+                    new_columns = [col for col in result.columns if col not in current_data.columns]
+                    for col in new_columns:
+                        current_data[col] = result[col]
+                        
+            except Exception as e:
+                logger.error(f"Pipeline step {name} failed: {e}")
+                results[name] = pd.DataFrame()  # Empty result on failure
+                
+        self.results = results
+        return results
+        
+    def get_summary(self) -> Dict[str, Any]:
+        """Generate summary of pipeline execution."""
+        summary = {
+            'steps_executed': len(self.results),
+            'successful_steps': sum(1 for result in self.results.values() if not result.empty),
+            'failed_steps': sum(1 for result in self.results.values() if result.empty),
+            'total_features_created': sum(len(result.columns) for result in self.results.values() if isinstance(result, pd.DataFrame)),
+            'analysis_types': list(self.results.keys())
+        }
+        
+        # Add specific analysis summaries
+        for name, result in self.results.items():
+            if isinstance(result, pd.DataFrame) and not result.empty:
+                summary[f'{name}_columns'] = list(result.columns)
+                summary[f'{name}_rows'] = len(result)
+                
+        return summary
+
+
 # Initialize dependency checking on module import
 logger.info("Initializing geospatial analysis module")
 logger.info(f"Available geospatial libraries: "
