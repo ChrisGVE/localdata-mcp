@@ -4684,6 +4684,975 @@ def aggregate_points_in_polygons(point_data: pd.DataFrame,
     )
 
 
+# =============================================================================
+# Network Analysis with Spatial Constraints
+# =============================================================================
+
+class NetworkAnalysisType(Enum):
+    """Types of network analysis operations."""
+    SHORTEST_PATH = "shortest_path"
+    ROUTING = "routing"
+    ACCESSIBILITY = "accessibility"
+    ISOCHRONE = "isochrone"
+    NETWORK_CONNECTIVITY = "connectivity"
+    SERVICE_AREA = "service_area"
+
+
+@dataclass
+class RouteResult:
+    """Results from a route optimization operation."""
+    route_path: List[Any]
+    route_coordinates: List[Tuple[float, float]]
+    total_distance: float
+    total_time: Optional[float]
+    waypoints: List[Any]
+    path_geometry: Optional[Any]
+    execution_time: float
+    
+    def summary(self) -> Dict[str, Any]:
+        """Generate summary statistics for the route result."""
+        return {
+            'total_distance': self.total_distance,
+            'total_time': self.total_time,
+            'waypoints_count': len(self.waypoints),
+            'path_length': len(self.route_path),
+            'execution_time_seconds': self.execution_time
+        }
+
+
+@dataclass
+class AccessibilityResult:
+    """Results from an accessibility analysis."""
+    accessibility_scores: Dict[str, float]
+    reachable_locations: List[Any]
+    travel_times: Dict[str, float]
+    service_coverage: Dict[str, Any]
+    analysis_parameters: Dict[str, Any]
+    execution_time: float
+    
+    def summary(self) -> Dict[str, Any]:
+        """Generate summary statistics for the accessibility result."""
+        return {
+            'total_locations_analyzed': len(self.accessibility_scores),
+            'reachable_count': len(self.reachable_locations),
+            'average_accessibility': np.mean(list(self.accessibility_scores.values())) if self.accessibility_scores else 0,
+            'max_travel_time': max(self.travel_times.values()) if self.travel_times else 0,
+            'analysis_parameters': self.analysis_parameters,
+            'execution_time_seconds': self.execution_time
+        }
+
+
+@dataclass
+class IsochroneResult:
+    """Results from an isochrone analysis."""
+    isochrone_polygons: List[Any]
+    time_bands: List[float]
+    coverage_areas: Dict[float, float]
+    population_coverage: Optional[Dict[float, int]]
+    service_points: List[Any]
+    execution_time: float
+    
+    def summary(self) -> Dict[str, Any]:
+        """Generate summary statistics for the isochrone result."""
+        return {
+            'time_bands': self.time_bands,
+            'isochrone_count': len(self.isochrone_polygons),
+            'coverage_areas': self.coverage_areas,
+            'population_coverage': self.population_coverage,
+            'service_points_count': len(self.service_points),
+            'execution_time_seconds': self.execution_time
+        }
+
+
+class SpatialNetwork:
+    """
+    Core spatial network representation with networkx integration.
+    """
+    
+    def __init__(self):
+        """Initialize the spatial network."""
+        self.dependency_checker = GeospatialDependencyChecker()
+        self.network = None
+        self.node_coordinates = {}
+        self.edge_geometries = {}
+        
+    def create_network_from_points(self, 
+                                  points: List[Tuple[float, float]], 
+                                  connection_threshold: float = None,
+                                  connection_method: str = 'distance') -> None:
+        """
+        Create a network from point coordinates.
+        
+        Parameters
+        ----------
+        points : list
+            List of (x, y) coordinate tuples.
+        connection_threshold : float, optional
+            Maximum distance for automatic connections.
+        connection_method : str
+            Method for connecting points ('distance', 'knn', 'delaunay').
+        """
+        if not _dependency_status.is_available(GeospatialLibrary.NETWORKX):
+            raise ValueError("NetworkX is required for network analysis")
+            
+        import networkx as nx
+        
+        self.network = nx.Graph()
+        
+        # Add nodes with coordinates
+        for i, (x, y) in enumerate(points):
+            self.network.add_node(i, x=x, y=y)
+            self.node_coordinates[i] = (x, y)
+            
+        # Create connections based on method
+        if connection_method == 'distance' and connection_threshold:
+            self._connect_by_distance(connection_threshold)
+        elif connection_method == 'knn':
+            k = min(5, len(points) - 1) if connection_threshold is None else int(connection_threshold)
+            self._connect_by_knn(k)
+        elif connection_method == 'delaunay':
+            self._connect_by_delaunay()
+        else:
+            logger.warning(f"Unknown connection method: {connection_method}")
+            
+    def create_network_from_edges(self, 
+                                 nodes: List[Dict], 
+                                 edges: List[Dict]) -> None:
+        """
+        Create a network from explicit node and edge definitions.
+        
+        Parameters
+        ----------
+        nodes : list
+            List of node dictionaries with 'id', 'x', 'y' keys.
+        edges : list
+            List of edge dictionaries with 'source', 'target', optional 'weight', 'geometry' keys.
+        """
+        if not _dependency_status.is_available(GeospatialLibrary.NETWORKX):
+            raise ValueError("NetworkX is required for network analysis")
+            
+        import networkx as nx
+        
+        self.network = nx.Graph()
+        
+        # Add nodes
+        for node in nodes:
+            node_id = node['id']
+            x, y = node['x'], node['y']
+            self.network.add_node(node_id, x=x, y=y, **{k: v for k, v in node.items() if k not in ['id', 'x', 'y']})
+            self.node_coordinates[node_id] = (x, y)
+            
+        # Add edges
+        for edge in edges:
+            source, target = edge['source'], edge['target']
+            weight = edge.get('weight', 1.0)
+            
+            # Calculate distance if not provided
+            if 'weight' not in edge and source in self.node_coordinates and target in self.node_coordinates:
+                coord1, coord2 = self.node_coordinates[source], self.node_coordinates[target]
+                weight = np.sqrt((coord1[0] - coord2[0])**2 + (coord1[1] - coord2[1])**2)
+                
+            self.network.add_edge(source, target, weight=weight, **{k: v for k, v in edge.items() if k not in ['source', 'target', 'weight']})
+            
+            # Store edge geometry if provided
+            if 'geometry' in edge:
+                self.edge_geometries[(source, target)] = edge['geometry']
+                
+    def _connect_by_distance(self, threshold: float) -> None:
+        """Connect nodes within distance threshold."""
+        distance_calc = SpatialDistanceCalculator()
+        
+        node_list = list(self.network.nodes())
+        for i, node1 in enumerate(node_list):
+            coord1 = self.node_coordinates[node1]
+            for node2 in node_list[i+1:]:
+                coord2 = self.node_coordinates[node2]
+                
+                distance = distance_calc.euclidean_distance(coord1, coord2)
+                if distance <= threshold:
+                    self.network.add_edge(node1, node2, weight=distance)
+                    
+    def _connect_by_knn(self, k: int) -> None:
+        """Connect each node to k nearest neighbors."""
+        distance_calc = SpatialDistanceCalculator()
+        
+        for node in self.network.nodes():
+            coord = self.node_coordinates[node]
+            
+            # Calculate distances to all other nodes
+            distances = []
+            for other_node in self.network.nodes():
+                if other_node != node:
+                    other_coord = self.node_coordinates[other_node]
+                    distance = distance_calc.euclidean_distance(coord, other_coord)
+                    distances.append((distance, other_node))
+                    
+            # Connect to k nearest neighbors
+            distances.sort()
+            for distance, neighbor in distances[:k]:
+                if not self.network.has_edge(node, neighbor):
+                    self.network.add_edge(node, neighbor, weight=distance)
+                    
+    def _connect_by_delaunay(self) -> None:
+        """Connect nodes using Delaunay triangulation."""
+        if not _dependency_status.is_available(GeospatialLibrary.SCIPY):
+            logger.warning("SciPy not available for Delaunay triangulation")
+            return
+            
+        try:
+            from scipy.spatial import Delaunay
+            
+            points = np.array([self.node_coordinates[node] for node in self.network.nodes()])
+            node_list = list(self.network.nodes())
+            
+            tri = Delaunay(points)
+            
+            distance_calc = SpatialDistanceCalculator()
+            
+            for simplex in tri.simplices:
+                for i in range(3):
+                    for j in range(i+1, 3):
+                        node1, node2 = node_list[simplex[i]], node_list[simplex[j]]
+                        if not self.network.has_edge(node1, node2):
+                            coord1, coord2 = self.node_coordinates[node1], self.node_coordinates[node2]
+                            distance = distance_calc.euclidean_distance(coord1, coord2)
+                            self.network.add_edge(node1, node2, weight=distance)
+                            
+        except ImportError:
+            logger.warning("Delaunay triangulation requires scipy")
+            
+    def get_network_statistics(self) -> Dict[str, Any]:
+        """Get basic network topology statistics."""
+        if self.network is None:
+            return {}
+            
+        import networkx as nx
+        
+        stats = {
+            'num_nodes': self.network.number_of_nodes(),
+            'num_edges': self.network.number_of_edges(),
+            'density': nx.density(self.network),
+            'is_connected': nx.is_connected(self.network),
+        }
+        
+        if nx.is_connected(self.network):
+            stats.update({
+                'average_clustering': nx.average_clustering(self.network),
+                'average_path_length': nx.average_shortest_path_length(self.network, weight='weight'),
+                'diameter': nx.diameter(self.network)
+            })
+        else:
+            stats['num_components'] = nx.number_connected_components(self.network)
+            
+        return stats
+
+
+class NetworkRouter:
+    """
+    Route optimization and path finding with spatial constraints.
+    """
+    
+    def __init__(self, network: SpatialNetwork):
+        """Initialize the network router."""
+        self.network = network
+        self.distance_calc = SpatialDistanceCalculator()
+        
+    def find_shortest_path(self, 
+                          source: Any, 
+                          target: Any, 
+                          weight: str = 'weight') -> RouteResult:
+        """
+        Find shortest path between two nodes.
+        
+        Parameters
+        ----------
+        source : Any
+            Source node identifier.
+        target : Any
+            Target node identifier.
+        weight : str
+            Edge attribute to use as weight.
+            
+        Returns
+        -------
+        RouteResult
+            Route optimization results.
+        """
+        start_time = time.time()
+        
+        if self.network.network is None:
+            raise ValueError("Network not initialized")
+            
+        if not _dependency_status.is_available(GeospatialLibrary.NETWORKX):
+            raise ValueError("NetworkX is required for routing")
+            
+        import networkx as nx
+        
+        try:
+            path = nx.shortest_path(self.network.network, source, target, weight=weight)
+            path_length = nx.shortest_path_length(self.network.network, source, target, weight=weight)
+            
+            # Extract route coordinates
+            route_coordinates = [self.network.node_coordinates[node] for node in path]
+            
+            # Create path geometry if Shapely available
+            path_geometry = None
+            if _dependency_status.is_available(GeospatialLibrary.SHAPELY):
+                from shapely.geometry import LineString
+                path_geometry = LineString(route_coordinates)
+                
+            execution_time = time.time() - start_time
+            
+            return RouteResult(
+                route_path=path,
+                route_coordinates=route_coordinates,
+                total_distance=path_length,
+                total_time=None,  # Could be calculated if time weights available
+                waypoints=[source, target],
+                path_geometry=path_geometry,
+                execution_time=execution_time
+            )
+            
+        except nx.NetworkXNoPath:
+            execution_time = time.time() - start_time
+            return RouteResult(
+                route_path=[],
+                route_coordinates=[],
+                total_distance=float('inf'),
+                total_time=None,
+                waypoints=[source, target],
+                path_geometry=None,
+                execution_time=execution_time
+            )
+            
+    def find_optimal_route(self, 
+                          waypoints: List[Any], 
+                          return_to_start: bool = False,
+                          optimization_method: str = 'greedy') -> RouteResult:
+        """
+        Find optimal route through multiple waypoints.
+        
+        Parameters
+        ----------
+        waypoints : list
+            List of waypoint node identifiers.
+        return_to_start : bool
+            Whether to return to starting waypoint.
+        optimization_method : str
+            Method for route optimization ('greedy', 'nearest_neighbor').
+            
+        Returns
+        -------
+        RouteResult
+            Optimized route results.
+        """
+        start_time = time.time()
+        
+        if len(waypoints) < 2:
+            raise ValueError("At least 2 waypoints required")
+            
+        if optimization_method == 'greedy':
+            route_path, total_distance = self._greedy_route_optimization(waypoints, return_to_start)
+        elif optimization_method == 'nearest_neighbor':
+            route_path, total_distance = self._nearest_neighbor_tsp(waypoints, return_to_start)
+        else:
+            raise ValueError(f"Unknown optimization method: {optimization_method}")
+            
+        # Extract route coordinates
+        route_coordinates = [self.network.node_coordinates[node] for node in route_path]
+        
+        # Create path geometry if Shapely available
+        path_geometry = None
+        if _dependency_status.is_available(GeospatialLibrary.SHAPELY):
+            from shapely.geometry import LineString
+            path_geometry = LineString(route_coordinates)
+            
+        execution_time = time.time() - start_time
+        
+        return RouteResult(
+            route_path=route_path,
+            route_coordinates=route_coordinates,
+            total_distance=total_distance,
+            total_time=None,
+            waypoints=waypoints,
+            path_geometry=path_geometry,
+            execution_time=execution_time
+        )
+        
+    def _greedy_route_optimization(self, waypoints: List[Any], return_to_start: bool) -> Tuple[List[Any], float]:
+        """Greedy optimization for route through waypoints."""
+        import networkx as nx
+        
+        if len(waypoints) == 2:
+            # Simple shortest path for 2 waypoints
+            try:
+                path = nx.shortest_path(self.network.network, waypoints[0], waypoints[1], weight='weight')
+                distance = nx.shortest_path_length(self.network.network, waypoints[0], waypoints[1], weight='weight')
+                
+                if return_to_start and waypoints[0] != waypoints[1]:
+                    return_path = nx.shortest_path(self.network.network, waypoints[1], waypoints[0], weight='weight')[1:]
+                    return_distance = nx.shortest_path_length(self.network.network, waypoints[1], waypoints[0], weight='weight')
+                    path.extend(return_path)
+                    distance += return_distance
+                    
+                return path, distance
+            except nx.NetworkXNoPath:
+                return waypoints, float('inf')
+        
+        # For multiple waypoints, connect them sequentially
+        full_path = []
+        total_distance = 0
+        
+        for i in range(len(waypoints) - 1):
+            try:
+                segment = nx.shortest_path(self.network.network, waypoints[i], waypoints[i+1], weight='weight')
+                segment_distance = nx.shortest_path_length(self.network.network, waypoints[i], waypoints[i+1], weight='weight')
+                
+                if i == 0:
+                    full_path.extend(segment)
+                else:
+                    full_path.extend(segment[1:])  # Skip duplicate node
+                    
+                total_distance += segment_distance
+                
+            except nx.NetworkXNoPath:
+                return waypoints, float('inf')
+                
+        # Return to start if requested
+        if return_to_start and len(waypoints) > 1:
+            try:
+                return_segment = nx.shortest_path(self.network.network, waypoints[-1], waypoints[0], weight='weight')[1:]
+                return_distance = nx.shortest_path_length(self.network.network, waypoints[-1], waypoints[0], weight='weight')
+                full_path.extend(return_segment)
+                total_distance += return_distance
+            except nx.NetworkXNoPath:
+                return full_path, float('inf')
+                
+        return full_path, total_distance
+        
+    def _nearest_neighbor_tsp(self, waypoints: List[Any], return_to_start: bool) -> Tuple[List[Any], float]:
+        """Nearest neighbor heuristic for TSP-like routing."""
+        import networkx as nx
+        
+        if len(waypoints) <= 2:
+            return self._greedy_route_optimization(waypoints, return_to_start)
+            
+        # Build distance matrix between waypoints
+        distance_matrix = {}
+        for i, wp1 in enumerate(waypoints):
+            for j, wp2 in enumerate(waypoints):
+                if i != j:
+                    try:
+                        dist = nx.shortest_path_length(self.network.network, wp1, wp2, weight='weight')
+                        distance_matrix[(wp1, wp2)] = dist
+                    except nx.NetworkXNoPath:
+                        distance_matrix[(wp1, wp2)] = float('inf')
+                        
+        # Nearest neighbor algorithm
+        start_wp = waypoints[0]
+        current_wp = start_wp
+        remaining = set(waypoints[1:])
+        route_order = [current_wp]
+        total_distance = 0
+        
+        while remaining:
+            nearest = min(remaining, key=lambda wp: distance_matrix.get((current_wp, wp), float('inf')))
+            distance = distance_matrix.get((current_wp, nearest), float('inf'))
+            
+            if distance == float('inf'):
+                break
+                
+            route_order.append(nearest)
+            total_distance += distance
+            current_wp = nearest
+            remaining.remove(nearest)
+            
+        # Add return to start if requested
+        if return_to_start and len(route_order) > 1:
+            return_distance = distance_matrix.get((current_wp, start_wp), float('inf'))
+            if return_distance != float('inf'):
+                route_order.append(start_wp)
+                total_distance += return_distance
+                
+        # Convert waypoint route to full node path
+        full_path = []
+        for i in range(len(route_order) - 1):
+            try:
+                segment = nx.shortest_path(self.network.network, route_order[i], route_order[i+1], weight='weight')
+                if i == 0:
+                    full_path.extend(segment)
+                else:
+                    full_path.extend(segment[1:])
+            except nx.NetworkXNoPath:
+                full_path.extend([route_order[i], route_order[i+1]])
+                
+        return full_path, total_distance
+
+
+class AccessibilityAnalyzer:
+    """
+    Spatial accessibility analysis for service coverage and reachability.
+    """
+    
+    def __init__(self, network: SpatialNetwork):
+        """Initialize the accessibility analyzer."""
+        self.network = network
+        
+    def calculate_accessibility(self, 
+                              service_locations: List[Any], 
+                              demand_locations: List[Any],
+                              max_travel_time: float = None,
+                              impedance_function: str = 'linear') -> AccessibilityResult:
+        """
+        Calculate accessibility scores for demand locations to services.
+        
+        Parameters
+        ----------
+        service_locations : list
+            List of service node identifiers.
+        demand_locations : list
+            List of demand node identifiers.
+        max_travel_time : float, optional
+            Maximum travel time/distance threshold.
+        impedance_function : str
+            Function for distance decay ('linear', 'exponential', 'gaussian').
+            
+        Returns
+        -------
+        AccessibilityResult
+            Accessibility analysis results.
+        """
+        start_time = time.time()
+        
+        if self.network.network is None:
+            raise ValueError("Network not initialized")
+            
+        import networkx as nx
+        
+        accessibility_scores = {}
+        travel_times = {}
+        reachable_locations = []
+        
+        # Calculate accessibility for each demand location
+        for demand_node in demand_locations:
+            accessibility_score = 0
+            min_travel_time = float('inf')
+            
+            for service_node in service_locations:
+                try:
+                    travel_distance = nx.shortest_path_length(
+                        self.network.network, demand_node, service_node, weight='weight'
+                    )
+                    
+                    # Apply distance decay function
+                    if impedance_function == 'linear':
+                        impedance = 1 / (1 + travel_distance) if travel_distance > 0 else 1
+                    elif impedance_function == 'exponential':
+                        impedance = np.exp(-travel_distance / 1000) if travel_distance > 0 else 1  # Decay parameter
+                    elif impedance_function == 'gaussian':
+                        impedance = np.exp(-(travel_distance ** 2) / (2 * (500 ** 2)))  # Gaussian decay
+                    else:
+                        impedance = 1
+                        
+                    accessibility_score += impedance
+                    min_travel_time = min(min_travel_time, travel_distance)
+                    
+                except nx.NetworkXNoPath:
+                    continue
+                    
+            accessibility_scores[demand_node] = accessibility_score
+            travel_times[demand_node] = min_travel_time
+            
+            # Check reachability threshold
+            if max_travel_time is None or min_travel_time <= max_travel_time:
+                reachable_locations.append(demand_node)
+                
+        # Calculate service coverage statistics
+        total_demand = len(demand_locations)
+        reachable_count = len(reachable_locations)
+        coverage_percentage = (reachable_count / total_demand * 100) if total_demand > 0 else 0
+        
+        service_coverage = {
+            'total_demand_locations': total_demand,
+            'reachable_locations': reachable_count,
+            'coverage_percentage': coverage_percentage,
+            'average_accessibility': np.mean(list(accessibility_scores.values())) if accessibility_scores else 0
+        }
+        
+        analysis_parameters = {
+            'service_count': len(service_locations),
+            'demand_count': len(demand_locations),
+            'max_travel_time': max_travel_time,
+            'impedance_function': impedance_function
+        }
+        
+        execution_time = time.time() - start_time
+        
+        return AccessibilityResult(
+            accessibility_scores=accessibility_scores,
+            reachable_locations=reachable_locations,
+            travel_times=travel_times,
+            service_coverage=service_coverage,
+            analysis_parameters=analysis_parameters,
+            execution_time=execution_time
+        )
+
+
+class IsochroneGenerator:
+    """
+    Generate isochrones (equal-time/distance polygons) for service areas.
+    """
+    
+    def __init__(self, network: SpatialNetwork):
+        """Initialize the isochrone generator."""
+        self.network = network
+        
+    def generate_isochrones(self, 
+                          service_locations: List[Any], 
+                          time_bands: List[float],
+                          resolution: int = 50) -> IsochroneResult:
+        """
+        Generate isochrone polygons for service locations.
+        
+        Parameters
+        ----------
+        service_locations : list
+            List of service node identifiers.
+        time_bands : list
+            List of travel time thresholds for isochrone bands.
+        resolution : int
+            Resolution for isochrone polygon generation.
+            
+        Returns
+        -------
+        IsochroneResult
+            Isochrone analysis results.
+        """
+        start_time = time.time()
+        
+        if not _dependency_status.is_available(GeospatialLibrary.SHAPELY):
+            logger.warning("Shapely not available for isochrone polygon generation")
+            return IsochroneResult(
+                isochrone_polygons=[],
+                time_bands=time_bands,
+                coverage_areas={},
+                population_coverage=None,
+                service_points=service_locations,
+                execution_time=time.time() - start_time
+            )
+            
+        import networkx as nx
+        from shapely.geometry import Point, Polygon
+        from shapely.ops import unary_union
+        
+        isochrone_polygons = []
+        coverage_areas = {}
+        
+        # Generate isochrones for each time band
+        for time_threshold in sorted(time_bands):
+            band_polygons = []
+            
+            # Generate isochrone for each service location
+            for service_node in service_locations:
+                reachable_nodes = []
+                
+                # Find all nodes reachable within time threshold
+                try:
+                    path_lengths = nx.single_source_shortest_path_length(
+                        self.network.network, service_node, cutoff=time_threshold, weight='weight'
+                    )
+                    reachable_nodes = list(path_lengths.keys())
+                except:
+                    continue
+                    
+                if len(reachable_nodes) < 3:  # Need at least 3 points for polygon
+                    continue
+                    
+                # Extract coordinates of reachable nodes
+                reachable_coords = [self.network.node_coordinates[node] for node in reachable_nodes]
+                
+                # Create convex hull as simple isochrone approximation
+                if len(reachable_coords) >= 3:
+                    try:
+                        points = [Point(coord) for coord in reachable_coords]
+                        # Create buffer around points to form isochrone
+                        buffer_distance = time_threshold / 10  # Simple heuristic
+                        buffered_points = [point.buffer(buffer_distance) for point in points]
+                        isochrone_polygon = unary_union(buffered_points)
+                        band_polygons.append(isochrone_polygon)
+                    except Exception as e:
+                        logger.warning(f"Failed to create isochrone polygon: {e}")
+                        continue
+                        
+            # Combine polygons for this time band
+            if band_polygons:
+                combined_polygon = unary_union(band_polygons)
+                isochrone_polygons.append(combined_polygon)
+                coverage_areas[time_threshold] = combined_polygon.area
+            else:
+                isochrone_polygons.append(None)
+                coverage_areas[time_threshold] = 0
+                
+        execution_time = time.time() - start_time
+        
+        return IsochroneResult(
+            isochrone_polygons=isochrone_polygons,
+            time_bands=time_bands,
+            coverage_areas=coverage_areas,
+            population_coverage=None,  # Would need population data
+            service_points=service_locations,
+            execution_time=execution_time
+        )
+
+
+class SpatialNetworkTransformer(BaseEstimator, TransformerMixin):
+    """
+    Sklearn-compatible transformer for network analysis operations.
+    """
+    
+    def __init__(self,
+                 analysis_type: NetworkAnalysisType = NetworkAnalysisType.ACCESSIBILITY,
+                 network_data: Optional[Dict] = None,
+                 service_locations: List[Any] = None,
+                 max_travel_time: float = None):
+        """
+        Initialize spatial network transformer.
+        
+        Parameters
+        ----------
+        analysis_type : NetworkAnalysisType
+            Type of network analysis to perform.
+        network_data : dict, optional
+            Network definition with 'nodes' and 'edges' keys.
+        service_locations : list, optional
+            Service node identifiers for accessibility/isochrone analysis.
+        max_travel_time : float, optional
+            Maximum travel time threshold.
+        """
+        self.analysis_type = analysis_type
+        self.network_data = network_data
+        self.service_locations = service_locations or []
+        self.max_travel_time = max_travel_time
+        
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y=None):
+        """
+        Fit the spatial network transformer.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input data containing node coordinates or network definition.
+        y : array-like, optional
+            Target values (ignored).
+            
+        Returns
+        -------
+        self : SpatialNetworkTransformer
+            Fitted transformer.
+        """
+        # Initialize network
+        self.network_ = SpatialNetwork()
+        
+        if self.network_data:
+            # Use provided network data
+            self.network_.create_network_from_edges(
+                self.network_data['nodes'], 
+                self.network_data['edges']
+            )
+        else:
+            # Create network from input coordinates
+            if isinstance(X, pd.DataFrame):
+                if 'x' in X.columns and 'y' in X.columns:
+                    points = list(zip(X['x'], X['y']))
+                elif 'longitude' in X.columns and 'latitude' in X.columns:
+                    points = list(zip(X['longitude'], X['latitude']))
+                else:
+                    raise ValueError("DataFrame must contain 'x'/'y' or 'longitude'/'latitude' columns")
+            else:
+                points = [(row[0], row[1]) for row in X]
+                
+            self.network_.create_network_from_points(points, connection_method='knn')
+            
+        # Initialize analyzers based on analysis type
+        if self.analysis_type in [NetworkAnalysisType.SHORTEST_PATH, NetworkAnalysisType.ROUTING]:
+            self.router_ = NetworkRouter(self.network_)
+        elif self.analysis_type == NetworkAnalysisType.ACCESSIBILITY:
+            self.accessibility_analyzer_ = AccessibilityAnalyzer(self.network_)
+        elif self.analysis_type == NetworkAnalysisType.ISOCHRONE:
+            self.isochrone_generator_ = IsochroneGenerator(self.network_)
+            
+        return self
+        
+    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> Union[pd.DataFrame, np.ndarray]:
+        """
+        Perform network analysis transformation.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Input data for analysis.
+            
+        Returns
+        -------
+        X_transformed : DataFrame or array-like
+            Analysis results.
+        """
+        check_is_fitted(self, 'network_')
+        
+        if self.analysis_type == NetworkAnalysisType.ACCESSIBILITY:
+            if not hasattr(self, 'accessibility_analyzer_'):
+                raise ValueError("Accessibility analyzer not initialized")
+                
+            # Use all nodes as demand locations if not specified
+            demand_locations = list(range(len(X))) if not isinstance(X, pd.DataFrame) else list(X.index)
+            
+            result = self.accessibility_analyzer_.calculate_accessibility(
+                self.service_locations, 
+                demand_locations,
+                max_travel_time=self.max_travel_time
+            )
+            
+            # Create output DataFrame
+            if isinstance(X, pd.DataFrame):
+                X_transformed = X.copy()
+                X_transformed['accessibility_score'] = [result.accessibility_scores.get(i, 0) for i in X.index]
+                X_transformed['travel_time'] = [result.travel_times.get(i, float('inf')) for i in X.index]
+                X_transformed['is_reachable'] = [i in result.reachable_locations for i in X.index]
+                return X_transformed
+            else:
+                accessibility_values = [result.accessibility_scores.get(i, 0) for i in range(len(X))]
+                travel_times = [result.travel_times.get(i, float('inf')) for i in range(len(X))]
+                return np.column_stack([X, accessibility_values, travel_times])
+                
+        elif self.analysis_type == NetworkAnalysisType.ISOCHRONE:
+            if not hasattr(self, 'isochrone_generator_'):
+                raise ValueError("Isochrone generator not initialized")
+                
+            time_bands = [self.max_travel_time] if self.max_travel_time else [500, 1000, 1500]
+            result = self.isochrone_generator_.generate_isochrones(
+                self.service_locations, 
+                time_bands
+            )
+            
+            # Return isochrone summary as DataFrame
+            summary_data = {
+                'time_band': time_bands,
+                'coverage_area': [result.coverage_areas.get(band, 0) for band in time_bands],
+                'has_polygon': [i < len(result.isochrone_polygons) and result.isochrone_polygons[i] is not None 
+                               for i in range(len(time_bands))]
+            }
+            
+            return pd.DataFrame(summary_data)
+            
+        else:
+            # For other analysis types, return network statistics
+            stats = self.network_.get_network_statistics()
+            
+            if isinstance(X, pd.DataFrame):
+                X_transformed = X.copy()
+                for key, value in stats.items():
+                    X_transformed[f'network_{key}'] = value
+                return X_transformed
+            else:
+                return X  # Return unchanged for non-accessibility analysis
+                
+
+# High-level convenience functions
+def optimize_route(network_data: Dict,
+                  waypoints: List[Any],
+                  return_to_start: bool = False,
+                  optimization_method: str = 'greedy') -> RouteResult:
+    """
+    Optimize route through multiple waypoints on a spatial network.
+    
+    Parameters
+    ----------
+    network_data : dict
+        Network definition with 'nodes' and 'edges' keys.
+    waypoints : list
+        List of waypoint node identifiers.
+    return_to_start : bool
+        Whether to return to starting waypoint.
+    optimization_method : str
+        Method for route optimization.
+        
+    Returns
+    -------
+    RouteResult
+        Optimized route results.
+    """
+    network = SpatialNetwork()
+    network.create_network_from_edges(network_data['nodes'], network_data['edges'])
+    
+    router = NetworkRouter(network)
+    return router.find_optimal_route(waypoints, return_to_start, optimization_method)
+
+
+def analyze_accessibility(network_data: Dict,
+                         service_locations: List[Any],
+                         demand_locations: List[Any],
+                         max_travel_time: float = None,
+                         impedance_function: str = 'linear') -> AccessibilityResult:
+    """
+    Analyze spatial accessibility to services on a network.
+    
+    Parameters
+    ----------
+    network_data : dict
+        Network definition with 'nodes' and 'edges' keys.
+    service_locations : list
+        List of service node identifiers.
+    demand_locations : list
+        List of demand node identifiers.
+    max_travel_time : float, optional
+        Maximum travel time threshold.
+    impedance_function : str
+        Function for distance decay.
+        
+    Returns
+    -------
+    AccessibilityResult
+        Accessibility analysis results.
+    """
+    network = SpatialNetwork()
+    network.create_network_from_edges(network_data['nodes'], network_data['edges'])
+    
+    analyzer = AccessibilityAnalyzer(network)
+    return analyzer.calculate_accessibility(
+        service_locations, demand_locations, max_travel_time, impedance_function
+    )
+
+
+def generate_service_isochrones(network_data: Dict,
+                               service_locations: List[Any],
+                               time_bands: List[float],
+                               resolution: int = 50) -> IsochroneResult:
+    """
+    Generate isochrone polygons for service locations.
+    
+    Parameters
+    ----------
+    network_data : dict
+        Network definition with 'nodes' and 'edges' keys.
+    service_locations : list
+        List of service node identifiers.
+    time_bands : list
+        List of travel time thresholds.
+    resolution : int
+        Resolution for polygon generation.
+        
+    Returns
+    -------
+    IsochroneResult
+        Isochrone analysis results.
+    """
+    network = SpatialNetwork()
+    network.create_network_from_edges(network_data['nodes'], network_data['edges'])
+    
+    generator = IsochroneGenerator(network)
+    return generator.generate_isochrones(service_locations, time_bands, resolution)
+
+
 # Initialize dependency checking on module import
 logger.info("Initializing geospatial analysis module")
 logger.info(f"Available geospatial libraries: "
