@@ -1384,3 +1384,218 @@ def analyze_funnel(data: pd.DataFrame,
     transformer = FunnelAnalyzer(steps=steps)
     transformer.fit(data)
     return transformer.transform(data)
+
+
+class BusinessIntelligencePipeline(AnalysisPipelineBase):
+    """
+    Comprehensive Business Intelligence pipeline combining customer analytics,
+    A/B testing, attribution modeling, and funnel analysis.
+    
+    This pipeline orchestrates multiple BI transformers to provide end-to-end
+    business intelligence capabilities for marketing and customer analytics.
+    
+    Parameters:
+    -----------
+    customer_analytics : bool, default=True
+        Whether to include customer analytics (RFM, cohort, CLV)
+    ab_testing : bool, default=True
+        Whether to include A/B testing capabilities
+    attribution_modeling : bool, default=True
+        Whether to include marketing attribution analysis
+    funnel_analysis : bool, default=True
+        Whether to include conversion funnel analysis
+    """
+    
+    def __init__(self, customer_analytics=True, ab_testing=True, 
+                 attribution_modeling=True, funnel_analysis=True, 
+                 streaming_config=None, **kwargs):
+        super().__init__(streaming_config=streaming_config, **kwargs)
+        
+        self.customer_analytics = customer_analytics
+        self.ab_testing = ab_testing
+        self.attribution_modeling = attribution_modeling
+        self.funnel_analysis = funnel_analysis
+        
+        # Initialize component transformers
+        self._init_transformers()
+        
+    def _init_transformers(self):
+        """Initialize component transformers based on configuration."""
+        self.transformers = {}
+        
+        if self.customer_analytics:
+            self.transformers['rfm'] = RFMAnalysisTransformer()
+            self.transformers['cohort'] = CohortAnalysisTransformer()
+            self.transformers['clv'] = CLVCalculator()
+            
+        if self.ab_testing:
+            self.transformers['ab_test'] = ABTestAnalyzer()
+            self.transformers['power_analysis'] = PowerAnalysisTransformer()
+            
+        if self.attribution_modeling:
+            self.transformers['attribution'] = AttributionAnalyzer()
+            
+        if self.funnel_analysis:
+            self.transformers['funnel'] = FunnelAnalyzer()
+            
+    def fit(self, X, y=None):
+        """Fit all enabled BI transformers."""
+        logger.info("Fitting Business Intelligence pipeline components")
+        
+        for name, transformer in self.transformers.items():
+            try:
+                transformer.fit(X, y)
+                logger.debug(f"Successfully fitted {name} transformer")
+            except Exception as e:
+                logger.warning(f"Failed to fit {name} transformer: {str(e)}")
+                
+        return self
+        
+    def transform(self, X):
+        """Transform data using all fitted BI transformers."""
+        logger.info("Executing Business Intelligence pipeline analysis")
+        
+        results = {}
+        metadata = CompositionMetadata()
+        
+        for name, transformer in self.transformers.items():
+            try:
+                if hasattr(transformer, 'is_fitted_') and transformer.is_fitted_:
+                    result = transformer.transform(X)
+                    results[name] = result
+                    logger.debug(f"Successfully executed {name} analysis")
+                else:
+                    logger.warning(f"Transformer {name} not fitted, skipping")
+            except Exception as e:
+                logger.error(f"Error executing {name} analysis: {str(e)}")
+                results[name] = f"Error: {str(e)}"
+                
+        # Create pipeline result
+        pipeline_result = PipelineResult(
+            data=results,
+            metadata=metadata,
+            streaming_config=self.streaming_config
+        )
+        
+        return pipeline_result
+        
+    def analyze_customer_journey(self, transaction_data: pd.DataFrame,
+                                touchpoint_data: pd.DataFrame = None,
+                                funnel_data: pd.DataFrame = None) -> Dict[str, Any]:
+        """
+        Comprehensive customer journey analysis combining all BI components.
+        
+        Parameters:
+        -----------
+        transaction_data : pd.DataFrame
+            Customer transaction data for RFM, cohort, and CLV analysis
+        touchpoint_data : pd.DataFrame, optional
+            Marketing touchpoint data for attribution analysis
+        funnel_data : pd.DataFrame, optional
+            Funnel step data for conversion analysis
+            
+        Returns:
+        --------
+        analysis : Dict[str, Any]
+            Complete customer journey analysis results
+        """
+        logger.info("Performing comprehensive customer journey analysis")
+        
+        journey_analysis = {}
+        
+        # Customer Analytics
+        if self.customer_analytics and transaction_data is not None:
+            journey_analysis['customer_segments'] = analyze_rfm(transaction_data)
+            journey_analysis['retention_analysis'] = perform_cohort_analysis(transaction_data)
+            journey_analysis['lifetime_value'] = calculate_clv(transaction_data)
+            
+        # Attribution Analysis
+        if self.attribution_modeling and touchpoint_data is not None:
+            journey_analysis['attribution'] = analyze_attribution(touchpoint_data)
+            
+        # Funnel Analysis
+        if self.funnel_analysis and funnel_data is not None:
+            journey_analysis['funnel_optimization'] = analyze_funnel(funnel_data)
+            
+        # Cross-analysis insights
+        journey_analysis['insights'] = self._generate_cross_analysis_insights(journey_analysis)
+        
+        return journey_analysis
+        
+    def _generate_cross_analysis_insights(self, analysis_results: Dict[str, Any]) -> List[str]:
+        """Generate insights from cross-analysis of BI components."""
+        insights = []
+        
+        # RFM + CLV insights
+        if 'customer_segments' in analysis_results and 'lifetime_value' in analysis_results:
+            insights.append("Cross-reference RFM segments with CLV to identify high-value customer characteristics")
+            
+        # Cohort + Attribution insights
+        if 'retention_analysis' in analysis_results and 'attribution' in analysis_results:
+            insights.append("Analyze which acquisition channels produce customers with better retention rates")
+            
+        # Funnel + Attribution insights
+        if 'funnel_optimization' in analysis_results and 'attribution' in analysis_results:
+            insights.append("Optimize attribution models based on funnel performance at each touchpoint")
+            
+        if not insights:
+            insights.append("Enable multiple analysis components for cross-analysis insights")
+            
+        return insights
+
+
+# Integration with existing statistical domain for enhanced A/B testing
+def enhanced_ab_test(data: pd.DataFrame, 
+                    group_column: str = 'group',
+                    outcome_column: str = 'converted',
+                    use_statistical_domain: bool = True,
+                    **kwargs) -> Dict[str, Any]:
+    """
+    Enhanced A/B test analysis leveraging both BI and statistical analysis domains.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        A/B test data
+    group_column : str, default='group'
+        Group assignment column
+    outcome_column : str, default='converted'
+        Outcome variable column
+    use_statistical_domain : bool, default=True
+        Whether to include statistical domain analysis
+    **kwargs : additional arguments
+        Additional arguments for statistical tests
+        
+    Returns:
+    --------
+    results : Dict[str, Any]
+        Combined BI and statistical analysis results
+    """
+    results = {}
+    
+    # Business Intelligence A/B test analysis
+    bi_result = perform_ab_test(data, group_column, outcome_column, **kwargs)
+    results['business_intelligence'] = bi_result.to_dict()
+    
+    if use_statistical_domain:
+        try:
+            # Import and use statistical analysis domain for additional rigor
+            from .statistical_analysis import run_hypothesis_test
+            
+            # Prepare data for statistical analysis
+            groups = data[group_column].unique()
+            if len(groups) == 2:
+                group_a_data = data[data[group_column] == groups[0]][outcome_column]
+                group_b_data = data[data[group_column] == groups[1]][outcome_column]
+                
+                # Run statistical hypothesis test
+                stat_result = run_hypothesis_test(
+                    group_a_data.values, group_b_data.values,
+                    test_type='ttest_ind', alpha=kwargs.get('alpha', 0.05)
+                )
+                results['statistical_analysis'] = stat_result
+                
+        except ImportError:
+            logger.warning("Statistical analysis domain not available for enhanced A/B testing")
+            
+    return results

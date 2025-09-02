@@ -87,6 +87,41 @@ from .optimization import (
     AssignmentResult
 )
 
+from .business_intelligence import (
+    # Core transformers
+    RFMAnalysisTransformer,
+    CohortAnalysisTransformer,
+    CLVCalculator,
+    ABTestAnalyzer,
+    PowerAnalysisTransformer,
+    AttributionAnalyzer,
+    FunnelAnalyzer,
+    
+    # Pipeline
+    BusinessIntelligencePipeline,
+    
+    # High-level functions
+    analyze_rfm,
+    perform_cohort_analysis,
+    calculate_clv,
+    perform_ab_test,
+    analyze_attribution,
+    analyze_funnel,
+    enhanced_ab_test,
+    
+    # Result classes
+    RFMResult,
+    CohortAnalysisResult,
+    CLVResult,
+    ABTestResult,
+    AttributionResult,
+    FunnelAnalysisResult,
+    
+    # Enums
+    AttributionModel,
+    ExperimentStatus
+)
+
 from .geospatial_analysis import (
     # Core transformers
     GeospatialDependencyChecker,
@@ -195,6 +230,31 @@ __all__ = [
     "ConstrainedOptResult",
     "NetworkAnalysisResult",
     "AssignmentResult",
+    
+    # Business Intelligence Domain
+    "RFMAnalysisTransformer",
+    "CohortAnalysisTransformer",
+    "CLVCalculator",
+    "ABTestAnalyzer",
+    "PowerAnalysisTransformer",
+    "AttributionAnalyzer",
+    "FunnelAnalyzer",
+    "BusinessIntelligencePipeline",
+    "analyze_rfm",
+    "perform_cohort_analysis",
+    "calculate_clv",
+    "perform_ab_test",
+    "analyze_attribution",
+    "analyze_funnel",
+    "enhanced_ab_test",
+    "RFMResult",
+    "CohortAnalysisResult",
+    "CLVResult",
+    "ABTestResult",
+    "AttributionResult",
+    "FunnelAnalysisResult",
+    "AttributionModel",
+    "ExperimentStatus",
     
     # Geospatial Analysis Domain
     "GeospatialDependencyChecker",
