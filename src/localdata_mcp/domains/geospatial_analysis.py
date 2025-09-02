@@ -3854,6 +3854,836 @@ class SpatialInterpolationTransformer(BaseEstimator, TransformerMixin):
                 return np.column_stack([X, result.interpolated_values])
 
 
+# =============================================================================
+# Spatial Joins and Overlay Operations
+# =============================================================================
+
+class SpatialJoinType(Enum):
+    """Types of spatial join operations."""
+    INTERSECTS = "intersects"
+    WITHIN = "within"
+    CONTAINS = "contains"
+    TOUCHES = "touches"
+    OVERLAPS = "overlaps"
+    CROSSES = "crosses"
+    DISJOINT = "disjoint"
+    NEAREST = "nearest"
+
+
+class OverlayOperation(Enum):
+    """Types of spatial overlay operations."""
+    INTERSECTION = "intersection"
+    UNION = "union"
+    DIFFERENCE = "difference"
+    SYMMETRIC_DIFFERENCE = "symmetric_difference"
+    IDENTITY = "identity"
+
+
+@dataclass
+class SpatialJoinResult:
+    """Results from a spatial join operation."""
+    joined_data: pd.DataFrame
+    left_geometry_column: str
+    right_geometry_column: str
+    join_type: SpatialJoinType
+    match_counts: Dict[str, int]
+    execution_time: float
+    
+    def summary(self) -> Dict[str, Any]:
+        """Generate summary statistics for the join result."""
+        return {
+            'total_rows': len(self.joined_data),
+            'join_type': self.join_type.value,
+            'match_counts': self.match_counts,
+            'execution_time_seconds': self.execution_time,
+            'columns': list(self.joined_data.columns)
+        }
+
+
+@dataclass 
+class OverlayResult:
+    """Results from a spatial overlay operation."""
+    result_geometries: List[Any]
+    result_data: pd.DataFrame
+    operation: OverlayOperation
+    input_counts: Dict[str, int]
+    output_count: int
+    execution_time: float
+    
+    def summary(self) -> Dict[str, Any]:
+        """Generate summary statistics for the overlay result."""
+        return {
+            'operation': self.operation.value,
+            'input_counts': self.input_counts,
+            'output_count': self.output_count,
+            'execution_time_seconds': self.execution_time,
+            'columns': list(self.result_data.columns) if self.result_data is not None else []
+        }
+
+
+class SpatialJoinEngine:
+    """
+    Core engine for spatial join operations with support for multiple backends.
+    """
+    
+    def __init__(self):
+        """Initialize the spatial join engine."""
+        self.dependency_checker = GeospatialDependencyChecker()
+        
+    def _prepare_geometries(self, data: pd.DataFrame, geometry_column: str) -> List[Any]:
+        """Prepare geometries for spatial operations."""
+        if geometry_column not in data.columns:
+            raise ValueError(f"Geometry column '{geometry_column}' not found in data")
+            
+        geometries = []
+        for idx, row in data.iterrows():
+            geom = row[geometry_column]
+            if isinstance(geom, (tuple, list)) and len(geom) == 2:
+                # Convert point coordinates to geometry object
+                if _dependency_status.is_available(GeospatialLibrary.SHAPELY):
+                    from shapely.geometry import Point
+                    geometries.append(Point(geom[0], geom[1]))
+                else:
+                    geometries.append(geom)
+            else:
+                geometries.append(geom)
+                
+        return geometries
+        
+    def _spatial_predicate_check(self, geom1: Any, geom2: Any, join_type: SpatialJoinType) -> bool:
+        """Check spatial relationship between two geometries."""
+        if not _dependency_status.is_available(GeospatialLibrary.SHAPELY):
+            # Fallback to basic point operations
+            if join_type == SpatialJoinType.INTERSECTS:
+                if isinstance(geom1, (tuple, list)) and isinstance(geom2, (tuple, list)):
+                    return abs(geom1[0] - geom2[0]) < 1e-6 and abs(geom1[1] - geom2[1]) < 1e-6
+            return False
+            
+        # Use Shapely for full geometric operations
+        try:
+            if join_type == SpatialJoinType.INTERSECTS:
+                return geom1.intersects(geom2)
+            elif join_type == SpatialJoinType.WITHIN:
+                return geom1.within(geom2)
+            elif join_type == SpatialJoinType.CONTAINS:
+                return geom1.contains(geom2)
+            elif join_type == SpatialJoinType.TOUCHES:
+                return geom1.touches(geom2)
+            elif join_type == SpatialJoinType.OVERLAPS:
+                return geom1.overlaps(geom2)
+            elif join_type == SpatialJoinType.CROSSES:
+                return geom1.crosses(geom2)
+            elif join_type == SpatialJoinType.DISJOINT:
+                return geom1.disjoint(geom2)
+            else:
+                return False
+        except Exception:
+            return False
+            
+    def _find_nearest_geometry(self, target_geom: Any, candidate_geometries: List[Any]) -> int:
+        """Find the index of the nearest geometry."""
+        if not _dependency_status.is_available(GeospatialLibrary.SHAPELY):
+            # Basic distance for point geometries
+            if isinstance(target_geom, (tuple, list)):
+                min_dist = float('inf')
+                min_idx = -1
+                for i, candidate in enumerate(candidate_geometries):
+                    if isinstance(candidate, (tuple, list)):
+                        dist = np.sqrt((target_geom[0] - candidate[0])**2 + (target_geom[1] - candidate[1])**2)
+                        if dist < min_dist:
+                            min_dist = dist
+                            min_idx = i
+                return min_idx
+            return -1
+            
+        # Use Shapely for accurate distance calculations
+        min_dist = float('inf')
+        min_idx = -1
+        
+        for i, candidate in enumerate(candidate_geometries):
+            try:
+                dist = target_geom.distance(candidate)
+                if dist < min_dist:
+                    min_dist = dist
+                    min_idx = i
+            except Exception:
+                continue
+                
+        return min_idx
+        
+    def spatial_join(self, 
+                    left_df: pd.DataFrame, 
+                    right_df: pd.DataFrame,
+                    left_geometry_col: str = 'geometry',
+                    right_geometry_col: str = 'geometry',
+                    join_type: SpatialJoinType = SpatialJoinType.INTERSECTS,
+                    how: str = 'inner') -> SpatialJoinResult:
+        """
+        Perform spatial join between two datasets.
+        
+        Parameters
+        ----------
+        left_df : DataFrame
+            Left dataset with geometry column.
+        right_df : DataFrame
+            Right dataset with geometry column.
+        left_geometry_col : str
+            Name of geometry column in left dataset.
+        right_geometry_col : str
+            Name of geometry column in right dataset.
+        join_type : SpatialJoinType
+            Type of spatial relationship to test.
+        how : str
+            Type of join ('inner', 'left', 'right').
+            
+        Returns
+        -------
+        SpatialJoinResult
+            Results of the spatial join operation.
+        """
+        start_time = time.time()
+        
+        # Prepare geometries
+        left_geometries = self._prepare_geometries(left_df, left_geometry_col)
+        right_geometries = self._prepare_geometries(right_df, right_geometry_col)
+        
+        # Initialize result storage
+        joined_rows = []
+        match_counts = {'matches': 0, 'no_matches': 0}
+        
+        # Perform spatial join
+        for left_idx, left_geom in enumerate(left_geometries):
+            matches_found = []
+            
+            if join_type == SpatialJoinType.NEAREST:
+                # Find single nearest neighbor
+                nearest_idx = self._find_nearest_geometry(left_geom, right_geometries)
+                if nearest_idx >= 0:
+                    matches_found = [nearest_idx]
+            else:
+                # Find all geometries that satisfy the spatial predicate
+                for right_idx, right_geom in enumerate(right_geometries):
+                    if self._spatial_predicate_check(left_geom, right_geom, join_type):
+                        matches_found.append(right_idx)
+                        
+            # Create joined records
+            if matches_found:
+                match_counts['matches'] += len(matches_found)
+                for right_idx in matches_found:
+                    joined_row = {}
+                    # Add left data with suffix
+                    for col in left_df.columns:
+                        if col != left_geometry_col:
+                            joined_row[f"{col}_left"] = left_df.iloc[left_idx][col]
+                        else:
+                            joined_row[left_geometry_col] = left_df.iloc[left_idx][col]
+                            
+                    # Add right data with suffix
+                    for col in right_df.columns:
+                        if col != right_geometry_col:
+                            joined_row[f"{col}_right"] = right_df.iloc[right_idx][col]
+                        elif col != left_geometry_col:  # Avoid duplicate geometry columns
+                            joined_row[f"{right_geometry_col}_right"] = right_df.iloc[right_idx][col]
+                            
+                    joined_rows.append(joined_row)
+            else:
+                match_counts['no_matches'] += 1
+                if how == 'left':
+                    # Include left record with null right values
+                    joined_row = {}
+                    for col in left_df.columns:
+                        if col != left_geometry_col:
+                            joined_row[f"{col}_left"] = left_df.iloc[left_idx][col]
+                        else:
+                            joined_row[left_geometry_col] = left_df.iloc[left_idx][col]
+                            
+                    for col in right_df.columns:
+                        if col != right_geometry_col:
+                            joined_row[f"{col}_right"] = None
+                        elif col != left_geometry_col:
+                            joined_row[f"{right_geometry_col}_right"] = None
+                            
+                    joined_rows.append(joined_row)
+                    
+        # Handle right join case
+        if how == 'right':
+            # Find unmatched right geometries
+            matched_right_indices = set()
+            for left_idx, left_geom in enumerate(left_geometries):
+                for right_idx, right_geom in enumerate(right_geometries):
+                    if self._spatial_predicate_check(left_geom, right_geom, join_type):
+                        matched_right_indices.add(right_idx)
+                        
+            # Add unmatched right records
+            for right_idx in range(len(right_geometries)):
+                if right_idx not in matched_right_indices:
+                    joined_row = {}
+                    for col in left_df.columns:
+                        if col != left_geometry_col:
+                            joined_row[f"{col}_left"] = None
+                        else:
+                            joined_row[left_geometry_col] = None
+                            
+                    for col in right_df.columns:
+                        if col != right_geometry_col:
+                            joined_row[f"{col}_right"] = right_df.iloc[right_idx][col]
+                        else:
+                            joined_row[right_geometry_col] = right_df.iloc[right_idx][col]
+                            
+                    joined_rows.append(joined_row)
+        
+        # Create result DataFrame
+        joined_df = pd.DataFrame(joined_rows) if joined_rows else pd.DataFrame()
+        
+        execution_time = time.time() - start_time
+        
+        return SpatialJoinResult(
+            joined_data=joined_df,
+            left_geometry_column=left_geometry_col,
+            right_geometry_column=right_geometry_col,
+            join_type=join_type,
+            match_counts=match_counts,
+            execution_time=execution_time
+        )
+
+
+class SpatialOverlayEngine:
+    """
+    Core engine for spatial overlay operations.
+    """
+    
+    def __init__(self):
+        """Initialize the spatial overlay engine."""
+        self.dependency_checker = GeospatialDependencyChecker()
+        
+    def _perform_geometric_operation(self, geom1: Any, geom2: Any, operation: OverlayOperation) -> Any:
+        """Perform geometric operation between two geometries."""
+        if not _dependency_status.is_available(GeospatialLibrary.SHAPELY):
+            logger.warning(f"Shapely not available, overlay operation {operation.value} not supported")
+            return None
+            
+        try:
+            if operation == OverlayOperation.INTERSECTION:
+                return geom1.intersection(geom2)
+            elif operation == OverlayOperation.UNION:
+                return geom1.union(geom2)
+            elif operation == OverlayOperation.DIFFERENCE:
+                return geom1.difference(geom2)
+            elif operation == OverlayOperation.SYMMETRIC_DIFFERENCE:
+                return geom1.symmetric_difference(geom2)
+            else:
+                return None
+        except Exception as e:
+            logger.warning(f"Geometric operation failed: {e}")
+            return None
+            
+    def spatial_overlay(self,
+                       left_df: pd.DataFrame,
+                       right_df: pd.DataFrame,
+                       operation: OverlayOperation,
+                       left_geometry_col: str = 'geometry',
+                       right_geometry_col: str = 'geometry',
+                       keep_geom_type: bool = True) -> OverlayResult:
+        """
+        Perform spatial overlay operation between two datasets.
+        
+        Parameters
+        ----------
+        left_df : DataFrame
+            Left dataset with geometry column.
+        right_df : DataFrame
+            Right dataset with geometry column.
+        operation : OverlayOperation
+            Type of overlay operation to perform.
+        left_geometry_col : str
+            Name of geometry column in left dataset.
+        right_geometry_col : str
+            Name of geometry column in right dataset.
+        keep_geom_type : bool
+            Whether to filter results to maintain geometry type.
+            
+        Returns
+        -------
+        OverlayResult
+            Results of the spatial overlay operation.
+        """
+        start_time = time.time()
+        
+        if not _dependency_status.is_available(GeospatialLibrary.SHAPELY):
+            raise ValueError("Shapely is required for spatial overlay operations")
+            
+        # Prepare input data
+        left_geometries = self._prepare_geometries(left_df, left_geometry_col)
+        right_geometries = self._prepare_geometries(right_df, right_geometry_col)
+        
+        result_geometries = []
+        result_rows = []
+        
+        input_counts = {
+            'left_features': len(left_df),
+            'right_features': len(right_df)
+        }
+        
+        # Perform overlay operation
+        for left_idx, left_geom in enumerate(left_geometries):
+            for right_idx, right_geom in enumerate(right_geometries):
+                result_geom = self._perform_geometric_operation(left_geom, right_geom, operation)
+                
+                if result_geom is not None and not result_geom.is_empty:
+                    # Filter by geometry type if requested
+                    if keep_geom_type:
+                        left_geom_type = type(left_geom).__name__
+                        result_geom_type = type(result_geom).__name__
+                        if left_geom_type != result_geom_type:
+                            continue
+                    
+                    result_geometries.append(result_geom)
+                    
+                    # Combine attributes from both datasets
+                    result_row = {'geometry': result_geom}
+                    
+                    # Add left attributes
+                    for col in left_df.columns:
+                        if col != left_geometry_col:
+                            result_row[f"{col}_1"] = left_df.iloc[left_idx][col]
+                            
+                    # Add right attributes  
+                    for col in right_df.columns:
+                        if col != right_geometry_col:
+                            result_row[f"{col}_2"] = right_df.iloc[right_idx][col]
+                            
+                    result_rows.append(result_row)
+        
+        # Create result DataFrame
+        result_df = pd.DataFrame(result_rows) if result_rows else pd.DataFrame()
+        
+        execution_time = time.time() - start_time
+        
+        return OverlayResult(
+            result_geometries=result_geometries,
+            result_data=result_df,
+            operation=operation,
+            input_counts=input_counts,
+            output_count=len(result_geometries),
+            execution_time=execution_time
+        )
+    
+    def _prepare_geometries(self, data: pd.DataFrame, geometry_column: str) -> List[Any]:
+        """Prepare geometries for spatial operations."""
+        if geometry_column not in data.columns:
+            raise ValueError(f"Geometry column '{geometry_column}' not found in data")
+            
+        geometries = []
+        for idx, row in data.iterrows():
+            geom = row[geometry_column]
+            if isinstance(geom, (tuple, list)) and len(geom) == 2:
+                # Convert point coordinates to geometry object
+                if _dependency_status.is_available(GeospatialLibrary.SHAPELY):
+                    from shapely.geometry import Point
+                    geometries.append(Point(geom[0], geom[1]))
+                else:
+                    geometries.append(geom)
+            else:
+                geometries.append(geom)
+                
+        return geometries
+
+
+class SpatialAggregator:
+    """
+    Tools for spatial aggregation operations.
+    """
+    
+    def __init__(self):
+        """Initialize the spatial aggregator."""
+        self.join_engine = SpatialJoinEngine()
+        
+    def aggregate_by_geometry(self,
+                             point_df: pd.DataFrame,
+                             polygon_df: pd.DataFrame,
+                             value_column: str,
+                             aggregation_functions: List[str] = ['mean', 'sum', 'count'],
+                             point_geometry_col: str = 'geometry',
+                             polygon_geometry_col: str = 'geometry') -> pd.DataFrame:
+        """
+        Aggregate point values within polygons.
+        
+        Parameters
+        ----------
+        point_df : DataFrame
+            Point dataset with values to aggregate.
+        polygon_df : DataFrame
+            Polygon dataset for aggregation boundaries.
+        value_column : str
+            Column in point data to aggregate.
+        aggregation_functions : list
+            List of aggregation functions to apply.
+        point_geometry_col : str
+            Name of geometry column in point dataset.
+        polygon_geometry_col : str
+            Name of geometry column in polygon dataset.
+            
+        Returns
+        -------
+        DataFrame
+            Polygon data with aggregated values.
+        """
+        # Perform spatial join to assign points to polygons
+        join_result = self.join_engine.spatial_join(
+            point_df, polygon_df,
+            left_geometry_col=point_geometry_col,
+            right_geometry_col=polygon_geometry_col,
+            join_type=SpatialJoinType.WITHIN,
+            how='inner'
+        )
+        
+        if join_result.joined_data.empty:
+            # No points within polygons, return empty result
+            result_df = polygon_df.copy()
+            for func in aggregation_functions:
+                result_df[f"{value_column}_{func}"] = np.nan
+            return result_df
+            
+        # Group by polygon attributes and aggregate
+        # Identify polygon columns (those with '_right' suffix)
+        polygon_cols = [col for col in join_result.joined_data.columns if col.endswith('_right')]
+        
+        if not polygon_cols:
+            raise ValueError("No polygon columns found in join result")
+            
+        # Create aggregation dictionary
+        agg_dict = {}
+        value_col_left = f"{value_column}_left"
+        
+        if value_col_left not in join_result.joined_data.columns:
+            raise ValueError(f"Value column '{value_column}' not found in joined data")
+            
+        for func in aggregation_functions:
+            if func in ['mean', 'sum', 'std', 'min', 'max', 'median']:
+                agg_dict[f"{value_column}_{func}"] = (value_col_left, func)
+            elif func == 'count':
+                agg_dict[f"{value_column}_count"] = (value_col_left, 'count')
+            else:
+                logger.warning(f"Aggregation function '{func}' not supported")
+                
+        # Perform aggregation
+        grouped = join_result.joined_data.groupby(polygon_cols).agg(agg_dict)
+        grouped.columns = [col[0] for col in grouped.columns]
+        grouped = grouped.reset_index()
+        
+        # Merge back with original polygon data
+        # Create mapping from original to suffixed columns
+        polygon_mapping = {}
+        for col in polygon_df.columns:
+            suffixed_col = f"{col}_right"
+            if suffixed_col in polygon_cols:
+                polygon_mapping[suffixed_col] = col
+                
+        # Rename columns back to original names
+        grouped = grouped.rename(columns=polygon_mapping)
+        
+        # Merge with original polygon data to preserve all polygons
+        result_df = polygon_df.merge(grouped, on=list(polygon_mapping.values()), how='left')
+        
+        # Fill NaN values for polygons with no points
+        for func in aggregation_functions:
+            col_name = f"{value_column}_{func}"
+            if col_name in result_df.columns:
+                if func == 'count':
+                    result_df[col_name] = result_df[col_name].fillna(0)
+                else:
+                    result_df[col_name] = result_df[col_name].fillna(np.nan)
+                    
+        return result_df
+
+
+class SpatialJoinTransformer(BaseEstimator, TransformerMixin):
+    """
+    Sklearn-compatible transformer for spatial join operations.
+    """
+    
+    def __init__(self,
+                 right_data: pd.DataFrame,
+                 left_geometry_col: str = 'geometry',
+                 right_geometry_col: str = 'geometry',
+                 join_type: SpatialJoinType = SpatialJoinType.INTERSECTS,
+                 how: str = 'inner'):
+        """
+        Initialize spatial join transformer.
+        
+        Parameters
+        ----------
+        right_data : DataFrame
+            Right dataset to join with.
+        left_geometry_col : str
+            Name of geometry column in left dataset.
+        right_geometry_col : str
+            Name of geometry column in right dataset.
+        join_type : SpatialJoinType
+            Type of spatial relationship to test.
+        how : str
+            Type of join ('inner', 'left', 'right').
+        """
+        self.right_data = right_data
+        self.left_geometry_col = left_geometry_col
+        self.right_geometry_col = right_geometry_col
+        self.join_type = join_type
+        self.how = how
+        
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y=None):
+        """
+        Fit the spatial join transformer.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Left dataset for spatial join.
+        y : array-like, optional
+            Target values (ignored).
+            
+        Returns
+        -------
+        self : SpatialJoinTransformer
+            Fitted transformer.
+        """
+        self.join_engine_ = SpatialJoinEngine()
+        return self
+        
+    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> Union[pd.DataFrame, np.ndarray]:
+        """
+        Perform spatial join transformation.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Left dataset for spatial join.
+            
+        Returns
+        -------
+        X_transformed : DataFrame or array-like
+            Joined dataset.
+        """
+        check_is_fitted(self, 'join_engine_')
+        
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("Spatial join requires DataFrame input with geometry column")
+            
+        result = self.join_engine_.spatial_join(
+            X, self.right_data,
+            left_geometry_col=self.left_geometry_col,
+            right_geometry_col=self.right_geometry_col,
+            join_type=self.join_type,
+            how=self.how
+        )
+        
+        return result.joined_data
+
+
+class SpatialOverlayTransformer(BaseEstimator, TransformerMixin):
+    """
+    Sklearn-compatible transformer for spatial overlay operations.
+    """
+    
+    def __init__(self,
+                 right_data: pd.DataFrame,
+                 operation: OverlayOperation,
+                 left_geometry_col: str = 'geometry',
+                 right_geometry_col: str = 'geometry',
+                 keep_geom_type: bool = True):
+        """
+        Initialize spatial overlay transformer.
+        
+        Parameters
+        ----------
+        right_data : DataFrame
+            Right dataset for overlay operation.
+        operation : OverlayOperation
+            Type of overlay operation to perform.
+        left_geometry_col : str
+            Name of geometry column in left dataset.
+        right_geometry_col : str
+            Name of geometry column in right dataset.
+        keep_geom_type : bool
+            Whether to filter results to maintain geometry type.
+        """
+        self.right_data = right_data
+        self.operation = operation
+        self.left_geometry_col = left_geometry_col
+        self.right_geometry_col = right_geometry_col
+        self.keep_geom_type = keep_geom_type
+        
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y=None):
+        """
+        Fit the spatial overlay transformer.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Left dataset for spatial overlay.
+        y : array-like, optional
+            Target values (ignored).
+            
+        Returns
+        -------
+        self : SpatialOverlayTransformer
+            Fitted transformer.
+        """
+        self.overlay_engine_ = SpatialOverlayEngine()
+        return self
+        
+    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> Union[pd.DataFrame, np.ndarray]:
+        """
+        Perform spatial overlay transformation.
+        
+        Parameters
+        ----------
+        X : DataFrame or array-like
+            Left dataset for spatial overlay.
+            
+        Returns
+        -------
+        X_transformed : DataFrame or array-like
+            Overlay result dataset.
+        """
+        check_is_fitted(self, 'overlay_engine_')
+        
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("Spatial overlay requires DataFrame input with geometry column")
+            
+        result = self.overlay_engine_.spatial_overlay(
+            X, self.right_data,
+            operation=self.operation,
+            left_geometry_col=self.left_geometry_col,
+            right_geometry_col=self.right_geometry_col,
+            keep_geom_type=self.keep_geom_type
+        )
+        
+        return result.result_data
+
+
+# High-level convenience functions
+def perform_spatial_join(left_data: pd.DataFrame,
+                        right_data: pd.DataFrame,
+                        join_type: str = 'intersects',
+                        left_geometry_col: str = 'geometry',
+                        right_geometry_col: str = 'geometry',
+                        how: str = 'inner') -> SpatialJoinResult:
+    """
+    Perform spatial join between two datasets.
+    
+    Parameters
+    ----------
+    left_data : DataFrame
+        Left dataset with geometry column.
+    right_data : DataFrame
+        Right dataset with geometry column.
+    join_type : str
+        Type of spatial relationship ('intersects', 'within', 'contains', etc.).
+    left_geometry_col : str
+        Name of geometry column in left dataset.
+    right_geometry_col : str
+        Name of geometry column in right dataset.
+    how : str
+        Type of join ('inner', 'left', 'right').
+        
+    Returns
+    -------
+    SpatialJoinResult
+        Results of the spatial join operation.
+    """
+    join_type_enum = SpatialJoinType(join_type)
+    engine = SpatialJoinEngine()
+    
+    return engine.spatial_join(
+        left_data, right_data,
+        left_geometry_col=left_geometry_col,
+        right_geometry_col=right_geometry_col,
+        join_type=join_type_enum,
+        how=how
+    )
+
+
+def perform_spatial_overlay(left_data: pd.DataFrame,
+                           right_data: pd.DataFrame,
+                           operation: str = 'intersection',
+                           left_geometry_col: str = 'geometry',
+                           right_geometry_col: str = 'geometry',
+                           keep_geom_type: bool = True) -> OverlayResult:
+    """
+    Perform spatial overlay operation between two datasets.
+    
+    Parameters
+    ----------
+    left_data : DataFrame
+        Left dataset with geometry column.
+    right_data : DataFrame
+        Right dataset with geometry column.
+    operation : str
+        Type of overlay operation ('intersection', 'union', 'difference', etc.).
+    left_geometry_col : str
+        Name of geometry column in left dataset.
+    right_geometry_col : str
+        Name of geometry column in right dataset.
+    keep_geom_type : bool
+        Whether to filter results to maintain geometry type.
+        
+    Returns
+    -------
+    OverlayResult
+        Results of the spatial overlay operation.
+    """
+    operation_enum = OverlayOperation(operation)
+    engine = SpatialOverlayEngine()
+    
+    return engine.spatial_overlay(
+        left_data, right_data,
+        operation=operation_enum,
+        left_geometry_col=left_geometry_col,
+        right_geometry_col=right_geometry_col,
+        keep_geom_type=keep_geom_type
+    )
+
+
+def aggregate_points_in_polygons(point_data: pd.DataFrame,
+                                polygon_data: pd.DataFrame,
+                                value_column: str,
+                                aggregation_functions: List[str] = ['mean', 'sum', 'count'],
+                                point_geometry_col: str = 'geometry',
+                                polygon_geometry_col: str = 'geometry') -> pd.DataFrame:
+    """
+    Aggregate point values within polygon boundaries.
+    
+    Parameters
+    ----------
+    point_data : DataFrame
+        Point dataset with values to aggregate.
+    polygon_data : DataFrame
+        Polygon dataset for aggregation boundaries.
+    value_column : str
+        Column in point data to aggregate.
+    aggregation_functions : list
+        List of aggregation functions to apply.
+    point_geometry_col : str
+        Name of geometry column in point dataset.
+    polygon_geometry_col : str
+        Name of geometry column in polygon dataset.
+        
+    Returns
+    -------
+    DataFrame
+        Polygon data with aggregated values.
+    """
+    aggregator = SpatialAggregator()
+    
+    return aggregator.aggregate_by_geometry(
+        point_data, polygon_data,
+        value_column=value_column,
+        aggregation_functions=aggregation_functions,
+        point_geometry_col=point_geometry_col,
+        polygon_geometry_col=polygon_geometry_col
+    )
+
+
 # Initialize dependency checking on module import
 logger.info("Initializing geospatial analysis module")
 logger.info(f"Available geospatial libraries: "
