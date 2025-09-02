@@ -9,6 +9,7 @@ Available domains:
 - statistical_analysis: Comprehensive statistical analysis tools
 - regression_modeling: Comprehensive regression analysis and modeling capabilities
 - pattern_recognition: Advanced clustering, dimensionality reduction, and anomaly detection
+- optimization: Optimization and operations research capabilities
 """
 
 from .statistical_analysis import (
@@ -65,6 +66,27 @@ from .pattern_recognition import (
     PatternEvaluationResult
 )
 
+from .optimization import (
+    # Core transformers
+    LinearProgrammingSolver,
+    ConstrainedOptimizer,
+    NetworkAnalyzer,
+    AssignmentSolver,
+    
+    # High-level functions
+    solve_linear_program,
+    optimize_constrained,
+    analyze_network,
+    solve_assignment_problem,
+    
+    # Result classes
+    OptimizationResult,
+    LinearProgramResult,
+    ConstrainedOptResult,
+    NetworkAnalysisResult,
+    AssignmentResult
+)
+
 __all__ = [
     # Statistical Analysis Domain
     "HypothesisTestingTransformer",
@@ -103,5 +125,20 @@ __all__ = [
     "ClusteringResult",
     "DimensionalityReductionResult",
     "AnomalyDetectionResult",
-    "PatternEvaluationResult"
+    "PatternEvaluationResult",
+    
+    # Optimization Domain
+    "LinearProgrammingSolver",
+    "ConstrainedOptimizer",
+    "NetworkAnalyzer",
+    "AssignmentSolver",
+    "solve_linear_program",
+    "optimize_constrained",
+    "analyze_network",
+    "solve_assignment_problem",
+    "OptimizationResult",
+    "LinearProgramResult",
+    "ConstrainedOptResult",
+    "NetworkAnalysisResult",
+    "AssignmentResult"
 ]
