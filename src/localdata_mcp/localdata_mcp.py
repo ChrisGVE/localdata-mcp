@@ -2762,19 +2762,29 @@ class DatabaseManager:
                     if df.empty:
                         return json.dumps({"error": "No data returned from query"}, indent=2)
                     
-                    # Perform intelligent type detection
-                    type_analysis = self._detect_intelligent_types(df, confidence_threshold)
+                    # Use the new DataTypeDetectorTransformer for analysis
+                    from .pipeline.phase1_transformers import DataTypeDetectorTransformer
                     
-                    # Add metadata
-                    type_analysis['metadata'] = {
+                    detector = DataTypeDetectorTransformer(
+                        sample_size=0,  # Already sampled in query
+                        confidence_threshold=confidence_threshold,
+                        include_semantic_types=True
+                    )
+                    
+                    # Fit the transformer and get the detected types
+                    detector.fit(df)
+                    type_analysis = detector.get_detected_types()
+                    
+                    # Update metadata with database-specific information
+                    if 'metadata' not in type_analysis:
+                        type_analysis['metadata'] = {}
+                    type_analysis['metadata'].update({
                         'source_database': name,
                         'source_table': table_name,
                         'custom_query': query is not None,
                         'sample_size': sample_size,
-                        'actual_rows_analyzed': len(df),
-                        'analysis_timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-                        'confidence_threshold': confidence_threshold
-                    }
+                        'actual_rows_analyzed': len(df)
+                    })
                     
                     return json.dumps(type_analysis, indent=2, default=str)
                     
@@ -3163,40 +3173,51 @@ class DatabaseManager:
                         missing_cols = [col for col in analyze_columns if col not in df.columns]
                         if missing_cols:
                             return json.dumps({"error": f"Columns not found: {missing_cols}"}, indent=2)
+                        # Filter dataframe to selected columns
+                        df = df[analyze_columns]
                     else:
                         # Default to numeric columns only
-                        analyze_columns = df.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns.tolist()
-                    
-                    if not analyze_columns:
-                        return json.dumps({"error": "No numeric columns found for distribution analysis"}, indent=2)
+                        numeric_columns = df.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns.tolist()
+                        if not numeric_columns:
+                            return json.dumps({"error": "No numeric columns found for distribution analysis"}, indent=2)
+                        df = df[numeric_columns]
+                        analyze_columns = numeric_columns
                     
                     # Parse percentiles
                     if percentiles:
                         try:
-                            percentile_list = [float(p.strip()) / 100 for p in percentiles.split(',')]
-                            percentile_list = [p for p in percentile_list if 0 <= p <= 1]
+                            percentile_list = [float(p.strip()) for p in percentiles.split(',')]
+                            percentile_list = [p for p in percentile_list if 0 <= p <= 100]
                         except ValueError:
                             return json.dumps({"error": "Invalid percentiles format. Use comma-separated numbers (e.g., '10,25,50,75,90')"}, indent=2)
                     else:
-                        percentile_list = [0.05, 0.10, 0.25, 0.5, 0.75, 0.90, 0.95]
+                        percentile_list = [5, 10, 25, 50, 75, 90, 95]
                     
-                    # Perform distribution analysis
-                    distribution_analysis = self._analyze_column_distributions(
-                        df, analyze_columns, bins, percentile_list
+                    # Use the new DistributionAnalyzerTransformer for analysis
+                    from .pipeline.phase1_transformers import DistributionAnalyzerTransformer
+                    
+                    analyzer = DistributionAnalyzerTransformer(
+                        sample_size=0,  # Already sampled in query
+                        bins=bins,
+                        percentiles=percentile_list
                     )
                     
-                    # Add metadata
-                    distribution_analysis['metadata'] = {
+                    # Fit the transformer and get the distributions
+                    analyzer.fit(df)
+                    distribution_analysis = analyzer.get_distributions()
+                    
+                    # Update metadata with database-specific information
+                    if 'metadata' not in distribution_analysis:
+                        distribution_analysis['metadata'] = {}
+                    distribution_analysis['metadata'].update({
                         'source_database': name,
                         'source_table': table_name,
                         'custom_query': query is not None,
                         'columns_analyzed': analyze_columns,
                         'sample_size': sample_size,
                         'actual_rows_analyzed': len(df),
-                        'histogram_bins': bins,
-                        'percentiles': [p * 100 for p in percentile_list],
-                        'analysis_timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
-                    }
+                        'histogram_bins': bins
+                    })
                     
                     return json.dumps(distribution_analysis, indent=2, default=str)
                     
