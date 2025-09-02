@@ -179,6 +179,94 @@ class ProfileTableTransformer(BaseEstimator, TransformerMixin):
         check_is_fitted(self)
         return json.dumps(self.profile_, indent=2, default=str)
         
+    def get_feature_names_out(self, input_features=None):
+        """
+        Get output feature names for transformation (sklearn compatibility).
+        
+        Parameters:
+        -----------
+        input_features : array-like of str or None, default=None
+            Input features. If None, uses feature_names_in_.
+            
+        Returns:
+        --------
+        feature_names_out : ndarray of str
+            Transformed feature names (same as input for profiling)
+        """
+        check_is_fitted(self)
+        
+        if input_features is None:
+            return self.feature_names_in_.copy()
+        else:
+            return np.array(input_features)
+            
+    def get_composition_metadata(self) -> Dict[str, Any]:
+        """
+        Get metadata for pipeline composition and tool chaining.
+        
+        Returns:
+        --------
+        composition_metadata : dict
+            Metadata for downstream pipeline composition including:
+            - Statistical summaries for each column
+            - Data quality scores
+            - Processing hints for downstream tools
+            - Recommended next steps
+        """
+        check_is_fitted(self)
+        
+        if not self.profile_:
+            return {}
+            
+        # Extract composition-relevant metadata
+        metadata = {
+            'tool_type': 'profiler',
+            'processing_stage': 'data_understanding',
+            'data_shape': {
+                'rows': self.profile_['summary']['total_rows'],
+                'columns': self.profile_['summary']['total_columns']
+            },
+            'data_quality': self.profile_.get('data_quality', {}),
+            'column_types': {},
+            'processing_hints': {},
+            'recommended_next_steps': []
+        }
+        
+        # Extract column-level information
+        for col_name, col_info in self.profile_.get('columns', {}).items():
+            metadata['column_types'][col_name] = {
+                'data_type': col_info.get('data_type', 'unknown'),
+                'null_percentage': col_info.get('null_percentage', 0),
+                'unique_percentage': col_info.get('unique_percentage', 0),
+                'has_outliers': col_info.get('outliers', {}).get('count', 0) > 0 if 'outliers' in col_info else False
+            }
+            
+            # Generate processing hints
+            hints = []
+            if col_info.get('null_percentage', 0) > 5:
+                hints.append('missing_value_imputation')
+            if 'outliers' in col_info and col_info['outliers'].get('count', 0) > 0:
+                hints.append('outlier_handling')
+            if pd.api.types.is_numeric_dtype(col_info.get('data_type', '')):
+                hints.append('scaling_normalization')
+            if col_info.get('unique_percentage', 0) > 95:
+                hints.append('potential_identifier')
+                
+            metadata['processing_hints'][col_name] = hints
+        
+        # Generate recommended next steps
+        overall_quality = metadata['data_quality'].get('overall_score', 100)
+        if overall_quality < 80:
+            metadata['recommended_next_steps'].append('data_cleaning')
+        if any('missing_value_imputation' in hints for hints in metadata['processing_hints'].values()):
+            metadata['recommended_next_steps'].append('missing_value_treatment')
+        if any('outlier_handling' in hints for hints in metadata['processing_hints'].values()):
+            metadata['recommended_next_steps'].append('outlier_analysis')
+        if any('scaling_normalization' in hints for hints in metadata['processing_hints'].values()):
+            metadata['recommended_next_steps'].append('feature_scaling')
+            
+        return metadata
+        
     def _generate_data_profile(self, df: pd.DataFrame, include_distributions: bool = True) -> Dict[str, Any]:
         """
         Generate comprehensive data profile for a DataFrame.
@@ -577,6 +665,130 @@ class DataTypeDetectorTransformer(BaseEstimator, TransformerMixin):
         check_is_fitted(self)
         return json.dumps(self.detected_types_, indent=2, default=str)
         
+    def get_feature_names_out(self, input_features=None):
+        """
+        Get output feature names for transformation (sklearn compatibility).
+        
+        Parameters:
+        -----------
+        input_features : array-like of str or None, default=None
+            Input features. If None, uses feature_names_in_.
+            
+        Returns:
+        --------
+        feature_names_out : ndarray of str
+            Transformed feature names (same as input for type detection)
+        """
+        check_is_fitted(self)
+        
+        if input_features is None:
+            return self.feature_names_in_.copy()
+        else:
+            return np.array(input_features)
+            
+    def get_composition_metadata(self) -> Dict[str, Any]:
+        """
+        Get metadata for pipeline composition and tool chaining.
+        
+        Returns:
+        --------
+        composition_metadata : dict
+            Metadata for downstream pipeline composition including:
+            - Detected types and confidence scores
+            - Semantic type information
+            - Type conversion recommendations
+            - Processing hints for downstream tools
+        """
+        check_is_fitted(self)
+        
+        if not self.detected_types_:
+            return {}
+            
+        # Extract composition-relevant metadata
+        metadata = {
+            'tool_type': 'type_detector',
+            'processing_stage': 'data_understanding',
+            'overall_confidence': self.detected_types_.get('summary', {}).get('detection_confidence', 0),
+            'type_conversions': {},
+            'semantic_types': {},
+            'processing_hints': {},
+            'recommended_next_steps': []
+        }
+        
+        # Extract column-level type information
+        for col_name, col_info in self.detected_types_.get('columns', {}).items():
+            detected_type = col_info.get('detected_type', 'unknown')
+            confidence = col_info.get('confidence', 0)
+            semantic_type = col_info.get('semantic_type')
+            
+            # Type conversion recommendations
+            if detected_type == 'numeric_string' and confidence > self.confidence_threshold:
+                metadata['type_conversions'][col_name] = {
+                    'from': 'string',
+                    'to': 'numeric',
+                    'confidence': confidence,
+                    'conversion_function': 'pd.to_numeric'
+                }
+            elif detected_type == 'date_string' and confidence > self.confidence_threshold:
+                metadata['type_conversions'][col_name] = {
+                    'from': 'string',
+                    'to': 'datetime',
+                    'confidence': confidence,
+                    'conversion_function': 'pd.to_datetime'
+                }
+            elif detected_type == 'boolean_string' and confidence > self.confidence_threshold:
+                metadata['type_conversions'][col_name] = {
+                    'from': 'string',
+                    'to': 'boolean',
+                    'confidence': confidence,
+                    'conversion_function': 'astype(bool)'
+                }
+                
+            # Semantic type information
+            if semantic_type:
+                metadata['semantic_types'][col_name] = {
+                    'type': semantic_type,
+                    'validation_required': True,
+                    'special_handling': self._get_semantic_handling_hints(semantic_type)
+                }
+                
+            # Processing hints
+            hints = []
+            if confidence < self.confidence_threshold:
+                hints.append('manual_type_verification')
+            if semantic_type == 'email':
+                hints.append('email_validation')
+            elif semantic_type == 'phone':
+                hints.append('phone_formatting')
+            elif semantic_type == 'url':
+                hints.append('url_validation')
+            elif detected_type in ['integer', 'float']:
+                hints.append('numeric_analysis')
+            elif detected_type == 'datetime':
+                hints.append('temporal_analysis')
+                
+            metadata['processing_hints'][col_name] = hints
+        
+        # Generate recommended next steps
+        if len(metadata['type_conversions']) > 0:
+            metadata['recommended_next_steps'].append('type_conversion')
+        if any(info['type'] in ['email', 'phone', 'url'] for info in metadata['semantic_types'].values()):
+            metadata['recommended_next_steps'].append('data_validation')
+        if metadata['overall_confidence'] < 0.9:
+            metadata['recommended_next_steps'].append('manual_type_review')
+            
+        return metadata
+        
+    def _get_semantic_handling_hints(self, semantic_type: str) -> List[str]:
+        """Get special handling hints for semantic types."""
+        hints_map = {
+            'email': ['validation', 'privacy_masking', 'domain_analysis'],
+            'phone': ['formatting', 'country_code_detection', 'privacy_masking'],
+            'url': ['validation', 'domain_extraction', 'security_check'],
+            'zip_code': ['geographic_analysis', 'validation'],
+        }
+        return hints_map.get(semantic_type, [])
+        
     def _detect_column_types(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
         Detect data types for all columns in DataFrame.
@@ -869,6 +1081,136 @@ class DistributionAnalyzerTransformer(BaseEstimator, TransformerMixin):
         """
         check_is_fitted(self)
         return json.dumps(self.distributions_, indent=2, default=str)
+        
+    def get_feature_names_out(self, input_features=None):
+        """
+        Get output feature names for transformation (sklearn compatibility).
+        
+        Parameters:
+        -----------
+        input_features : array-like of str or None, default=None
+            Input features. If None, uses feature_names_in_.
+            
+        Returns:
+        --------
+        feature_names_out : ndarray of str
+            Transformed feature names (same as input for distribution analysis)
+        """
+        check_is_fitted(self)
+        
+        if input_features is None:
+            return self.feature_names_in_.copy()
+        else:
+            return np.array(input_features)
+            
+    def get_composition_metadata(self) -> Dict[str, Any]:
+        """
+        Get metadata for pipeline composition and tool chaining.
+        
+        Returns:
+        --------
+        composition_metadata : dict
+            Metadata for downstream pipeline composition including:
+            - Distribution characteristics and patterns
+            - Statistical summaries for each column
+            - Normality and outlier information
+            - Processing hints for downstream tools
+        """
+        check_is_fitted(self)
+        
+        if not self.distributions_:
+            return {}
+            
+        # Extract composition-relevant metadata
+        metadata = {
+            'tool_type': 'distribution_analyzer',
+            'processing_stage': 'statistical_analysis',
+            'summary': self.distributions_.get('summary', {}),
+            'distribution_patterns': {},
+            'normality_tests': {},
+            'outlier_information': {},
+            'processing_hints': {},
+            'recommended_next_steps': []
+        }
+        
+        # Extract distribution information for each column
+        for col_name, dist_info in self.distributions_.get('distributions', {}).items():
+            if dist_info.get('type') == 'numeric':
+                # Numeric distribution patterns
+                shape_metrics = dist_info.get('shape_metrics', {})
+                metadata['distribution_patterns'][col_name] = {
+                    'type': 'numeric',
+                    'is_normal': shape_metrics.get('is_normal_distributed', False),
+                    'skewness': shape_metrics.get('skewness', 0),
+                    'kurtosis': shape_metrics.get('kurtosis', 0),
+                    'outliers_count': shape_metrics.get('outliers_count', 0)
+                }
+                
+                # Normality test results
+                metadata['normality_tests'][col_name] = {
+                    'is_normal': shape_metrics.get('is_normal_distributed', False),
+                    'recommendation': 'parametric_tests' if shape_metrics.get('is_normal_distributed') else 'non_parametric_tests'
+                }
+                
+                # Outlier information
+                outliers_count = shape_metrics.get('outliers_count', 0)
+                if outliers_count > 0:
+                    metadata['outlier_information'][col_name] = {
+                        'count': outliers_count,
+                        'percentage': (outliers_count / dist_info.get('summary_stats', {}).get('count', 1)) * 100,
+                        'treatment_needed': outliers_count > dist_info.get('summary_stats', {}).get('count', 0) * 0.05  # More than 5%
+                    }
+                    
+                # Processing hints for numeric columns
+                hints = []
+                if not shape_metrics.get('is_normal_distributed', True):
+                    hints.extend(['log_transformation', 'box_cox_transformation'])
+                if outliers_count > 0:
+                    hints.extend(['outlier_treatment', 'robust_scaling'])
+                if abs(shape_metrics.get('skewness', 0)) > 1:
+                    hints.append('skewness_correction')
+                hints.append('standardization')
+                
+                metadata['processing_hints'][col_name] = hints
+                
+            elif dist_info.get('type') == 'categorical':
+                # Categorical distribution patterns
+                dist_metrics = dist_info.get('distribution_metrics', {})
+                metadata['distribution_patterns'][col_name] = {
+                    'type': 'categorical',
+                    'entropy': dist_metrics.get('entropy', 0),
+                    'uniformity': dist_metrics.get('uniformity_score', 0),
+                    'concentration_ratio': dist_metrics.get('concentration_ratio', 0)
+                }
+                
+                # Processing hints for categorical columns
+                hints = []
+                if dist_metrics.get('entropy', 0) > 3:  # High entropy
+                    hints.append('dimensionality_reduction')
+                if dist_metrics.get('concentration_ratio', 0) > 0.8:  # Highly concentrated
+                    hints.append('rare_category_handling')
+                hints.extend(['one_hot_encoding', 'label_encoding'])
+                
+                metadata['processing_hints'][col_name] = hints
+        
+        # Generate recommended next steps based on patterns
+        numeric_cols = [col for col, info in metadata['distribution_patterns'].items() if info.get('type') == 'numeric']
+        categorical_cols = [col for col, info in metadata['distribution_patterns'].items() if info.get('type') == 'categorical']
+        
+        if numeric_cols:
+            metadata['recommended_next_steps'].extend(['feature_scaling', 'correlation_analysis'])
+            if any(info.get('outliers_count', 0) > 0 for info in metadata['outlier_information'].values()):
+                metadata['recommended_next_steps'].append('outlier_treatment')
+            if any(not info.get('is_normal') for info in metadata['normality_tests'].values()):
+                metadata['recommended_next_steps'].append('normality_transformation')
+                
+        if categorical_cols:
+            metadata['recommended_next_steps'].extend(['categorical_encoding', 'feature_engineering'])
+            
+        if numeric_cols and categorical_cols:
+            metadata['recommended_next_steps'].append('mixed_type_preprocessing')
+            
+        return metadata
         
     def _analyze_distributions(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
