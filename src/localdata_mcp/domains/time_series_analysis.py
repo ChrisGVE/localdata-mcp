@@ -642,6 +642,507 @@ def detect_time_series_gaps(data: Union[pd.DataFrame, pd.Series],
     return gaps
 
 
+class TimeSeriesResamplingTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for time series resampling operations.
+    
+    Resamples time series data to a specified frequency with aggregation functions.
+    Useful for converting high-frequency data to lower frequencies or handling
+    irregular time series data.
+    
+    Parameters:
+    -----------
+    target_frequency : str
+        Target frequency for resampling (e.g., 'D', 'H', 'W', 'M')
+    aggregation_method : str or dict, default='mean'
+        Aggregation method: 'mean', 'sum', 'min', 'max', 'first', 'last', or
+        dict mapping column names to aggregation functions
+    interpolate_missing : bool, default=True
+        Whether to interpolate missing values after resampling
+    """
+    
+    def __init__(self, target_frequency: str, aggregation_method='mean', 
+                 interpolate_missing=True, **kwargs):
+        super().__init__(**kwargs)
+        self.target_frequency = target_frequency
+        self.aggregation_method = aggregation_method
+        self.interpolate_missing = interpolate_missing
+        self.original_frequency_ = None
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """
+        Fit the resampling transformer.
+        
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Time series data with datetime index
+        y : pd.Series, optional
+            Target time series data (not used)
+            
+        Returns:
+        --------
+        self : TimeSeriesResamplingTransformer
+            Fitted transformer
+        """
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+            
+        # Store original frequency for metadata
+        if self.infer_frequency:
+            self.original_frequency_ = self._infer_frequency(X)
+            
+        logger.debug(f"Fitted resampling transformer: {self.original_frequency_} -> {self.target_frequency}")
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Resample the time series data.
+        
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Time series data to resample
+            
+        Returns:
+        --------
+        X_resampled : pd.DataFrame
+            Resampled time series data
+        """
+        check_is_fitted(self, ['original_frequency_'])
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        try:
+            # Perform resampling
+            if isinstance(self.aggregation_method, dict):
+                X_resampled = X.resample(self.target_frequency).agg(self.aggregation_method)
+            else:
+                resampler = X.resample(self.target_frequency)
+                if self.aggregation_method == 'mean':
+                    X_resampled = resampler.mean()
+                elif self.aggregation_method == 'sum':
+                    X_resampled = resampler.sum()
+                elif self.aggregation_method == 'min':
+                    X_resampled = resampler.min()
+                elif self.aggregation_method == 'max':
+                    X_resampled = resampler.max()
+                elif self.aggregation_method == 'first':
+                    X_resampled = resampler.first()
+                elif self.aggregation_method == 'last':
+                    X_resampled = resampler.last()
+                else:
+                    raise ValueError(f"Unknown aggregation method: {self.aggregation_method}")
+            
+            # Handle missing values after resampling if requested
+            if self.interpolate_missing and X_resampled.isnull().any().any():
+                X_resampled = X_resampled.interpolate(method='time')
+                
+            logger.debug(f"Resampled from {len(X)} to {len(X_resampled)} observations")
+            return X_resampled
+            
+        except Exception as e:
+            logger.error(f"Error in resampling transformation: {e}")
+            raise
+
+
+class TimeSeriesFeatureExtractor(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for extracting temporal features from time series data.
+    
+    Creates features like lag variables, rolling statistics, datetime components,
+    and seasonality indicators to enhance time series analysis and forecasting.
+    
+    Parameters:
+    -----------
+    lag_features : list of int, default=[1, 7, 30]
+        Lag periods to create lagged features
+    rolling_windows : list of int, default=[7, 30]
+        Window sizes for rolling statistics (mean, std, min, max)
+    datetime_features : list of str, default=['hour', 'dayofweek', 'month', 'quarter']
+        Datetime components to extract
+    seasonal_features : bool, default=True
+        Whether to create seasonal indicator features
+    cyclical_encoding : bool, default=True
+        Whether to use cyclical encoding for periodic features
+    """
+    
+    def __init__(self, lag_features=[1, 7, 30], rolling_windows=[7, 30], 
+                 datetime_features=['hour', 'dayofweek', 'month', 'quarter'],
+                 seasonal_features=True, cyclical_encoding=True, **kwargs):
+        super().__init__(**kwargs)
+        self.lag_features = lag_features
+        self.rolling_windows = rolling_windows
+        self.datetime_features = datetime_features
+        self.seasonal_features = seasonal_features
+        self.cyclical_encoding = cyclical_encoding
+        self.feature_names_ = []
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the feature extraction transformer."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+            
+        # Determine feature names that will be created
+        self.feature_names_ = []
+        
+        # Original columns
+        self.feature_names_.extend(X.columns.tolist())
+        
+        # Lag features
+        for col in X.columns:
+            for lag in self.lag_features:
+                self.feature_names_.append(f'{col}_lag_{lag}')
+                
+        # Rolling features
+        for col in X.columns:
+            for window in self.rolling_windows:
+                self.feature_names_.extend([
+                    f'{col}_rolling_mean_{window}',
+                    f'{col}_rolling_std_{window}',
+                    f'{col}_rolling_min_{window}',
+                    f'{col}_rolling_max_{window}'
+                ])
+        
+        # Datetime features
+        for dt_feature in self.datetime_features:
+            if self.cyclical_encoding and dt_feature in ['hour', 'dayofweek', 'month']:
+                self.feature_names_.extend([f'{dt_feature}_sin', f'{dt_feature}_cos'])
+            else:
+                self.feature_names_.append(dt_feature)
+        
+        logger.debug(f"Will create {len(self.feature_names_)} features")
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Extract temporal features from time series data."""
+        check_is_fitted(self, ['feature_names_'])
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        try:
+            X_features = X.copy()
+            
+            # Create lag features
+            for col in X.columns:
+                for lag in self.lag_features:
+                    X_features[f'{col}_lag_{lag}'] = X[col].shift(lag)
+            
+            # Create rolling features
+            for col in X.columns:
+                for window in self.rolling_windows:
+                    rolling = X[col].rolling(window=window, min_periods=1)
+                    X_features[f'{col}_rolling_mean_{window}'] = rolling.mean()
+                    X_features[f'{col}_rolling_std_{window}'] = rolling.std()
+                    X_features[f'{col}_rolling_min_{window}'] = rolling.min()
+                    X_features[f'{col}_rolling_max_{window}'] = rolling.max()
+            
+            # Create datetime features
+            for dt_feature in self.datetime_features:
+                if dt_feature == 'hour':
+                    values = X.index.hour
+                    if self.cyclical_encoding:
+                        X_features['hour_sin'] = np.sin(2 * np.pi * values / 24)
+                        X_features['hour_cos'] = np.cos(2 * np.pi * values / 24)
+                    else:
+                        X_features['hour'] = values
+                        
+                elif dt_feature == 'dayofweek':
+                    values = X.index.dayofweek
+                    if self.cyclical_encoding:
+                        X_features['dayofweek_sin'] = np.sin(2 * np.pi * values / 7)
+                        X_features['dayofweek_cos'] = np.cos(2 * np.pi * values / 7)
+                    else:
+                        X_features['dayofweek'] = values
+                        
+                elif dt_feature == 'month':
+                    values = X.index.month
+                    if self.cyclical_encoding:
+                        X_features['month_sin'] = np.sin(2 * np.pi * values / 12)
+                        X_features['month_cos'] = np.cos(2 * np.pi * values / 12)
+                    else:
+                        X_features['month'] = values
+                        
+                elif dt_feature == 'quarter':
+                    X_features['quarter'] = X.index.quarter
+                elif dt_feature == 'year':
+                    X_features['year'] = X.index.year
+                elif dt_feature == 'dayofyear':
+                    X_features['dayofyear'] = X.index.dayofyear
+                elif dt_feature == 'weekofyear':
+                    X_features['weekofyear'] = X.index.isocalendar().week
+            
+            # Create seasonal features if requested
+            if self.seasonal_features:
+                seasonality_info = self._detect_seasonality(X.iloc[:, 0])  # Use first column
+                if seasonality_info['has_seasonality']:
+                    period = seasonality_info['dominant_period']
+                    position_in_season = np.arange(len(X)) % period
+                    X_features['seasonal_position_sin'] = np.sin(2 * np.pi * position_in_season / period)
+                    X_features['seasonal_position_cos'] = np.cos(2 * np.pi * position_in_season / period)
+            
+            logger.debug(f"Created {len(X_features.columns)} total features")
+            return X_features
+            
+        except Exception as e:
+            logger.error(f"Error in feature extraction: {e}")
+            raise
+
+
+class TimeSeriesImputationTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for time series missing value imputation.
+    
+    Provides specialized imputation methods that respect temporal structure,
+    including forward fill, backward fill, interpolation, and seasonal imputation.
+    
+    Parameters:
+    -----------
+    method : str, default='interpolate'
+        Imputation method: 'forward_fill', 'backward_fill', 'interpolate',
+        'seasonal', 'mean', or 'median'
+    interpolation_method : str, default='time'
+        Interpolation method when method='interpolate'
+    limit_direction : str, default='forward'
+        Direction for fill operations
+    seasonal_period : int, optional
+        Period for seasonal imputation
+    """
+    
+    def __init__(self, method='interpolate', interpolation_method='time',
+                 limit_direction='forward', seasonal_period=None, **kwargs):
+        super().__init__(**kwargs)
+        self.method = method
+        self.interpolation_method = interpolation_method
+        self.limit_direction = limit_direction
+        self.seasonal_period = seasonal_period
+        self.seasonal_patterns_ = {}
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the imputation transformer."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+            
+        # For seasonal imputation, learn seasonal patterns
+        if self.method == 'seasonal':
+            for col in X.columns:
+                series = X[col].dropna()
+                if len(series) > 0:
+                    # Detect seasonality if period not specified
+                    if self.seasonal_period is None:
+                        seasonality_info = self._detect_seasonality(series)
+                        if seasonality_info['has_seasonality']:
+                            period = seasonality_info['dominant_period']
+                        else:
+                            period = min(12, len(series) // 4)  # Default fallback
+                    else:
+                        period = self.seasonal_period
+                    
+                    # Calculate seasonal averages
+                    seasonal_means = {}
+                    for i in range(period):
+                        season_values = series.iloc[i::period]
+                        if len(season_values) > 0:
+                            seasonal_means[i] = season_values.mean()
+                        else:
+                            seasonal_means[i] = series.mean()
+                    
+                    self.seasonal_patterns_[col] = {
+                        'period': period,
+                        'seasonal_means': seasonal_means
+                    }
+                    
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Impute missing values in time series data."""
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+            
+        X_imputed = X.copy()
+        
+        try:
+            if self.method == 'forward_fill':
+                X_imputed = X_imputed.fillna(method='ffill')
+                
+            elif self.method == 'backward_fill':
+                X_imputed = X_imputed.fillna(method='bfill')
+                
+            elif self.method == 'interpolate':
+                X_imputed = X_imputed.interpolate(method=self.interpolation_method)
+                
+            elif self.method == 'mean':
+                X_imputed = X_imputed.fillna(X_imputed.mean())
+                
+            elif self.method == 'median':
+                X_imputed = X_imputed.fillna(X_imputed.median())
+                
+            elif self.method == 'seasonal':
+                check_is_fitted(self, ['seasonal_patterns_'])
+                
+                for col in X.columns:
+                    if col in self.seasonal_patterns_:
+                        pattern = self.seasonal_patterns_[col]
+                        period = pattern['period']
+                        seasonal_means = pattern['seasonal_means']
+                        
+                        # Fill missing values with seasonal pattern
+                        missing_mask = X_imputed[col].isnull()
+                        for idx in missing_mask[missing_mask].index:
+                            position_in_period = len(X_imputed.loc[:idx]) % period
+                            if position_in_period in seasonal_means:
+                                X_imputed.loc[idx, col] = seasonal_means[position_in_period]
+            
+            # Log imputation results
+            original_missing = X.isnull().sum().sum()
+            final_missing = X_imputed.isnull().sum().sum()
+            imputed_values = original_missing - final_missing
+            
+            if imputed_values > 0:
+                logger.debug(f"Imputed {imputed_values} missing values using {self.method}")
+                
+            return X_imputed
+            
+        except Exception as e:
+            logger.error(f"Error in imputation: {e}")
+            raise
+
+
+class TimeSeriesQualityValidator(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for time series data quality validation.
+    
+    Validates time series data quality and provides recommendations for
+    preprocessing and analysis approach.
+    
+    Parameters:
+    -----------
+    min_observations : int, default=10
+        Minimum number of observations required
+    max_missing_percentage : float, default=0.2
+        Maximum percentage of missing values allowed
+    require_regular_frequency : bool, default=False
+        Whether to require regular time frequency
+    check_stationarity : bool, default=False
+        Whether to perform basic stationarity checks
+    """
+    
+    def __init__(self, min_observations=10, max_missing_percentage=0.2,
+                 require_regular_frequency=False, check_stationarity=False, **kwargs):
+        super().__init__(**kwargs)
+        self.min_observations = min_observations
+        self.max_missing_percentage = max_missing_percentage
+        self.require_regular_frequency = require_regular_frequency
+        self.check_stationarity = check_stationarity
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the quality validator."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Validate time series data quality.
+        
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Quality validation results and recommendations
+        """
+        start_time = time.time()
+        
+        if self.validate_input:
+            X, _ = self._validate_time_series(X, None)
+        
+        try:
+            # Perform comprehensive quality assessment
+            quality_assessment = validate_time_series_continuity(X)
+            
+            # Additional checks
+            warnings_list = []
+            recommendations_list = []
+            quality_issues = []
+            
+            # Check minimum observations
+            if len(X) < self.min_observations:
+                quality_issues.append(f"Insufficient data: {len(X)} < {self.min_observations} required")
+                recommendations_list.append("Collect more historical data")
+            
+            # Check missing value percentage
+            missing_pct = quality_assessment['missing_value_percentage']
+            if missing_pct > self.max_missing_percentage * 100:
+                quality_issues.append(f"High missing values: {missing_pct:.1f}% > {self.max_missing_percentage*100:.1f}% threshold")
+                recommendations_list.append("Apply missing value imputation")
+            
+            # Check frequency regularity
+            if self.require_regular_frequency and quality_assessment['frequency'] is None:
+                quality_issues.append("Irregular time frequency detected")
+                recommendations_list.append("Resample to regular frequency")
+            
+            # Basic stationarity check if requested
+            stationarity_info = {}
+            if self.check_stationarity and len(X.columns) > 0:
+                try:
+                    from statsmodels.tsa.stattools import adfuller
+                    first_col = X.iloc[:, 0].dropna()
+                    if len(first_col) > 10:
+                        adf_result = adfuller(first_col)
+                        stationarity_info = {
+                            'adf_statistic': adf_result[0],
+                            'adf_pvalue': adf_result[1],
+                            'is_likely_stationary': adf_result[1] < 0.05
+                        }
+                        if not stationarity_info['is_likely_stationary']:
+                            recommendations_list.append("Consider differencing or transformation for stationarity")
+                except Exception as e:
+                    warnings_list.append(f"Could not perform stationarity check: {e}")
+            
+            # Overall assessment
+            overall_quality = quality_assessment['data_quality_score']
+            if len(quality_issues) == 0:
+                interpretation = f"Time series data quality: GOOD (score: {overall_quality:.2f})"
+            elif overall_quality > 0.7:
+                interpretation = f"Time series data quality: ACCEPTABLE (score: {overall_quality:.2f}) with minor issues"
+            else:
+                interpretation = f"Time series data quality: POOR (score: {overall_quality:.2f}) - significant issues detected"
+            
+            # Combine recommendations
+            recommendations_list.extend(quality_assessment.get('recommendations', []))
+            
+            result = TimeSeriesAnalysisResult(
+                analysis_type="quality_validation",
+                interpretation=interpretation,
+                data_quality_score=overall_quality,
+                frequency=quality_assessment['frequency'],
+                model_diagnostics={
+                    'total_observations': len(X),
+                    'missing_values': quality_assessment['missing_value_count'],
+                    'missing_percentage': missing_pct,
+                    'has_datetime_index': quality_assessment['has_datetime_index'],
+                    'is_monotonic': quality_assessment['is_monotonic'],
+                    'time_gaps': len(quality_assessment['gaps']),
+                    'stationarity_info': stationarity_info
+                },
+                recommendations=recommendations_list,
+                warnings=warnings_list + [f"Quality issue: {issue}" for issue in quality_issues],
+                processing_time=time.time() - start_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in quality validation: {e}")
+            return TimeSeriesAnalysisResult(
+                analysis_type="quality_validation_error",
+                interpretation=f"Error during quality validation: {str(e)}",
+                warnings=[str(e)],
+                processing_time=time.time() - start_time
+            )
+
+
 def validate_time_series_continuity(data: Union[pd.DataFrame, pd.Series],
                                    max_gap_tolerance: Optional[str] = None) -> Dict[str, Any]:
     """
