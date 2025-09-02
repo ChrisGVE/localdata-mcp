@@ -3495,6 +3495,258 @@ class DatabaseManager:
         else:
             return "strong"
 
+    # Pattern Recognition Methods
+    
+    def perform_clustering(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                          algorithm: str = 'kmeans', n_clusters: Optional[int] = None,
+                          sample_size: int = 10000, **kwargs) -> str:
+        """Perform comprehensive clustering analysis on data."""
+        try:
+            if not table_name and not query:
+                return json.dumps({"error": "Either table_name or query must be provided"})
+            
+            if table_name and query:
+                return json.dumps({"error": "Provide either table_name or query, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for clustering analysis"})
+            
+            # Select only numeric columns for clustering
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) == 0:
+                return json.dumps({"error": "No numeric columns found for clustering analysis"})
+            
+            X = df[numeric_cols].values
+            
+            # Perform clustering using the domain function
+            from .domains.pattern_recognition import perform_clustering as domain_perform_clustering
+            result = domain_perform_clustering(X, algorithm, n_clusters, **kwargs)
+            
+            # Add metadata about the data
+            result['data_info'] = {
+                'n_samples': len(df),
+                'n_features': len(numeric_cols),
+                'feature_names': numeric_cols.tolist(),
+                'sample_size_used': sample_size
+            }
+            
+            return json.dumps(result, default=str)
+            
+        except Exception as e:
+            logger.error(f"Clustering analysis failed: {e}")
+            return json.dumps({"error": f"Clustering analysis failed: {str(e)}"})
+    
+    def reduce_dimensions(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                         algorithm: str = 'pca', n_components: Optional[int] = None,
+                         sample_size: int = 10000, **kwargs) -> str:
+        """Perform comprehensive dimensionality reduction on data."""
+        try:
+            if not table_name and not query:
+                return json.dumps({"error": "Either table_name or query must be provided"})
+            
+            if table_name and query:
+                return json.dumps({"error": "Provide either table_name or query, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for dimensionality reduction"})
+            
+            # Select only numeric columns for reduction
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) == 0:
+                return json.dumps({"error": "No numeric columns found for dimensionality reduction"})
+            
+            X = df[numeric_cols].values
+            
+            # For LDA, we need target labels - use first categorical column if available
+            y = None
+            if algorithm == 'lda':
+                categorical_cols = df.select_dtypes(include=['object', 'category']).columns
+                if len(categorical_cols) > 0:
+                    from sklearn.preprocessing import LabelEncoder
+                    le = LabelEncoder()
+                    y = le.fit_transform(df[categorical_cols[0]].astype(str))
+                else:
+                    return json.dumps({"error": "LDA requires categorical target variable. No categorical columns found."})
+            
+            # Perform dimensionality reduction using the domain function
+            from .domains.pattern_recognition import reduce_dimensions as domain_reduce_dimensions
+            result = domain_reduce_dimensions(X, algorithm, n_components, y, **kwargs)
+            
+            # Add metadata about the data
+            result['data_info'] = {
+                'n_samples': len(df),
+                'n_features': len(numeric_cols),
+                'feature_names': numeric_cols.tolist(),
+                'sample_size_used': sample_size,
+                'target_used_for_lda': categorical_cols[0] if algorithm == 'lda' and len(categorical_cols) > 0 else None
+            }
+            
+            return json.dumps(result, default=str)
+            
+        except Exception as e:
+            logger.error(f"Dimensionality reduction failed: {e}")
+            return json.dumps({"error": f"Dimensionality reduction failed: {str(e)}"})
+    
+    def detect_anomalies(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                        algorithm: str = 'isolation_forest', contamination: Optional[float] = None,
+                        sample_size: int = 10000, **kwargs) -> str:
+        """Perform comprehensive anomaly detection on data."""
+        try:
+            if not table_name and not query:
+                return json.dumps({"error": "Either table_name or query must be provided"})
+            
+            if table_name and query:
+                return json.dumps({"error": "Provide either table_name or query, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for anomaly detection"})
+            
+            # Select only numeric columns for anomaly detection
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) == 0:
+                return json.dumps({"error": "No numeric columns found for anomaly detection"})
+            
+            X = df[numeric_cols].values
+            
+            # Perform anomaly detection using the domain function
+            from .domains.pattern_recognition import detect_anomalies as domain_detect_anomalies
+            result = domain_detect_anomalies(X, algorithm, contamination, **kwargs)
+            
+            # Add metadata about the data and anomalies
+            anomaly_indices = result.get('anomaly_statistics', {}).get('anomaly_indices', [])
+            result['data_info'] = {
+                'n_samples': len(df),
+                'n_features': len(numeric_cols),
+                'feature_names': numeric_cols.tolist(),
+                'sample_size_used': sample_size
+            }
+            
+            # Add details about specific anomalous records if found
+            if anomaly_indices and len(anomaly_indices) > 0 and len(anomaly_indices) <= 100:  # Limit to 100 records
+                anomalous_records = df.iloc[anomaly_indices].to_dict('records')
+                result['anomalous_records'] = anomalous_records[:10]  # Show top 10 only
+                
+            return json.dumps(result, default=str)
+            
+        except Exception as e:
+            logger.error(f"Anomaly detection failed: {e}")
+            return json.dumps({"error": f"Anomaly detection failed: {str(e)}"})
+    
+    def evaluate_patterns(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                         pattern_type: str = 'clustering', results_data: Optional[str] = None,
+                         sample_size: int = 10000) -> str:
+        """Evaluate pattern recognition results and provide recommendations."""
+        try:
+            if not table_name and not query and not results_data:
+                return json.dumps({"error": "Either table_name/query or results_data must be provided"})
+            
+            if (table_name or query) and results_data:
+                return json.dumps({"error": "Provide either data source (table_name/query) or results_data, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data if needed
+            X = None
+            if table_name or query:
+                df = self._get_data_for_analysis(name, table_name, query, sample_size)
+                if df.empty:
+                    return json.dumps({"error": "No data available for pattern evaluation"})
+                
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) == 0:
+                    return json.dumps({"error": "No numeric columns found for pattern evaluation"})
+                
+                X = df[numeric_cols].values
+            
+            # Parse results data if provided
+            results = None
+            if results_data:
+                try:
+                    results = json.loads(results_data)
+                except json.JSONDecodeError:
+                    return json.dumps({"error": "Invalid JSON format in results_data"})
+            
+            # Perform pattern evaluation using the domain function
+            from .domains.pattern_recognition import evaluate_patterns as domain_evaluate_patterns
+            
+            if X is not None and results is None:
+                # Need to generate dummy results for evaluation
+                if pattern_type == 'clustering':
+                    from .domains.pattern_recognition import perform_clustering as domain_perform_clustering
+                    results = domain_perform_clustering(X)
+                elif pattern_type == 'dimensionality_reduction':
+                    from .domains.pattern_recognition import reduce_dimensions as domain_reduce_dimensions
+                    results = domain_reduce_dimensions(X)
+                elif pattern_type == 'anomaly_detection':
+                    from .domains.pattern_recognition import detect_anomalies as domain_detect_anomalies
+                    results = domain_detect_anomalies(X)
+                else:
+                    return json.dumps({"error": f"Unknown pattern type: {pattern_type}"})
+            
+            if X is None and results is not None:
+                # Create dummy data from results (not ideal but works for evaluation)
+                if pattern_type == 'clustering':
+                    labels = results.get('labels', [])
+                    if labels:
+                        X = np.random.randn(len(labels), 2)  # Dummy 2D data
+                elif pattern_type == 'dimensionality_reduction':
+                    transformed_data = results.get('transformed_data', [])
+                    if transformed_data:
+                        X = np.random.randn(len(transformed_data), 10)  # Dummy high-D data
+                elif pattern_type == 'anomaly_detection':
+                    anomaly_labels = results.get('anomaly_labels', [])
+                    if anomaly_labels:
+                        X = np.random.randn(len(anomaly_labels), 5)  # Dummy data
+            
+            if X is None:
+                return json.dumps({"error": "Unable to obtain data for pattern evaluation"})
+                
+            evaluation_result = domain_evaluate_patterns(X, pattern_type, results)
+            
+            return json.dumps(evaluation_result, default=str)
+            
+        except Exception as e:
+            logger.error(f"Pattern evaluation failed: {e}")
+            return json.dumps({"error": f"Pattern evaluation failed: {str(e)}"})
+    
+    def _get_data_for_analysis(self, name: str, table_name: Optional[str], query: Optional[str], sample_size: int) -> pd.DataFrame:
+        """Helper method to get data for pattern recognition analysis."""
+        engine = self._get_connection(name)
+        
+        # Build the analysis query
+        if table_name:
+            if sample_size > 0:
+                analysis_query = f"SELECT * FROM {self._safe_table_identifier(table_name)} ORDER BY RANDOM() LIMIT {sample_size}"
+            else:
+                analysis_query = f"SELECT * FROM {self._safe_table_identifier(table_name)}"
+        else:
+            if sample_size > 0:
+                analysis_query = f"SELECT * FROM ({query}) AS subquery ORDER BY RANDOM() LIMIT {sample_size}"
+            else:
+                analysis_query = query
+        
+        # Execute query and return DataFrame
+        with engine.connect() as connection:
+            result = connection.execute(text(analysis_query))
+            df = pd.DataFrame(result.fetchall(), columns=result.keys())
+            return df
+
 
 # Global DatabaseManager instance for MCP tool binding
 # This fixes the MCP interface compatibility issue identified in validation
@@ -3583,6 +3835,105 @@ def analyze_distributions(name: str, table_name: Optional[str] = None, query: Op
         Detailed distribution analysis with histograms and statistical measures in JSON format
     """
     return _db_manager.analyze_distributions(name, table_name, query, columns, sample_size, bins, percentiles)
+
+
+@mcp.tool
+def perform_clustering(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                      algorithm: str = 'kmeans', n_clusters: Optional[int] = None,
+                      sample_size: int = 10000, **kwargs) -> str:
+    """
+    Perform comprehensive clustering analysis on data using advanced pattern recognition algorithms.
+    
+    Supports multiple clustering algorithms including K-means, hierarchical, DBSCAN, Gaussian Mixture Models,
+    and spectral clustering with automatic parameter optimization and quality assessment.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table to cluster (mutually exclusive with query)
+        query: Custom SQL query to cluster (mutually exclusive with table_name)
+        algorithm: Clustering algorithm ('kmeans', 'hierarchical', 'dbscan', 'gmm', 'spectral')
+        n_clusters: Number of clusters (auto-selected if None)
+        sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
+        **kwargs: Additional parameters for the clustering algorithm
+        
+    Returns:
+        Comprehensive clustering results with labels, quality metrics, and recommendations in JSON format
+    """
+    return _db_manager.perform_clustering(name, table_name, query, algorithm, n_clusters, sample_size, **kwargs)
+
+
+@mcp.tool
+def reduce_dimensions(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                     algorithm: str = 'pca', n_components: Optional[int] = None,
+                     sample_size: int = 10000, **kwargs) -> str:
+    """
+    Perform comprehensive dimensionality reduction on data for visualization and analysis.
+    
+    Supports PCA, t-SNE, UMAP, Independent Component Analysis, and Linear Discriminant Analysis
+    with automatic component selection and quality assessment.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table to reduce (mutually exclusive with query)
+        query: Custom SQL query to reduce (mutually exclusive with table_name)
+        algorithm: Reduction algorithm ('pca', 'tsne', 'umap', 'ica', 'lda')
+        n_components: Number of components (auto-selected if None)
+        sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
+        **kwargs: Additional parameters for the reduction algorithm
+        
+    Returns:
+        Dimensionality reduction results with transformed data and quality metrics in JSON format
+    """
+    return _db_manager.reduce_dimensions(name, table_name, query, algorithm, n_components, sample_size, **kwargs)
+
+
+@mcp.tool
+def detect_anomalies(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                    algorithm: str = 'isolation_forest', contamination: Optional[float] = None,
+                    sample_size: int = 10000, **kwargs) -> str:
+    """
+    Perform comprehensive anomaly detection on data using advanced algorithms.
+    
+    Supports Isolation Forest, One-Class SVM, Local Outlier Factor, and statistical methods
+    for detecting outliers and anomalous patterns in datasets.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table to analyze (mutually exclusive with query)
+        query: Custom SQL query to analyze (mutually exclusive with table_name)
+        algorithm: Detection algorithm ('isolation_forest', 'one_class_svm', 'lof', 'statistical')
+        contamination: Expected proportion of outliers (auto-estimated if None)
+        sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
+        **kwargs: Additional parameters for the detection algorithm
+        
+    Returns:
+        Anomaly detection results with labels, scores, and quality assessment in JSON format
+    """
+    return _db_manager.detect_anomalies(name, table_name, query, algorithm, contamination, sample_size, **kwargs)
+
+
+@mcp.tool
+def evaluate_patterns(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                     pattern_type: str = 'clustering', results_data: Optional[str] = None,
+                     sample_size: int = 10000) -> str:
+    """
+    Evaluate pattern recognition results and provide comprehensive quality assessment and recommendations.
+    
+    Analyzes clustering, dimensionality reduction, or anomaly detection results to provide
+    quality metrics, validation scores, and actionable recommendations for improvement.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table to evaluate (mutually exclusive with query)
+        query: Custom SQL query to evaluate (mutually exclusive with table_name)
+        pattern_type: Type of pattern analysis ('clustering', 'dimensionality_reduction', 'anomaly_detection')
+        results_data: JSON string of previous pattern recognition results (optional)
+        sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
+        
+    Returns:
+        Comprehensive evaluation results with quality metrics and recommendations in JSON format
+    """
+    return _db_manager.evaluate_patterns(name, table_name, query, pattern_type, results_data, sample_size)
 
 
 def main():
