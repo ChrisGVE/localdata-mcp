@@ -1,0 +1,3 @@
+[submodule "datascience-mcp"]
+	path = datascience-mcp
+	url = https://github.com/ChrisGVE/datascience-mcp.git
