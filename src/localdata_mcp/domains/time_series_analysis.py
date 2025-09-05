@@ -35,6 +35,7 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.stats.diagnostic import acorr_ljungbox
+from scipy import stats
 import itertools
 
 from ..logging_manager import get_logger
@@ -3639,3 +3640,1955 @@ class AutoARIMATransformer(TimeSeriesTransformer):
         except Exception as e:
             logger.error(f"Error in Auto-ARIMA forecasting: {e}")
             raise TimeSeriesValidationError(f"Auto-ARIMA forecasting failed: {str(e)}")
+
+
+class AdvancedForecastingTransformer(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for advanced forecasting methods.
+    
+    Provides access to Prophet, Exponential Smoothing, and Ensemble forecasting
+    with automatic method selection based on data characteristics and user preferences.
+    
+    Parameters:
+    -----------
+    method : str, default='auto'
+        Forecasting method: 'prophet', 'exponential_smoothing', 'ensemble', 'auto'
+    forecast_steps : int, default=10
+        Number of steps to forecast ahead
+    confidence_level : float, default=0.95
+        Confidence level for prediction intervals
+    ensemble_weights : dict, optional
+        Weights for ensemble methods (auto-computed if None)
+    prophet_params : dict, optional
+        Additional parameters for Prophet model
+    holt_winters_params : dict, optional
+        Additional parameters for Holt-Winters model
+    """
+    
+    def __init__(self, method='auto', forecast_steps=10, confidence_level=0.95,
+                 ensemble_weights=None, prophet_params=None, holt_winters_params=None, **kwargs):
+        super().__init__(**kwargs)
+        self.method = method
+        self.forecast_steps = forecast_steps
+        self.confidence_level = confidence_level
+        self.ensemble_weights = ensemble_weights or {}
+        self.prophet_params = prophet_params or {}
+        self.holt_winters_params = holt_winters_params or {}
+        
+        # Model instances
+        self.prophet_forecaster_ = None
+        self.exponential_smoothing_forecaster_ = None
+        self.ensemble_forecaster_ = None
+        self.evaluator_ = None
+        self.selected_method_ = None
+        self.training_data_ = None
+        
+    def _select_method(self, data: pd.Series) -> str:
+        """
+        Automatically select the best forecasting method based on data characteristics.
+        
+        Parameters:
+        -----------
+        data : pd.Series
+            Time series data for analysis
+            
+        Returns:
+        --------
+        method : str
+            Selected forecasting method
+        """
+        if self.method != 'auto':
+            return self.method
+            
+        # Analyze data characteristics
+        n_observations = len(data)
+        frequency = self._infer_frequency(pd.DataFrame({'value': data}))
+        
+        # Check for strong seasonality
+        has_seasonality = self._detect_seasonality(data)
+        
+        # Selection logic
+        if n_observations < 50:
+            return 'exponential_smoothing'  # Better for small datasets
+        elif has_seasonality and n_observations >= 100:
+            # Prophet is good for seasonal data with sufficient observations
+            try:
+                import prophet
+                return 'prophet'
+            except ImportError:
+                logger.warning("Prophet not available, falling back to exponential smoothing")
+                return 'exponential_smoothing'
+        elif n_observations >= 200:
+            return 'ensemble'  # Use ensemble for large datasets
+        else:
+            return 'exponential_smoothing'
+            
+    def _detect_seasonality(self, data: pd.Series) -> bool:
+        """
+        Detect if the time series has significant seasonality.
+        
+        Parameters:
+        -----------
+        data : pd.Series
+            Time series data
+            
+        Returns:
+        --------
+        has_seasonality : bool
+            True if seasonality is detected
+        """
+        try:
+            from statsmodels.tsa.seasonal import seasonal_decompose
+            
+            # Need at least 2 full cycles for seasonality detection
+            min_periods = 24  # Default assumption
+            if len(data) < 2 * min_periods:
+                return False
+                
+            decomposition = seasonal_decompose(data, model='additive', period=min_periods)
+            seasonal_strength = np.var(decomposition.seasonal) / np.var(data)
+            
+            return seasonal_strength > 0.1  # Threshold for significant seasonality
+        except Exception:
+            return False
+            
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the advanced forecasting model."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+            
+        logger = get_logger(__name__)
+        
+        try:
+            # Extract univariate time series
+            if isinstance(X, pd.DataFrame):
+                if X.shape[1] == 1:
+                    data = X.iloc[:, 0]
+                else:
+                    raise ValueError("Advanced forecasting requires univariate time series data")
+            elif y is not None:
+                data = y
+            else:
+                raise ValueError("No target variable provided for forecasting")
+                
+            self.training_data_ = data
+            
+            # Select forecasting method
+            self.selected_method_ = self._select_method(data)
+            logger.info(f"Selected forecasting method: {self.selected_method_}")
+            
+            # Initialize selected method(s)
+            if self.selected_method_ == 'prophet':
+                self.prophet_forecaster_ = ProphetForecaster(
+                    forecast_steps=self.forecast_steps,
+                    confidence_level=self.confidence_level,
+                    **self.prophet_params
+                )
+                self.prophet_forecaster_.fit(X, y)
+                
+            elif self.selected_method_ == 'exponential_smoothing':
+                self.exponential_smoothing_forecaster_ = ExponentialSmoothingForecaster(
+                    forecast_steps=self.forecast_steps,
+                    confidence_level=self.confidence_level,
+                    **self.holt_winters_params
+                )
+                self.exponential_smoothing_forecaster_.fit(X, y)
+                
+            elif self.selected_method_ == 'ensemble':
+                self.ensemble_forecaster_ = EnsembleForecaster(
+                    forecast_steps=self.forecast_steps,
+                    confidence_level=self.confidence_level,
+                    weights=self.ensemble_weights
+                )
+                self.ensemble_forecaster_.fit(X, y)
+                
+            # Initialize evaluator
+            self.evaluator_ = ForecastEvaluator()
+            
+        except Exception as e:
+            logger.error(f"Error in advanced forecasting fit: {e}")
+            raise TimeSeriesValidationError(f"Advanced forecasting fit failed: {str(e)}")
+            
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> PipelineResult:
+        """Generate forecasts using the fitted model."""
+        check_is_fitted(self, ['selected_method_', 'training_data_'])
+        
+        start_time = time.time()
+        logger = get_logger(__name__)
+        
+        try:
+            # Generate forecasts based on selected method
+            if self.selected_method_ == 'prophet' and self.prophet_forecaster_:
+                result = self.prophet_forecaster_.transform(X)
+            elif self.selected_method_ == 'exponential_smoothing' and self.exponential_smoothing_forecaster_:
+                result = self.exponential_smoothing_forecaster_.transform(X)
+            elif self.selected_method_ == 'ensemble' and self.ensemble_forecaster_:
+                result = self.ensemble_forecaster_.transform(X)
+            else:
+                raise ValueError(f"No fitted model available for method: {self.selected_method_}")
+                
+            # Add method information to result
+            result.data['selected_method'] = self.selected_method_
+            result.data['available_methods'] = ['prophet', 'exponential_smoothing', 'ensemble']
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in advanced forecasting transform: {e}")
+            raise TimeSeriesValidationError(f"Advanced forecasting transform failed: {str(e)}")
+
+
+class ProphetForecaster(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for Facebook Prophet forecasting.
+    
+    Provides robust forecasting with automatic handling of trends, seasonality,
+    holidays, and special events. Prophet is particularly effective for time series
+    with strong seasonal effects and several seasons of historical data.
+    
+    Parameters:
+    -----------
+    forecast_steps : int, default=10
+        Number of steps to forecast ahead
+    confidence_level : float, default=0.95
+        Confidence level for prediction intervals
+    growth : str, default='linear'
+        Type of trend: 'linear' or 'logistic'
+    seasonality_mode : str, default='additive'
+        Seasonality mode: 'additive' or 'multiplicative'
+    daily_seasonality : bool or str, default='auto'
+        Whether to include daily seasonality
+    weekly_seasonality : bool or str, default='auto'
+        Whether to include weekly seasonality
+    yearly_seasonality : bool or str, default='auto'
+        Whether to include yearly seasonality
+    holidays : pd.DataFrame, optional
+        Holiday dataframe with columns 'holiday' and 'ds'
+    changepoint_prior_scale : float, default=0.05
+        Flexibility of automatic changepoint selection
+    seasonality_prior_scale : float, default=10.0
+        Strength of seasonality model
+    """
+    
+    def __init__(self, forecast_steps=10, confidence_level=0.95, growth='linear',
+                 seasonality_mode='additive', daily_seasonality='auto',
+                 weekly_seasonality='auto', yearly_seasonality='auto',
+                 holidays=None, changepoint_prior_scale=0.05,
+                 seasonality_prior_scale=10.0, **kwargs):
+        super().__init__(**kwargs)
+        self.forecast_steps = forecast_steps
+        self.confidence_level = confidence_level
+        self.growth = growth
+        self.seasonality_mode = seasonality_mode
+        self.daily_seasonality = daily_seasonality
+        self.weekly_seasonality = weekly_seasonality
+        self.yearly_seasonality = yearly_seasonality
+        self.holidays = holidays
+        self.changepoint_prior_scale = changepoint_prior_scale
+        self.seasonality_prior_scale = seasonality_prior_scale
+        
+        self.model_ = None
+        self.forecast_ = None
+        self.training_data_ = None
+        self._prophet_available = self._check_prophet_availability()
+        
+    def _check_prophet_availability(self) -> bool:
+        """
+        Check if Prophet is available and can be imported.
+        
+        Returns:
+        --------
+        available : bool
+            True if Prophet can be imported
+        """
+        try:
+            import prophet
+            return True
+        except ImportError:
+            logger.warning("Prophet package not available. Install with: pip install prophet")
+            return False
+            
+    def _prepare_prophet_data(self, data: pd.Series) -> pd.DataFrame:
+        """
+        Prepare data in Prophet's required format.
+        
+        Parameters:
+        -----------
+        data : pd.Series
+            Time series data with datetime index
+            
+        Returns:
+        --------
+        df : pd.DataFrame
+            DataFrame with columns 'ds' (dates) and 'y' (values)
+        """
+        df = pd.DataFrame({
+            'ds': data.index,
+            'y': data.values
+        })
+        return df
+        
+    def _create_default_holidays(self, data: pd.Series) -> Optional[pd.DataFrame]:
+        """
+        Create a basic holidays dataframe if none provided.
+        
+        Parameters:
+        -----------
+        data : pd.Series
+            Time series data to analyze date range
+            
+        Returns:
+        --------
+        holidays : pd.DataFrame or None
+            Basic holidays dataframe or None if not applicable
+        """
+        # For now, return None - users can provide custom holidays
+        # Future enhancement: could include common holidays for different countries
+        return None
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the Prophet forecasting model."""
+        if not self._prophet_available:
+            raise ImportError("Prophet package is required but not available. Install with: pip install prophet")
+            
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+            
+        logger = get_logger(__name__)
+        
+        try:
+            # Extract univariate time series
+            if isinstance(X, pd.DataFrame):
+                if X.shape[1] == 1:
+                    data = X.iloc[:, 0]
+                else:
+                    raise ValueError("Prophet forecasting requires univariate time series data")
+            elif y is not None:
+                data = y
+            else:
+                raise ValueError("No target variable provided for Prophet forecasting")
+                
+            self.training_data_ = data
+            
+            # Prepare data for Prophet
+            prophet_data = self._prepare_prophet_data(data)
+            
+            # Import Prophet (after checking availability)
+            from prophet import Prophet
+            
+            # Initialize Prophet model with parameters
+            model_params = {
+                'growth': self.growth,
+                'seasonality_mode': self.seasonality_mode,
+                'daily_seasonality': self.daily_seasonality,
+                'weekly_seasonality': self.weekly_seasonality,
+                'yearly_seasonality': self.yearly_seasonality,
+                'changepoint_prior_scale': self.changepoint_prior_scale,
+                'seasonality_prior_scale': self.seasonality_prior_scale
+            }
+            
+            if self.holidays is not None:
+                model_params['holidays'] = self.holidays
+            elif len(data) > 365:  # Only add holidays for data spanning more than a year
+                default_holidays = self._create_default_holidays(data)
+                if default_holidays is not None:
+                    model_params['holidays'] = default_holidays
+                    
+            # Suppress Prophet's verbose output
+            import logging
+            logging.getLogger('prophet').setLevel(logging.WARNING)
+            
+            self.model_ = Prophet(**model_params)
+            self.model_.fit(prophet_data)
+            
+            logger.info("Prophet model fitted successfully")
+            
+        except Exception as e:
+            logger.error(f"Error in Prophet fitting: {e}")
+            raise TimeSeriesValidationError(f"Prophet fitting failed: {str(e)}")
+            
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> PipelineResult:
+        """Generate forecasts using the fitted Prophet model."""
+        check_is_fitted(self, ['model_', 'training_data_'])
+        
+        start_time = time.time()
+        logger = get_logger(__name__)
+        
+        try:
+            # Create future dataframe for forecasting
+            future = self.model_.make_future_dataframe(
+                periods=self.forecast_steps,
+                freq=self._infer_frequency(pd.DataFrame({'value': self.training_data_}))
+            )
+            
+            # Generate forecast
+            forecast = self.model_.predict(future)
+            self.forecast_ = forecast
+            
+            # Extract forecast values (only future periods)
+            forecast_values = forecast[['ds', 'yhat']].tail(self.forecast_steps)
+            forecast_values = forecast_values.set_index('ds')['yhat']
+            
+            # Extract confidence intervals
+            confidence_intervals = forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(self.forecast_steps)
+            confidence_intervals = confidence_intervals.set_index('ds')[['yhat_lower', 'yhat_upper']]
+            
+            # Calculate prediction intervals width
+            interval_width = (confidence_intervals['yhat_upper'] - confidence_intervals['yhat_lower']).mean()
+            
+            # Prepare result data
+            result_data = {
+                'forecast_method': 'Prophet',
+                'forecast_values': forecast_values.to_dict(),
+                'confidence_intervals': confidence_intervals.to_dict(),
+                'forecast_horizon': self.forecast_steps,
+                'confidence_level': self.confidence_level,
+                'model_components': {
+                    'trend': forecast[['ds', 'trend']].set_index('ds')['trend'].to_dict(),
+                    'seasonal': {},  # Will be populated with seasonal components
+                },
+                'model_parameters': {
+                    'growth': self.growth,
+                    'seasonality_mode': self.seasonality_mode,
+                    'changepoint_prior_scale': self.changepoint_prior_scale,
+                    'seasonality_prior_scale': self.seasonality_prior_scale
+                },
+                'diagnostics': {
+                    'mean_interval_width': float(interval_width),
+                    'number_of_changepoints': len(self.model_.changepoints),
+                    'training_data_points': len(self.training_data_)
+                }
+            }
+            
+            # Add seasonal components if available
+            for component in ['weekly', 'yearly', 'daily']:
+                if component in forecast.columns:
+                    result_data['model_components']['seasonal'][component] = \
+                        forecast[['ds', component]].set_index('ds')[component].to_dict()
+                        
+            # Add interpretation
+            interpretation = self._generate_interpretation(forecast_values, confidence_intervals)
+            result_data['interpretation'] = interpretation
+            
+            # Add recommendations
+            recommendations = self._generate_recommendations()
+            result_data['recommendations'] = recommendations
+            
+            return TimeSeriesAnalysisResult(
+                data=result_data,
+                execution_time=time.time() - start_time,
+                metadata=CompositionMetadata(
+                    timestamp=datetime.now(),
+                    data_shape=(len(self.training_data_), 1),
+                    parameters={
+                        'forecast_steps': self.forecast_steps,
+                        'growth': self.growth,
+                        'seasonality_mode': self.seasonality_mode
+                    }
+                )
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in Prophet forecasting: {e}")
+            raise TimeSeriesValidationError(f"Prophet forecasting failed: {str(e)}")
+            
+    def _generate_interpretation(self, forecast_values: pd.Series, 
+                               confidence_intervals: pd.DataFrame) -> str:
+        """
+        Generate human-readable interpretation of Prophet forecast results.
+        
+        Parameters:
+        -----------
+        forecast_values : pd.Series
+            Forecasted values
+        confidence_intervals : pd.DataFrame
+            Confidence intervals for forecasts
+            
+        Returns:
+        --------
+        interpretation : str
+            Human-readable interpretation
+        """
+        avg_forecast = forecast_values.mean()
+        forecast_trend = 'increasing' if forecast_values.iloc[-1] > forecast_values.iloc[0] else 'decreasing'
+        avg_interval_width = (confidence_intervals['yhat_upper'] - confidence_intervals['yhat_lower']).mean()
+        
+        interpretation = (
+            f"Prophet forecast shows {forecast_trend} trend over {self.forecast_steps} periods. "
+            f"Average predicted value: {avg_forecast:.2f}. "
+            f"Average prediction interval width: {avg_interval_width:.2f}, "
+            f"indicating {'high' if avg_interval_width > abs(avg_forecast) * 0.2 else 'moderate'} uncertainty."
+        )
+        
+        return interpretation
+        
+    def _generate_recommendations(self) -> List[str]:
+        """
+        Generate recommendations based on the Prophet model.
+        
+        Returns:
+        --------
+        recommendations : List[str]
+            List of recommendations for the user
+        """
+        recommendations = []
+        
+        if len(self.training_data_) < 100:
+            recommendations.append("Consider collecting more historical data for improved forecast accuracy")
+            
+        if self.model_ and len(self.model_.changepoints) > len(self.training_data_) * 0.1:
+            recommendations.append("High number of changepoints detected - consider adjusting changepoint_prior_scale")
+            
+        if self.seasonality_mode == 'additive' and self.training_data_.std() > self.training_data_.mean() * 0.5:
+            recommendations.append("High variability detected - consider using multiplicative seasonality")
+            
+        recommendations.append("Prophet works best with at least one year of data and clear seasonal patterns")
+        
+        return recommendations
+
+
+class ExponentialSmoothingForecaster(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for Exponential Smoothing (Holt-Winters) forecasting.
+    
+    Implements simple, double (Holt's), and triple (Holt-Winters) exponential smoothing
+    methods for time series forecasting. Automatically selects the best model
+    configuration based on data characteristics.
+    
+    Parameters:
+    -----------
+    forecast_steps : int, default=10
+        Number of steps to forecast ahead
+    confidence_level : float, default=0.95
+        Confidence level for prediction intervals
+    trend : str or None, default='auto'
+        Type of trend: None, 'add', 'mul', or 'auto'
+    seasonal : str or None, default='auto'
+        Type of seasonality: None, 'add', 'mul', or 'auto'
+    seasonal_periods : int, default=None
+        Number of periods in a complete seasonal cycle (auto-detected if None)
+    damped_trend : bool, default=False
+        Whether to use a damped trend
+    smoothing_level : float, default=None
+        Smoothing parameter for level (alpha). Auto-optimized if None
+    smoothing_trend : float, default=None
+        Smoothing parameter for trend (beta). Auto-optimized if None
+    smoothing_seasonal : float, default=None
+        Smoothing parameter for seasonal component (gamma). Auto-optimized if None
+    use_boxcox : bool or str, default=False
+        Whether to use Box-Cox transformation
+    """
+    
+    def __init__(self, forecast_steps=10, confidence_level=0.95, trend='auto',
+                 seasonal='auto', seasonal_periods=None, damped_trend=False,
+                 smoothing_level=None, smoothing_trend=None, smoothing_seasonal=None,
+                 use_boxcox=False, **kwargs):
+        super().__init__(**kwargs)
+        self.forecast_steps = forecast_steps
+        self.confidence_level = confidence_level
+        self.trend = trend
+        self.seasonal = seasonal
+        self.seasonal_periods = seasonal_periods
+        self.damped_trend = damped_trend
+        self.smoothing_level = smoothing_level
+        self.smoothing_trend = smoothing_trend
+        self.smoothing_seasonal = smoothing_seasonal
+        self.use_boxcox = use_boxcox
+        
+        self.model_ = None
+        self.fitted_model_ = None
+        self.training_data_ = None
+        self.selected_trend_ = None
+        self.selected_seasonal_ = None
+        self.selected_seasonal_periods_ = None
+        
+    def _detect_seasonality_periods(self, data: pd.Series) -> int:
+        """
+        Detect the number of periods in a seasonal cycle.
+        
+        Parameters:
+        -----------
+        data : pd.Series
+            Time series data with datetime index
+            
+        Returns:
+        --------
+        periods : int
+            Number of periods in seasonal cycle
+        """
+        # Try to infer from frequency
+        freq = self._infer_frequency(pd.DataFrame({'value': data}))
+        
+        if freq:
+            freq_map = {
+                'H': 24,    # Hourly -> daily seasonality
+                'D': 7,     # Daily -> weekly seasonality  
+                'W': 52,    # Weekly -> yearly seasonality
+                'M': 12,    # Monthly -> yearly seasonality
+                'Q': 4,     # Quarterly -> yearly seasonality
+                'T': 60,    # Minutes -> hourly seasonality
+                'S': 60     # Seconds -> minute seasonality
+            }
+            
+            for f, periods in freq_map.items():
+                if f in str(freq).upper():
+                    return periods
+                    
+        # Fallback: use autocorrelation to detect seasonality
+        try:
+            max_lag = min(len(data) // 3, 50)
+            autocorr = [data.autocorr(lag=i) for i in range(1, max_lag + 1)]
+            
+            # Find the lag with maximum autocorrelation
+            if autocorr:
+                best_lag = np.argmax(np.abs(autocorr)) + 1
+                if abs(autocorr[best_lag - 1]) > 0.3:  # Significant autocorrelation
+                    return best_lag
+        except Exception as e:
+            logger.debug(f"Could not detect seasonality via autocorrelation: {e}")
+            
+        # Default fallback
+        return 12
+        
+    def _select_model_components(self, data: pd.Series) -> Tuple[str, str, int]:
+        """
+        Automatically select trend and seasonality components.
+        
+        Parameters:
+        -----------
+        data : pd.Series
+            Time series data
+            
+        Returns:
+        --------
+        trend : str
+            Selected trend component
+        seasonal : str
+            Selected seasonal component
+        seasonal_periods : int
+            Selected seasonal periods
+        """
+        if self.trend != 'auto' and self.seasonal != 'auto':
+            return self.trend, self.seasonal, self.seasonal_periods or self._detect_seasonality_periods(data)
+            
+        # Detect trend
+        if self.trend == 'auto':
+            # Simple trend detection using linear regression
+            x = np.arange(len(data))
+            slope, _, r_value, _, _ = stats.linregress(x, data.values)
+            
+            if abs(r_value) > 0.7 and abs(slope) > data.std() * 0.01:
+                # Check if multiplicative trend is better
+                if data.min() > 0 and (data.max() / data.min()) > 2:
+                    selected_trend = 'mul'
+                else:
+                    selected_trend = 'add'
+            else:
+                selected_trend = None
+        else:
+            selected_trend = self.trend
+            
+        # Detect seasonality
+        if self.seasonal == 'auto':
+            seasonal_periods = self.seasonal_periods or self._detect_seasonality_periods(data)
+            
+            if len(data) >= 2 * seasonal_periods:
+                try:
+                    # Try seasonal decomposition to check for seasonality
+                    decomposition = seasonal_decompose(data, model='additive', period=seasonal_periods)
+                    seasonal_strength = np.var(decomposition.seasonal) / np.var(data)
+                    
+                    if seasonal_strength > 0.1:
+                        # Check if multiplicative seasonality is better
+                        if data.min() > 0:
+                            # Compare additive vs multiplicative seasonal patterns
+                            try:
+                                decomp_mul = seasonal_decompose(data, model='multiplicative', period=seasonal_periods)
+                                seasonal_strength_mul = np.var(decomp_mul.seasonal) / np.var(data)
+                                
+                                if seasonal_strength_mul > seasonal_strength * 1.1:
+                                    selected_seasonal = 'mul'
+                                else:
+                                    selected_seasonal = 'add'
+                            except:
+                                selected_seasonal = 'add'
+                        else:
+                            selected_seasonal = 'add'
+                    else:
+                        selected_seasonal = None
+                        seasonal_periods = None
+                except Exception as e:
+                    logger.debug(f"Seasonality detection failed: {e}")
+                    selected_seasonal = None
+                    seasonal_periods = None
+            else:
+                selected_seasonal = None
+                seasonal_periods = None
+        else:
+            selected_seasonal = self.seasonal
+            seasonal_periods = self.seasonal_periods or self._detect_seasonality_periods(data)
+            
+        return selected_trend, selected_seasonal, seasonal_periods
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the Exponential Smoothing forecasting model."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+            
+        logger = get_logger(__name__)
+        
+        try:
+            # Import here to handle potential ImportError gracefully
+            from scipy import stats
+            from statsmodels.tsa.holtwinters import ExponentialSmoothing
+            
+            # Extract univariate time series
+            if isinstance(X, pd.DataFrame):
+                if X.shape[1] == 1:
+                    data = X.iloc[:, 0]
+                else:
+                    raise ValueError("Exponential Smoothing requires univariate time series data")
+            elif y is not None:
+                data = y
+            else:
+                raise ValueError("No target variable provided for Exponential Smoothing")
+                
+            self.training_data_ = data
+            
+            # Select model components automatically
+            self.selected_trend_, self.selected_seasonal_, self.selected_seasonal_periods_ = \
+                self._select_model_components(data)
+                
+            logger.info(f"Selected components - Trend: {self.selected_trend_}, "
+                       f"Seasonal: {self.selected_seasonal_}, Periods: {self.selected_seasonal_periods_}")
+            
+            # Initialize Exponential Smoothing model
+            model_params = {
+                'trend': self.selected_trend_,
+                'seasonal': self.selected_seasonal_,
+                'seasonal_periods': self.selected_seasonal_periods_,
+                'damped_trend': self.damped_trend,
+                'use_boxcox': self.use_boxcox
+            }
+            
+            # Remove None values
+            model_params = {k: v for k, v in model_params.items() if v is not None}
+            
+            self.model_ = ExponentialSmoothing(data, **model_params)
+            
+            # Fit model with optional smoothing parameters
+            fit_params = {}
+            if self.smoothing_level is not None:
+                fit_params['smoothing_level'] = self.smoothing_level
+            if self.smoothing_trend is not None:
+                fit_params['smoothing_trend'] = self.smoothing_trend
+            if self.smoothing_seasonal is not None:
+                fit_params['smoothing_seasonal'] = self.smoothing_seasonal
+                
+            self.fitted_model_ = self.model_.fit(**fit_params)
+            
+            logger.info("Exponential Smoothing model fitted successfully")
+            
+        except Exception as e:
+            logger.error(f"Error in Exponential Smoothing fitting: {e}")
+            raise TimeSeriesValidationError(f"Exponential Smoothing fitting failed: {str(e)}")
+            
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> PipelineResult:
+        """Generate forecasts using the fitted Exponential Smoothing model."""
+        check_is_fitted(self, ['fitted_model_', 'training_data_'])
+        
+        start_time = time.time()
+        logger = get_logger(__name__)
+        
+        try:
+            # Generate forecast
+            forecast_result = self.fitted_model_.forecast(steps=self.forecast_steps)
+            
+            # Generate prediction intervals if possible
+            try:
+                # Try to get prediction intervals
+                alpha = 1 - self.confidence_level
+                forecast_summary = self.fitted_model_.get_forecast(steps=self.forecast_steps)
+                confidence_intervals = forecast_summary.conf_int(alpha=alpha)
+                
+                # Convert to DataFrame with proper column names
+                confidence_intervals.columns = ['lower', 'upper']
+                
+            except Exception as e:
+                logger.warning(f"Could not generate prediction intervals: {e}")
+                # Create dummy intervals based on historical residuals
+                residuals = self.fitted_model_.resid
+                std_residual = np.std(residuals)
+                z_score = stats.norm.ppf(1 - alpha/2) if 'stats' in locals() else 1.96
+                
+                confidence_intervals = pd.DataFrame({
+                    'lower': forecast_result - z_score * std_residual,
+                    'upper': forecast_result + z_score * std_residual
+                }, index=forecast_result.index)
+                
+            # Calculate prediction intervals width
+            interval_width = (confidence_intervals['upper'] - confidence_intervals['lower']).mean()
+            
+            # Prepare result data
+            result_data = {
+                'forecast_method': 'Exponential Smoothing (Holt-Winters)',
+                'forecast_values': forecast_result.to_dict(),
+                'confidence_intervals': confidence_intervals.to_dict(),
+                'forecast_horizon': self.forecast_steps,
+                'confidence_level': self.confidence_level,
+                'model_components': {
+                    'trend': self.selected_trend_,
+                    'seasonal': self.selected_seasonal_,
+                    'seasonal_periods': self.selected_seasonal_periods_,
+                    'damped_trend': self.damped_trend
+                },
+                'model_parameters': {
+                    'smoothing_level': float(self.fitted_model_.params['smoothing_level']),
+                    'aic': float(self.fitted_model_.aic),
+                    'bic': float(self.fitted_model_.bic),
+                    'sse': float(self.fitted_model_.sse)
+                },
+                'diagnostics': {
+                    'mean_interval_width': float(interval_width),
+                    'training_data_points': len(self.training_data_),
+                    'model_fit_quality': 'good' if self.fitted_model_.aic < len(self.training_data_) * 2 else 'moderate'
+                }
+            }
+            
+            # Add trend and seasonal smoothing parameters if available
+            if self.selected_trend_ and 'smoothing_trend' in self.fitted_model_.params:
+                result_data['model_parameters']['smoothing_trend'] = float(self.fitted_model_.params['smoothing_trend'])
+            if self.selected_seasonal_ and 'smoothing_seasonal' in self.fitted_model_.params:
+                result_data['model_parameters']['smoothing_seasonal'] = float(self.fitted_model_.params['smoothing_seasonal'])
+                
+            # Add interpretation
+            interpretation = self._generate_interpretation(forecast_result, confidence_intervals)
+            result_data['interpretation'] = interpretation
+            
+            # Add recommendations
+            recommendations = self._generate_recommendations()
+            result_data['recommendations'] = recommendations
+            
+            return TimeSeriesAnalysisResult(
+                data=result_data,
+                execution_time=time.time() - start_time,
+                metadata=CompositionMetadata(
+                    timestamp=datetime.now(),
+                    data_shape=(len(self.training_data_), 1),
+                    parameters={
+                        'forecast_steps': self.forecast_steps,
+                        'trend': self.selected_trend_,
+                        'seasonal': self.selected_seasonal_,
+                        'seasonal_periods': self.selected_seasonal_periods_
+                    }
+                )
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in Exponential Smoothing forecasting: {e}")
+            raise TimeSeriesValidationError(f"Exponential Smoothing forecasting failed: {str(e)}")
+            
+    def _generate_interpretation(self, forecast_values: pd.Series, 
+                               confidence_intervals: pd.DataFrame) -> str:
+        """
+        Generate human-readable interpretation of Exponential Smoothing forecast results.
+        
+        Parameters:
+        -----------
+        forecast_values : pd.Series
+            Forecasted values
+        confidence_intervals : pd.DataFrame
+            Confidence intervals for forecasts
+            
+        Returns:
+        --------
+        interpretation : str
+            Human-readable interpretation
+        """
+        avg_forecast = forecast_values.mean()
+        forecast_trend = 'increasing' if forecast_values.iloc[-1] > forecast_values.iloc[0] else 'decreasing'
+        avg_interval_width = (confidence_intervals['upper'] - confidence_intervals['lower']).mean()
+        
+        model_type = "Simple"
+        if self.selected_trend_ and self.selected_seasonal_:
+            model_type = "Triple (Holt-Winters)"
+        elif self.selected_trend_:
+            model_type = "Double (Holt's)"
+            
+        interpretation = (
+            f"{model_type} Exponential Smoothing forecast shows {forecast_trend} trend over {self.forecast_steps} periods. "
+            f"Average predicted value: {avg_forecast:.2f}. "
+            f"Prediction uncertainty: {'high' if avg_interval_width > abs(avg_forecast) * 0.2 else 'moderate'} "
+            f"(interval width: {avg_interval_width:.2f})."
+        )
+        
+        if self.selected_seasonal_:
+            interpretation += f" Seasonal component detected with period {self.selected_seasonal_periods_}."
+            
+        return interpretation
+        
+    def _generate_recommendations(self) -> List[str]:
+        """
+        Generate recommendations based on the Exponential Smoothing model.
+        
+        Returns:
+        --------
+        recommendations : List[str]
+            List of recommendations for the user
+        """
+        recommendations = []
+        
+        if len(self.training_data_) < 30:
+            recommendations.append("Consider collecting more historical data for improved forecast accuracy")
+            
+        if self.fitted_model_.aic > len(self.training_data_) * 3:
+            recommendations.append("High AIC value suggests model may be overfitting - consider simpler configuration")
+            
+        if self.selected_seasonal_ is None and len(self.training_data_) > 24:
+            recommendations.append("No seasonality detected - verify if seasonal patterns exist in your data")
+            
+        if self.selected_trend_ is None:
+            recommendations.append("No trend detected - consider if the data has underlying growth patterns")
+            
+        recommendations.append("Exponential smoothing works well for data with clear trends and seasonal patterns")
+        
+        return recommendations
+
+
+class EnsembleForecaster(TimeSeriesTransformer):
+    """
+    sklearn-compatible transformer for ensemble forecasting methods.
+    
+    Combines multiple forecasting models (Prophet, Exponential Smoothing, ARIMA)
+    to create robust ensemble predictions. Uses weighted averaging or more
+    sophisticated combination methods.
+    
+    Parameters:
+    -----------
+    forecast_steps : int, default=10
+        Number of steps to forecast ahead
+    confidence_level : float, default=0.95
+        Confidence level for prediction intervals
+    methods : list, default=['exponential_smoothing', 'arima']
+        List of forecasting methods to combine
+    weights : dict, optional
+        Weights for each method (auto-computed if None)
+    combination_method : str, default='weighted_average'
+        Method for combining forecasts: 'weighted_average', 'median', 'best_performer'
+    validation_split : float, default=0.2
+        Fraction of data to use for model validation and weight optimization
+    """
+    
+    def __init__(self, forecast_steps=10, confidence_level=0.95, 
+                 methods=None, weights=None, combination_method='weighted_average',
+                 validation_split=0.2, **kwargs):
+        super().__init__(**kwargs)
+        self.forecast_steps = forecast_steps
+        self.confidence_level = confidence_level
+        self.methods = methods or ['exponential_smoothing', 'arima']
+        self.weights = weights or {}
+        self.combination_method = combination_method
+        self.validation_split = validation_split
+        
+        # Model instances
+        self.models_ = {}
+        self.fitted_models_ = {}
+        self.model_performance_ = {}
+        self.computed_weights_ = {}
+        self.training_data_ = None
+        self.validation_data_ = None
+        
+    def _split_data(self, data: pd.Series) -> Tuple[pd.Series, pd.Series]:
+        """
+        Split data into training and validation sets.
+        
+        Parameters:
+        -----------
+        data : pd.Series
+            Full time series data
+            
+        Returns:
+        --------
+        train_data : pd.Series
+            Training data
+        val_data : pd.Series
+            Validation data
+        """
+        split_point = int(len(data) * (1 - self.validation_split))
+        train_data = data.iloc[:split_point]
+        val_data = data.iloc[split_point:]
+        return train_data, val_data
+        
+    def _initialize_models(self) -> Dict[str, TimeSeriesTransformer]:
+        """
+        Initialize the forecasting models for the ensemble.
+        
+        Returns:
+        --------
+        models : dict
+            Dictionary of initialized model instances
+        """
+        models = {}
+        
+        for method in self.methods:
+            if method == 'prophet':
+                try:
+                    models[method] = ProphetForecaster(
+                        forecast_steps=len(self.validation_data_) if hasattr(self, 'validation_data_') else self.forecast_steps,
+                        confidence_level=self.confidence_level
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not initialize Prophet: {e}")
+                    continue
+                    
+            elif method == 'exponential_smoothing':
+                models[method] = ExponentialSmoothingForecaster(
+                    forecast_steps=len(self.validation_data_) if hasattr(self, 'validation_data_') else self.forecast_steps,
+                    confidence_level=self.confidence_level
+                )
+                
+            elif method == 'arima':
+                models[method] = ARIMAForecastTransformer(
+                    forecast_steps=len(self.validation_data_) if hasattr(self, 'validation_data_') else self.forecast_steps,
+                    confidence_level=self.confidence_level
+                )
+                
+            elif method == 'auto_arima':
+                models[method] = AutoARIMATransformer(
+                    forecast_steps=len(self.validation_data_) if hasattr(self, 'validation_data_') else self.forecast_steps,
+                    stepwise=True  # Faster for ensemble
+                )
+                
+        return models
+        
+    def _evaluate_model_performance(self, model: TimeSeriesTransformer, 
+                                   method: str, train_data: pd.DataFrame, 
+                                   val_data: pd.Series) -> Dict[str, float]:
+        """
+        Evaluate model performance on validation data.
+        
+        Parameters:
+        -----------
+        model : TimeSeriesTransformer
+            Fitted model to evaluate
+        method : str
+            Method name
+        train_data : pd.DataFrame
+            Training data
+        val_data : pd.Series
+            Validation data for evaluation
+            
+        Returns:
+        --------
+        performance : dict
+            Performance metrics
+        """
+        try:
+            # Fit model on training data
+            model.fit(train_data)
+            
+            # Generate forecasts for validation period
+            result = model.transform(train_data)
+            
+            # Extract forecast values
+            if hasattr(result, 'data') and 'forecast_values' in result.data:
+                forecast_dict = result.data['forecast_values']
+                if isinstance(forecast_dict, dict):
+                    forecast_values = pd.Series(forecast_dict)
+                else:
+                    forecast_values = forecast_dict
+            else:
+                raise ValueError(f"Could not extract forecasts from {method} model")
+                
+            # Align forecast and actual values
+            min_length = min(len(forecast_values), len(val_data))
+            forecast_aligned = forecast_values.iloc[:min_length]
+            actual_aligned = val_data.iloc[:min_length]
+            
+            # Calculate metrics
+            mae = np.mean(np.abs(forecast_aligned - actual_aligned))
+            mse = np.mean((forecast_aligned - actual_aligned) ** 2)
+            rmse = np.sqrt(mse)
+            
+            # MAPE (handle zero values)
+            mape_values = np.abs((actual_aligned - forecast_aligned) / actual_aligned)
+            mape_values = mape_values[np.isfinite(mape_values)]  # Remove inf/nan
+            mape = np.mean(mape_values) * 100 if len(mape_values) > 0 else float('inf')
+            
+            return {
+                'mae': mae,
+                'mse': mse,
+                'rmse': rmse,
+                'mape': mape,
+                'score': 1.0 / (1.0 + rmse)  # Higher is better
+            }
+            
+        except Exception as e:
+            logger.warning(f"Could not evaluate {method}: {e}")
+            return {
+                'mae': float('inf'),
+                'mse': float('inf'), 
+                'rmse': float('inf'),
+                'mape': float('inf'),
+                'score': 0.0
+            }
+            
+    def _compute_weights(self) -> Dict[str, float]:
+        """
+        Compute weights for ensemble combination based on validation performance.
+        
+        Returns:
+        --------
+        weights : dict
+            Computed weights for each method
+        """
+        if self.weights:
+            # Use provided weights, normalize to sum to 1
+            total_weight = sum(self.weights.values())
+            return {k: v / total_weight for k, v in self.weights.items()}
+            
+        # Compute weights based on performance scores
+        if not self.model_performance_:
+            # Equal weights as fallback
+            num_models = len(self.fitted_models_)
+            return {method: 1.0 / num_models for method in self.fitted_models_}
+            
+        # Inverse error weighting (better performance = higher weight)
+        scores = {method: perf['score'] for method, perf in self.model_performance_.items()}
+        total_score = sum(scores.values())
+        
+        if total_score == 0:
+            # Equal weights fallback
+            num_models = len(scores)
+            return {method: 1.0 / num_models for method in scores}
+            
+        return {method: score / total_score for method, score in scores.items()}
+        
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """Fit the ensemble forecasting models."""
+        if self.validate_input:
+            X, y = self._validate_time_series(X, y)
+            
+        logger = get_logger(__name__)
+        
+        try:
+            # Extract univariate time series
+            if isinstance(X, pd.DataFrame):
+                if X.shape[1] == 1:
+                    data = X.iloc[:, 0]
+                else:
+                    raise ValueError("Ensemble forecasting requires univariate time series data")
+            elif y is not None:
+                data = y
+            else:
+                raise ValueError("No target variable provided for ensemble forecasting")
+                
+            self.training_data_ = data
+            
+            # Split data for validation if we have enough data points
+            if len(data) > 50 and self.validation_split > 0:
+                train_data, val_data = self._split_data(data)
+                self.validation_data_ = val_data
+                logger.info(f"Split data: {len(train_data)} training, {len(val_data)} validation")
+            else:
+                train_data = data
+                self.validation_data_ = None
+                logger.info("Using full dataset for training (insufficient data for validation)")
+                
+            # Initialize models
+            self.models_ = self._initialize_models()
+            logger.info(f"Initialized {len(self.models_)} models: {list(self.models_.keys())}")
+            
+            # Fit models and evaluate performance
+            train_df = pd.DataFrame({'value': train_data})
+            
+            for method, model in self.models_.items():
+                try:
+                    logger.info(f"Fitting {method} model...")
+                    
+                    if self.validation_data_ is not None:
+                        # Evaluate on validation set
+                        performance = self._evaluate_model_performance(
+                            model, method, train_df, self.validation_data_
+                        )
+                        self.model_performance_[method] = performance
+                        logger.info(f"{method} validation RMSE: {performance['rmse']:.4f}")
+                    else:
+                        # Fit on full data
+                        model.fit(train_df)
+                        
+                    self.fitted_models_[method] = model
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to fit {method}: {e}")
+                    continue
+                    
+            if not self.fitted_models_:
+                raise ValueError("No models could be fitted successfully")
+                
+            # Now fit models on full training data for final predictions
+            full_train_df = pd.DataFrame({'value': self.training_data_})
+            for method in self.fitted_models_:
+                try:
+                    # Update forecast steps for final fitting
+                    self.fitted_models_[method].forecast_steps = self.forecast_steps
+                    self.fitted_models_[method].fit(full_train_df)
+                except Exception as e:
+                    logger.warning(f"Failed to refit {method} on full data: {e}")
+                    
+            # Compute ensemble weights
+            self.computed_weights_ = self._compute_weights()
+            logger.info(f"Computed weights: {self.computed_weights_}")
+            
+        except Exception as e:
+            logger.error(f"Error in ensemble forecasting fit: {e}")
+            raise TimeSeriesValidationError(f"Ensemble forecasting fit failed: {str(e)}")
+            
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> PipelineResult:
+        """Generate ensemble forecasts using fitted models."""
+        check_is_fitted(self, ['fitted_models_', 'computed_weights_', 'training_data_'])
+        
+        start_time = time.time()
+        logger = get_logger(__name__)
+        
+        try:
+            # Generate forecasts from each model
+            individual_forecasts = {}
+            individual_intervals = {}
+            
+            for method, model in self.fitted_models_.items():
+                try:
+                    result = model.transform(X)
+                    
+                    # Extract forecast values
+                    if hasattr(result, 'data') and 'forecast_values' in result.data:
+                        forecast_dict = result.data['forecast_values']
+                        if isinstance(forecast_dict, dict):
+                            forecast_values = pd.Series(forecast_dict)
+                        else:
+                            forecast_values = forecast_dict
+                            
+                        individual_forecasts[method] = forecast_values
+                        
+                        # Extract confidence intervals if available
+                        if 'confidence_intervals' in result.data:
+                            intervals_dict = result.data['confidence_intervals']
+                            if isinstance(intervals_dict, dict):
+                                intervals = pd.DataFrame(intervals_dict)
+                            else:
+                                intervals = intervals_dict
+                            individual_intervals[method] = intervals
+                            
+                except Exception as e:
+                    logger.warning(f"Failed to get forecast from {method}: {e}")
+                    continue
+                    
+            if not individual_forecasts:
+                raise ValueError("No individual forecasts could be generated")
+                
+            # Combine forecasts based on combination method
+            if self.combination_method == 'weighted_average':
+                ensemble_forecast = self._weighted_average_combination(individual_forecasts)
+            elif self.combination_method == 'median':
+                ensemble_forecast = self._median_combination(individual_forecasts)
+            elif self.combination_method == 'best_performer':
+                ensemble_forecast = self._best_performer_combination(individual_forecasts)
+            else:
+                raise ValueError(f"Unknown combination method: {self.combination_method}")
+                
+            # Combine confidence intervals
+            ensemble_intervals = self._combine_confidence_intervals(individual_intervals)
+            
+            # Calculate ensemble statistics
+            forecast_std = np.std([f.values for f in individual_forecasts.values()], axis=0)
+            forecast_agreement = 1.0 - (np.mean(forecast_std) / np.mean(np.abs(ensemble_forecast)))
+            
+            # Prepare result data
+            result_data = {
+                'forecast_method': 'Ensemble',
+                'forecast_values': ensemble_forecast.to_dict(),
+                'confidence_intervals': ensemble_intervals.to_dict() if ensemble_intervals is not None else None,
+                'forecast_horizon': self.forecast_steps,
+                'confidence_level': self.confidence_level,
+                'ensemble_details': {
+                    'methods': list(self.fitted_models_.keys()),
+                    'weights': self.computed_weights_,
+                    'combination_method': self.combination_method,
+                    'individual_forecasts': {method: f.to_dict() for method, f in individual_forecasts.items()}
+                },
+                'ensemble_statistics': {
+                    'forecast_agreement': float(forecast_agreement),
+                    'method_count': len(individual_forecasts),
+                    'forecast_std_dev': forecast_std.tolist() if hasattr(forecast_std, 'tolist') else float(forecast_std)
+                },
+                'model_performance': self.model_performance_
+            }
+            
+            # Add interpretation
+            interpretation = self._generate_interpretation(ensemble_forecast, individual_forecasts)
+            result_data['interpretation'] = interpretation
+            
+            # Add recommendations
+            recommendations = self._generate_recommendations()
+            result_data['recommendations'] = recommendations
+            
+            return TimeSeriesAnalysisResult(
+                data=result_data,
+                execution_time=time.time() - start_time,
+                metadata=CompositionMetadata(
+                    timestamp=datetime.now(),
+                    data_shape=(len(self.training_data_), 1),
+                    parameters={
+                        'forecast_steps': self.forecast_steps,
+                        'methods': self.methods,
+                        'combination_method': self.combination_method
+                    }
+                )
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in ensemble forecasting transform: {e}")
+            raise TimeSeriesValidationError(f"Ensemble forecasting transform failed: {str(e)}")
+            
+    def _weighted_average_combination(self, forecasts: Dict[str, pd.Series]) -> pd.Series:
+        """
+        Combine forecasts using weighted average.
+        
+        Parameters:
+        -----------
+        forecasts : dict
+            Dictionary of individual forecasts
+            
+        Returns:
+        --------
+        combined_forecast : pd.Series
+            Weighted average forecast
+        """
+        # Align all forecasts to same length
+        min_length = min(len(f) for f in forecasts.values())
+        aligned_forecasts = {method: f.iloc[:min_length] for method, f in forecasts.items()}
+        
+        # Calculate weighted average
+        combined = None
+        for method, forecast in aligned_forecasts.items():
+            weight = self.computed_weights_.get(method, 0.0)
+            if combined is None:
+                combined = forecast * weight
+            else:
+                combined += forecast * weight
+                
+        return combined
+        
+    def _median_combination(self, forecasts: Dict[str, pd.Series]) -> pd.Series:
+        """
+        Combine forecasts using median.
+        
+        Parameters:
+        -----------
+        forecasts : dict
+            Dictionary of individual forecasts
+            
+        Returns:
+        --------
+        combined_forecast : pd.Series
+            Median forecast
+        """
+        # Align all forecasts to same length
+        min_length = min(len(f) for f in forecasts.values())
+        forecast_array = np.array([f.iloc[:min_length].values for f in forecasts.values()])
+        
+        # Calculate median across methods
+        median_values = np.median(forecast_array, axis=0)
+        
+        # Use index from first forecast
+        first_forecast = list(forecasts.values())[0]
+        return pd.Series(median_values, index=first_forecast.index[:min_length])
+        
+    def _best_performer_combination(self, forecasts: Dict[str, pd.Series]) -> pd.Series:
+        """
+        Use forecast from best-performing model.
+        
+        Parameters:
+        -----------
+        forecasts : dict
+            Dictionary of individual forecasts
+            
+        Returns:
+        --------
+        combined_forecast : pd.Series
+            Best performer's forecast
+        """
+        if not self.model_performance_:
+            # Fallback to first available forecast
+            return list(forecasts.values())[0]
+            
+        # Find best performing method
+        best_method = max(self.model_performance_.keys(), 
+                         key=lambda x: self.model_performance_[x]['score'])
+        
+        return forecasts.get(best_method, list(forecasts.values())[0])
+        
+    def _combine_confidence_intervals(self, intervals: Dict[str, pd.DataFrame]) -> Optional[pd.DataFrame]:
+        """
+        Combine confidence intervals from multiple models.
+        
+        Parameters:
+        -----------
+        intervals : dict
+            Dictionary of individual confidence intervals
+            
+        Returns:
+        --------
+        combined_intervals : pd.DataFrame or None
+            Combined confidence intervals
+        """
+        if not intervals:
+            return None
+            
+        try:
+            # Align all intervals
+            min_length = min(len(ci) for ci in intervals.values())
+            aligned_intervals = {method: ci.iloc[:min_length] for method, ci in intervals.items()}
+            
+            # Use the widest intervals (most conservative approach)
+            all_lowers = [ci['lower'] if 'lower' in ci.columns else ci.iloc[:, 0] 
+                         for ci in aligned_intervals.values()]
+            all_uppers = [ci['upper'] if 'upper' in ci.columns else ci.iloc[:, 1] 
+                         for ci in aligned_intervals.values()]
+            
+            combined_lower = np.min(all_lowers, axis=0)
+            combined_upper = np.max(all_uppers, axis=0)
+            
+            # Use index from first interval
+            first_interval = list(intervals.values())[0]
+            return pd.DataFrame({
+                'lower': combined_lower,
+                'upper': combined_upper
+            }, index=first_interval.index[:min_length])
+            
+        except Exception as e:
+            logger.warning(f"Could not combine confidence intervals: {e}")
+            return None
+            
+    def _generate_interpretation(self, ensemble_forecast: pd.Series, 
+                               individual_forecasts: Dict[str, pd.Series]) -> str:
+        """
+        Generate human-readable interpretation of ensemble forecast results.
+        
+        Parameters:
+        -----------
+        ensemble_forecast : pd.Series
+            Combined ensemble forecast
+        individual_forecasts : dict
+            Dictionary of individual model forecasts
+            
+        Returns:
+        --------
+        interpretation : str
+            Human-readable interpretation
+        """
+        avg_forecast = ensemble_forecast.mean()
+        forecast_trend = 'increasing' if ensemble_forecast.iloc[-1] > ensemble_forecast.iloc[0] else 'decreasing'
+        
+        # Calculate forecast agreement
+        forecast_std = np.std([f.values for f in individual_forecasts.values()], axis=0)
+        avg_std = np.mean(forecast_std)
+        agreement = 'high' if avg_std < abs(avg_forecast) * 0.1 else ('moderate' if avg_std < abs(avg_forecast) * 0.2 else 'low')
+        
+        interpretation = (
+            f"Ensemble of {len(individual_forecasts)} models predicts {forecast_trend} trend over {self.forecast_steps} periods. "
+            f"Average predicted value: {avg_forecast:.2f}. "
+            f"Model agreement: {agreement} (std dev: {avg_std:.2f}). "
+            f"Best performing method: {max(self.model_performance_.keys(), key=lambda x: self.model_performance_[x]['score']) if self.model_performance_ else 'N/A'}."
+        )
+        
+        return interpretation
+        
+    def _generate_recommendations(self) -> List[str]:
+        """
+        Generate recommendations based on the ensemble model performance.
+        
+        Returns:
+        --------
+        recommendations : List[str]
+            List of recommendations for the user
+        """
+        recommendations = []
+        
+        if len(self.fitted_models_) < 3:
+            recommendations.append("Consider adding more forecasting methods to the ensemble for better robustness")
+            
+        if self.model_performance_:
+            # Check performance spread
+            scores = [perf['score'] for perf in self.model_performance_.values()]
+            score_std = np.std(scores)
+            if score_std > 0.3:
+                recommendations.append("High performance variation between models - consider investigating data characteristics")
+                
+            # Check if one model dominates
+            max_weight = max(self.computed_weights_.values())
+            if max_weight > 0.8:
+                best_method = max(self.computed_weights_.keys(), key=lambda x: self.computed_weights_[x])
+                recommendations.append(f"Single model ({best_method}) dominates ensemble - consider using it individually")
+                
+        if len(self.training_data_) < 100:
+            recommendations.append("More historical data would improve ensemble forecast reliability")
+            
+        recommendations.append("Ensemble forecasting combines multiple methods to reduce individual model biases")
+        
+        return recommendations
+
+
+class ForecastEvaluator(BaseEstimator, TransformerMixin):
+    """
+    sklearn-compatible transformer for evaluating forecast accuracy.
+    
+    Provides comprehensive evaluation metrics for comparing forecasted values
+    against actual observations, including MAE, MAPE, RMSE, and other
+    time series specific metrics.
+    
+    Parameters:
+    -----------
+    metrics : list, default=['mae', 'mape', 'rmse', 'mase']
+        List of metrics to compute
+    seasonal_period : int, optional
+        Seasonal period for MASE calculation
+    """
+    
+    def __init__(self, metrics=None, seasonal_period=None):
+        self.metrics = metrics or ['mae', 'mape', 'rmse', 'mase']
+        self.seasonal_period = seasonal_period
+        
+    def fit(self, X, y=None):
+        """ForecastEvaluator doesn't require fitting."""
+        return self
+        
+    def transform(self, X: pd.DataFrame) -> PipelineResult:
+        """This method is not used - use evaluate_forecast instead."""
+        raise NotImplementedError("Use evaluate_forecast method instead")
+        
+    def evaluate_forecast(self, actual: Union[pd.Series, np.ndarray], 
+                         predicted: Union[pd.Series, np.ndarray],
+                         historical_data: Optional[Union[pd.Series, np.ndarray]] = None) -> Dict[str, float]:
+        """
+        Evaluate forecast accuracy using multiple metrics.
+        
+        Parameters:
+        -----------
+        actual : pd.Series or np.ndarray
+            Actual observed values
+        predicted : pd.Series or np.ndarray
+            Predicted/forecasted values
+        historical_data : pd.Series or np.ndarray, optional
+            Historical data for MASE calculation
+            
+        Returns:
+        --------
+        metrics : dict
+            Dictionary of evaluation metrics
+        """
+        # Convert to numpy arrays for calculation
+        actual_array = actual.values if hasattr(actual, 'values') else np.array(actual)
+        predicted_array = predicted.values if hasattr(predicted, 'values') else np.array(predicted)
+        
+        # Ensure same length
+        min_length = min(len(actual_array), len(predicted_array))
+        actual_array = actual_array[:min_length]
+        predicted_array = predicted_array[:min_length]
+        
+        if len(actual_array) == 0:
+            raise ValueError("No data points to evaluate")
+            
+        results = {}
+        
+        # Calculate requested metrics
+        for metric in self.metrics:
+            if metric == 'mae':
+                results['mae'] = self._calculate_mae(actual_array, predicted_array)
+            elif metric == 'mape':
+                results['mape'] = self._calculate_mape(actual_array, predicted_array)
+            elif metric == 'rmse':
+                results['rmse'] = self._calculate_rmse(actual_array, predicted_array)
+            elif metric == 'mase':
+                results['mase'] = self._calculate_mase(actual_array, predicted_array, historical_data)
+            elif metric == 'smape':
+                results['smape'] = self._calculate_smape(actual_array, predicted_array)
+            elif metric == 'mse':
+                results['mse'] = self._calculate_mse(actual_array, predicted_array)
+            elif metric == 'r2':
+                results['r2'] = self._calculate_r2(actual_array, predicted_array)
+            elif metric == 'directional_accuracy':
+                results['directional_accuracy'] = self._calculate_directional_accuracy(actual_array, predicted_array)
+                
+        # Add additional summary statistics
+        results['forecast_bias'] = np.mean(predicted_array - actual_array)
+        results['mean_actual'] = np.mean(actual_array)
+        results['mean_predicted'] = np.mean(predicted_array)
+        results['std_actual'] = np.std(actual_array)
+        results['std_predicted'] = np.std(predicted_array)
+        results['n_observations'] = len(actual_array)
+        
+        return results
+        
+    def _calculate_mae(self, actual: np.ndarray, predicted: np.ndarray) -> float:
+        """
+        Calculate Mean Absolute Error.
+        
+        Parameters:
+        -----------
+        actual : np.ndarray
+            Actual values
+        predicted : np.ndarray
+            Predicted values
+            
+        Returns:
+        --------
+        mae : float
+            Mean Absolute Error
+        """
+        return float(np.mean(np.abs(actual - predicted)))
+        
+    def _calculate_mape(self, actual: np.ndarray, predicted: np.ndarray) -> float:
+        """
+        Calculate Mean Absolute Percentage Error.
+        
+        Parameters:
+        -----------
+        actual : np.ndarray
+            Actual values
+        predicted : np.ndarray
+            Predicted values
+            
+        Returns:
+        --------
+        mape : float
+            Mean Absolute Percentage Error (as percentage)
+        """
+        # Handle zero values in actual
+        mask = actual != 0
+        if not np.any(mask):
+            return float('inf')  # All actual values are zero
+            
+        mape_values = np.abs((actual[mask] - predicted[mask]) / actual[mask]) * 100
+        return float(np.mean(mape_values))
+        
+    def _calculate_rmse(self, actual: np.ndarray, predicted: np.ndarray) -> float:
+        """
+        Calculate Root Mean Square Error.
+        
+        Parameters:
+        -----------
+        actual : np.ndarray
+            Actual values
+        predicted : np.ndarray
+            Predicted values
+            
+        Returns:
+        --------
+        rmse : float
+            Root Mean Square Error
+        """
+        return float(np.sqrt(np.mean((actual - predicted) ** 2)))
+        
+    def _calculate_mse(self, actual: np.ndarray, predicted: np.ndarray) -> float:
+        """
+        Calculate Mean Square Error.
+        
+        Parameters:
+        -----------
+        actual : np.ndarray
+            Actual values
+        predicted : np.ndarray
+            Predicted values
+            
+        Returns:
+        --------
+        mse : float
+            Mean Square Error
+        """
+        return float(np.mean((actual - predicted) ** 2))
+        
+    def _calculate_mase(self, actual: np.ndarray, predicted: np.ndarray, 
+                       historical_data: Optional[np.ndarray] = None) -> float:
+        """
+        Calculate Mean Absolute Scaled Error.
+        
+        Parameters:
+        -----------
+        actual : np.ndarray
+            Actual values
+        predicted : np.ndarray
+            Predicted values
+        historical_data : np.ndarray, optional
+            Historical data for scaling factor calculation
+            
+        Returns:
+        --------
+        mase : float
+            Mean Absolute Scaled Error
+        """
+        if historical_data is None:
+            # Cannot calculate MASE without historical data
+            return float('nan')
+            
+        historical_array = historical_data.values if hasattr(historical_data, 'values') else np.array(historical_data)
+        
+        # Calculate seasonal naive forecast errors
+        seasonal_period = self.seasonal_period or 1
+        
+        if len(historical_array) <= seasonal_period:
+            # Use simple naive forecast (lag-1) if insufficient data for seasonal naive
+            naive_errors = np.abs(np.diff(historical_array))
+        else:
+            # Use seasonal naive forecast
+            naive_forecast = historical_array[:-seasonal_period]
+            naive_actual = historical_array[seasonal_period:]
+            naive_errors = np.abs(naive_actual - naive_forecast)
+            
+        if len(naive_errors) == 0 or np.mean(naive_errors) == 0:
+            return float('inf')
+            
+        mae = np.mean(np.abs(actual - predicted))
+        mean_naive_error = np.mean(naive_errors)
+        
+        return float(mae / mean_naive_error)
+        
+    def _calculate_smape(self, actual: np.ndarray, predicted: np.ndarray) -> float:
+        """
+        Calculate Symmetric Mean Absolute Percentage Error.
+        
+        Parameters:
+        -----------
+        actual : np.ndarray
+            Actual values
+        predicted : np.ndarray
+            Predicted values
+            
+        Returns:
+        --------
+        smape : float
+            Symmetric Mean Absolute Percentage Error (as percentage)
+        """
+        denominator = (np.abs(actual) + np.abs(predicted)) / 2.0
+        
+        # Handle zero denominators
+        mask = denominator != 0
+        if not np.any(mask):
+            return 0.0  # Perfect forecast when both actual and predicted are zero
+            
+        smape_values = np.abs(actual[mask] - predicted[mask]) / denominator[mask] * 100
+        return float(np.mean(smape_values))
+        
+    def _calculate_r2(self, actual: np.ndarray, predicted: np.ndarray) -> float:
+        """
+        Calculate R-squared (coefficient of determination).
+        
+        Parameters:
+        -----------
+        actual : np.ndarray
+            Actual values
+        predicted : np.ndarray
+            Predicted values
+            
+        Returns:
+        --------
+        r2 : float
+            R-squared value
+        """
+        ss_res = np.sum((actual - predicted) ** 2)
+        ss_tot = np.sum((actual - np.mean(actual)) ** 2)
+        
+        if ss_tot == 0:
+            return 1.0 if ss_res == 0 else 0.0
+            
+        return float(1 - (ss_res / ss_tot))
+        
+    def _calculate_directional_accuracy(self, actual: np.ndarray, predicted: np.ndarray) -> float:
+        """
+        Calculate directional accuracy (percentage of correct direction predictions).
+        
+        Parameters:
+        -----------
+        actual : np.ndarray
+            Actual values
+        predicted : np.ndarray
+            Predicted values
+            
+        Returns:
+        --------
+        directional_accuracy : float
+            Directional accuracy as percentage
+        """
+        if len(actual) < 2 or len(predicted) < 2:
+            return float('nan')
+            
+        # Calculate direction changes
+        actual_direction = np.diff(actual) >= 0
+        predicted_direction = np.diff(predicted) >= 0
+        
+        # Calculate accuracy
+        correct_directions = actual_direction == predicted_direction
+        return float(np.mean(correct_directions) * 100)
+        
+    def create_evaluation_report(self, actual: Union[pd.Series, np.ndarray], 
+                               predicted: Union[pd.Series, np.ndarray],
+                               historical_data: Optional[Union[pd.Series, np.ndarray]] = None,
+                               model_name: str = "Model") -> Dict[str, Any]:
+        """
+        Create a comprehensive evaluation report.
+        
+        Parameters:
+        -----------
+        actual : pd.Series or np.ndarray
+            Actual observed values
+        predicted : pd.Series or np.ndarray
+            Predicted/forecasted values
+        historical_data : pd.Series or np.ndarray, optional
+            Historical data for MASE calculation
+        model_name : str, default='Model'
+            Name of the model being evaluated
+            
+        Returns:
+        --------
+        report : dict
+            Comprehensive evaluation report
+        """
+        metrics = self.evaluate_forecast(actual, predicted, historical_data)
+        
+        # Create performance categorization
+        performance_category = self._categorize_performance(metrics)
+        
+        # Generate interpretation
+        interpretation = self._generate_evaluation_interpretation(metrics, model_name)
+        
+        # Generate recommendations
+        recommendations = self._generate_evaluation_recommendations(metrics)
+        
+        report = {
+            'model_name': model_name,
+            'evaluation_metrics': metrics,
+            'performance_category': performance_category,
+            'interpretation': interpretation,
+            'recommendations': recommendations,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        return report
+        
+    def _categorize_performance(self, metrics: Dict[str, float]) -> str:
+        """
+        Categorize model performance based on metrics.
+        
+        Parameters:
+        -----------
+        metrics : dict
+            Evaluation metrics
+            
+        Returns:
+        --------
+        category : str
+            Performance category
+        """
+        # Use MAPE as primary metric for categorization
+        mape = metrics.get('mape', float('inf'))
+        
+        if mape <= 5:
+            return 'excellent'
+        elif mape <= 15:
+            return 'good'
+        elif mape <= 25:
+            return 'moderate'
+        else:
+            return 'poor'
+            
+    def _generate_evaluation_interpretation(self, metrics: Dict[str, float], model_name: str) -> str:
+        """
+        Generate human-readable interpretation of evaluation results.
+        
+        Parameters:
+        -----------
+        metrics : dict
+            Evaluation metrics
+        model_name : str
+            Name of the model
+            
+        Returns:
+        --------
+        interpretation : str
+            Human-readable interpretation
+        """
+        mae = metrics.get('mae', 0)
+        mape = metrics.get('mape', 0)
+        rmse = metrics.get('rmse', 0)
+        r2 = metrics.get('r2', 0)
+        n_obs = metrics.get('n_observations', 0)
+        
+        interpretation = (
+            f"{model_name} evaluation on {n_obs} observations: "
+            f"MAE = {mae:.3f}, MAPE = {mape:.1f}%, RMSE = {rmse:.3f}. "
+        )
+        
+        if r2 != 0:
+            interpretation += f"Variance explained (R²) = {r2:.3f}. "
+            
+        # Add performance assessment
+        if mape <= 10:
+            interpretation += "Forecast accuracy is excellent."
+        elif mape <= 20:
+            interpretation += "Forecast accuracy is good."
+        elif mape <= 30:
+            interpretation += "Forecast accuracy is moderate."
+        else:
+            interpretation += "Forecast accuracy needs improvement."
+            
+        return interpretation
+        
+    def _generate_evaluation_recommendations(self, metrics: Dict[str, float]) -> List[str]:
+        """
+        Generate recommendations based on evaluation metrics.
+        
+        Parameters:
+        -----------
+        metrics : dict
+            Evaluation metrics
+            
+        Returns:
+        --------
+        recommendations : List[str]
+            List of recommendations
+        """
+        recommendations = []
+        
+        mape = metrics.get('mape', 0)
+        mae = metrics.get('mae', 0)
+        rmse = metrics.get('rmse', 0)
+        bias = abs(metrics.get('forecast_bias', 0))
+        directional_accuracy = metrics.get('directional_accuracy', 0)
+        
+        if mape > 30:
+            recommendations.append("High forecast error - consider alternative models or additional features")
+            
+        if rmse > mae * 2:
+            recommendations.append("High RMSE relative to MAE suggests presence of large forecast errors")
+            
+        if bias > mae * 0.5:
+            recommendations.append("Significant forecast bias detected - model systematically over/under-predicts")
+            
+        if directional_accuracy and directional_accuracy < 50:
+            recommendations.append("Poor directional accuracy - model struggles to predict trend changes")
+            
+        if metrics.get('n_observations', 0) < 20:
+            recommendations.append("Limited evaluation data - collect more out-of-sample observations for robust evaluation")
+            
+        if not recommendations:
+            recommendations.append("Forecast performance is satisfactory - continue monitoring")
+            
+        return recommendations
