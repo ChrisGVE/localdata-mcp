@@ -154,8 +154,8 @@ class ResidualAnalysisResult:
     """Result structure for residual analysis."""
     residuals: np.ndarray
     standardized_residuals: np.ndarray
-    studentized_residuals: Optional[np.ndarray] = None
     fitted_values: np.ndarray
+    studentized_residuals: Optional[np.ndarray] = None
     
     # Diagnostic tests
     normality_test: Dict[str, Any] = field(default_factory=dict)
