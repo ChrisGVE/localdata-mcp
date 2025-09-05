@@ -6095,3 +6095,728 @@ class VARModelForecaster(MultivariateTimeSeriesTransformer):
             recommendations.append("VAR model appears well-specified - continue with current specification")
         
         return recommendations
+
+
+class CointegrationAnalyzer(MultivariateTimeSeriesTransformer):
+    """
+    Cointegration analysis for multivariate time series using Johansen test.
+    
+    This analyzer identifies long-run equilibrium relationships between multiple
+    non-stationary time series. The Johansen cointegration test determines the
+    number of cointegrating relationships and provides error correction model
+    components for understanding short-term dynamics and long-term equilibrium.
+    
+    Key Features:
+    - Johansen cointegration test with trace and maximum eigenvalue statistics
+    - Automatic determination of optimal lag order for VECM
+    - Cointegrating vectors and adjustment coefficients estimation
+    - Error correction model analysis
+    - Comprehensive interpretation of long-term relationships
+    - Support for different deterministic trend specifications
+    
+    Parameters:
+    -----------
+    det_order : int, default=-1
+        Deterministic order for cointegration test
+        (-1: no deterministic trend, 0: constant, 1: linear trend)
+    k_ar_diff : int, default=1
+        Number of lags for VECM in differences
+    significance_level : float, default=0.05
+        Significance level for cointegration tests
+    
+    Example:
+    --------
+    >>> import pandas as pd
+    >>> import numpy as np
+    >>> from localdata_mcp.domains.time_series_analysis import CointegrationAnalyzer
+    >>> 
+    >>> # Create sample cointegrated time series
+    >>> dates = pd.date_range('2020-01-01', periods=200, freq='D')
+    >>> np.random.seed(42)
+    >>> # Create common stochastic trend
+    >>> common_trend = np.cumsum(np.random.randn(200))
+    >>> data = pd.DataFrame({
+    ...     'series1': common_trend + np.random.randn(200) * 0.1,
+    ...     'series2': 2 * common_trend + np.random.randn(200) * 0.1,
+    ...     'series3': common_trend - np.random.randn(200) * 0.1
+    ... }, index=dates)
+    >>> 
+    >>> # Perform cointegration analysis
+    >>> analyzer = CointegrationAnalyzer()
+    >>> result = analyzer.fit_transform(data)
+    >>> 
+    >>> print(f"Number of cointegrating relationships: {result.model_parameters['n_coint']}")
+    >>> print(f"Trace statistics: {result.model_parameters['trace_stat']}")
+    """
+    
+    def __init__(self, det_order: int = -1, k_ar_diff: int = 1,
+                 significance_level: float = 0.05, **kwargs):
+        super().__init__(**kwargs)
+        self.det_order = det_order
+        self.k_ar_diff = k_ar_diff
+        self.significance_level = significance_level
+        
+        # Validate parameters
+        if det_order not in [-1, 0, 1]:
+            raise ValueError("det_order must be -1 (no trend), 0 (constant), or 1 (linear trend)")
+            
+        if significance_level <= 0 or significance_level >= 1:
+            raise ValueError("significance_level must be between 0 and 1")
+    
+    def _analysis_logic(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Core cointegration analysis logic.
+        
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input multivariate time series data
+            
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Cointegration analysis results
+        """
+        start_time = time.time()
+        
+        try:
+            # Validate multivariate data
+            X = self._validate_multivariate_data(X)
+            
+            # Perform Johansen cointegration test
+            coint_result = coint_johansen(X.values, det_order=self.det_order, k_ar_diff=self.k_ar_diff)
+            
+            n_series = X.shape[1]
+            
+            # Determine number of cointegrating relationships
+            trace_crit_values = coint_result.cvt
+            max_eigen_crit_values = coint_result.cvm
+            
+            # Count cointegrating relationships using trace test
+            n_coint_trace = 0
+            for i in range(n_series):
+                if coint_result.lr1[i] > trace_crit_values[i, 1]:  # 5% critical value
+                    n_coint_trace += 1
+            
+            # Count cointegrating relationships using max eigenvalue test
+            n_coint_max_eigen = 0
+            for i in range(n_series):
+                if coint_result.lr2[i] > max_eigen_crit_values[i, 1]:  # 5% critical value
+                    n_coint_max_eigen += 1
+            
+            # Use the more conservative estimate
+            n_coint = min(n_coint_trace, n_coint_max_eigen)
+            
+            logger.info(f"Detected {n_coint} cointegrating relationships")
+            
+            # Extract cointegrating vectors and adjustment coefficients
+            coint_vectors = coint_result.evec[:, :n_coint] if n_coint > 0 else None
+            adjustment_coeffs = coint_result.evecr[:n_coint, :] if n_coint > 0 else None
+            
+            # Create cointegrating relationships DataFrame
+            coint_relationships = None
+            if n_coint > 0 and coint_vectors is not None:
+                coint_relationships = pd.DataFrame(
+                    coint_vectors,
+                    index=X.columns,
+                    columns=[f'Coint_Relationship_{i+1}' for i in range(n_coint)]
+                )
+            
+            # Create adjustment coefficients DataFrame
+            adjustment_df = None
+            if n_coint > 0 and adjustment_coeffs is not None:
+                adjustment_df = pd.DataFrame(
+                    adjustment_coeffs,
+                    index=[f'Coint_Relationship_{i+1}' for i in range(n_coint)],
+                    columns=X.columns
+                )
+            
+            # Model diagnostics
+            model_diagnostics = {
+                'n_cointegrating_relationships_trace': n_coint_trace,
+                'n_cointegrating_relationships_max_eigen': n_coint_max_eigen,
+                'n_cointegrating_relationships_final': n_coint,
+                'deterministic_order': self.det_order,
+                'vecm_lags': self.k_ar_diff,
+                'trace_statistics': coint_result.lr1.tolist(),
+                'max_eigen_statistics': coint_result.lr2.tolist(),
+                'trace_critical_values': trace_crit_values.tolist(),
+                'max_eigen_critical_values': max_eigen_crit_values.tolist(),
+                'eigenvalues': coint_result.eig.tolist()
+            }
+            
+            # Model parameters
+            model_parameters = {
+                'n_coint': n_coint,
+                'det_order': self.det_order,
+                'k_ar_diff': self.k_ar_diff,
+                'trace_stat': coint_result.lr1,
+                'max_eigen_stat': coint_result.lr2,
+                'eigenvalues': coint_result.eig,
+                'cointegrating_vectors': coint_vectors,
+                'adjustment_coefficients': adjustment_coeffs,
+                'cointegrating_relationships': coint_relationships,
+                'adjustment_coefficients_df': adjustment_df
+            }
+            
+            # Generate interpretation
+            interpretation = self._generate_cointegration_interpretation(
+                n_coint, n_series, coint_result, X.columns
+            )
+            
+            # Generate recommendations
+            recommendations = self._generate_cointegration_recommendations(
+                n_coint, n_series, coint_result, X
+            )
+            
+            processing_time = time.time() - start_time
+            
+            return self._prepare_multivariate_result(
+                analysis_type="cointegration_analysis",
+                statistic=float(coint_result.lr1[0]) if len(coint_result.lr1) > 0 else None,
+                p_value=None,  # Johansen test doesn't provide explicit p-values
+                model_parameters=model_parameters,
+                model_diagnostics=model_diagnostics,
+                interpretation=interpretation,
+                recommendations=recommendations,
+                processing_time=processing_time,
+                data_quality_score=self._calculate_data_quality_score(X)
+            )
+            
+        except Exception as e:
+            logger.error(f"Cointegration analysis failed: {e}")
+            return self._prepare_multivariate_result(
+                analysis_type="cointegration_analysis",
+                interpretation=f"Cointegration analysis failed: {str(e)}",
+                recommendations=["Check data quality and ensure series are I(1)"],
+                processing_time=time.time() - start_time
+            )
+    
+    def _generate_cointegration_interpretation(self, n_coint: int, n_series: int,
+                                             coint_result, series_names) -> str:
+        """
+        Generate interpretation of cointegration analysis results.
+        
+        Parameters:
+        -----------
+        n_coint : int
+            Number of cointegrating relationships detected
+        n_series : int
+            Total number of time series
+        coint_result
+            Johansen cointegration test result
+        series_names
+            Names of the time series
+            
+        Returns:
+        --------
+        interpretation : str
+            Human-readable interpretation
+        """
+        interpretation = (
+            f"Johansen cointegration test on {n_series} time series "
+            f"detected {n_coint} cointegrating relationships. "
+        )
+        
+        if n_coint == 0:
+            interpretation += (
+                "No long-term equilibrium relationships found. "
+                "Time series appear to drift apart over time without "
+                "a stable long-term relationship."
+            )
+        elif n_coint == 1:
+            interpretation += (
+                "One cointegrating relationship found, indicating a "
+                "single long-term equilibrium binding the time series together. "
+                "The series share a common stochastic trend."
+            )
+        elif n_coint == n_series - 1:
+            interpretation += (
+                f"Maximum number of cointegrating relationships ({n_coint}) found. "
+                "This suggests the system is stationary in levels, with strong "
+                "long-term equilibrium relationships."
+            )
+        else:
+            interpretation += (
+                f"Multiple cointegrating relationships ({n_coint}) found, "
+                "indicating several independent long-term equilibria. "
+                "The system has both common trends and stable relationships."
+            )
+        
+        # Add information about the strongest relationship
+        if n_coint > 0 and len(coint_result.lr1) > 0:
+            max_trace_stat = max(coint_result.lr1)
+            interpretation += f" Strongest relationship has trace statistic: {max_trace_stat:.2f}."
+        
+        return interpretation
+    
+    def _generate_cointegration_recommendations(self, n_coint: int, n_series: int,
+                                              coint_result, X: pd.DataFrame) -> List[str]:
+        """
+        Generate recommendations based on cointegration analysis results.
+        
+        Parameters:
+        -----------
+        n_coint : int
+            Number of cointegrating relationships detected
+        n_series : int
+            Total number of time series
+        coint_result
+            Johansen cointegration test result
+        X : pd.DataFrame
+            Original data
+            
+        Returns:
+        --------
+        recommendations : List[str]
+            List of recommendations
+        """
+        recommendations = []
+        
+        if n_coint == 0:
+            recommendations.extend([
+                "No cointegration detected - consider VAR model in first differences",
+                "Check for structural breaks that might mask cointegrating relationships",
+                "Verify that all series are integrated of the same order (I(1))"
+            ])
+        elif n_coint > 0:
+            recommendations.extend([
+                f"Use Vector Error Correction Model (VECM) with {n_coint} cointegrating relationships",
+                "Analyze error correction coefficients for adjustment speed to equilibrium",
+                "Consider economic interpretation of cointegrating vectors"
+            ])
+            
+            if n_coint == n_series - 1:
+                recommendations.append(
+                    "System appears stationary - consider VAR model in levels"
+                )
+        
+        # Check eigenvalues for stability
+        if hasattr(coint_result, 'eig') and len(coint_result.eig) > 0:
+            largest_eigenvalue = max(coint_result.eig)
+            if largest_eigenvalue > 0.9:
+                recommendations.append(
+                    "Large eigenvalue detected - verify system stability"
+                )
+        
+        # Data quality recommendations
+        if len(X) < 100:
+            recommendations.append(
+                "Limited sample size - cointegration tests have low power with small samples"
+            )
+        
+        # Check for sufficient variation
+        try:
+            coeff_vars = X.std() / X.mean()
+            if any(cv < 0.1 for cv in coeff_vars.abs()):
+                recommendations.append(
+                    "Low variation in some series - may affect cointegration test power"
+                )
+        except Exception:
+            pass
+        
+        if not recommendations:
+            recommendations.append(
+                "Cointegration analysis appears robust - proceed with VECM modeling"
+            )
+        
+        return recommendations
+
+
+class GrangerCausalityAnalyzer(MultivariateTimeSeriesTransformer):
+    """
+    Granger causality analysis for multivariate time series.
+    
+    This analyzer tests whether one time series can help predict another time series,
+    which is the statistical definition of Granger causality. The test examines if
+    lagged values of variable X provide statistically significant information about
+    variable Y, beyond what is already contained in lagged values of Y itself.
+    
+    Key Features:
+    - Pairwise Granger causality testing for all variable combinations
+    - Multiple lag lengths testing with automatic optimal lag selection
+    - F-statistic computation with p-values for significance testing
+    - Directional causality analysis (X→Y vs Y→X)
+    - Comprehensive interpretation of causal relationships
+    - Support for different significance levels
+    
+    Parameters:
+    -----------
+    max_lags : int, default=4
+        Maximum number of lags to test for Granger causality
+    significance_level : float, default=0.05
+        Significance level for Granger causality tests
+    test_all_pairs : bool, default=True
+        Whether to test all pairwise combinations of variables
+    
+    Example:
+    --------
+    >>> import pandas as pd
+    >>> import numpy as np
+    >>> from localdata_mcp.domains.time_series_analysis import GrangerCausalityAnalyzer
+    >>> 
+    >>> # Create sample data with causal relationship
+    >>> dates = pd.date_range('2020-01-01', periods=200, freq='D')
+    >>> np.random.seed(42)
+    >>> x = np.random.randn(200)
+    >>> y = np.zeros(200)
+    >>> for i in range(1, 200):
+    ...     y[i] = 0.5 * x[i-1] + 0.3 * y[i-1] + np.random.randn() * 0.1
+    >>> 
+    >>> data = pd.DataFrame({
+    ...     'cause': x,
+    ...     'effect': y
+    ... }, index=dates)
+    >>> 
+    >>> # Perform Granger causality analysis
+    >>> analyzer = GrangerCausalityAnalyzer()
+    >>> result = analyzer.fit_transform(data)
+    >>> 
+    >>> print(f"Causality results: {result.model_parameters['causality_results']}")
+    """
+    
+    def __init__(self, max_lags: int = 4, significance_level: float = 0.05,
+                 test_all_pairs: bool = True, **kwargs):
+        super().__init__(**kwargs)
+        self.max_lags = max_lags
+        self.significance_level = significance_level
+        self.test_all_pairs = test_all_pairs
+        
+        # Validate parameters
+        if max_lags < 1:
+            raise ValueError("max_lags must be at least 1")
+            
+        if significance_level <= 0 or significance_level >= 1:
+            raise ValueError("significance_level must be between 0 and 1")
+    
+    def _analysis_logic(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Core Granger causality analysis logic.
+        
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input multivariate time series data
+            
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Granger causality analysis results
+        """
+        start_time = time.time()
+        
+        try:
+            # Validate multivariate data
+            X = self._validate_multivariate_data(X)
+            
+            n_series = X.shape[1]
+            series_names = list(X.columns)
+            
+            # Initialize results storage
+            causality_results = {}
+            f_statistics = {}
+            p_values = {}
+            significant_relationships = []
+            
+            # Perform pairwise Granger causality tests
+            for i, cause_var in enumerate(series_names):
+                for j, effect_var in enumerate(series_names):
+                    if i != j:  # Don't test variable against itself
+                        pair_name = f"{cause_var} → {effect_var}"
+                        
+                        try:
+                            # Prepare data for Granger causality test
+                            test_data = X[[effect_var, cause_var]].dropna()
+                            
+                            if len(test_data) < self.max_lags + 20:  # Need sufficient data
+                                logger.warning(f"Insufficient data for {pair_name} causality test")
+                                continue
+                            
+                            # Perform Granger causality test
+                            granger_result = grangercausalitytests(
+                                test_data, 
+                                maxlag=self.max_lags, 
+                                verbose=False
+                            )
+                            
+                            # Extract results for different lag orders
+                            lag_results = {}
+                            min_p_value = 1.0
+                            best_lag = 1
+                            
+                            for lag in range(1, self.max_lags + 1):
+                                if lag in granger_result:
+                                    # Get F-statistic and p-value
+                                    f_stat = granger_result[lag][0]['ssr_ftest'][0]
+                                    p_val = granger_result[lag][0]['ssr_ftest'][1]
+                                    
+                                    lag_results[lag] = {
+                                        'f_statistic': f_stat,
+                                        'p_value': p_val,
+                                        'significant': p_val < self.significance_level
+                                    }
+                                    
+                                    if p_val < min_p_value:
+                                        min_p_value = p_val
+                                        best_lag = lag
+                            
+                            # Store overall results for this pair
+                            causality_results[pair_name] = {
+                                'cause': cause_var,
+                                'effect': effect_var,
+                                'lag_results': lag_results,
+                                'best_lag': best_lag,
+                                'min_p_value': min_p_value,
+                                'significant': min_p_value < self.significance_level,
+                                'f_statistic_best': lag_results[best_lag]['f_statistic'] if best_lag in lag_results else None
+                            }
+                            
+                            # Track significant relationships
+                            if min_p_value < self.significance_level:
+                                significant_relationships.append({
+                                    'relationship': pair_name,
+                                    'p_value': min_p_value,
+                                    'lag': best_lag,
+                                    'f_statistic': lag_results[best_lag]['f_statistic']
+                                })
+                            
+                            f_statistics[pair_name] = lag_results[best_lag]['f_statistic'] if best_lag in lag_results else None
+                            p_values[pair_name] = min_p_value
+                            
+                        except Exception as e:
+                            logger.warning(f"Granger causality test failed for {pair_name}: {e}")
+                            continue
+            
+            # Sort significant relationships by strength (lowest p-value)
+            significant_relationships.sort(key=lambda x: x['p_value'])
+            
+            # Create causality network summary
+            causality_matrix = self._create_causality_matrix(causality_results, series_names)
+            
+            # Model diagnostics
+            model_diagnostics = {
+                'n_relationships_tested': len(causality_results),
+                'n_significant_relationships': len(significant_relationships),
+                'significance_level': self.significance_level,
+                'max_lags_tested': self.max_lags,
+                'causality_matrix': causality_matrix
+            }
+            
+            # Model parameters
+            model_parameters = {
+                'causality_results': causality_results,
+                'significant_relationships': significant_relationships,
+                'f_statistics': f_statistics,
+                'p_values': p_values,
+                'causality_matrix': causality_matrix,
+                'series_names': series_names
+            }
+            
+            # Generate interpretation
+            interpretation = self._generate_granger_interpretation(
+                significant_relationships, len(causality_results), series_names
+            )
+            
+            # Generate recommendations
+            recommendations = self._generate_granger_recommendations(
+                significant_relationships, causality_results, X
+            )
+            
+            processing_time = time.time() - start_time
+            
+            return self._prepare_multivariate_result(
+                analysis_type="granger_causality",
+                statistic=significant_relationships[0]['f_statistic'] if significant_relationships else None,
+                p_value=significant_relationships[0]['p_value'] if significant_relationships else None,
+                model_parameters=model_parameters,
+                model_diagnostics=model_diagnostics,
+                interpretation=interpretation,
+                recommendations=recommendations,
+                processing_time=processing_time,
+                data_quality_score=self._calculate_data_quality_score(X)
+            )
+            
+        except Exception as e:
+            logger.error(f"Granger causality analysis failed: {e}")
+            return self._prepare_multivariate_result(
+                analysis_type="granger_causality",
+                interpretation=f"Granger causality analysis failed: {str(e)}",
+                recommendations=["Check data quality and stationarity"],
+                processing_time=time.time() - start_time
+            )
+    
+    def _create_causality_matrix(self, causality_results: Dict, series_names: List[str]) -> pd.DataFrame:
+        """
+        Create a matrix showing causality relationships between all variables.
+        
+        Parameters:
+        -----------
+        causality_results : dict
+            Results from Granger causality tests
+        series_names : list
+            Names of the time series
+            
+        Returns:
+        --------
+        matrix : pd.DataFrame
+            Causality matrix where entry (i,j) indicates whether i causes j
+        """
+        n_series = len(series_names)
+        matrix = np.zeros((n_series, n_series))
+        
+        for relationship, results in causality_results.items():
+            cause_var = results['cause']
+            effect_var = results['effect']
+            
+            try:
+                cause_idx = series_names.index(cause_var)
+                effect_idx = series_names.index(effect_var)
+                
+                # Store p-value (0 = strong causality, 1 = no causality)
+                matrix[cause_idx, effect_idx] = results['min_p_value']
+            except ValueError:
+                continue
+        
+        causality_df = pd.DataFrame(
+            matrix,
+            index=series_names,
+            columns=series_names
+        )
+        
+        return causality_df
+    
+    def _generate_granger_interpretation(self, significant_relationships: List[Dict],
+                                       total_tests: int, series_names: List[str]) -> str:
+        """
+        Generate interpretation of Granger causality results.
+        
+        Parameters:
+        -----------
+        significant_relationships : list
+            List of significant causality relationships
+        total_tests : int
+            Total number of causality tests performed
+        series_names : list
+            Names of time series
+            
+        Returns:
+        --------
+        interpretation : str
+            Human-readable interpretation
+        """
+        n_significant = len(significant_relationships)
+        n_series = len(series_names)
+        
+        interpretation = (
+            f"Granger causality analysis tested {total_tests} directional relationships "
+            f"between {n_series} time series. "
+            f"Found {n_significant} significant causal relationships "
+            f"at {self.significance_level*100:.0f}% significance level. "
+        )
+        
+        if n_significant == 0:
+            interpretation += (
+                "No significant causal relationships detected. "
+                "Variables appear to evolve independently or relationships "
+                "may be non-linear or at different time scales."
+            )
+        elif n_significant == 1:
+            rel = significant_relationships[0]
+            interpretation += (
+                f"One significant relationship found: {rel['relationship']} "
+                f"(p-value: {rel['p_value']:.4f}, optimal lag: {rel['lag']}). "
+                "This suggests predictive information flows in one direction."
+            )
+        else:
+            interpretation += (
+                f"Multiple causal relationships detected. "
+                f"Strongest relationship: {significant_relationships[0]['relationship']} "
+                f"(p-value: {significant_relationships[0]['p_value']:.4f}). "
+            )
+            
+            # Check for bidirectional causality
+            relationships_set = {rel['relationship'] for rel in significant_relationships}
+            bidirectional = []
+            
+            for rel in significant_relationships:
+                cause, effect = rel['relationship'].split(' → ')
+                reverse_rel = f"{effect} → {cause}"
+                if reverse_rel in relationships_set:
+                    bidirectional.append((cause, effect))
+            
+            if bidirectional:
+                interpretation += f" Detected {len(bidirectional)} bidirectional causal relationships."
+        
+        return interpretation
+    
+    def _generate_granger_recommendations(self, significant_relationships: List[Dict],
+                                        causality_results: Dict, X: pd.DataFrame) -> List[str]:
+        """
+        Generate recommendations based on Granger causality results.
+        
+        Parameters:
+        -----------
+        significant_relationships : list
+            List of significant causality relationships
+        causality_results : dict
+            All causality test results
+        X : pd.DataFrame
+            Original data
+            
+        Returns:
+        --------
+        recommendations : List[str]
+            List of recommendations
+        """
+        recommendations = []
+        n_significant = len(significant_relationships)
+        
+        if n_significant == 0:
+            recommendations.extend([
+                "No Granger causality detected - consider alternative modeling approaches",
+                "Check for non-linear relationships using non-parametric methods",
+                "Consider different lag structures or transformation of variables"
+            ])
+        else:
+            recommendations.extend([
+                f"Incorporate {n_significant} causal relationships in forecasting models",
+                "Use causal variables as predictors in targeted forecasting",
+                "Consider VAR model structure based on causality patterns"
+            ])
+            
+            # Check for complex causal patterns
+            if n_significant > len(X.columns):
+                recommendations.append(
+                    "Complex causal network detected - consider structural VAR modeling"
+                )
+            
+            # Lag-specific recommendations
+            optimal_lags = [rel['lag'] for rel in significant_relationships]
+            if max(optimal_lags) > 1:
+                recommendations.append(
+                    f"Multi-period causality detected (up to {max(optimal_lags)} lags) - "
+                    "consider longer-term predictive relationships"
+                )
+        
+        # Data quality recommendations
+        if len(X) < self.max_lags * 20:
+            recommendations.append(
+                "Limited sample size relative to lag order - results may be unreliable"
+            )
+        
+        # Statistical power recommendations
+        weak_relationships = [
+            rel for rel in significant_relationships 
+            if rel['p_value'] > self.significance_level * 2  # Marginally significant
+        ]
+        if weak_relationships:
+            recommendations.append(
+                "Some marginally significant relationships detected - verify with larger sample"
+            )
+        
+        if not recommendations:
+            recommendations.append(
+                "Granger causality analysis appears robust - use results for model specification"
+            )
+        
+        return recommendations
