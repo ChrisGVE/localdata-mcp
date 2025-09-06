@@ -9,6 +9,7 @@ Available domains:
 - statistical_analysis: Comprehensive statistical analysis tools
 - regression_modeling: Comprehensive regression analysis and modeling capabilities
 - pattern_recognition: Advanced clustering, dimensionality reduction, and anomaly detection
+- time_series: Time series analysis, forecasting, and temporal pattern detection
 - optimization: Optimization and operations research capabilities
 """
 
@@ -64,6 +65,32 @@ from .pattern_recognition import (
     DimensionalityReductionResult,
     AnomalyDetectionResult,
     PatternEvaluationResult
+)
+
+from .time_series import (
+    # Core transformers
+    TimeSeriesAnalyzer,
+    BasicTimeSeriesAnalyzer,
+    ARIMAForecaster,
+    ExponentialSmoothingForecaster,
+    AnomalyDetector,
+    ChangePointDetector,
+    MultivariateAnalyzer,
+    
+    # High-level functions
+    analyze_time_series_basic,
+    forecast_arima,
+    forecast_exponential_smoothing,
+    detect_time_series_anomalies,
+    detect_change_points,
+    analyze_multivariate_time_series,
+    
+    # Result classes
+    TimeSeriesResult,
+    BasicAnalysisResult,
+    ForecastResult,
+    AnomalyDetectionResult,
+    ChangePointResult
 )
 
 from .optimization import (
@@ -215,6 +242,26 @@ __all__ = [
     "DimensionalityReductionResult",
     "AnomalyDetectionResult",
     "PatternEvaluationResult",
+    
+    # Time Series Domain
+    "TimeSeriesAnalyzer",
+    "BasicTimeSeriesAnalyzer",
+    "ARIMAForecaster",
+    "ExponentialSmoothingForecaster",
+    "AnomalyDetector",
+    "ChangePointDetector",
+    "MultivariateAnalyzer",
+    "analyze_time_series_basic",
+    "forecast_arima",
+    "forecast_exponential_smoothing",
+    "detect_time_series_anomalies",
+    "detect_change_points",
+    "analyze_multivariate_time_series",
+    "TimeSeriesResult",
+    "BasicAnalysisResult",
+    "ForecastResult",
+    "AnomalyDetectionResult",
+    "ChangePointResult",
     
     # Optimization Domain
     "LinearProgrammingSolver",

@@ -66,6 +66,25 @@ from .metadata_manager import (
     create_metadata_schema,
 )
 
+from .converters import (
+    # Core converters
+    PandasConverter,
+    NumpyConverter,
+    SparseMatrixConverter,
+    
+    # Conversion options and utilities
+    ConversionOptions,
+    ConversionQuality,
+    
+    # Factory functions
+    create_pandas_converter,
+    create_numpy_converter,
+    create_sparse_converter,
+    create_memory_efficient_options,
+    create_high_fidelity_options,
+    create_streaming_options,
+)
+
 __all__ = [
     # Core data structures
     'DataFormat',
@@ -105,6 +124,23 @@ __all__ = [
     'MetadataLineage',
     'create_preservation_rule',
     'create_metadata_schema',
+    
+    # Core converters
+    'PandasConverter',
+    'NumpyConverter', 
+    'SparseMatrixConverter',
+    
+    # Conversion options and utilities
+    'ConversionOptions',
+    'ConversionQuality',
+    
+    # Factory functions
+    'create_pandas_converter',
+    'create_numpy_converter',
+    'create_sparse_converter',
+    'create_memory_efficient_options',
+    'create_high_fidelity_options',
+    'create_streaming_options',
     
     # Error handling
     'ConversionError',

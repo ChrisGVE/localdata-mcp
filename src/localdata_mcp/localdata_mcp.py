@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
+import numpy as np
 import yaml
 from fastmcp import FastMCP
 from sqlalchemy import create_engine, inspect, text
@@ -99,1904 +100,394 @@ except ImportError:
 
 # Apple Numbers support
 try:
-    from numbers_parser import Document
-    NUMBERS_PARSER_AVAILABLE = True
+    import numbers_parser
+    NUMBERS_AVAILABLE = True
 except ImportError:
-    NUMBERS_PARSER_AVAILABLE = False
+    NUMBERS_AVAILABLE = False
 
-# DuckDB support
-try:
-    import duckdb
-    DUCKDB_AVAILABLE = True
-except ImportError:
-    DUCKDB_AVAILABLE = False
-
-# HDF5 support for scientific data
+# HDF5 support (scientific data format)
 try:
     import h5py
-    H5PY_AVAILABLE = True
+    import tables
+    HDF5_AVAILABLE = True
 except ImportError:
-    H5PY_AVAILABLE = False
+    HDF5_AVAILABLE = False
 
-# Modern database support - Redis
+# Modern database support
 try:
     import redis
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
 
-# Modern database support - Elasticsearch
 try:
-    from elasticsearch import Elasticsearch
+    import elasticsearch
     ELASTICSEARCH_AVAILABLE = True
 except ImportError:
     ELASTICSEARCH_AVAILABLE = False
 
-# Modern database support - MongoDB
 try:
     import pymongo
-    PYMONGO_AVAILABLE = True
+    MONGODB_AVAILABLE = True
 except ImportError:
-    PYMONGO_AVAILABLE = False
+    MONGODB_AVAILABLE = False
 
-# Modern database support - InfluxDB
 try:
     from influxdb_client import InfluxDBClient
     INFLUXDB_AVAILABLE = True
 except ImportError:
     INFLUXDB_AVAILABLE = False
 
-# Modern database support - Neo4j
 try:
     from neo4j import GraphDatabase
     NEO4J_AVAILABLE = True
 except ImportError:
     NEO4J_AVAILABLE = False
 
-# Modern database support - CouchDB
 try:
     import couchdb
     COUCHDB_AVAILABLE = True
 except ImportError:
     COUCHDB_AVAILABLE = False
 
-# Set up logging
-# Initialize structured logging before other components
-config_manager = get_config_manager()
-logging_config = config_manager.get_logging_config()
-logging_manager = get_logging_manager(logging_config)
+# Enhanced streaming JSON processing
+try:
+    import ijson
+    IJSON_AVAILABLE = True
+except ImportError:
+    IJSON_AVAILABLE = False
 
-# Get structured logger (logging configuration handled by LoggingManager)
+# Create FastMCP instance
+mcp = FastMCP("LocalData MCP - Advanced database connection and analytics platform")
+
+# Initialize components
+logging_manager = get_logging_manager()
+config_manager = get_config_manager()
+
+# Initialize logging configuration from config manager
+logging_config = config_manager.logging_config
 logger = get_logger(__name__)
 
-# Create the MCP server instance
-mcp = FastMCP("localdata-mcp")
-
-# Add metrics endpoint if enabled
-if logging_config.enable_metrics:
-    from prometheus_client import CONTENT_TYPE_LATEST
-    
-    @mcp.tool()
-    def get_metrics() -> str:
-        """Get Prometheus metrics for monitoring dashboards.
-        
-        Returns:
-            Prometheus-formatted metrics string
-        """
-        try:
-            with logging_manager.context(
-                operation="metrics_export",
-                component="localdata_mcp"
-            ):
-                logger.debug("Exporting Prometheus metrics")
-            
-            metrics_data = logging_manager.get_metrics()
-            return metrics_data
-            
-        except Exception as e:
-            logging_manager.log_error(e, "localdata_mcp", operation="metrics_export")
-            return f"Error exporting metrics: {e}"
-
-
-@dataclass
 class QueryBuffer:
-    query_id: str
-    db_name: str
-    query: str
-    results: pd.DataFrame
-    timestamp: float
-    source_file_path: Optional[str] = None
-    source_file_mtime: Optional[float] = None
+    """Buffer to store query results with metadata."""
     
-    # Enhanced metadata integration
-    response_metadata: Optional['EnhancedResponseMetadata'] = None
-    llm_protocol: Optional['LLMCommunicationProtocol'] = None
+    def __init__(self, df: pd.DataFrame, query: str, db_name: str):
+        self.df = df
+        self.query = query
+        self.db_name = db_name
+        self.timestamp = time.time()
+        self.access_count = 0
+        self.chunk_info = {}
+        self.llm_protocol = None  
+        self.response_metadata = None
+        
+    def access(self) -> pd.DataFrame:
+        """Access the buffered data and increment access count."""
+        self.access_count += 1
+        return self.df
+        
+    def is_expired(self, ttl: float = 3600) -> bool:
+        """Check if buffer has expired based on TTL (default 1 hour)."""
+        return time.time() - self.timestamp > ttl
 
 
 class DatabaseManager:
-    def __init__(self):
-        self.connections: Dict[str, Any] = {}
-        self.db_types: Dict[str, str] = {}  # Track database type for each connection
-        self.query_history: Dict[str, List[str]] = {}
-
-        # Security and connection management
-        self.connection_semaphore = threading.Semaphore(
-            10
-        )  # Max 10 concurrent connections
-        self.connection_lock = threading.Lock()
-        self.connection_count = 0
-
-        # Query buffering system
-        self.query_buffers: Dict[str, QueryBuffer] = {}
-        self.query_buffer_lock = threading.Lock()
-
-        # Temporary file management
-        self.temp_files: List[str] = []
-        self.temp_file_lock = threading.Lock()
-
-        # Auto-cleanup for buffers (10 minute expiry)
-        self.buffer_cleanup_interval = 600  # 10 minutes
-        self.last_cleanup = time.time()
-
-        # Streaming executor for memory-bounded processing
-        self.streaming_executor = StreamingQueryExecutor()
-
-        # Initialize backward compatibility manager
-        self.compatibility_manager = get_compatibility_manager()
-        
-        # Check for legacy configuration and show warnings
-        self._check_legacy_configuration()
-
-        # Register cleanup on exit
-        atexit.register(self._cleanup_all)
-
-    def _check_legacy_configuration(self):
-        """Check for legacy configuration patterns and show warnings."""
-        try:
-            legacy_config = self.compatibility_manager.detect_legacy_configuration()
-            
-            if legacy_config['detected']:
-                logger.info("Legacy configuration patterns detected")
-                
-                for pattern in legacy_config['detected']:
-                    if pattern['pattern'] == 'Legacy Environment Variables':
-                        self.compatibility_manager.warn_deprecated('single_database_env_vars')
-                        
-                if legacy_config['migration_required']:
-                    self.compatibility_manager.warn_deprecated('env_only_config')
-                    logger.info("Consider running compatibility check for migration assistance")
-                    
-        except Exception as e:
-            logger.warning(f"Error checking legacy configuration: {e}")
-
-    def _get_connection(self, name: str):
-        if name not in self.connections:
-            raise ValueError(
-                f"Database '{name}' is not connected. Use 'connect_database' first."
-            )
-        return self.connections[name]
-
-    def _sanitize_path(self, file_path: str):
-        """Enhanced path security - restrict to current working directory and subdirectories only."""
-        base_dir = Path(os.getcwd()).resolve()
-        try:
-            # Resolve the path to handle symlinks and relative paths
-            abs_file_path = Path(file_path).resolve()
-        except (OSError, ValueError) as e:
-            raise ValueError(f"Invalid path '{file_path}': {e}")
-
-        # Security check: ensure path is within base directory
-        try:
-            abs_file_path.relative_to(base_dir)
-        except ValueError:
-            raise ValueError(
-                f"Path '{file_path}' is outside the allowed directory. Only current directory and subdirectories are allowed."
-            )
-
-        # Check if file exists
-        if not abs_file_path.is_file():
-            raise ValueError(f"File not found at path '{file_path}'.")
-
-        return str(abs_file_path)
-
-    def _serialize_complex_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Serialize complex nested objects (dict, list) in DataFrame columns to JSON strings.
-        
-        This prevents SQLite insertion errors when DataFrame contains nested structures
-        that can't be directly serialized to database columns.
-        
-        Args:
-            df: DataFrame that may contain columns with complex nested objects
-            
-        Returns:
-            DataFrame with complex objects serialized as JSON strings
-        """
-        if df.empty:
-            return df
-        
-        # Create a copy to avoid modifying the original DataFrame
-        df_copy = df.copy()
-        
-        for col in df_copy.columns:
-            if df_copy[col].dtype == 'object':
-                # Check if this column contains complex objects (dict/list)
-                non_null_values = df_copy[col].dropna()
-                if not non_null_values.empty:
-                    # Check first few non-null values to determine if serialization is needed
-                    sample_values = non_null_values.head(3)
-                    needs_serialization = any(
-                        isinstance(val, (dict, list)) for val in sample_values.values
-                    )
-                    
-                    if needs_serialization:
-                        logger.info(f"Serializing column '{col}' containing complex nested objects")
-                        def serialize_value(x):
-                            # Handle null values safely - avoid pd.notna() with arrays
-                            if x is None:
-                                return x
-                            # Check if it's a complex object that needs serialization
-                            if isinstance(x, (dict, list)):
-                                return json.dumps(x)
-                            return x
-                        
-                        df_copy[col] = df_copy[col].apply(serialize_value)
-        
-        return df_copy
-
-    def _get_file_size(self, file_path: str) -> int:
-        """Get file size in bytes."""
-        try:
-            return os.path.getsize(file_path)
-        except OSError as e:
-            raise ValueError(f"Cannot get size of file '{file_path}': {e}")
-
-    def _is_large_file(self, file_path: str, threshold_mb: int = 100) -> bool:
-        """Check if file exceeds the size threshold (default 100MB)."""
-        threshold_bytes = threshold_mb * 1024 * 1024
-        return self._get_file_size(file_path) > threshold_bytes
-
-    def _sanitize_sheet_name(self, sheet_name: str, used_names: set = None) -> str:
-        """Sanitize sheet name for use as SQL table name."""
-        import re
-        
-        if used_names is None:
-            used_names = set()
-        
-        # Convert to string and strip whitespace
-        name = str(sheet_name).strip()
-        
-        # Replace spaces and hyphens with underscores
-        name = re.sub(r'[\s\-]+', '_', name)
-        
-        # Remove or replace problematic characters, keep only alphanumeric and underscore
-        name = re.sub(r'[^\w]', '_', name)
-        
-        # Remove consecutive underscores
-        name = re.sub(r'_+', '_', name)
-        
-        # Ensure it starts with letter or underscore
-        if name and not re.match(r'^[a-zA-Z_]', name):
-            name = 'sheet_' + name
-        
-        # Handle empty names
-        if not name:
-            name = 'sheet_unnamed'
-        
-        # Ensure uniqueness
-        original_name = name
-        counter = 1
-        while name.lower() in {n.lower() for n in used_names}:
-            name = f"{original_name}_{counter}"
-            counter += 1
-        
-        # Add to used names
-        used_names.add(name)
-        
-        return name
-
-    def _generate_query_id(self, db_name: str, query: str) -> str:
-        """Generate a unique query ID in format: {db}_{timestamp}_{4char_hash}."""
-        timestamp = int(time.time())
-        query_hash = hashlib.md5(query.encode(), usedforsecurity=False).hexdigest()[
-            :4
-        ]  # nosec B324
-        return f"{db_name}_{timestamp}_{query_hash}"
-
-    def _cleanup_expired_buffers(self):
-        """Remove expired query buffers (older than 10 minutes)."""
-        current_time = time.time()
-        if current_time - self.last_cleanup < self.buffer_cleanup_interval:
-            return  # Skip if not time for cleanup yet
-
-        with self.query_buffer_lock:
-            expired_ids = [
-                query_id
-                for query_id, buffer in self.query_buffers.items()
-                if current_time - buffer.timestamp > self.buffer_cleanup_interval
-            ]
-            for query_id in expired_ids:
-                del self.query_buffers[query_id]
-
-        self.last_cleanup = current_time
-
-    def _cleanup_all(self):
-        """Clean up all resources on exit."""
-        # Clean up streaming executor buffers
-        if hasattr(self, 'streaming_executor'):
-            try:
-                self.streaming_executor.cleanup_expired_buffers(max_age_seconds=0)  # Clean all
-            except Exception:
-                pass  # Ignore errors during cleanup
-        
-        # Clean up temporary files
-        with self.temp_file_lock:
-            for temp_file in self.temp_files:
-                try:
-                    if os.path.exists(temp_file):
-                        os.unlink(temp_file)
-                except OSError:
-                    pass  # Ignore errors during cleanup
-            self.temp_files.clear()
-
-        # Close all database connections
-        with self.connection_lock:
-            for name, engine in self.connections.items():
-                try:
-                    engine.dispose()
-                except:
-                    pass  # Ignore errors during cleanup
-            self.connections.clear()
-            self.db_types.clear()
-
-    def _get_engine(self, db_type: str, conn_string: str, sheet_name: Optional[str] = None):
-        if db_type == "sqlite":
-            return create_engine(f"sqlite:///{conn_string}")
-        elif db_type == "postgresql":
-            return create_engine(conn_string)
-        elif db_type == "mysql":
-            return create_engine(conn_string)
-        elif db_type == "duckdb":
-            if not DUCKDB_AVAILABLE:
-                raise ValueError("duckdb library is required for DuckDB connections. Install with: pip install duckdb")
-            return create_engine(f"duckdb:///{conn_string}")
-        elif db_type == "redis":
-            if not REDIS_AVAILABLE:
-                raise ValueError("redis library is required for Redis connections. Install with: pip install redis")
-            return self._create_redis_connection(conn_string)
-        elif db_type == "elasticsearch":
-            if not ELASTICSEARCH_AVAILABLE:
-                raise ValueError("elasticsearch library is required for Elasticsearch connections. Install with: pip install elasticsearch")
-            return self._create_elasticsearch_connection(conn_string)
-        elif db_type == "mongodb":
-            if not PYMONGO_AVAILABLE:
-                raise ValueError("pymongo library is required for MongoDB connections. Install with: pip install pymongo")
-            return self._create_mongodb_connection(conn_string)
-        elif db_type == "influxdb":
-            if not INFLUXDB_AVAILABLE:
-                raise ValueError("influxdb-client library is required for InfluxDB connections. Install with: pip install influxdb-client")
-            return self._create_influxdb_connection(conn_string)
-        elif db_type == "neo4j":
-            if not NEO4J_AVAILABLE:
-                raise ValueError("neo4j library is required for Neo4j connections. Install with: pip install neo4j")
-            return self._create_neo4j_connection(conn_string)
-        elif db_type == "couchdb":
-            if not COUCHDB_AVAILABLE:
-                raise ValueError("couchdb library is required for CouchDB connections. Install with: pip install couchdb")
-            return self._create_couchdb_connection(conn_string)
-        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5"]:
-            sanitized_path = self._sanitize_path(conn_string)
-            return self._create_engine_from_file(sanitized_path, db_type, sheet_name)
-        else:
-            raise ValueError(f"Unsupported db_type: {db_type}")
-
-    def _create_engine_from_file(self, file_path: str, file_type: str, sheet_name: Optional[str] = None):
-        """Create SQLite engine from file, using streaming processing for supported formats.
-        
-        Args:
-            file_path: Path to the file
-            file_type: Type of file (excel, ods, numbers, csv, json, etc.)
-            sheet_name: For Excel/ODS/Numbers files, specific sheet to load. If None, load all sheets/datasets.
-        """
-        try:
-            # Check if file type is supported by streaming processors
-            if FileProcessorFactory.is_supported(file_type):
-                logger.info(f"Using streaming processor for {file_type} file: {file_path}")
-                
-                # Use streaming file processing
-                engine, processing_metadata = create_streaming_file_engine(
-                    file_path=file_path,
-                    file_type=file_type,
-                    sheet_name=sheet_name,
-                    temp_files_registry=self.temp_files
-                )
-                
-                logger.info(f"Streaming processing completed: {processing_metadata}")
-                return engine
-            
-            # Fallback to batch processing for unsupported formats
-            logger.info(f"Using batch processing for {file_type} file: {file_path}")
-            
-            # Check if file is large
-            is_large = self._is_large_file(file_path)
-
-            # Load data based on file type (keeping existing logic for unsupported formats)
-            if file_type == "yaml":
-                with open(file_path, "r") as f:
-                    yaml_data = yaml.safe_load(f)
-                data = (
-                    pd.json_normalize(yaml_data)
-                    if isinstance(yaml_data, (list, dict))
-                    else pd.DataFrame(yaml_data)
-                )
-            elif file_type == "toml":
-                if not TOML_AVAILABLE:
-                    raise ValueError(
-                        "toml library is required for TOML files. "
-                        "Install with: pip install toml"
-                    )
-                with open(file_path, "r") as f:
-                    toml_data = toml.load(f)
-                data = (
-                    pd.json_normalize(toml_data)
-                    if isinstance(toml_data, (list, dict))
-                    else pd.DataFrame(toml_data)
-                )
-            elif file_type == "xml":
-                data = self._load_xml_file(file_path)
-            elif file_type == "ini":
-                data = self._load_ini_file(file_path)
-            elif file_type == "parquet":
-                if not PYARROW_AVAILABLE:
-                    raise ValueError(
-                        "pyarrow library is required for Parquet files. "
-                        "Install with: pip install pyarrow"
-                    )
-                data = pd.read_parquet(file_path, engine='pyarrow')
-            elif file_type == "feather":
-                if not PYARROW_AVAILABLE:
-                    raise ValueError(
-                        "pyarrow library is required for Feather files. "
-                        "Install with: pip install pyarrow"
-                    )
-                data = pd.read_feather(file_path)
-            elif file_type == "arrow":
-                if not PYARROW_AVAILABLE:
-                    raise ValueError(
-                        "pyarrow library is required for Arrow files. "
-                        "Install with: pip install pyarrow"
-                    )
-                data = pd.read_feather(file_path)  # Arrow IPC format uses same reader
-            elif file_type == "hdf5":
-                data = self._load_hdf5_file(file_path, sheet_name)
-            else:
-                raise ValueError(f"Unsupported file type: {file_type}")
-
-            # Create engine - use temporary file for large files, memory for small ones
-            if is_large:
-                # Create temporary SQLite file
-                temp_fd, temp_path = tempfile.mkstemp(
-                    suffix=".sqlite", prefix="db_client_"
-                )
-                os.close(
-                    temp_fd
-                )  # Close the file descriptor, SQLAlchemy will handle the file
-
-                with self.temp_file_lock:
-                    self.temp_files.append(temp_path)
-
-                engine = create_engine(f"sqlite:///{temp_path}")
-            else:
-                engine = create_engine("sqlite:///:memory:")
-
-            # Load data into SQLite
-            # Handle multi-sheet files (Excel/ODS) vs single DataFrame files
-            if isinstance(data, dict):
-                # Multi-sheet file: create separate table for each sheet
-                for table_name, df in data.items():
-                    # Serialize complex nested objects before SQLite insertion
-                    df_serialized = self._serialize_complex_columns(df)
-                    df_serialized.to_sql(table_name, engine, index=False, if_exists="replace")
-                    logger.info(f"Created table '{table_name}' with {len(df_serialized)} rows")
-            else:
-                # Single DataFrame: create single table called 'data_table'
-                # Serialize complex nested objects before SQLite insertion
-                data_serialized = self._serialize_complex_columns(data)
-                data_serialized.to_sql("data_table", engine, index=False, if_exists="replace")
-                logger.info(f"Created table 'data_table' with {len(data_serialized)} rows")
-            
-            return engine
-
-        except Exception as e:
-            raise ValueError(
-                f"Failed to create engine from {file_type} file '{file_path}': {e}"
-            )
-
-    def _load_excel_file(self, file_path: str, sheet_name: Optional[str] = None) -> Dict[str, pd.DataFrame]:
-        """Load Excel file (.xlsx or .xls) into dict of pandas DataFrames (one per sheet).
-        
-        Args:
-            file_path: Path to the Excel file
-            sheet_name: Specific sheet to load. If None, load all sheets.
-        """
-        # Check for security library
-        if not DEFUSEDXML_AVAILABLE:
-            logger.warning("defusedxml not available - Excel files may be vulnerable to XML attacks")
-        
-        # Detect file format based on extension
-        file_ext = Path(file_path).suffix.lower()
-        
-        try:
-            # Determine engine based on file extension
-            if file_ext in ['.xlsx', '.xlsm']:
-                # Modern Excel format
-                if not OPENPYXL_AVAILABLE:
-                    raise ValueError(
-                        "openpyxl library is required for .xlsx files. "
-                        "Install with: pip install openpyxl"
-                    )
-                engine = 'openpyxl'
-                
-            elif file_ext == '.xls':
-                # Legacy Excel format
-                if not XLRD_AVAILABLE:
-                    raise ValueError(
-                        "xlrd library is required for .xls files. "
-                        "Install with: pip install xlrd"
-                    )
-                engine = 'xlrd'
-                
-            else:
-                # Try pandas auto-detection as fallback
-                logger.info(f"Unknown Excel extension '{file_ext}', trying pandas auto-detection")
-                engine = None
-            
-            # Read all sheets or specific sheet
-            with pd.ExcelFile(file_path, engine=engine) as excel_file:
-                available_sheet_names = excel_file.sheet_names
-                logger.info(f"Found {len(available_sheet_names)} sheets in Excel file: {available_sheet_names}")
-                
-                # Determine which sheets to load
-                if sheet_name is not None:
-                    if sheet_name not in available_sheet_names:
-                        raise ValueError(f"Sheet '{sheet_name}' not found in Excel file. Available sheets: {available_sheet_names}")
-                    sheets_to_load = [sheet_name]
-                    logger.info(f"Loading specific sheet: {sheet_name}")
-                else:
-                    sheets_to_load = available_sheet_names
-                    logger.info(f"Loading all sheets")
-                
-                # Track used table names for uniqueness
-                used_names = set()
-                sheets_data = {}
-                
-                for current_sheet_name in sheets_to_load:
-                    try:
-                        # Load sheet data
-                        df = pd.read_excel(excel_file, sheet_name=current_sheet_name)
-                        
-                        # Skip empty sheets
-                        if df.empty:
-                            logger.warning(f"Sheet '{current_sheet_name}' is empty, skipping")
-                            continue
-                        
-                        # Clean up column names (remove extra whitespace, replace problematic characters)
-                        df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
-                        
-                        # Handle Excel-specific data types
-                        # Convert any datetime-like columns properly
-                        for col in df.columns:
-                            if df[col].dtype == 'object':
-                                # Try to convert to datetime if it looks like dates
-                                try:
-                                    pd.to_datetime(df[col], errors='raise')
-                                    df[col] = pd.to_datetime(df[col], errors='coerce')
-                                except:
-                                    pass  # Keep as object type
-                        
-                        # Sanitize sheet name for SQL table name
-                        table_name = self._sanitize_sheet_name(current_sheet_name, used_names)
-                        sheets_data[table_name] = df
-                        
-                        logger.info(f"Successfully loaded sheet '{current_sheet_name}' as table '{table_name}' with {len(df)} rows and {len(df.columns)} columns")
-                        
-                    except Exception as e:
-                        logger.warning(f"Failed to load sheet '{current_sheet_name}': {e}")
-                        continue
-                
-                if not sheets_data:
-                    raise ValueError(f"Excel file '{file_path}' contains no readable data in any sheets")
-                
-                logger.info(f"Successfully loaded Excel file '{file_path}' with {len(sheets_data)} sheets")
-                return sheets_data
-            
-        except Exception as e:
-            raise ValueError(f"Failed to load Excel file '{file_path}': {e}")
-
-    def _load_ods_file(self, file_path: str, sheet_name: Optional[str] = None) -> Dict[str, pd.DataFrame]:
-        """Load LibreOffice Calc ODS file into dict of pandas DataFrames (one per sheet).
-        
-        Args:
-            file_path: Path to the ODS file
-            sheet_name: Specific sheet to load. If None, load all sheets.
-        """
-        # Check for ODS support
-        if not ODFPY_AVAILABLE:
-            logger.warning("odfpy not available - ODS files cannot be loaded")
-            raise ValueError(
-                "odfpy library is required for .ods files. "
-                "Install with: pip install odfpy"
-            )
-        
-        try:
-            # Use pandas native ODS support with odfpy engine
-            with pd.ExcelFile(file_path, engine='odf') as excel_file:
-                available_sheet_names = excel_file.sheet_names
-                logger.info(f"Found {len(available_sheet_names)} sheets in ODS file: {available_sheet_names}")
-                
-                # Determine which sheets to load
-                if sheet_name is not None:
-                    if sheet_name not in available_sheet_names:
-                        raise ValueError(f"Sheet '{sheet_name}' not found in ODS file. Available sheets: {available_sheet_names}")
-                    sheets_to_load = [sheet_name]
-                    logger.info(f"Loading specific sheet: {sheet_name}")
-                else:
-                    sheets_to_load = available_sheet_names
-                    logger.info(f"Loading all sheets")
-                
-                # Track used table names for uniqueness
-                used_names = set()
-                sheets_data = {}
-                
-                for current_sheet_name in sheets_to_load:
-                    try:
-                        # Load sheet data
-                        df = pd.read_excel(excel_file, sheet_name=current_sheet_name, engine='odf')
-                        
-                        # Skip empty sheets
-                        if df.empty:
-                            logger.warning(f"Sheet '{current_sheet_name}' is empty, skipping")
-                            continue
-                        
-                        # Clean up column names (remove extra whitespace, replace problematic characters)
-                        df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
-                        
-                        # Handle ODS-specific data types
-                        # Convert any datetime-like columns properly
-                        for col in df.columns:
-                            if df[col].dtype == 'object':
-                                # Try to convert to datetime if it looks like dates
-                                try:
-                                    pd.to_datetime(df[col], errors='raise')
-                                    df[col] = pd.to_datetime(df[col], errors='coerce')
-                                except:
-                                    pass  # Keep as object type
-                        
-                        # Sanitize sheet name for SQL table name
-                        table_name = self._sanitize_sheet_name(current_sheet_name, used_names)
-                        sheets_data[table_name] = df
-                        
-                        logger.info(f"Successfully loaded sheet '{current_sheet_name}' as table '{table_name}' with {len(df)} rows and {len(df.columns)} columns")
-                        
-                    except Exception as e:
-                        logger.warning(f"Failed to load sheet '{current_sheet_name}': {e}")
-                        continue
-                
-                if not sheets_data:
-                    raise ValueError(f"ODS file '{file_path}' contains no readable data in any sheets")
-                
-                logger.info(f"Successfully loaded ODS file '{file_path}' with {len(sheets_data)} sheets")
-                return sheets_data
-            
-        except Exception as e:
-            raise ValueError(f"Failed to load ODS file '{file_path}': {e}")
-
-    def _load_numbers_file(self, file_path: str, sheet_name: Optional[str] = None) -> Dict[str, pd.DataFrame]:
-        """Load Apple Numbers file into dict of pandas DataFrames (one per sheet/table).
-        
-        Args:
-            file_path: Path to the Numbers file
-            sheet_name: Specific sheet to load. If None, load all sheets.
-        """
-        # Check for Numbers support
-        if not NUMBERS_PARSER_AVAILABLE:
-            logger.warning("numbers-parser not available - Numbers files cannot be loaded")
-            raise ValueError(
-                "numbers-parser library is required for .numbers files. "
-                "Install with: pip install numbers-parser"
-            )
-        
-        try:
-            # Open Numbers document
-            doc = Document(file_path)
-            logger.info(f"Opened Numbers document with {len(doc.sheets)} sheets")
-            
-            # Determine which sheets to load
-            if sheet_name is not None:
-                available_sheet_names = [sheet.name for sheet in doc.sheets]
-                if sheet_name not in available_sheet_names:
-                    raise ValueError(f"Sheet '{sheet_name}' not found in Numbers file. Available sheets: {available_sheet_names}")
-                sheets_to_load = [sheet for sheet in doc.sheets if sheet.name == sheet_name]
-                logger.info(f"Loading specific sheet: {sheet_name}")
-            else:
-                sheets_to_load = doc.sheets
-                sheet_names = [sheet.name for sheet in sheets_to_load]
-                logger.info(f"Loading all sheets: {sheet_names}")
-            
-            # Track used table names for uniqueness
-            used_names = set()
-            sheets_data = {}
-            
-            for sheet in sheets_to_load:
-                logger.info(f"Processing sheet '{sheet.name}' with {len(sheet.tables)} tables")
-                
-                # Numbers files can have multiple tables per sheet
-                for table_idx, table in enumerate(sheet.tables):
-                    try:
-                        # Get table data as list of lists (includes headers)
-                        table_data = table.rows(values_only=True)
-                        
-                        if not table_data:
-                            logger.warning(f"Table {table_idx} in sheet '{sheet.name}' is empty, skipping")
-                            continue
-                        
-                        # First row is typically headers
-                        if len(table_data) < 2:
-                            logger.warning(f"Table {table_idx} in sheet '{sheet.name}' has no data rows, skipping")
-                            continue
-                        
-                        # Create DataFrame from table data
-                        headers = table_data[0]
-                        data_rows = table_data[1:]
-                        
-                        # Handle case where headers might be None or empty
-                        if not headers or all(h is None or h == '' for h in headers):
-                            # Generate column names
-                            headers = [f'Column_{i+1}' for i in range(len(data_rows[0]) if data_rows else 0)]
-                        else:
-                            # Clean up headers
-                            headers = [str(h) if h is not None else f'Column_{i+1}' for i, h in enumerate(headers)]
-                        
-                        df = pd.DataFrame(data_rows, columns=headers)
-                        
-                        # Skip empty DataFrames
-                        if df.empty:
-                            logger.warning(f"Table {table_idx} in sheet '{sheet.name}' resulted in empty DataFrame, skipping")
-                            continue
-                        
-                        # Clean up column names (remove extra whitespace, replace problematic characters)
-                        df.columns = [str(col).strip().replace(' ', '_').replace('-', '_').replace('.', '_') for col in df.columns]
-                        
-                        # Handle Numbers-specific data types and formatting
-                        for col in df.columns:
-                            if df[col].dtype == 'object':
-                                # Try to convert numeric strings to numbers
-                                try:
-                                    # Check if this looks like a numeric column
-                                    numeric_df = pd.to_numeric(df[col], errors='coerce')
-                                    non_null_count = numeric_df.notna().sum()
-                                    if non_null_count > len(df) * 0.5:  # If >50% can be converted to numbers
-                                        df[col] = numeric_df
-                                        continue
-                                except:
-                                    pass
-                                
-                                # Try to convert to datetime if it looks like dates
-                                try:
-                                    pd.to_datetime(df[col], errors='raise')
-                                    df[col] = pd.to_datetime(df[col], errors='coerce')
-                                except:
-                                    pass  # Keep as object type
-                        
-                        # Create unique table name
-                        if len(sheet.tables) == 1:
-                            # Single table per sheet - use sheet name
-                            base_table_name = sheet.name or f"Sheet_{len(sheets_data) + 1}"
-                        else:
-                            # Multiple tables per sheet - include table index
-                            base_table_name = f"{sheet.name}_Table_{table_idx + 1}" if sheet.name else f"Sheet_{len(sheets_data) + 1}_Table_{table_idx + 1}"
-                        
-                        # Sanitize table name for SQL table name
-                        table_name = self._sanitize_sheet_name(base_table_name, used_names)
-                        sheets_data[table_name] = df
-                        
-                        logger.info(f"Successfully loaded table {table_idx} from sheet '{sheet.name}' as table '{table_name}' with {len(df)} rows and {len(df.columns)} columns")
-                        
-                    except Exception as e:
-                        logger.warning(f"Failed to load table {table_idx} from sheet '{sheet.name}': {e}")
-                        continue
-            
-            if not sheets_data:
-                raise ValueError(f"Numbers file '{file_path}' contains no readable data in any sheets/tables")
-            
-            logger.info(f"Successfully loaded Numbers file '{file_path}' with {len(sheets_data)} tables")
-            return sheets_data
-            
-        except Exception as e:
-            # Handle specific Numbers parser limitations
-            error_msg = str(e).lower()
-            if "password" in error_msg or "encrypted" in error_msg:
-                raise ValueError(f"Numbers file '{file_path}' is password-protected. Please remove the password and try again.")
-            elif "unsupported" in error_msg:
-                raise ValueError(f"Numbers file '{file_path}' uses unsupported features. Try re-saving the file in Numbers and try again.")
-            else:
-                raise ValueError(f"Failed to load Numbers file '{file_path}': {e}")
-
-    def _load_hdf5_file(self, file_path: str, dataset_name: Optional[str] = None) -> Dict[str, pd.DataFrame]:
-        """Load HDF5 file into dict of pandas DataFrames (one per dataset).
-        
-        Args:
-            file_path: Path to the HDF5 file
-            dataset_name: Specific dataset to load. If None, load all compatible datasets.
-        """
-        # Check for HDF5 support
-        if not H5PY_AVAILABLE:
-            logger.warning("h5py not available - HDF5 files cannot be loaded")
-            raise ValueError(
-                "h5py library is required for .hdf5 files. "
-                "Install with: pip install h5py"
-            )
-        
-        try:
-            import h5py
-            datasets_data = {}
-            used_names = set()
-            
-            with h5py.File(file_path, 'r') as hdf_file:
-                logger.info(f"Opened HDF5 file with {len(hdf_file.keys())} top-level items")
-                
-                # Recursive function to explore HDF5 structure
-                def explore_hdf5_group(group, path=""):
-                    """Recursively explore HDF5 groups and datasets."""
-                    datasets_found = {}
-                    
-                    for key in group.keys():
-                        item = group[key]
-                        current_path = f"{path}/{key}" if path else key
-                        
-                        if isinstance(item, h5py.Dataset):
-                            # This is a dataset - try to convert to DataFrame
-                            try:
-                                # Get dataset info
-                                shape = item.shape
-                                dtype = item.dtype
-                                logger.info(f"Found dataset '{current_path}': shape={shape}, dtype={dtype}")
-                                
-                                # Skip if dataset_name is specified and doesn't match
-                                if dataset_name is not None and key != dataset_name and current_path != dataset_name:
-                                    continue
-                                
-                                # Read dataset
-                                data = item[...]
-                                
-                                # Convert to DataFrame based on shape
-                                if len(shape) == 1:
-                                    # 1D array - create single column DataFrame
-                                    df = pd.DataFrame({key: data})
-                                elif len(shape) == 2:
-                                    # 2D array - assume rows x columns
-                                    if shape[1] == 1:
-                                        # Single column
-                                        df = pd.DataFrame({key: data.flatten()})
-                                    else:
-                                        # Multiple columns - generate column names
-                                        columns = [f'{key}_col_{i+1}' for i in range(shape[1])]
-                                        df = pd.DataFrame(data, columns=columns)
-                                else:
-                                    # Higher dimensional - flatten to 2D
-                                    data_2d = data.reshape(shape[0], -1)
-                                    columns = [f'{key}_dim_{i+1}' for i in range(data_2d.shape[1])]
-                                    df = pd.DataFrame(data_2d, columns=columns)
-                                    logger.info(f"Flattened {len(shape)}D dataset to 2D: {data_2d.shape}")
-                                
-                                # Handle data types
-                                for col in df.columns:
-                                    # Try to convert bytes to strings
-                                    if df[col].dtype.kind == 'S':  # String/bytes type
-                                        try:
-                                            df[col] = df[col].astype(str).str.decode('utf-8', errors='ignore')
-                                        except:
-                                            df[col] = df[col].astype(str)
-                                
-                                # Create sanitized table name
-                                table_name = self._sanitize_sheet_name(current_path.replace('/', '_'), used_names)
-                                datasets_found[table_name] = df
-                                
-                                logger.info(f"Successfully loaded dataset '{current_path}' as table '{table_name}' with {len(df)} rows and {len(df.columns)} columns")
-                                
-                            except Exception as e:
-                                logger.warning(f"Failed to load dataset '{current_path}': {e}")
-                                continue
-                                
-                        elif isinstance(item, h5py.Group):
-                            # This is a group - recurse into it
-                            logger.info(f"Exploring group '{current_path}' with {len(item.keys())} items")
-                            sub_datasets = explore_hdf5_group(item, current_path)
-                            datasets_found.update(sub_datasets)
-                    
-                    return datasets_found
-                
-                # Start exploration from root
-                if dataset_name is not None:
-                    # Look for specific dataset
-                    available_datasets = []
-                    def collect_dataset_names(group, path=""):
-                        for key in group.keys():
-                            item = group[key]
-                            current_path = f"{path}/{key}" if path else key
-                            if isinstance(item, h5py.Dataset):
-                                available_datasets.append(current_path)
-                            elif isinstance(item, h5py.Group):
-                                collect_dataset_names(item, current_path)
-                    
-                    collect_dataset_names(hdf_file)
-                    
-                    # Check if requested dataset exists
-                    if dataset_name not in available_datasets and dataset_name not in [d.split('/')[-1] for d in available_datasets]:
-                        raise ValueError(f"Dataset '{dataset_name}' not found in HDF5 file. Available datasets: {available_datasets}")
-                
-                datasets_data = explore_hdf5_group(hdf_file)
-                
-                if not datasets_data:
-                    raise ValueError(f"HDF5 file '{file_path}' contains no readable datasets")
-                
-                logger.info(f"Successfully loaded HDF5 file '{file_path}' with {len(datasets_data)} datasets")
-                return datasets_data
-                
-        except Exception as e:
-            # Handle specific HDF5 errors
-            error_msg = str(e).lower()
-            if "permission" in error_msg or "access" in error_msg:
-                raise ValueError(f"Cannot access HDF5 file '{file_path}': Permission denied or file in use")
-            elif "not an hdf5 file" in error_msg:
-                raise ValueError(f"File '{file_path}' is not a valid HDF5 file")
-            else:
-                raise ValueError(f"Failed to load HDF5 file '{file_path}': {e}")
-
-    def _load_xml_file(self, file_path: str) -> pd.DataFrame:
-        """Load XML file into pandas DataFrame."""
-        try:
-            # Use pandas native XML support (available since pandas 1.3.0)
-            df = pd.read_xml(file_path)
-            
-            # Validate that we have data
-            if df.empty:
-                raise ValueError(f"XML file '{file_path}' contains no data")
-            
-            # Clean up column names
-            df.columns = [str(col).strip().replace(' ', '_').replace('-', '_') for col in df.columns]
-            
-            logger.info(f"Successfully loaded XML file '{file_path}' with {len(df)} rows and {len(df.columns)} columns")
-            return df
-            
-        except Exception as e:
-            # If pandas XML reading fails, provide helpful error message
-            if "lxml" in str(e).lower():
-                if not LXML_AVAILABLE:
-                    raise ValueError(
-                        f"Failed to load XML file '{file_path}': lxml library is required. "
-                        "Install with: pip install lxml"
-                    )
-            raise ValueError(f"Failed to load XML file '{file_path}': {e}")
-
-    def _load_ini_file(self, file_path: str) -> pd.DataFrame:
-        """Load INI configuration file into pandas DataFrame."""
-        try:
-            config = configparser.ConfigParser()
-            config.read(file_path)
-            
-            # Convert INI structure to flat DataFrame format
-            rows = []
-            for section_name in config.sections():
-                section = config[section_name]
-                for key, value in section.items():
-                    rows.append({
-                        'section': section_name,
-                        'key': key,
-                        'value': value
-                    })
-            
-            # Handle case where no sections exist (only DEFAULT section)
-            if not rows and config.defaults():
-                for key, value in config.defaults().items():
-                    rows.append({
-                        'section': 'DEFAULT',
-                        'key': key,
-                        'value': value
-                    })
-            
-            if not rows:
-                raise ValueError(f"INI file '{file_path}' contains no configuration data")
-            
-            df = pd.DataFrame(rows)
-            logger.info(f"Successfully loaded INI file '{file_path}' with {len(df)} configuration entries")
-            return df
-            
-        except Exception as e:
-            raise ValueError(f"Failed to load INI file '{file_path}': {e}")
-
-    def _get_table_metadata(self, inspector, table_name):
-        columns = inspector.get_columns(table_name)
-        foreign_keys = inspector.get_foreign_keys(table_name)
-        primary_keys = inspector.get_pk_constraint(table_name)["constrained_columns"]
-        indexes = inspector.get_indexes(table_name)
-        try:
-            table_options = inspector.get_table_options(table_name)
-        except NotImplementedError:
-            # SQLite and some other dialects don't support table options
-            table_options = {}
-
-        col_list = []
-        for col in columns:
-            col_info = {"name": col["name"], "type": str(col["type"])}
-            if col["nullable"] is False:
-                col_info["not_null"] = True
-            if col.get("autoincrement", False) is True:
-                col_info["autoincrement"] = True
-            if col.get("default"):
-                col_info["default"] = str(col["default"])
-
-            if col["name"] in primary_keys:
-                col_info["primary_key"] = True
-
-            for fk in foreign_keys:
-                if col["name"] in fk["constrained_columns"]:
-                    col_info["foreign_key"] = {
-                        "referred_table": fk["referred_table"],
-                        "referred_column": fk["referred_columns"][0],
-                    }
-            col_list.append(col_info)
-
-        index_list = []
-        for idx in indexes:
-            index_list.append(
-                {
-                    "name": idx["name"],
-                    "columns": idx["column_names"],
-                    "unique": idx.get("unique", False),
-                }
-            )
-
-        return {
-            "name": table_name,
-            "columns": col_list,
-            "foreign_keys": [f["name"] for f in foreign_keys],
-            "primary_keys": primary_keys,
-            "indexes": index_list,
-            "options": table_options,
-        }
-
-    # =========================================================
-    # Requested Tools
-    # =========================================================
-
-    def connect_database(self, name: str, db_type: str, conn_string: str, sheet_name: Optional[str] = None):
-        """
-        Open a connection to a database.
-
-        Args:
-            name: A unique name to identify the connection (e.g., "analytics_db", "user_data").
-            db_type: The type of the database ("sqlite", "postgresql", "mysql", "duckdb", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5").
-            conn_string: The connection string or file path for the database.
-            sheet_name: Optional sheet name to load from Excel/ODS/Numbers files, or dataset name for HDF5 files. If not specified, all sheets/datasets are loaded.
-        """
-        logger.info(f"Attempting to connect to database '{name}' of type '{db_type}'")
-
-        if name in self.connections:
-            logger.warning(f"Database '{name}' is already connected")
-            return f"Error: A database with the name '{name}' is already connected."
-
-        # Check connection limit
-        if not self.connection_semaphore.acquire(blocking=False):
-            logger.warning(f"Connection limit reached for database '{name}'")
-            return f"Error: Maximum number of concurrent connections (10) reached. Please disconnect a database first."
-
-        try:
-            engine = self._get_engine(db_type, conn_string, sheet_name)
-            sql_flavor = self._get_sql_flavor(db_type, engine)
-
-            with self.connection_lock:
-                self.connections[name] = engine
-                self.db_types[name] = db_type
-                self.query_history[name] = []
-                self.connection_count += 1
-
-            logger.info(
-                f"Successfully connected to database '{name}' ({sql_flavor}). Total connections: {self.connection_count}"
-            )
-            
-            response = {
-                "success": True,
-                "message": f"Successfully connected to database '{name}'",
-                "connection_info": {
-                    "name": name,
-                    "db_type": db_type,
-                    "sql_flavor": sql_flavor,
-                    "total_connections": self.connection_count
-                }
-            }
-            
-            return json.dumps(response, indent=2)
-            
-        except Exception as e:
-            # Release semaphore on failure
-            self.connection_semaphore.release()
-            logger.error(f"Failed to connect to database '{name}': {e}")
-            return f"Failed to connect to database '{name}': {e}"
-
-    @mcp.tool
-    def disconnect_database(self, name: str):
-        """
-        Close a connection to a database. All open connections are closed when the script terminates.
-
-        Args:
-            name: The name of the database connection to close.
-        """
-        logger.info(f"Attempting to disconnect from database '{name}'")
-        try:
-            conn = self._get_connection(name)
-            conn.dispose()
-
-            with self.connection_lock:
-                del self.connections[name]
-                del self.db_types[name]
-                del self.query_history[name]
-                self.connection_count -= 1
-
-            # Release semaphore slot
-            self.connection_semaphore.release()
-
-            logger.info(
-                f"Successfully disconnected from database '{name}'. Total connections: {self.connection_count}"
-            )
-            return f"Successfully disconnected from database '{name}'."
-        except ValueError as e:
-            logger.error(f"Database '{name}' not found for disconnection: {e}")
-            return str(e)
-        except Exception as e:
-            logger.error(f"Error disconnecting from database '{name}': {e}")
-            return f"An error occurred while disconnecting: {e}"
-
-
-    @mcp.tool
-    def execute_query(self, name: str, query: str, chunk_size: Optional[int] = None, 
-                     enable_analysis: bool = True) -> str:
-        """
-        Execute a SQL query and return results as JSON.
-        
-        For large result sets (>100 rows), automatically creates chunked response with pagination.
-        Includes pre-query analysis to estimate resource usage and prevent crashes.
-        Auto-clears buffers from the same database when memory is high.
-
-        Args:
-            name: The name of the database connection.
-            query: The SQL query to execute.
-            chunk_size: Optional chunk size for pagination. If not specified, uses analysis recommendations.
-            enable_analysis: Whether to perform pre-query analysis (default: True).
-        """
-        try:
-            # Backward compatibility check
-            import inspect
-            frame = inspect.currentframe()
-            args, _, _, values = inspect.getargvalues(frame)
-            compatibility_info = self.compatibility_manager.check_api_compatibility(
-                'execute_query', 
-                (name, query), 
-                {'chunk_size': chunk_size, 'enable_analysis': enable_analysis}
-            )
-            
-            # Log compatibility warnings if any
-            for warning in compatibility_info['warnings']:
-                logger.info(f"COMPATIBILITY: {warning}")
-            for suggestion in compatibility_info['suggestions']:
-                logger.info(f"SUGGESTION: {suggestion}")
-                
-        except Exception as e:
-            # Don't fail on compatibility check errors
-            logger.warning(f"Compatibility check error: {e}")
-        
-        try:
-            # Security validation: Only allow SELECT queries
-            try:
-                validated_query = parse_and_validate_sql(query)
-                logger.info(f"SQL query validation passed for database '{name}'")
-            except SQLSecurityError as e:
-                logger.warning(f"SQL query blocked for database '{name}': {e}")
-                return f"Security Error: {e}"
-            except Exception as e:
-                logger.error(f"Query validation error for database '{name}': {e}")
-                return f"Query validation failed: {e}"
-
-            engine = self._get_connection(name)
-            
-            # Pre-query analysis (optional but recommended)
-            query_analysis = None
-            if enable_analysis:
-                try:
-                    logger.info(f"Performing pre-query analysis for database '{name}'")
-                    query_analysis = analyze_query(validated_query, engine, name)
-                    
-                    # Log analysis results
-                    logger.info(f"Query analysis complete: {query_analysis.estimated_rows} rows, "
-                               f"{query_analysis.estimated_total_memory_mb:.1f}MB, "
-                               f"{query_analysis.estimated_total_tokens} tokens, "
-                               f"risks: {query_analysis.memory_risk_level}/{query_analysis.token_risk_level}/{query_analysis.timeout_risk_level}")
-                    
-                    # Check for critical risks and warn user
-                    if query_analysis.memory_risk_level == 'critical':
-                        logger.warning(f"CRITICAL memory risk detected: {query_analysis.estimated_total_memory_mb:.1f}MB estimated")
-                    
-                    if query_analysis.timeout_risk_level == 'critical':
-                        logger.warning(f"CRITICAL timeout risk detected: {query_analysis.estimated_execution_time_seconds:.1f}s estimated")
-                        
-                except Exception as e:
-                    logger.warning(f"Pre-query analysis failed for database '{name}': {e}")
-                    # Continue with execution even if analysis fails
-                    query_analysis = None
-
-            # Check memory usage before query execution
-            memory_info = self._check_memory_usage()
-            if memory_info.get("low_memory", False):
-                logger.warning(f"High memory usage detected ({memory_info.get('used_percent', 0)}%) before query execution")
-                # Auto-clear buffers from same database to free memory
-                self._auto_clear_buffers_if_needed(name)
-
-            # Clean up expired buffers
-            self._cleanup_expired_buffers()
-
-            # Use streaming execution for memory-bounded processing
-            query_id = self._generate_query_id(name, query)
-            
-            # Create streaming source
-            streaming_source = create_streaming_source(
-                engine=engine,
-                query=validated_query,
-                query_analysis=query_analysis
-            )
-            
-            # Determine initial chunk size
-            initial_chunk_size = chunk_size
-            if initial_chunk_size is None:
-                if query_analysis and query_analysis.should_chunk:
-                    initial_chunk_size = query_analysis.recommended_chunk_size or 100
-                else:
-                    initial_chunk_size = 100  # Default
-            
-            # Execute streaming query with timeout management
-            try:
-                first_chunk, streaming_metadata = self.streaming_executor.execute_streaming(
-                    streaming_source, 
-                    query_id, 
-                    initial_chunk_size,
-                    database_name=name  # Pass database name for timeout configuration
-                )
-                self.query_history[name].append(query)
-                
-                # Handle empty results
-                if first_chunk.empty:
-                    empty_response = {"data": []}
-                    if query_analysis:
-                        empty_response["analysis"] = {
-                            "estimated_rows": query_analysis.estimated_rows,
-                            "actual_rows": 0,
-                            "analysis_accuracy": "N/A (empty result)",
-                            "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
-                        }
-                    return json.dumps(empty_response)
-                
-                # Generate enhanced response metadata
-                metadata_generator = get_metadata_generator()
-                enhanced_metadata = metadata_generator.generate_metadata(
-                    query_id=query_id,
-                    df=first_chunk,
-                    query=validated_query,
-                    query_analysis=query_analysis,
-                    db_name=name
-                )
-                
-                # Check if we should use streaming approach based on data size
-                total_rows_processed = streaming_metadata.get("total_rows_processed", len(first_chunk))
-                threshold = initial_chunk_size
-                
-                if total_rows_processed > threshold or streaming_metadata.get("streaming", False):
-                    # Large result set - use streaming approach with buffering
-                    chunk_limit = len(first_chunk)
-                    estimated_total = streaming_metadata.get("estimated_total_rows") or total_rows_processed
-                    
-                    # Create LLM communication protocol
-                    llm_protocol = LLMCommunicationProtocol(enhanced_metadata)
-                    
-                    # Store enhanced QueryBuffer with metadata
-                    enhanced_query_buffer = QueryBuffer(
-                        query_id=query_id,
-                        db_name=name,
-                        query=validated_query,
-                        results=first_chunk,
-                        timestamp=time.time(),
-                        response_metadata=enhanced_metadata,
-                        llm_protocol=llm_protocol
-                    )
-                    
-                    with self.query_buffer_lock:
-                        self.query_buffers[query_id] = enhanced_query_buffer
-                    
-                    response = {
-                        "metadata": {
-                            "total_rows": estimated_total,
-                            "showing_rows": f"1-{chunk_limit}",
-                            "query_id": query_id,
-                            "memory_info": memory_info,
-                            "chunked": True,
-                            "chunk_size": chunk_limit,
-                            "streaming": True,
-                            "buffer_complete": streaming_metadata.get("buffer_complete", False)
-                        },
-                        "data": json.loads(first_chunk.to_json(orient="records")),
-                        "pagination": {
-                            "use_next_chunk": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size=100)",
-                            "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size='all')",
-                        },
-                        "streaming_metadata": streaming_metadata,
-                        "enhanced_metadata": {
-                            "llm_summary": llm_protocol.get_summary(),
-                            "complexity": {
-                                "level": enhanced_metadata.query_complexity_level.value,
-                                "score": enhanced_metadata.query_complexity_score,
-                                "processing_time_estimate": enhanced_metadata.estimated_processing_time
-                            },
-                            "data_quality": {
-                                "overall": enhanced_metadata.data_quality_metrics.overall_quality.value,
-                                "score": enhanced_metadata.data_quality_metrics.quality_score,
-                                "completeness": enhanced_metadata.data_quality_metrics.completeness
-                            },
-                            "recommended_action": enhanced_metadata.recommended_action,
-                            "action_rationale": enhanced_metadata.action_rationale
-                        }
-                    }
-
-                    # Add analysis results to metadata
-                    if query_analysis:
-                        actual_rows = streaming_metadata.get("total_rows_processed", len(first_chunk))
-                        response["analysis"] = {
-                            "estimated_rows": query_analysis.estimated_rows,
-                            "actual_rows": actual_rows,
-                            "row_estimate_accuracy": f"{(1 - abs(query_analysis.estimated_rows - actual_rows) / max(actual_rows, 1)) * 100:.1f}%",
-                            "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
-                            "estimated_tokens": query_analysis.estimated_total_tokens,
-                            "complexity_score": query_analysis.complexity_score,
-                            "risk_levels": {
-                                "memory": query_analysis.memory_risk_level,
-                                "tokens": query_analysis.token_risk_level,
-                                "timeout": query_analysis.timeout_risk_level
-                            },
-                            "recommendations": query_analysis.recommendations,
-                            "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
-                        }
-
-                    return json.dumps(response, indent=2)
-                else:
-                    # Small result set - return all results
-                    # Create LLM communication protocol for small results too
-                    llm_protocol = LLMCommunicationProtocol(enhanced_metadata)
-                    
-                    # Store enhanced QueryBuffer with metadata
-                    enhanced_query_buffer = QueryBuffer(
-                        query_id=query_id,
-                        db_name=name,
-                        query=validated_query,
-                        results=first_chunk,
-                        timestamp=time.time(),
-                        response_metadata=enhanced_metadata,
-                        llm_protocol=llm_protocol
-                    )
-                    
-                    with self.query_buffer_lock:
-                        self.query_buffers[query_id] = enhanced_query_buffer
-                    
-                    response = {
-                        "metadata": {
-                            "total_rows": len(first_chunk),
-                            "showing_rows": f"1-{len(first_chunk)}",
-                            "memory_info": memory_info,
-                            "chunked": False,
-                            "streaming": True
-                        },
-                        "data": json.loads(first_chunk.to_json(orient="records")),
-                        "streaming_metadata": streaming_metadata,
-                        "enhanced_metadata": {
-                            "llm_summary": llm_protocol.get_summary(),
-                            "complexity": {
-                                "level": enhanced_metadata.query_complexity_level.value,
-                                "score": enhanced_metadata.query_complexity_score,
-                                "processing_time_estimate": enhanced_metadata.estimated_processing_time
-                            },
-                            "data_quality": {
-                                "overall": enhanced_metadata.data_quality_metrics.overall_quality.value,
-                                "score": enhanced_metadata.data_quality_metrics.quality_score,
-                                "completeness": enhanced_metadata.data_quality_metrics.completeness
-                            },
-                            "recommended_action": enhanced_metadata.recommended_action,
-                            "action_rationale": enhanced_metadata.action_rationale
-                        }
-                    }
-                    
-                    # Add analysis results to metadata for small results too
-                    if query_analysis:
-                        response["analysis"] = {
-                            "estimated_rows": query_analysis.estimated_rows,
-                            "actual_rows": len(first_chunk),
-                            "row_estimate_accuracy": f"{(1 - abs(query_analysis.estimated_rows - len(first_chunk)) / max(len(first_chunk), 1)) * 100:.1f}%",
-                            "estimated_memory_mb": query_analysis.estimated_total_memory_mb,
-                            "estimated_tokens": query_analysis.estimated_total_tokens,
-                            "complexity_score": query_analysis.complexity_score,
-                            "risk_levels": {
-                                "memory": query_analysis.memory_risk_level,
-                                "tokens": query_analysis.token_risk_level,
-                                "timeout": query_analysis.timeout_risk_level
-                            },
-                            "recommendations": query_analysis.recommendations,
-                            "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
-                        }
-                    
-                    return json.dumps(response, indent=2)
-                    
-            except QueryTimeoutError as timeout_error:
-                logger.error(f"Query timed out for database '{name}': {timeout_error}")
-                return f"Query Timeout Error: {timeout_error.message} (execution time: {timeout_error.execution_time:.1f}s, reason: {timeout_error.timeout_reason.value})"
-            except Exception as streaming_error:
-                logger.error(f"Streaming execution failed for database '{name}': {streaming_error}")
-                return f"Streaming execution error: {streaming_error}"
-
-        except Exception as e:
-            return f"An error occurred while executing the query: {e}"
+    """Enhanced database manager with streaming support and comprehensive data source compatibility."""
     
-    @mcp.tool
-    def analyze_query_preview(self, name: str, query: str) -> str:
-        """
-        Analyze a SQL query without executing it to preview resource requirements.
+    def __init__(self):
+        self.connections = {}
+        self.db_types = {}
+        self.timeout_manager = get_timeout_manager()
+        self.temp_files = set()  # Track temporary files for cleanup
         
-        This tool performs the same pre-query analysis as execute_query but without
-        actually running the main query. Useful for understanding query complexity,
-        estimated resource usage, and getting recommendations before execution.
-
-        Args:
-            name: The name of the database connection.
-            query: The SQL query to analyze.
-        """
-        try:
-            # Security validation: Only allow SELECT queries
+        # Query result buffers with thread-safe access
+        self.query_buffers = {}
+        self.query_buffer_lock = threading.Lock()
+        
+        # Initialize streaming executor
+        self.streaming_executor = StreamingQueryExecutor()
+        
+        # Register cleanup handler
+        atexit.register(self._cleanup_temp_files)
+        atexit.register(self._cleanup_connections)
+        
+    def _cleanup_temp_files(self):
+        """Clean up temporary files on exit."""
+        for temp_file in self.temp_files.copy():
             try:
-                validated_query = parse_and_validate_sql(query)
-                logger.info(f"SQL query validation passed for preview analysis on database '{name}'")
-            except SQLSecurityError as e:
-                logger.warning(f"SQL query blocked for preview analysis on database '{name}': {e}")
-                return f"Security Error: {e}"
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+                self.temp_files.remove(temp_file)
             except Exception as e:
-                logger.error(f"Query validation error for preview analysis on database '{name}': {e}")
-                return f"Query validation failed: {e}"
-
-            engine = self._get_connection(name)
-            
-            # Perform query analysis
+                logger.warning(f"Failed to cleanup temp file {temp_file}: {e}")
+                
+    def _cleanup_connections(self):
+        """Clean up database connections on exit."""
+        for name, conn in self.connections.items():
             try:
-                logger.info(f"Performing query preview analysis for database '{name}'")
-                query_analysis = analyze_query(validated_query, engine, name)
-                
-                # Build comprehensive analysis response
-                response = {
-                    "query_info": {
-                        "query_hash": query_analysis.query_hash,
-                        "complexity_score": query_analysis.complexity_score,
-                        "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s"
-                    },
-                    "estimates": {
-                        "rows": query_analysis.estimated_rows,
-                        "memory_mb": query_analysis.estimated_total_memory_mb,
-                        "tokens": query_analysis.estimated_total_tokens,
-                        "execution_time_seconds": query_analysis.estimated_execution_time_seconds,
-                        "row_size_bytes": query_analysis.estimated_row_size_bytes
-                    },
-                    "query_features": {
-                        "has_joins": query_analysis.has_joins,
-                        "has_aggregations": query_analysis.has_aggregations,
-                        "has_subqueries": query_analysis.has_subqueries,
-                        "has_window_functions": query_analysis.has_window_functions,
-                        "column_count": query_analysis.column_count,
-                        "column_types": query_analysis.column_types
-                    },
-                    "risk_assessment": {
-                        "memory": query_analysis.memory_risk_level,
-                        "tokens": query_analysis.token_risk_level,
-                        "timeout": query_analysis.timeout_risk_level,
-                        "overall_risk": max([
-                            ['low', 'medium', 'high', 'critical'].index(query_analysis.memory_risk_level),
-                            ['low', 'medium', 'high', 'critical'].index(query_analysis.token_risk_level),
-                            ['low', 'medium', 'high', 'critical'].index(query_analysis.timeout_risk_level)
-                        ])
-                    },
-                    "recommendations": {
-                        "messages": query_analysis.recommendations,
-                        "should_chunk": query_analysis.should_chunk,
-                        "recommended_chunk_size": query_analysis.recommended_chunk_size
-                    },
-                    "sampling_info": {
-                        "count_query_time": f"{query_analysis.count_query_time:.3f}s",
-                        "sample_query_time": f"{query_analysis.sample_query_time:.3f}s",
-                        "has_sample_data": query_analysis.sample_row is not None
-                    }
-                }
-                
-                # Convert overall risk index back to string
-                risk_levels = ['low', 'medium', 'high', 'critical']
-                response["risk_assessment"]["overall_risk"] = risk_levels[response["risk_assessment"]["overall_risk"]]
-                
-                logger.info(f"Query preview analysis completed for database '{name}': "
-                           f"{query_analysis.estimated_rows} rows, {query_analysis.estimated_total_memory_mb:.1f}MB, "
-                           f"overall risk: {response['risk_assessment']['overall_risk']}")
-                
-                return json.dumps(response, indent=2)
-                
+                if hasattr(conn, 'dispose'):
+                    conn.dispose()
+                elif hasattr(conn, 'close'):
+                    conn.close()
             except Exception as e:
-                logger.error(f"Query preview analysis failed for database '{name}': {e}")
-                return f"Analysis failed: {e}"
-                
-        except ValueError as e:
-            logger.error(f"Database '{name}' not found for preview analysis: {e}")
-            return str(e)
-        except Exception as e:
-            logger.error(f"Unexpected error during query preview analysis: {e}")
-            return f"An unexpected error occurred: {e}"
-
-    @mcp.tool
-    def next_chunk(self, query_id: str, start_row: int, chunk_size: str) -> str:
-        """
-        Retrieve the next chunk of rows from a buffered query result.
-
-        Args:
-            query_id: The ID of the buffered query result.
-            start_row: The starting row number (1-based indexing).
-            chunk_size: Number of rows to retrieve, or 'all' for all remaining rows.
-        """
-        try:
-            # Clean up expired buffers in streaming executor
-            self.streaming_executor.cleanup_expired_buffers()
-            
-            # Get buffer info from streaming executor
-            buffer_info = self.streaming_executor.get_buffer_info(query_id)
-            if buffer_info is None:
-                return f"Error: Query buffer '{query_id}' not found. It may have expired or been cleared."
-            
-            # Handle chunk_size parameter
-            if chunk_size == "all":
-                requested_chunk_size = None  # Get all remaining
-            else:
-                try:
-                    requested_chunk_size = int(chunk_size)
-                    if requested_chunk_size <= 0:
-                        return "Error: chunk_size must be a positive integer or 'all'."
-                except ValueError:
-                    return "Error: chunk_size must be a positive integer or 'all'."
-            
-            # Convert to 0-based indexing for streaming executor
-            start_idx = start_row - 1
-            
-            # Get chunk using streaming executor's chunk iterator
-            chunk_iterator = self.streaming_executor.get_chunk_iterator(
-                query_id, 
-                start_idx, 
-                requested_chunk_size or 1000  # Default large chunk if 'all'
-            )
-            
-            try:
-                chunk_df = next(chunk_iterator)
-                if chunk_df.empty:
-                    return json.dumps({"metadata": {"message": "No more rows available"}, "data": []})
-            except StopIteration:
-                return json.dumps({"metadata": {"message": "No more rows available"}, "data": []})
-
-            if chunk_df.empty:
-                return json.dumps({"metadata": {"message": "No more rows available"}, "data": []})
-
-            # Build response
-            showing_end = start_row + len(chunk_df) - 1  # Adjust for 1-based indexing
-            total_rows = buffer_info.get("total_rows", "unknown")
-            
-            response = {
-                "metadata": {
-                    "query_id": query_id,
-                    "total_rows": total_rows,
-                    "showing_rows": f"{start_row}-{showing_end}",
-                    "chunk_size": len(chunk_df),
-                    "buffer_timestamp": buffer_info.get("timestamp"),
-                    "buffer_memory_usage_mb": buffer_info.get("memory_usage_mb"),
-                    "buffer_complete": buffer_info.get("is_complete", False),
-                    "streaming": True
-                },
-                "data": json.loads(chunk_df.to_json(orient="records")),
-            }
-
-            # Add next pagination options if more rows might be available
-            # For streaming, we don't always know the total, so we provide next options
-            if len(chunk_df) > 0:  # If we got data, there might be more
-                next_start = showing_end + 1
-                response["pagination"] = {
-                    "next_100": f"next_chunk(query_id='{query_id}', start_row={next_start}, chunk_size=100)",
-                    "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={next_start}, chunk_size='all')",
-                }
-
-            return json.dumps(response, indent=2)
-
-        except Exception as e:
-            return f"An error occurred while retrieving query chunk: {e}"
-
-    # @mcp.tool  # COMMENTED OUT - Debugging tool for v1.4.0 dynamic tooling
-    # def get_query_history(self, name: str) -> str:
-        """
-        Get the recent query history for a specific database connection.
-
-        Args:
-            name: The name of the database connection.
-        """
-        try:
-            history = self.query_history.get(name, [])
-            if not history:
-                return f"No query history found for database '{name}'."
-            return "\n".join(history)
-        except Exception as e:
-            return f"An error occurred: {e}"
-
-    @mcp.tool
-    def list_databases(self) -> str:
-        """
-        List all available database connections with their SQL flavor information.
-        """
-        if not self.connections:
-            return json.dumps({"message": "No databases are currently connected.", "databases": []})
-        
-        databases = []
-        for name in self.connections.keys():
-            db_type = self.db_types.get(name, "unknown")
-            sql_flavor = self._get_sql_flavor(db_type, self.connections[name])
-            databases.append({
-                "name": name,
-                "db_type": db_type,
-                "sql_flavor": sql_flavor
-            })
-        
-        response = {
-            "total_connections": len(databases),
-            "databases": databases
-        }
-        
-        return json.dumps(response, indent=2)
-
-    @mcp.tool
-    def describe_database(self, name: str) -> str:
-        """
-        Get detailed information about a database, including its schema in JSON format.
-
-        Args:
-            name: The name of the database connection.
-        """
-        try:
-            engine = self._get_connection(name)
-            inspector = inspect(engine)
-
-            db_info = {
-                "name": name,
-                "dialect": engine.dialect.name,
-                "version": inspector.get_server_version_info(),
-                "default_schema_name": inspector.default_schema_name,
-                "schemas": inspector.get_schema_names(),
-                "tables": [],
-            }
-
-            for table_name in inspector.get_table_names():
-                table_info = self._get_table_metadata(inspector, table_name)
-                with engine.connect() as conn:
-                    safe_table_name = self._safe_table_identifier(table_name)
-                    result = conn.execute(
-                        text(f"SELECT COUNT(*) FROM {safe_table_name}")  # nosec B608
-                    )
-                    row_count = result.scalar()
-                table_info["size"] = row_count
-                db_info["tables"].append(table_info)
-
-            return json.dumps(db_info, indent=2)
-        except Exception as e:
-            return f"An error occurred: {e}"
-
-    @mcp.tool
-    def find_table(self, table_name: str) -> str:
-        """
-        Find which database contains a specific table.
-
-        Args:
-            table_name: The name of the table to find.
-        """
-        found_dbs = []
-        for name, engine in self.connections.items():
-            inspector = inspect(engine)
-            if table_name in inspector.get_table_names():
-                found_dbs.append(name)
-
-        if not found_dbs:
-            return f"Table '{table_name}' was not found in any connected databases."
-        return json.dumps(found_dbs)
-
-    @mcp.tool
-    def describe_table(self, name: str, table_name: str) -> str:
-        """
-        Get a detailed description of a table including its schema in JSON.
-
-        Args:
-            name: The name of the database connection.
-            table_name: The name of the table.
-        """
-        try:
-            engine = self._get_connection(name)
-            inspector = inspect(engine)
-            if table_name not in inspector.get_table_names():
-                return (
-                    f"Error: Table '{table_name}' does not exist in database '{name}'."
-                )
-
-            table_info = self._get_table_metadata(inspector, table_name)
-            with engine.connect() as conn:
-                safe_table_name = self._safe_table_identifier(table_name)
-                result = conn.execute(
-                    text(f"SELECT COUNT(*) FROM {safe_table_name}")  # nosec B608
-                )
-                row_count = result.scalar()
-            table_info["size"] = row_count
-
-            return json.dumps(table_info, indent=2)
-        except Exception as e:
-            return f"An error occurred: {e}"
-
-
-
-
-
-
-
-    def _check_file_modified(self, buffer: QueryBuffer) -> bool:
-        """Check if the source file has been modified since buffer creation."""
-        if not buffer.source_file_path or not buffer.source_file_mtime:
-            return False
-
-        try:
-            current_mtime = os.path.getmtime(buffer.source_file_path)
-            return current_mtime > buffer.source_file_mtime
-        except OSError:
-            # File might not exist anymore
-            return True
-
-    def _check_memory_usage(self) -> Dict[str, Any]:
-        """Check current memory usage and available memory."""
-        try:
-            memory = psutil.virtual_memory()
-            return {
-                "total_gb": round(memory.total / (1024**3), 2),
-                "available_gb": round(memory.available / (1024**3), 2),
-                "used_percent": memory.percent,
-                "low_memory": memory.percent > 85  # Consider 85% as low memory threshold
-            }
-        except Exception as e:
-            logger.warning(f"Could not check memory usage: {e}")
-            return {"error": str(e), "low_memory": False}
-
-    def _auto_clear_buffers_if_needed(self, db_name: str) -> bool:
-        """Auto-clear buffers from the same database if memory is high."""
-        memory_info = self._check_memory_usage()
-        
-        if memory_info.get("low_memory", False):
-            with self.query_buffer_lock:
-                # Clear buffers from the same database
-                buffers_to_clear = [
-                    query_id for query_id, buffer in self.query_buffers.items()
-                    if buffer.db_name == db_name
-                ]
-                for query_id in buffers_to_clear:
-                    del self.query_buffers[query_id]
-                
-                if buffers_to_clear:
-                    logger.info(f"Auto-cleared {len(buffers_to_clear)} buffers from '{db_name}' due to low memory")
-                    return True
-        
-        return False
-
-    def _get_sql_flavor(self, db_type: str, engine=None) -> str:
-        """Determine the SQL flavor/dialect for the database type."""
-        if db_type == "sqlite":
-            return "SQLite"
-        elif db_type == "postgresql":
-            return "PostgreSQL"
-        elif db_type == "mysql":
-            return "MySQL"
-        elif db_type == "duckdb":
-            return "Duckdb"
-        elif db_type == "redis":
-            return "Redis"
-        elif db_type == "elasticsearch":
-            return "Elasticsearch"
-        elif db_type == "mongodb":
-            return "MongoDB"
-        elif db_type == "influxdb":
-            return "InfluxDB"
-        elif db_type == "neo4j":
-            return "Neo4j"
-        elif db_type == "couchdb":
-            return "CouchDB"
-        elif db_type in ["csv", "json", "yaml", "toml", "excel", "ods", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5"]:
-            # File formats use SQLite dialect internally
-            return "SQLite"
-        else:
-            # Try to get from engine if available
-            if engine and hasattr(engine, 'dialect'):
-                return engine.dialect.name.title()
-            return "Unknown"
+                logger.warning(f"Failed to cleanup connection {name}: {e}")
 
     def _safe_table_identifier(self, table_name: str) -> str:
-        """Create a safe SQL identifier for table names to prevent injection."""
-        # Validate table name contains only safe characters
-        import re
+        """Safely quote table identifiers to prevent SQL injection."""
+        return quoted_name(table_name, quote=True)
+        
+    def _get_connection(self, name: str):
+        """Get database connection by name."""
+        if name not in self.connections:
+            raise ValueError(f"Database '{name}' is not connected. Use connect_database first.")
+        return self.connections[name]
+        
+    def _check_memory_usage(self) -> Dict[str, Any]:
+        """Check current memory usage and return status."""
+        memory = psutil.virtual_memory()
+        return {
+            'total_gb': round(memory.total / (1024**3), 2),
+            'available_gb': round(memory.available / (1024**3), 2),
+            'used_gb': round(memory.used / (1024**3), 2),
+            'percent_used': memory.percent,
+            'is_low_memory': memory.percent > 85
+        }
 
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", table_name):
-            raise ValueError(
-                f"Invalid table name '{table_name}'. Table names must start with a letter or underscore and contain only alphanumeric characters and underscores."
-            )
+    def connect_database(self, name: str, db_type: str, conn_string: str, sheet_name: Optional[str] = None) -> str:
+        """
+        Connect to a database or file-based data source with comprehensive format support.
+        
+        This method supports traditional databases, modern NoSQL databases, and numerous file formats
+        with optimized memory usage and streaming capabilities for large datasets.
+        
+        Args:
+            name: Unique identifier for this connection
+            db_type: Database type or file format
+            conn_string: Connection string or file path
+            sheet_name: Sheet name for multi-sheet formats (Excel, ODS, Numbers) or dataset name (HDF5)
+        
+        Returns:
+            Connection status and metadata in JSON format
+        """
+        try:
+            logger.info(f"Connecting to {db_type} database: {name}")
+            
+            # Store connection metadata
+            self.db_types[name] = db_type
+            
+            # Handle different database types and file formats
+            if db_type in ['sqlite', 'postgresql', 'mysql', 'duckdb']:
+                self.connections[name] = create_engine(conn_string)
+                
+            elif db_type == 'csv':
+                # Use streaming file processor for CSV
+                engine = create_streaming_file_engine(conn_string, format_type='csv')
+                self.connections[name] = engine
+                
+            elif db_type == 'json':
+                # Handle both streaming and regular JSON
+                engine = create_streaming_file_engine(conn_string, format_type='json')
+                self.connections[name] = engine
+                
+            elif db_type in ['yaml', 'yml']:
+                if not os.path.exists(conn_string):
+                    return json.dumps({"error": f"YAML file not found: {conn_string}"})
+                    
+                with open(conn_string, 'r', encoding='utf-8') as file:
+                    data = yaml.safe_load(file)
+                    
+                # Convert to temporary SQLite database
+                df = pd.json_normalize(data) if isinstance(data, dict) else pd.DataFrame(data)
+                temp_db = self._create_temp_sqlite(df)
+                self.connections[name] = create_engine(f"sqlite:///{temp_db}")
+                self.temp_files.add(temp_db)
+                
+            elif db_type == 'toml':
+                if not TOML_AVAILABLE:
+                    return json.dumps({"error": "TOML support not available. Install with: pip install toml"})
+                    
+                if not os.path.exists(conn_string):
+                    return json.dumps({"error": f"TOML file not found: {conn_string}"})
+                    
+                with open(conn_string, 'r', encoding='utf-8') as file:
+                    data = toml.load(file)
+                    
+                # Convert to temporary SQLite database  
+                df = pd.json_normalize(data) if isinstance(data, dict) else pd.DataFrame(data)
+                temp_db = self._create_temp_sqlite(df)
+                self.connections[name] = create_engine(f"sqlite:///{temp_db}")
+                self.temp_files.add(temp_db)
+                
+            elif db_type == 'excel':
+                if not OPENPYXL_AVAILABLE:
+                    return json.dumps({"error": "Excel support not available. Install with: pip install openpyxl"})
+                
+                # Use streaming processor with enhanced Excel support
+                engine = create_streaming_file_engine(
+                    conn_string, 
+                    format_type='excel', 
+                    sheet_name=sheet_name
+                )
+                self.connections[name] = engine
+                
+            elif db_type == 'ods':
+                if not ODFPY_AVAILABLE:
+                    return json.dumps({"error": "ODS support not available. Install with: pip install odfpy"})
+                
+                engine = create_streaming_file_engine(
+                    conn_string,
+                    format_type='ods',
+                    sheet_name=sheet_name
+                )
+                self.connections[name] = engine
+                
+            elif db_type == 'numbers':
+                if not NUMBERS_AVAILABLE:
+                    return json.dumps({"error": "Apple Numbers support not available. Install with: pip install numbers-parser"})
+                
+                engine = create_streaming_file_engine(
+                    conn_string,
+                    format_type='numbers',
+                    sheet_name=sheet_name
+                )
+                self.connections[name] = engine
+                
+            elif db_type == 'xml':
+                if not LXML_AVAILABLE:
+                    return json.dumps({"error": "XML support not available. Install with: pip install lxml"})
+                
+                engine = create_streaming_file_engine(conn_string, format_type='xml')
+                self.connections[name] = engine
+                
+            elif db_type == 'parquet':
+                if not PYARROW_AVAILABLE:
+                    return json.dumps({"error": "Parquet support not available. Install with: pip install pyarrow"})
+                
+                engine = create_streaming_file_engine(conn_string, format_type='parquet')
+                self.connections[name] = engine
+                
+            elif db_type in ['feather', 'arrow']:
+                if not PYARROW_AVAILABLE:
+                    return json.dumps({"error": "Arrow/Feather support not available. Install with: pip install pyarrow"})
+                
+                engine = create_streaming_file_engine(conn_string, format_type=db_type)
+                self.connections[name] = engine
+                
+            elif db_type == 'hdf5':
+                if not HDF5_AVAILABLE:
+                    return json.dumps({"error": "HDF5 support not available. Install with: pip install h5py tables"})
+                
+                engine = create_streaming_file_engine(
+                    conn_string,
+                    format_type='hdf5',
+                    dataset_name=sheet_name  # Use sheet_name as dataset_name for HDF5
+                )
+                self.connections[name] = engine
+                
+            elif db_type == 'ini':
+                if not os.path.exists(conn_string):
+                    return json.dumps({"error": f"INI file not found: {conn_string}"})
+                    
+                config = configparser.ConfigParser()
+                config.read(conn_string)
+                
+                # Convert INI to DataFrame
+                data = []
+                for section in config.sections():
+                    for key, value in config[section].items():
+                        data.append({'section': section, 'key': key, 'value': value})
+                        
+                df = pd.DataFrame(data)
+                temp_db = self._create_temp_sqlite(df)
+                self.connections[name] = create_engine(f"sqlite:///{temp_db}")
+                self.temp_files.add(temp_db)
+                
+            elif db_type == 'tsv':
+                # TSV is CSV with tab separator
+                engine = create_streaming_file_engine(conn_string, format_type='csv', separator='\t')
+                self.connections[name] = engine
+                
+            # Modern database support
+            elif db_type == 'redis' and REDIS_AVAILABLE:
+                self.connections[name] = self._create_redis_connection(conn_string)
+                
+            elif db_type == 'elasticsearch' and ELASTICSEARCH_AVAILABLE:
+                self.connections[name] = self._create_elasticsearch_connection(conn_string)
+                
+            elif db_type == 'mongodb' and MONGODB_AVAILABLE:
+                self.connections[name] = self._create_mongodb_connection(conn_string)
+                
+            elif db_type == 'influxdb' and INFLUXDB_AVAILABLE:
+                self.connections[name] = self._create_influxdb_connection(conn_string)
+                
+            elif db_type == 'neo4j' and NEO4J_AVAILABLE:
+                self.connections[name] = self._create_neo4j_connection(conn_string)
+                
+            elif db_type == 'couchdb' and COUCHDB_AVAILABLE:
+                self.connections[name] = self._create_couchdb_connection(conn_string)
+                
+            else:
+                return json.dumps({"error": f"Unsupported database type: {db_type}"})
+            
+            # Test connection
+            self._test_connection(name, db_type)
+            
+            logger.info(f"Successfully connected to {db_type} database: {name}")
+            
+            return json.dumps({
+                "success": True,
+                "message": f"Connected to {db_type} database: {name}",
+                "database_type": db_type,
+                "connection_name": name,
+                "sheet_name": sheet_name
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to connect to database {name}: {e}")
+            return json.dumps({
+                "error": f"Connection failed: {str(e)}",
+                "database_type": db_type,
+                "connection_name": name
+            })
 
-        # Use SQLAlchemy's quoted_name for safe identifier quoting
-        return str(quoted_name(table_name, quote=True))
+    def _create_temp_sqlite(self, df: pd.DataFrame) -> str:
+        """Create temporary SQLite database from DataFrame."""
+        temp_file = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        temp_file.close()
+        
+        engine = create_engine(f"sqlite:///{temp_file.name}")
+        df.to_sql('data', engine, index=False, if_exists='replace')
+        
+        return temp_file.name
 
-    # Modern Database Connection Methods
-    
+    def _test_connection(self, name: str, db_type: str):
+        """Test database connection."""
+        if db_type in ['sqlite', 'postgresql', 'mysql', 'duckdb']:
+            # Test SQL databases
+            with self.connections[name].connect() as conn:
+                conn.execute(text("SELECT 1"))
+        # Add other connection tests as needed
+        
     def _create_redis_connection(self, conn_string: str):
         """Create Redis connection from connection string."""
-        import redis
-        
-        # Parse connection string (redis://localhost:6379/0)
-        if conn_string.startswith('redis://'):
-            # Parse URL format
-            parts = conn_string.replace('redis://', '').split('/')
-            host_port = parts[0].split(':')
-            host = host_port[0] or 'localhost'
-            port = int(host_port[1]) if len(host_port) > 1 else 6379
-            db = int(parts[1]) if len(parts) > 1 else 0
-        else:
-            # Default localhost
-            host, port, db = 'localhost', 6379, 0
-            
-        return redis.Redis(host=host, port=port, db=db, decode_responses=True)
+        # Parse Redis connection string (redis://localhost:6379/0)
+        return redis.from_url(conn_string)
     
     def _create_elasticsearch_connection(self, conn_string: str):
         """Create Elasticsearch connection from connection string."""
         from elasticsearch import Elasticsearch
         
-        # Parse connection string (http://localhost:9200)
-        if not conn_string.startswith('http'):
-            conn_string = f"http://{conn_string}"
-            
+        # Parse Elasticsearch connection string (http://localhost:9200)
         return Elasticsearch([conn_string])
     
     def _create_mongodb_connection(self, conn_string: str):
         """Create MongoDB connection from connection string."""
-        import pymongo
-        
-        # Parse connection string (mongodb://localhost:27017/database)
-        if not conn_string.startswith('mongodb://'):
-            conn_string = f"mongodb://{conn_string}"
-            
+        # Parse MongoDB connection string (mongodb://localhost:27017/)
         return pymongo.MongoClient(conn_string)
     
     def _create_influxdb_connection(self, conn_string: str):
         """Create InfluxDB connection from connection string."""
-        from influxdb_client import InfluxDBClient
-        
-        # Parse connection string (http://localhost:8086)
-        if not conn_string.startswith('http'):
-            conn_string = f"http://{conn_string}"
-            
+        # Parse InfluxDB connection string (http://localhost:8086)
         # InfluxDB requires token and org - use defaults for local testing
         return InfluxDBClient(url=conn_string, token="", org="")
     
@@ -2197,11 +688,11 @@ class DatabaseManager:
         This enables progressive loading of large datasets.
         
         Args:
-            query_id: The ID of the query to get chunk from.
-            chunk_id: The ID of the chunk to retrieve (starting from 0).
+            query_id: The ID of the query result to get a chunk from.
+            chunk_id: The specific chunk number to retrieve (0-based).
             
         Returns:
-            Chunk data with metadata in JSON format.
+            Chunk data in JSON format with metadata.
         """
         try:
             with self.query_buffer_lock:
@@ -2211,1292 +702,150 @@ class DatabaseManager:
                 query_buffer = self.query_buffers[query_id]
                 
                 if not query_buffer.llm_protocol:
-                    return f"Query ID '{query_id}' does not support chunk requests."
+                    return f"Query ID '{query_id}' does not support chunked access."
                 
-                # Request the chunk
-                chunk_data = query_buffer.llm_protocol.request_chunk(chunk_id)
+                # Request chunk through LLM protocol
+                chunk_result = query_buffer.llm_protocol.get_chunk(chunk_id)
                 
-                if chunk_data is None:
-                    return f"Chunk {chunk_id} not available for query {query_id}."
-                
-                return json.dumps(chunk_data, indent=2)
+                return json.dumps(chunk_result, indent=2, default=str)
                 
         except Exception as e:
-            logger.error(f"Error requesting chunk {chunk_id} for query {query_id}: {e}")
-            return f"Error requesting chunk: {e}"
+            logger.error(f"Error getting chunk {chunk_id} for query {query_id}: {e}")
+            return f"Error getting chunk: {e}"
     
-    @mcp.tool 
-    def request_multiple_chunks(self, query_id: str, chunk_ids: str) -> str:
-        """
-        Request multiple chunks of data efficiently.
-        
-        Args:
-            query_id: The ID of the query to get chunks from.
-            chunk_ids: Comma-separated list of chunk IDs (e.g., "0,1,2").
-            
-        Returns:
-            Multiple chunks data with metadata in JSON format.
-        """
-        try:
-            # Parse chunk IDs
-            try:
-                chunk_id_list = [int(cid.strip()) for cid in chunk_ids.split(',')]
-            except ValueError:
-                return f"Invalid chunk_ids format. Use comma-separated integers like '0,1,2'."
-            
-            with self.query_buffer_lock:
-                if query_id not in self.query_buffers:
-                    return f"Query ID '{query_id}' not found in buffers."
-                
-                query_buffer = self.query_buffers[query_id]
-                
-                if not query_buffer.llm_protocol:
-                    return f"Query ID '{query_id}' does not support chunk requests."
-                
-                # Request multiple chunks
-                chunks_data = query_buffer.llm_protocol.request_multiple_chunks(chunk_id_list)
-                
-                return json.dumps(chunks_data, indent=2)
-                
-        except Exception as e:
-            logger.error(f"Error requesting chunks {chunk_ids} for query {query_id}: {e}")
-            return f"Error requesting chunks: {e}"
-    
-    @mcp.tool
-    def cancel_query_operation(self, query_id: str, reason: str = "User requested") -> str:
-        """
-        Cancel an ongoing query operation and free resources.
-        
-        Args:
-            query_id: The ID of the query operation to cancel.
-            reason: Reason for cancellation (optional).
-            
-        Returns:
-            Cancellation status message.
-        """
-        try:
-            with self.query_buffer_lock:
-                if query_id not in self.query_buffers:
-                    return f"Query ID '{query_id}' not found in buffers."
-                
-                query_buffer = self.query_buffers[query_id]
-                
-                if not query_buffer.llm_protocol:
-                    return f"Query ID '{query_id}' does not support cancellation."
-                
-                # Cancel the operation
-                success = query_buffer.llm_protocol.cancel_operation(reason)
-                
-                if success:
-                    # Also clear from our buffers
-                    del self.query_buffers[query_id]
-                    return f"Successfully cancelled operation for query {query_id}. Reason: {reason}"
-                else:
-                    return f"Failed to cancel operation for query {query_id}. Operation may not support cancellation."
-                
-        except Exception as e:
-            logger.error(f"Error cancelling operation for query {query_id}: {e}")
-            return f"Error cancelling operation: {e}"
-    
-    @mcp.tool
-    def get_data_quality_report(self, query_id: str) -> str:
-        """
-        Get a comprehensive data quality assessment for a query result.
-        
-        Args:
-            query_id: The ID of the query to assess data quality for.
-            
-        Returns:
-            Detailed data quality report in JSON format.
-        """
-        try:
-            with self.query_buffer_lock:
-                if query_id not in self.query_buffers:
-                    return f"Query ID '{query_id}' not found in buffers."
-                
-                query_buffer = self.query_buffers[query_id]
-                
-                if not query_buffer.llm_protocol:
-                    return f"Query ID '{query_id}' does not have data quality information available."
-                
-                # Get data quality report
-                quality_report = query_buffer.llm_protocol.get_data_quality_report()
-                
-                return json.dumps(quality_report, indent=2)
-                
-        except Exception as e:
-            logger.error(f"Error getting data quality report for {query_id}: {e}")
-            return f"Error getting quality report: {e}"
-
-    @mcp.tool
-    def check_compatibility(self, generate_migration_script: bool = False) -> str:
-        """
-        Check backward compatibility status and get migration recommendations.
-        
-        Args:
-            generate_migration_script: Whether to generate a migration script for legacy configuration
-            
-        Returns:
-            Comprehensive compatibility report and migration guidance
-        """
-        try:
-            # Get compatibility status
-            status = self.compatibility_manager.get_compatibility_status()
-            
-            # Create report
-            report = {
-                "compatibility_status": "OK" if not status['legacy_config_detected'] else "LEGACY_DETECTED",
-                "version": status['version'],
-                "compatibility_mode": status['compatibility_mode'],
-                "legacy_configuration": status['legacy_config_detected'],
-                "recommendations": status['recommendations'],
-                "deprecation_warnings": status['deprecation_warnings_shown'],
-                "details": status['legacy_patterns']
-            }
-            
-            # Generate migration script if requested
-            if generate_migration_script and status['legacy_config_detected']:
-                try:
-                    migration_script = self.compatibility_manager.create_migration_script()
-                    report['migration_script'] = migration_script
-                    report['migration_script_note'] = "Save this script and run it to migrate your configuration"
-                except Exception as e:
-                    report['migration_script_error'] = f"Failed to generate migration script: {e}"
-            
-            # Add helpful information
-            if status['legacy_config_detected']:
-                report['migration_guidance'] = {
-                    "current_status": "Using deprecated configuration patterns",
-                    "action_required": "Migration recommended but not required immediately",
-                    "timeline": "Legacy patterns will be removed in v1.4.0",
-                    "next_steps": [
-                        "Review recommendations above",
-                        "Create YAML configuration file (localdata.yaml)",
-                        "Test new configuration alongside existing setup",
-                        "Gradually migrate environment variables to YAML"
-                    ]
-                }
-            else:
-                report['migration_guidance'] = {
-                    "current_status": "Using modern configuration patterns",
-                    "action_required": "None - configuration is up to date",
-                    "next_steps": ["Continue using current configuration"]
-                }
-            
-            return json.dumps(report, indent=2)
-            
-        except Exception as e:
-            logger.error(f"Error checking compatibility: {e}")
-            return f"Error checking compatibility: {e}"
-
     def profile_table(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None, 
                      sample_size: int = 10000, include_distributions: bool = True) -> str:
-        """
-        Generate comprehensive data profile with statistics, data quality metrics, and distribution analysis.
-        
-        This tool provides industry-standard data profiling including completeness, uniqueness, validity,
-        and consistency analysis. Optimized for large datasets using streaming architecture.
-        
-        Args:
-            name: Database connection name
-            table_name: Name of the table to profile (mutually exclusive with query)
-            query: Custom SQL query to profile (mutually exclusive with table_name)
-            sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
-            include_distributions: Whether to include distribution analysis for numeric columns
-            
-        Returns:
-            Comprehensive data profile in JSON format with statistics and quality metrics
-        """
+        """Generate comprehensive data profile with advanced analytics."""
         try:
             if not table_name and not query:
-                return "Error: Either table_name or query must be provided"
+                return json.dumps({"error": "Either table_name or query must be provided"})
             
             if table_name and query:
-                return "Error: Provide either table_name or query, not both"
+                return json.dumps({"error": "Provide either table_name or query, not both"})
                 
             if name not in self.connections:
-                return f"Database '{name}' is not connected. Use connect_database first."
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
             
-            engine = self._get_connection(name)
+            # Get data for analysis
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for profiling"})
             
-            # Build the profiling query
-            if table_name:
-                if sample_size > 0:
-                    profile_query = f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}"
-                else:
-                    profile_query = f"SELECT * FROM {table_name}"
-            else:
-                if sample_size > 0:
-                    profile_query = f"SELECT * FROM ({query}) AS subquery ORDER BY RANDOM() LIMIT {sample_size}"
-                else:
-                    profile_query = query
+            # Use statistical analysis domain for comprehensive profiling
+            from .domains.statistical_analysis import profile_dataset, detect_data_types, analyze_distributions
             
-            # Execute query to get data for profiling
-            with engine.connect() as connection:
-                try:
-                    result = connection.execute(text(profile_query))
-                    
-                    # Convert to pandas DataFrame for analysis
-                    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-                    
-                    if df.empty:
-                        return json.dumps({"error": "No data returned from query"}, indent=2)
-                    
-                    # Use the new ProfileTableTransformer for analysis
-                    from .pipeline.phase1_transformers import ProfileTableTransformer
-                    
-                    profiler = ProfileTableTransformer(
-                        sample_size=0,  # Already sampled in query
-                        include_distributions=include_distributions,
-                        connection_name=name,
-                        table_name=table_name,
-                        query=query
-                    )
-                    
-                    # Fit the transformer and get the profile
-                    profiler.fit(df)
-                    profile = profiler.get_profile()
-                    
-                    # Update metadata with database-specific information
-                    if 'metadata' not in profile:
-                        profile['metadata'] = {}
-                    profile['metadata'].update({
-                        'source_database': name,
-                        'source_table': table_name,
-                        'custom_query': query is not None,
-                        'sample_size': sample_size,
-                        'actual_rows_analyzed': len(df)
-                    })
-                    
-                    return json.dumps(profile, indent=2, default=str)
-                    
-                except Exception as e:
-                    logger.error(f"Error executing profiling query: {e}")
-                    return f"Error executing profiling query: {e}"
-                    
+            # Basic profiling
+            profile_result = profile_dataset(
+                df, 
+                include_distributions=include_distributions,
+                sample_size=sample_size
+            )
+            
+            # Add data type detection
+            type_detection = detect_data_types(df)
+            
+            # Distribution analysis for numeric columns
+            if include_distributions:
+                distribution_analysis = analyze_distributions(
+                    df.select_dtypes(include=[np.number]),
+                    bins=20
+                )
+                profile_result['distribution_analysis'] = distribution_analysis
+            
+            profile_result['data_type_suggestions'] = type_detection
+            profile_result['sample_size_used'] = sample_size
+            profile_result['database_name'] = name
+            
+            return json.dumps(profile_result, default=str)
+            
         except Exception as e:
-            logger.error(f"Error profiling data: {e}")
-            return f"Error profiling data: {e}"
+            logger.error(f"Data profiling failed: {e}")
+            return json.dumps({"error": f"Data profiling failed: {str(e)}"})
     
-    def _generate_data_profile(self, df: pd.DataFrame, include_distributions: bool = True) -> Dict[str, Any]:
-        """
-        Generate comprehensive data profile for a DataFrame.
-        
-        Args:
-            df: Pandas DataFrame to profile
-            include_distributions: Whether to include distribution analysis
-            
-        Returns:
-            Dictionary containing comprehensive profile data
-        """
-        profile = {
-            'summary': {
-                'total_rows': len(df),
-                'total_columns': len(df.columns),
-                'memory_usage_mb': df.memory_usage(deep=True).sum() / (1024 * 1024),
-                'completeness_score': ((df.notna().sum().sum()) / (len(df) * len(df.columns))) * 100
-            },
-            'columns': {}
-        }
-        
-        # Profile each column
-        for column in df.columns:
-            col_data = df[column]
-            col_profile = {
-                'data_type': str(col_data.dtype),
-                'non_null_count': int(col_data.notna().sum()),
-                'null_count': int(col_data.isnull().sum()),
-                'null_percentage': float((col_data.isnull().sum() / len(col_data)) * 100),
-                'unique_count': int(col_data.nunique()),
-                'unique_percentage': float((col_data.nunique() / len(col_data)) * 100) if len(col_data) > 0 else 0,
-                'memory_usage_bytes': int(col_data.memory_usage(deep=True))
-            }
-            
-            # Add basic statistics for non-null values
-            non_null_data = col_data.dropna()
-            
-            if len(non_null_data) > 0:
-                # Most common values
-                value_counts = non_null_data.value_counts().head(5)
-                col_profile['top_values'] = {
-                    str(val): int(count) for val, count in value_counts.items()
-                }
-                
-                # Type-specific analysis
-                if pd.api.types.is_numeric_dtype(col_data):
-                    col_profile.update(self._profile_numeric_column(non_null_data, include_distributions))
-                elif pd.api.types.is_datetime64_any_dtype(col_data):
-                    col_profile.update(self._profile_datetime_column(non_null_data))
-                else:
-                    col_profile.update(self._profile_text_column(non_null_data))
-            
-            profile['columns'][column] = col_profile
-        
-        # Calculate data quality metrics
-        profile['data_quality'] = self._calculate_data_quality_metrics(df)
-        
-        return profile
-    
-    def _profile_numeric_column(self, series: pd.Series, include_distributions: bool) -> Dict[str, Any]:
-        """Profile numeric column with statistical analysis."""
-        profile = {
-            'min_value': float(series.min()),
-            'max_value': float(series.max()),
-            'mean': float(series.mean()),
-            'median': float(series.median()),
-            'std_deviation': float(series.std()) if len(series) > 1 else 0,
-            'variance': float(series.var()) if len(series) > 1 else 0,
-            'skewness': float(series.skew()) if len(series) > 2 else 0,
-            'kurtosis': float(series.kurtosis()) if len(series) > 3 else 0
-        }
-        
-        # Quartiles
-        try:
-            quartiles = series.quantile([0.25, 0.5, 0.75])
-            q25_val = float(quartiles[0.25])
-            q75_val = float(quartiles[0.75])
-            
-            # Add quartiles both as top-level values for easy access and nested for detail
-            profile['q25'] = q25_val  # 25th percentile (Q1)
-            profile['q75'] = q75_val  # 75th percentile (Q3)
-            
-            profile['quartiles'] = {
-                'q1': q25_val,
-                'q2': float(quartiles[0.5]),
-                'q3': q75_val,
-                'iqr': float(q75_val - q25_val)
-            }
-        except Exception:
-            profile['quartiles'] = None
-            profile['q25'] = None
-            profile['q75'] = None
-        
-        # Outlier detection using IQR method
-        if profile['quartiles']:
-            q1, q3 = profile['quartiles']['q1'], profile['quartiles']['q3']
-            iqr = profile['quartiles']['iqr']
-            lower_bound = q1 - 1.5 * iqr
-            upper_bound = q3 + 1.5 * iqr
-            outliers = series[(series < lower_bound) | (series > upper_bound)]
-            profile['outliers'] = {
-                'count': int(len(outliers)),
-                'percentage': float((len(outliers) / len(series)) * 100),
-                'lower_bound': float(lower_bound),
-                'upper_bound': float(upper_bound)
-            }
-        
-        # Distribution analysis if requested
-        if include_distributions:
-            try:
-                # Create histogram data
-                hist, bin_edges = pd.cut(series, bins=20, retbins=True, duplicates='drop')
-                hist_counts = hist.value_counts().sort_index()
-                
-                profile['distribution'] = {
-                    'histogram': {
-                        'bins': [float(x) for x in bin_edges],
-                        'counts': [int(x) for x in hist_counts.values]
-                    }
-                }
-                
-                # Check for normal distribution (basic test)
-                from scipy import stats
-                if len(series) >= 3:
-                    _, p_value = stats.normaltest(series)
-                    profile['distribution']['normality_test'] = {
-                        'p_value': float(p_value),
-                        'is_normal': bool(p_value > 0.05)
-                    }
-            except ImportError:
-                # SciPy not available, skip advanced distribution analysis
-                profile['distribution'] = {'note': 'Advanced distribution analysis requires scipy'}
-            except Exception as e:
-                profile['distribution'] = {'error': f'Distribution analysis failed: {e}'}
-        
-        return profile
-    
-    def _profile_datetime_column(self, series: pd.Series) -> Dict[str, Any]:
-        """Profile datetime column."""
-        try:
-            # Convert to datetime if not already
-            if not pd.api.types.is_datetime64_any_dtype(series):
-                series = pd.to_datetime(series, errors='coerce')
-            
-            profile = {
-                'min_date': str(series.min()),
-                'max_date': str(series.max()),
-                'date_range_days': int((series.max() - series.min()).days) if len(series) > 1 else 0
-            }
-            
-            # Extract time components for analysis
-            profile['patterns'] = {
-                'years_span': int(series.dt.year.nunique()) if len(series) > 0 else 0,
-                'months_span': int(series.dt.month.nunique()) if len(series) > 0 else 0,
-                'days_of_week': series.dt.dayofweek.value_counts().to_dict() if len(series) > 0 else {}
-            }
-            
-            return profile
-        except Exception as e:
-            return {'error': f'DateTime profiling failed: {e}'}
-    
-    def _profile_text_column(self, series: pd.Series) -> Dict[str, Any]:
-        """Profile text column with pattern analysis."""
-        # Convert to string for analysis
-        str_series = series.astype(str)
-        
-        profile = {
-            'min_length': int(str_series.str.len().min()) if len(str_series) > 0 else 0,
-            'max_length': int(str_series.str.len().max()) if len(str_series) > 0 else 0,
-            'avg_length': float(str_series.str.len().mean()) if len(str_series) > 0 else 0,
-            'empty_strings': int((str_series == '').sum()),
-            'whitespace_only': int(str_series.str.strip().eq('').sum())
-        }
-        
-        # Pattern detection
-        if len(str_series) > 0:
-            import re
-            
-            patterns = {
-                'email': str_series.str.contains(r'^[\w\.-]+@[\w\.-]+\.\w+$', regex=True, na=False).sum(),
-                'phone': str_series.str.contains(r'^[\+]?[1-9]?[0-9]{7,15}$', regex=True, na=False).sum(),
-                'url': str_series.str.contains(r'^https?:\/\/', regex=True, na=False).sum(),
-                'numeric': str_series.str.match(r'^\d+$', na=False).sum(),
-                'alphanumeric': str_series.str.match(r'^[a-zA-Z0-9]+$', na=False).sum(),
-                'contains_digits': str_series.str.contains(r'\d', regex=True, na=False).sum(),
-                'all_uppercase': str_series.str.isupper().sum(),
-                'all_lowercase': str_series.str.islower().sum()
-            }
-            
-            profile['patterns'] = {k: int(v) for k, v in patterns.items()}
-        
-        return profile
-    
-    def _calculate_data_quality_metrics(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Calculate overall data quality metrics."""
-        total_cells = len(df) * len(df.columns)
-        null_cells = df.isnull().sum().sum()
-        
-        metrics = {
-            'completeness': {
-                'score': float(((total_cells - null_cells) / total_cells) * 100) if total_cells > 0 else 0,
-                'total_cells': int(total_cells),
-                'populated_cells': int(total_cells - null_cells),
-                'null_cells': int(null_cells)
-            },
-            'uniqueness': {
-                'duplicate_rows': int(df.duplicated().sum()),
-                'duplicate_percentage': float((df.duplicated().sum() / len(df)) * 100) if len(df) > 0 else 0,
-                'unique_rows': int(len(df) - df.duplicated().sum())
-            },
-            'consistency': {
-                'columns_with_mixed_types': 0,  # Would require more sophisticated analysis
-                'potential_formatting_issues': 0  # Would require domain-specific rules
-            }
-        }
-        
-        # Calculate column-level uniqueness
-        column_uniqueness = {}
-        for col in df.columns:
-            non_null_count = df[col].notna().sum()
-            unique_count = df[col].nunique()
-            column_uniqueness[col] = {
-                'uniqueness_ratio': float(unique_count / non_null_count) if non_null_count > 0 else 0,
-                'is_likely_key': bool(unique_count == non_null_count and non_null_count > 0)
-            }
-        
-        metrics['column_uniqueness'] = column_uniqueness
-        
-        return metrics
-
     def detect_data_types(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                          sample_size: int = 5000, confidence_threshold: float = 0.8) -> str:
-        """
-        Intelligent data type detection beyond schema inference with pattern recognition and semantic analysis.
-        
-        Performs advanced data type detection including pattern matching for emails, URLs, dates, IDs,
-        and semantic analysis for addresses, phone numbers. Provides confidence scoring and conversion
-        recommendations.
-        
-        Args:
-            name: Database connection name
-            table_name: Name of the table to analyze (mutually exclusive with query)
-            query: Custom SQL query to analyze (mutually exclusive with table_name)
-            sample_size: Number of rows to sample for analysis (default: 5000, 0 = all rows)
-            confidence_threshold: Minimum confidence score for type suggestions (0.0-1.0)
-            
-        Returns:
-            Detailed data type analysis with confidence scores and recommendations in JSON format
-        """
+        """Advanced data type detection with pattern recognition."""
         try:
             if not table_name and not query:
-                return "Error: Either table_name or query must be provided"
+                return json.dumps({"error": "Either table_name or query must be provided"})
             
             if table_name and query:
-                return "Error: Provide either table_name or query, not both"
+                return json.dumps({"error": "Provide either table_name or query, not both"})
                 
             if name not in self.connections:
-                return f"Database '{name}' is not connected. Use connect_database first."
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
             
-            engine = self._get_connection(name)
+            # Get data for analysis
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for type detection"})
             
-            # Build the analysis query
-            if table_name:
-                if sample_size > 0:
-                    analysis_query = f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}"
-                else:
-                    analysis_query = f"SELECT * FROM {table_name}"
-            else:
-                if sample_size > 0:
-                    analysis_query = f"SELECT * FROM ({query}) AS subquery ORDER BY RANDOM() LIMIT {sample_size}"
-                else:
-                    analysis_query = query
+            # Use statistical analysis domain for type detection
+            from .domains.statistical_analysis import detect_data_types as domain_detect_types
             
-            # Execute query to get data for type analysis
-            with engine.connect() as connection:
-                try:
-                    result = connection.execute(text(analysis_query))
-                    
-                    # Convert to pandas DataFrame for analysis
-                    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-                    
-                    if df.empty:
-                        return json.dumps({"error": "No data returned from query"}, indent=2)
-                    
-                    # Use the new DataTypeDetectorTransformer for analysis
-                    from .pipeline.phase1_transformers import DataTypeDetectorTransformer
-                    
-                    detector = DataTypeDetectorTransformer(
-                        sample_size=0,  # Already sampled in query
-                        confidence_threshold=confidence_threshold,
-                        include_semantic_types=True
-                    )
-                    
-                    # Fit the transformer and get the detected types
-                    detector.fit(df)
-                    type_analysis = detector.get_detected_types()
-                    
-                    # Update metadata with database-specific information
-                    if 'metadata' not in type_analysis:
-                        type_analysis['metadata'] = {}
-                    type_analysis['metadata'].update({
-                        'source_database': name,
-                        'source_table': table_name,
-                        'custom_query': query is not None,
-                        'sample_size': sample_size,
-                        'actual_rows_analyzed': len(df)
-                    })
-                    
-                    return json.dumps(type_analysis, indent=2, default=str)
-                    
-                except Exception as e:
-                    logger.error(f"Error executing type analysis query: {e}")
-                    return f"Error executing type analysis query: {e}"
-                    
+            result = domain_detect_types(df, confidence_threshold=confidence_threshold)
+            result['sample_size_used'] = sample_size
+            result['database_name'] = name
+            
+            return json.dumps(result, default=str)
+            
         except Exception as e:
-            logger.error(f"Error detecting data types: {e}")
-            return f"Error detecting data types: {e}"
+            logger.error(f"Data type detection failed: {e}")
+            return json.dumps({"error": f"Data type detection failed: {str(e)}"})
     
-    def _detect_intelligent_types(self, df: pd.DataFrame, confidence_threshold: float) -> Dict[str, Any]:
-        """
-        Perform intelligent data type detection with pattern recognition and semantic analysis.
-        
-        Args:
-            df: Pandas DataFrame to analyze
-            confidence_threshold: Minimum confidence score for suggestions
-            
-        Returns:
-            Dictionary containing detailed type analysis for each column
-        """
-        import re
-        from datetime import datetime
-        
-        analysis = {
-            'summary': {
-                'total_columns': len(df.columns),
-                'columns_analyzed': len(df.columns),
-                'high_confidence_suggestions': 0,
-                'potential_type_conflicts': 0
-            },
-            'columns': {}
-        }
-        
-        for column in df.columns:
-            col_data = df[column]
-            non_null_data = col_data.dropna()
-            
-            if len(non_null_data) == 0:
-                analysis['columns'][column] = {
-                    'current_type': str(col_data.dtype),
-                    'suggested_type': 'null',
-                    'confidence': 0.0,
-                    'analysis': 'Column contains only null values'
-                }
-                continue
-            
-            # Convert to string for pattern analysis
-            str_data = non_null_data.astype(str)
-            total_values = len(non_null_data)
-            
-            # Perform comprehensive type detection
-            type_scores = self._calculate_type_scores(str_data, non_null_data)
-            
-            # Find the best type suggestion
-            best_type = max(type_scores.items(), key=lambda x: x[1]['confidence'])
-            suggested_type, type_info = best_type
-            
-            # Additional analysis
-            column_analysis = {
-                'current_type': str(col_data.dtype),
-                'suggested_type': suggested_type,
-                'confidence': type_info['confidence'],
-                'matches': type_info['matches'],
-                'total_values': total_values,
-                'match_percentage': (type_info['matches'] / total_values) * 100,
-                'pattern_details': type_info.get('details', {}),
-                'conversion_feasibility': self._assess_conversion_feasibility(non_null_data, suggested_type),
-                'all_type_scores': {k: v['confidence'] for k, v in type_scores.items()}
-            }
-            
-            # Add recommendations
-            if type_info['confidence'] >= confidence_threshold:
-                column_analysis['recommendation'] = f"Consider converting to {suggested_type}"
-                analysis['summary']['high_confidence_suggestions'] += 1
-            else:
-                column_analysis['recommendation'] = "Current type appears appropriate"
-            
-            # Check for type conflicts
-            if str(col_data.dtype) != 'object' and suggested_type != 'numeric':
-                analysis['summary']['potential_type_conflicts'] += 1
-                column_analysis['type_conflict'] = True
-            
-            analysis['columns'][column] = column_analysis
-        
-        return analysis
-    
-    def _calculate_type_scores(self, str_data: pd.Series, original_data: pd.Series) -> Dict[str, Dict[str, Any]]:
-        """
-        Calculate confidence scores for different data type possibilities.
-        
-        Args:
-            str_data: String representation of the data
-            original_data: Original data series
-            
-        Returns:
-            Dictionary with type scores and match details
-        """
-        import re
-        
-        total_count = len(str_data)
-        type_scores = {}
-        
-        # Email detection
-        email_pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
-        email_matches = str_data.str.match(email_pattern, na=False).sum()
-        type_scores['email'] = {
-            'confidence': email_matches / total_count,
-            'matches': email_matches,
-            'details': {'pattern': 'Valid email format'}
-        }
-        
-        # Phone number detection (various formats)
-        phone_patterns = [
-            r'^\+?1?[\s-]?\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}$',  # US format
-            r'^\+?\d{1,4}[\s-]?\(?\d{1,4}\)?[\s-]?\d{1,4}[\s-]?\d{1,9}$'  # International
-        ]
-        phone_matches = 0
-        for pattern in phone_patterns:
-            phone_matches = max(phone_matches, str_data.str.match(pattern, na=False).sum())
-        
-        type_scores['phone'] = {
-            'confidence': phone_matches / total_count,
-            'matches': phone_matches,
-            'details': {'patterns': ['US format', 'International format']}
-        }
-        
-        # URL detection
-        url_pattern = r'^https?://'
-        url_matches = str_data.str.match(url_pattern, na=False).sum()
-        type_scores['url'] = {
-            'confidence': url_matches / total_count,
-            'matches': url_matches,
-            'details': {'pattern': 'HTTP/HTTPS URL'}
-        }
-        
-        # Date/DateTime detection
-        date_matches = 0
-        date_formats = [
-            '%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S',
-            '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M', '%d-%m-%Y'
-        ]
-        
-        for date_str in str_data.head(100):  # Sample for performance
-            for fmt in date_formats:
-                try:
-                    datetime.strptime(str(date_str), fmt)
-                    date_matches += 1
-                    break
-                except ValueError:
-                    continue
-        
-        # Extrapolate to full dataset
-        if len(str_data) > 100:
-            date_matches = int((date_matches / 100) * total_count)
-        
-        type_scores['datetime'] = {
-            'confidence': date_matches / total_count,
-            'matches': date_matches,
-            'details': {'formats_checked': len(date_formats)}
-        }
-        
-        # Numeric type detection (integer vs float)
-        if pd.api.types.is_numeric_dtype(original_data):
-            # Check if all values are whole numbers
-            if original_data.apply(lambda x: float(x).is_integer() if pd.notna(x) else True).all():
-                type_scores['integer'] = {
-                    'confidence': 1.0,
-                    'matches': total_count,
-                    'details': {'precision': 'All values are whole numbers'}
-                }
-                type_scores['float'] = {
-                    'confidence': 0.5,
-                    'matches': total_count,
-                    'details': {'note': 'Could be float but all values are integers'}
-                }
-            else:
-                type_scores['float'] = {
-                    'confidence': 1.0,
-                    'matches': total_count,
-                    'details': {'precision': 'Contains decimal values'}
-                }
-                type_scores['integer'] = {
-                    'confidence': 0.0,
-                    'matches': 0,
-                    'details': {'note': 'Contains non-integer values'}
-                }
-        else:
-            # Try to convert to numeric
-            numeric_convertible = pd.to_numeric(str_data, errors='coerce').notna().sum()
-            type_scores['numeric'] = {
-                'confidence': numeric_convertible / total_count,
-                'matches': numeric_convertible,
-                'details': {'convertible_values': numeric_convertible}
-            }
-        
-        # ID pattern detection
-        id_patterns = [
-            r'^\d+$',  # Simple numeric ID
-            r'^[A-Z]{2,4}\d+$',  # Alphanumeric with prefix
-            r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$',  # UUID
-            r'^[A-Za-z0-9]{8,}$'  # General alphanumeric ID
-        ]
-        
-        id_matches = 0
-        matched_pattern = None
-        for i, pattern in enumerate(id_patterns):
-            pattern_matches = str_data.str.match(pattern, na=False).sum()
-            if pattern_matches > id_matches:
-                id_matches = pattern_matches
-                matched_pattern = f"Pattern {i+1}"
-        
-        type_scores['identifier'] = {
-            'confidence': id_matches / total_count,
-            'matches': id_matches,
-            'details': {'matched_pattern': matched_pattern} if matched_pattern else {}
-        }
-        
-        # Boolean detection
-        boolean_values = set(['true', 'false', '1', '0', 'yes', 'no', 'y', 'n', 't', 'f'])
-        boolean_matches = str_data.str.lower().isin(boolean_values).sum()
-        type_scores['boolean'] = {
-            'confidence': boolean_matches / total_count,
-            'matches': boolean_matches,
-            'details': {'recognized_values': list(boolean_values)}
-        }
-        
-        # JSON detection
-        json_matches = 0
-        for val in str_data.head(100):  # Sample for performance
-            try:
-                json.loads(str(val))
-                json_matches += 1
-            except (json.JSONDecodeError, TypeError):
-                continue
-        
-        if len(str_data) > 100:
-            json_matches = int((json_matches / 100) * total_count)
-        
-        type_scores['json'] = {
-            'confidence': json_matches / total_count,
-            'matches': json_matches,
-            'details': {'valid_json_objects': json_matches}
-        }
-        
-        # Text/String (default fallback)
-        type_scores['text'] = {
-            'confidence': 0.1,  # Low baseline confidence
-            'matches': total_count,
-            'details': {'note': 'Default text classification'}
-        }
-        
-        return type_scores
-    
-    def _assess_conversion_feasibility(self, data: pd.Series, suggested_type: str) -> Dict[str, Any]:
-        """
-        Assess the feasibility of converting data to the suggested type.
-        
-        Args:
-            data: Original data series
-            suggested_type: Suggested data type
-            
-        Returns:
-            Dictionary with conversion feasibility assessment
-        """
-        feasibility = {
-            'is_feasible': False,
-            'estimated_success_rate': 0.0,
-            'potential_issues': [],
-            'recommendations': []
-        }
-        
-        if suggested_type == 'numeric':
-            try:
-                converted = pd.to_numeric(data.astype(str), errors='coerce')
-                success_rate = converted.notna().sum() / len(data)
-                feasibility['is_feasible'] = success_rate > 0.8
-                feasibility['estimated_success_rate'] = success_rate
-                
-                if success_rate < 1.0:
-                    feasibility['potential_issues'].append('Some values cannot be converted to numeric')
-                    feasibility['recommendations'].append('Review non-convertible values before conversion')
-            except Exception as e:
-                feasibility['potential_issues'].append(f'Conversion test failed: {e}')
-        
-        elif suggested_type == 'datetime':
-            # Test with common datetime formats
-            success_count = 0
-            for val in data.head(100):
-                try:
-                    pd.to_datetime(str(val))
-                    success_count += 1
-                except:
-                    continue
-            
-            success_rate = success_count / min(100, len(data))
-            feasibility['is_feasible'] = success_rate > 0.8
-            feasibility['estimated_success_rate'] = success_rate
-            
-            if success_rate < 1.0:
-                feasibility['potential_issues'].append('Some values may not parse as dates')
-                feasibility['recommendations'].append('Specify date format for reliable conversion')
-        
-        elif suggested_type == 'boolean':
-            # Check if values can be mapped to boolean
-            boolean_mapping = {'true': True, 'false': False, '1': True, '0': False, 
-                             'yes': True, 'no': False, 'y': True, 'n': False}
-            
-            str_data = data.astype(str).str.lower()
-            mappable_count = str_data.isin(boolean_mapping.keys()).sum()
-            success_rate = mappable_count / len(data)
-            
-            feasibility['is_feasible'] = success_rate > 0.8
-            feasibility['estimated_success_rate'] = success_rate
-            feasibility['recommendations'].append('Use mapping dictionary for consistent boolean conversion')
-        
-        else:
-            # For other types, assume conversion is feasible but may require validation
-            feasibility['is_feasible'] = True
-            feasibility['estimated_success_rate'] = 0.9
-            feasibility['recommendations'].append(f'Validate {suggested_type} format after conversion')
-        
-        return feasibility
-
     def analyze_distributions(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                              columns: Optional[str] = None, sample_size: int = 10000, 
                              bins: int = 20, percentiles: Optional[str] = None) -> str:
-        """
-        Column-wise distribution analysis with histograms, percentiles, and statistical pattern detection.
-        
-        Provides comprehensive distribution analysis including histogram generation, percentile analysis,
-        statistical moments, and distribution pattern detection for data exploration insights.
-        
-        Args:
-            name: Database connection name
-            table_name: Name of the table to analyze (mutually exclusive with query)
-            query: Custom SQL query to analyze (mutually exclusive with table_name)
-            columns: Comma-separated list of columns to analyze (default: all numeric columns)
-            sample_size: Number of rows to sample for analysis (default: 10000, 0 = all rows)
-            bins: Number of bins for histogram generation (default: 20)
-            percentiles: Comma-separated percentiles to calculate (e.g., "10,25,50,75,90")
-            
-        Returns:
-            Detailed distribution analysis with histograms and statistical measures in JSON format
-        """
+        """Column-wise distribution analysis with comprehensive statistics."""
         try:
             if not table_name and not query:
-                return "Error: Either table_name or query must be provided"
+                return json.dumps({"error": "Either table_name or query must be provided"})
             
             if table_name and query:
-                return "Error: Provide either table_name or query, not both"
+                return json.dumps({"error": "Provide either table_name or query, not both"})
                 
             if name not in self.connections:
-                return f"Database '{name}' is not connected. Use connect_database first."
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
             
-            engine = self._get_connection(name)
+            # Get data for analysis
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for distribution analysis"})
             
-            # Build the analysis query
-            if table_name:
-                if sample_size > 0:
-                    dist_query = f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}"
-                else:
-                    dist_query = f"SELECT * FROM {table_name}"
-            else:
-                if sample_size > 0:
-                    dist_query = f"SELECT * FROM ({query}) AS subquery ORDER BY RANDOM() LIMIT {sample_size}"
-                else:
-                    dist_query = query
+            # Filter columns if specified
+            if columns:
+                column_list = [col.strip() for col in columns.split(',')]
+                available_cols = [col for col in column_list if col in df.columns]
+                if not available_cols:
+                    return json.dumps({"error": f"None of the specified columns found: {columns}"})
+                df = df[available_cols]
             
-            # Execute query to get data for distribution analysis
-            with engine.connect() as connection:
+            # Parse percentiles if provided
+            percentile_list = None
+            if percentiles:
                 try:
-                    result = connection.execute(text(dist_query))
-                    
-                    # Convert to pandas DataFrame for analysis
-                    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-                    
-                    if df.empty:
-                        return json.dumps({"error": "No data returned from query"}, indent=2)
-                    
-                    # Determine columns to analyze
-                    if columns:
-                        analyze_columns = [col.strip() for col in columns.split(',')]
-                        # Validate columns exist
-                        missing_cols = [col for col in analyze_columns if col not in df.columns]
-                        if missing_cols:
-                            return json.dumps({"error": f"Columns not found: {missing_cols}"}, indent=2)
-                        # Filter dataframe to selected columns
-                        df = df[analyze_columns]
-                    else:
-                        # Default to numeric columns only
-                        numeric_columns = df.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns.tolist()
-                        if not numeric_columns:
-                            return json.dumps({"error": "No numeric columns found for distribution analysis"}, indent=2)
-                        df = df[numeric_columns]
-                        analyze_columns = numeric_columns
-                    
-                    # Parse percentiles
-                    if percentiles:
-                        try:
-                            percentile_list = [float(p.strip()) for p in percentiles.split(',')]
-                            percentile_list = [p for p in percentile_list if 0 <= p <= 100]
-                        except ValueError:
-                            return json.dumps({"error": "Invalid percentiles format. Use comma-separated numbers (e.g., '10,25,50,75,90')"}, indent=2)
-                    else:
-                        percentile_list = [5, 10, 25, 50, 75, 90, 95]
-                    
-                    # Use the new DistributionAnalyzerTransformer for analysis
-                    from .pipeline.phase1_transformers import DistributionAnalyzerTransformer
-                    
-                    analyzer = DistributionAnalyzerTransformer(
-                        sample_size=0,  # Already sampled in query
-                        bins=bins,
-                        percentiles=percentile_list
-                    )
-                    
-                    # Fit the transformer and get the distributions
-                    analyzer.fit(df)
-                    distribution_analysis = analyzer.get_distributions()
-                    
-                    # Update metadata with database-specific information
-                    if 'metadata' not in distribution_analysis:
-                        distribution_analysis['metadata'] = {}
-                    distribution_analysis['metadata'].update({
-                        'source_database': name,
-                        'source_table': table_name,
-                        'custom_query': query is not None,
-                        'columns_analyzed': analyze_columns,
-                        'sample_size': sample_size,
-                        'actual_rows_analyzed': len(df),
-                        'histogram_bins': bins
-                    })
-                    
-                    return json.dumps(distribution_analysis, indent=2, default=str)
-                    
-                except Exception as e:
-                    logger.error(f"Error executing distribution analysis query: {e}")
-                    return f"Error executing distribution analysis query: {e}"
-                    
+                    percentile_list = [float(p.strip()) for p in percentiles.split(',')]
+                except ValueError:
+                    return json.dumps({"error": "Invalid percentile format. Use comma-separated numbers (e.g., '25,50,75')"})
+            
+            # Use statistical analysis domain for distribution analysis
+            from .domains.statistical_analysis import analyze_distributions as domain_analyze_distributions
+            
+            result = domain_analyze_distributions(
+                df, 
+                bins=bins, 
+                percentiles=percentile_list
+            )
+            
+            result['sample_size_used'] = sample_size
+            result['database_name'] = name
+            
+            return json.dumps(result, default=str)
+            
         except Exception as e:
-            logger.error(f"Error analyzing distributions: {e}")
-            return f"Error analyzing distributions: {e}"
-    
-    def _analyze_column_distributions(self, df: pd.DataFrame, columns: List[str], 
-                                    bins: int, percentiles: List[float]) -> Dict[str, Any]:
-        """
-        Analyze distributions for specified columns.
-        
-        Args:
-            df: Pandas DataFrame to analyze
-            columns: List of column names to analyze
-            bins: Number of histogram bins
-            percentiles: List of percentiles to calculate (as decimals 0-1)
-            
-        Returns:
-            Dictionary containing distribution analysis for each column
-        """
-        analysis = {
-            'summary': {
-                'columns_analyzed': len(columns),
-                'total_data_points': len(df),
-                'analysis_type': 'distribution_analysis'
-            },
-            'columns': {},
-            'cross_column_analysis': {}
-        }
-        
-        # Analyze each column individually
-        for column in columns:
-            try:
-                col_data = df[column].dropna()
-                
-                if len(col_data) == 0:
-                    analysis['columns'][column] = {
-                        'error': 'No non-null data available for analysis'
-                    }
-                    continue
-                
-                # Basic statistics
-                col_analysis = {
-                    'basic_stats': {
-                        'count': int(len(col_data)),
-                        'mean': float(col_data.mean()),
-                        'median': float(col_data.median()),
-                        'std': float(col_data.std()) if len(col_data) > 1 else 0,
-                        'variance': float(col_data.var()) if len(col_data) > 1 else 0,
-                        'min': float(col_data.min()),
-                        'max': float(col_data.max()),
-                        'range': float(col_data.max() - col_data.min())
-                    }
-                }
-                
-                # Statistical moments
-                if len(col_data) > 2:
-                    col_analysis['moments'] = {
-                        'skewness': float(col_data.skew()),
-                        'kurtosis': float(col_data.kurtosis()),
-                        'skewness_interpretation': self._interpret_skewness(col_data.skew()),
-                        'kurtosis_interpretation': self._interpret_kurtosis(col_data.kurtosis())
-                    }
-                
-                # Percentile analysis
-                percentile_values = col_data.quantile(percentiles)
-                col_analysis['percentiles'] = {
-                    f'p{int(p*100)}': float(percentile_values[p]) for p in percentiles
-                }
-                
-                # Histogram generation
-                try:
-                    hist_data, bin_edges = self._generate_histogram(col_data, bins)
-                    col_analysis['histogram'] = {
-                        'bins': [float(x) for x in bin_edges],
-                        'frequencies': [int(x) for x in hist_data],
-                        'bin_width': float((col_data.max() - col_data.min()) / bins) if bins > 0 else 0
-                    }
-                except Exception as e:
-                    col_analysis['histogram'] = {'error': f'Histogram generation failed: {e}'}
-                
-                # Outlier analysis using IQR method
-                try:
-                    q1, q3 = col_data.quantile([0.25, 0.75])
-                    iqr = q3 - q1
-                    lower_bound = q1 - 1.5 * iqr
-                    upper_bound = q3 + 1.5 * iqr
-                    
-                    outliers = col_data[(col_data < lower_bound) | (col_data > upper_bound)]
-                    col_analysis['outliers'] = {
-                        'count': int(len(outliers)),
-                        'percentage': float((len(outliers) / len(col_data)) * 100),
-                        'lower_bound': float(lower_bound),
-                        'upper_bound': float(upper_bound),
-                        'outlier_values': outliers.head(10).tolist()  # Sample of outliers
-                    }
-                except Exception as e:
-                    col_analysis['outliers'] = {'error': f'Outlier analysis failed: {e}'}
-                
-                # Distribution pattern detection
-                col_analysis['distribution_patterns'] = self._detect_distribution_patterns(col_data)
-                
-                # Normality testing
-                try:
-                    from scipy import stats
-                    if len(col_data) >= 3:
-                        shapiro_stat, shapiro_p = stats.shapiro(col_data.head(5000))  # Limit for performance
-                        _, normaltest_p = stats.normaltest(col_data)
-                        
-                        col_analysis['normality_tests'] = {
-                            'shapiro_wilk': {
-                                'statistic': float(shapiro_stat),
-                                'p_value': float(shapiro_p),
-                                'is_normal': bool(shapiro_p > 0.05)
-                            },
-                            'd_agostino_pearson': {
-                                'p_value': float(normaltest_p),
-                                'is_normal': bool(normaltest_p > 0.05)
-                            },
-                            'interpretation': 'Normal distribution' if shapiro_p > 0.05 and normaltest_p > 0.05 else 'Non-normal distribution'
-                        }
-                except ImportError:
-                    col_analysis['normality_tests'] = {'note': 'Advanced normality testing requires scipy'}
-                except Exception as e:
-                    col_analysis['normality_tests'] = {'error': f'Normality testing failed: {e}'}
-                
-                analysis['columns'][column] = col_analysis
-                
-            except Exception as e:
-                analysis['columns'][column] = {'error': f'Column analysis failed: {e}'}
-        
-        # Cross-column correlation analysis
-        if len(columns) > 1:
-            try:
-                numeric_df = df[columns].select_dtypes(include=['int64', 'float64', 'int32', 'float32'])
-                if len(numeric_df.columns) > 1:
-                    correlation_matrix = numeric_df.corr()
-                    
-                    # Find high correlations
-                    high_correlations = []
-                    for i, col1 in enumerate(correlation_matrix.columns):
-                        for j, col2 in enumerate(correlation_matrix.columns):
-                            if i < j:  # Avoid duplicates
-                                corr_value = correlation_matrix.loc[col1, col2]
-                                if abs(corr_value) > 0.5:
-                                    high_correlations.append({
-                                        'column_1': col1,
-                                        'column_2': col2,
-                                        'correlation': float(corr_value),
-                                        'strength': self._interpret_correlation(abs(corr_value))
-                                    })
-                    
-                    analysis['cross_column_analysis'] = {
-                        'correlation_matrix': correlation_matrix.to_dict(),
-                        'high_correlations': high_correlations,
-                        'correlation_summary': f"Found {len(high_correlations)} high correlations (|r| > 0.5)"
-                    }
-            except Exception as e:
-                analysis['cross_column_analysis'] = {'error': f'Correlation analysis failed: {e}'}
-        
-        return analysis
-    
-    def _generate_histogram(self, data: pd.Series, bins: int) -> tuple:
-        """Generate histogram data for a numeric series."""
-        # Use pandas cut for consistent binning
-        hist, bin_edges = pd.cut(data, bins=bins, retbins=True, duplicates='drop')
-        frequencies = hist.value_counts().sort_index()
-        
-        # Convert to arrays
-        hist_data = frequencies.values
-        
-        return hist_data, bin_edges
-    
-    def _detect_distribution_patterns(self, data: pd.Series) -> Dict[str, Any]:
-        """Detect common distribution patterns in the data."""
-        patterns = {
-            'pattern_detected': [],
-            'confidence_scores': {},
-            'characteristics': []
-        }
-        
-        # Basic pattern detection based on statistical measures
-        try:
-            mean_val = data.mean()
-            median_val = data.median()
-            std_val = data.std()
-            skew_val = data.skew()
-            kurt_val = data.kurtosis()
-            
-            # Uniform distribution detection
-            cv = std_val / mean_val if mean_val != 0 else float('inf')
-            if abs(skew_val) < 0.5 and abs(kurt_val) < 0.5 and cv < 0.5:
-                patterns['pattern_detected'].append('uniform-like')
-                patterns['confidence_scores']['uniform-like'] = 0.7
-            
-            # Normal distribution detection
-            if abs(skew_val) < 0.5 and -0.5 < kurt_val < 0.5:
-                patterns['pattern_detected'].append('normal-like')
-                patterns['confidence_scores']['normal-like'] = 0.8
-            
-            # Right-skewed distribution
-            if skew_val > 1:
-                patterns['pattern_detected'].append('right-skewed')
-                patterns['confidence_scores']['right-skewed'] = min(0.9, skew_val / 2)
-            
-            # Left-skewed distribution
-            if skew_val < -1:
-                patterns['pattern_detected'].append('left-skewed')
-                patterns['confidence_scores']['left-skewed'] = min(0.9, abs(skew_val) / 2)
-            
-            # Heavy-tailed distribution
-            if kurt_val > 3:
-                patterns['pattern_detected'].append('heavy-tailed')
-                patterns['confidence_scores']['heavy-tailed'] = min(0.9, kurt_val / 5)
-            
-            # Bimodal detection (simplified)
-            # Check for valleys in the distribution
-            try:
-                hist_data, _ = self._generate_histogram(data, 20)
-                if len(hist_data) > 5:
-                    # Simple bimodal detection: look for local minima between peaks
-                    local_mins = 0
-                    for i in range(1, len(hist_data) - 1):
-                        if hist_data[i] < hist_data[i-1] and hist_data[i] < hist_data[i+1]:
-                            local_mins += 1
-                    
-                    if local_mins >= 1 and max(hist_data) > 2 * min(hist_data[hist_data > 0]):
-                        patterns['pattern_detected'].append('potentially-bimodal')
-                        patterns['confidence_scores']['potentially-bimodal'] = 0.6
-            except:
-                pass
-            
-            # Add characteristics
-            if not patterns['pattern_detected']:
-                patterns['characteristics'].append('No clear pattern detected')
-            else:
-                patterns['characteristics'].append(f"Skewness: {skew_val:.3f}")
-                patterns['characteristics'].append(f"Kurtosis: {kurt_val:.3f}")
-                patterns['characteristics'].append(f"Coefficient of variation: {cv:.3f}")
-        
-        except Exception as e:
-            patterns['error'] = f'Pattern detection failed: {e}'
-        
-        return patterns
-    
-    def _interpret_skewness(self, skewness: float) -> str:
-        """Interpret skewness value."""
-        if abs(skewness) < 0.5:
-            return "Approximately symmetric"
-        elif skewness > 0.5:
-            return "Right-skewed (positive skew)"
-        else:
-            return "Left-skewed (negative skew)"
-    
-    def _interpret_kurtosis(self, kurtosis: float) -> str:
-        """Interpret kurtosis value."""
-        if abs(kurtosis) < 0.5:
-            return "Approximately mesokurtic (normal-like tails)"
-        elif kurtosis > 0.5:
-            return "Leptokurtic (heavy tails)"
-        else:
-            return "Platykurtic (light tails)"
-    
-    def _interpret_correlation(self, correlation: float) -> str:
-        """Interpret correlation strength."""
-        if correlation < 0.3:
-            return "weak"
-        elif correlation < 0.7:
-            return "moderate"
-        else:
-            return "strong"
+            logger.error(f"Distribution analysis failed: {e}")
+            return json.dumps({"error": f"Distribution analysis failed: {str(e)}"})
 
-    # Pattern Recognition Methods
-    
     def perform_clustering(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
                           algorithm: str = 'kmeans', n_clusters: Optional[int] = None,
                           sample_size: int = 10000) -> str:
@@ -3725,6 +1074,290 @@ class DatabaseManager:
             logger.error(f"Pattern evaluation failed: {e}")
             return json.dumps({"error": f"Pattern evaluation failed: {str(e)}"})
     
+    # Time Series Analysis Methods
+    
+    def analyze_time_series_basic(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                                 date_column: Optional[str] = None, value_column: Optional[str] = None,
+                                 freq: Optional[str] = None, seasonal_periods: Optional[int] = None,
+                                 sample_size: int = 0) -> str:
+        """Perform comprehensive basic time series analysis."""
+        try:
+            if not table_name and not query:
+                return json.dumps({"error": "Either table_name or query must be provided"})
+            
+            if table_name and query:
+                return json.dumps({"error": "Provide either table_name or query, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data for analysis
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for time series analysis"})
+            
+            # Use time series domain for analysis
+            from .domains.time_series import analyze_time_series_basic as domain_analyze_basic
+            
+            result = domain_analyze_basic(
+                df, 
+                date_column=date_column,
+                value_column=value_column,
+                freq=freq,
+                seasonal_periods=seasonal_periods
+            )
+            
+            result['data_info'] = {
+                'database_name': name,
+                'sample_size_used': sample_size if sample_size > 0 else len(df)
+            }
+            
+            return json.dumps(result, default=str)
+            
+        except Exception as e:
+            logger.error(f"Basic time series analysis failed: {e}")
+            return json.dumps({"error": f"Basic time series analysis failed: {str(e)}"})
+    
+    def forecast_arima(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                      date_column: Optional[str] = None, value_column: Optional[str] = None,
+                      order: Optional[str] = None, seasonal_order: Optional[str] = None,
+                      forecast_steps: int = 12, auto_arima: bool = True,
+                      sample_size: int = 0) -> str:
+        """Perform ARIMA forecasting on time series data."""
+        try:
+            if not table_name and not query:
+                return json.dumps({"error": "Either table_name or query must be provided"})
+            
+            if table_name and query:
+                return json.dumps({"error": "Provide either table_name or query, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data for analysis
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for ARIMA forecasting"})
+            
+            # Parse order parameters if provided
+            arima_order = None
+            arima_seasonal_order = None
+            
+            if order:
+                try:
+                    arima_order = tuple(map(int, order.split(',')))
+                    if len(arima_order) != 3:
+                        return json.dumps({"error": "ARIMA order must have 3 components (p,d,q)"})
+                except ValueError:
+                    return json.dumps({"error": "Invalid ARIMA order format. Use 'p,d,q' (e.g., '1,1,1')"})
+            
+            if seasonal_order:
+                try:
+                    arima_seasonal_order = tuple(map(int, seasonal_order.split(',')))
+                    if len(arima_seasonal_order) != 4:
+                        return json.dumps({"error": "Seasonal order must have 4 components (P,D,Q,s)"})
+                except ValueError:
+                    return json.dumps({"error": "Invalid seasonal order format. Use 'P,D,Q,s' (e.g., '1,1,1,12')"})
+            
+            # Use time series domain for ARIMA forecasting
+            from .domains.time_series import forecast_arima as domain_forecast_arima
+            
+            result = domain_forecast_arima(
+                df,
+                date_column=date_column,
+                value_column=value_column,
+                forecast_steps=forecast_steps,
+                order=arima_order,
+                seasonal_order=arima_seasonal_order,
+                auto_arima=auto_arima
+            )
+            
+            result['data_info'] = {
+                'database_name': name,
+                'sample_size_used': sample_size if sample_size > 0 else len(df)
+            }
+            
+            return json.dumps(result, default=str)
+            
+        except Exception as e:
+            logger.error(f"ARIMA forecasting failed: {e}")
+            return json.dumps({"error": f"ARIMA forecasting failed: {str(e)}"})
+    
+    def forecast_exponential_smoothing(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                                      date_column: Optional[str] = None, value_column: Optional[str] = None,
+                                      method: str = 'auto', seasonal: Optional[str] = None,
+                                      seasonal_periods: Optional[int] = None, forecast_steps: int = 12,
+                                      sample_size: int = 0) -> str:
+        """Perform exponential smoothing forecasting on time series data."""
+        try:
+            if not table_name and not query:
+                return json.dumps({"error": "Either table_name or query must be provided"})
+            
+            if table_name and query:
+                return json.dumps({"error": "Provide either table_name or query, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data for analysis
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for exponential smoothing forecasting"})
+            
+            # Use time series domain for exponential smoothing
+            from .domains.time_series import forecast_exponential_smoothing as domain_forecast_smoothing
+            
+            result = domain_forecast_smoothing(
+                df,
+                date_column=date_column,
+                value_column=value_column,
+                method=method,
+                seasonal=seasonal,
+                seasonal_periods=seasonal_periods,
+                forecast_steps=forecast_steps
+            )
+            
+            result['data_info'] = {
+                'database_name': name,
+                'sample_size_used': sample_size if sample_size > 0 else len(df)
+            }
+            
+            return json.dumps(result, default=str)
+            
+        except Exception as e:
+            logger.error(f"Exponential smoothing forecasting failed: {e}")
+            return json.dumps({"error": f"Exponential smoothing forecasting failed: {str(e)}"})
+    
+    def detect_time_series_anomalies(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                                    date_column: Optional[str] = None, value_column: Optional[str] = None,
+                                    method: str = 'statistical', contamination: float = 0.05,
+                                    window_size: Optional[int] = None, sample_size: int = 0) -> str:
+        """Detect anomalies in time series data."""
+        try:
+            if not table_name and not query:
+                return json.dumps({"error": "Either table_name or query must be provided"})
+            
+            if table_name and query:
+                return json.dumps({"error": "Provide either table_name or query, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data for analysis
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for time series anomaly detection"})
+            
+            # Use time series domain for anomaly detection
+            from .domains.time_series import detect_time_series_anomalies as domain_detect_anomalies
+            
+            result = domain_detect_anomalies(
+                df,
+                date_column=date_column,
+                value_column=value_column,
+                method=method,
+                contamination=contamination,
+                window_size=window_size
+            )
+            
+            result['data_info'] = {
+                'database_name': name,
+                'sample_size_used': sample_size if sample_size > 0 else len(df)
+            }
+            
+            return json.dumps(result, default=str)
+            
+        except Exception as e:
+            logger.error(f"Time series anomaly detection failed: {e}")
+            return json.dumps({"error": f"Time series anomaly detection failed: {str(e)}"})
+    
+    def detect_change_points(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                            date_column: Optional[str] = None, value_column: Optional[str] = None,
+                            method: str = 'cusum', min_size: int = 10, sample_size: int = 0) -> str:
+        """Detect change points in time series data."""
+        try:
+            if not table_name and not query:
+                return json.dumps({"error": "Either table_name or query must be provided"})
+            
+            if table_name and query:
+                return json.dumps({"error": "Provide either table_name or query, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data for analysis
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for change point detection"})
+            
+            # Use time series domain for change point detection
+            from .domains.time_series import detect_change_points as domain_detect_change_points
+            
+            result = domain_detect_change_points(
+                df,
+                date_column=date_column,
+                value_column=value_column,
+                method=method,
+                min_size=min_size
+            )
+            
+            result['data_info'] = {
+                'database_name': name,
+                'sample_size_used': sample_size if sample_size > 0 else len(df)
+            }
+            
+            return json.dumps(result, default=str)
+            
+        except Exception as e:
+            logger.error(f"Change point detection failed: {e}")
+            return json.dumps({"error": f"Change point detection failed: {str(e)}"})
+    
+    def analyze_multivariate_time_series(self, name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                                        analysis_type: str = 'var', max_lags: int = 5, sample_size: int = 0) -> str:
+        """Perform multivariate time series analysis."""
+        try:
+            if not table_name and not query:
+                return json.dumps({"error": "Either table_name or query must be provided"})
+            
+            if table_name and query:
+                return json.dumps({"error": "Provide either table_name or query, not both"})
+                
+            if name not in self.connections:
+                return json.dumps({"error": f"Database '{name}' is not connected. Use connect_database first."})
+            
+            # Get data for analysis
+            df = self._get_data_for_analysis(name, table_name, query, sample_size)
+            if df.empty:
+                return json.dumps({"error": "No data available for multivariate time series analysis"})
+            
+            # Select numeric columns for multivariate analysis
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) < 2:
+                return json.dumps({"error": "At least 2 numeric columns required for multivariate time series analysis"})
+            
+            multivariate_df = df[numeric_cols]
+            
+            # Use time series domain for multivariate analysis
+            from .domains.time_series import analyze_multivariate_time_series as domain_analyze_multivariate
+            
+            result = domain_analyze_multivariate(
+                multivariate_df,
+                analysis_type=analysis_type,
+                max_lags=max_lags
+            )
+            
+            result['data_info'] = {
+                'database_name': name,
+                'sample_size_used': sample_size if sample_size > 0 else len(df),
+                'variables': numeric_cols.tolist()
+            }
+            
+            return json.dumps(result, default=str)
+            
+        except Exception as e:
+            logger.error(f"Multivariate time series analysis failed: {e}")
+            return json.dumps({"error": f"Multivariate time series analysis failed: {str(e)}"})
+    
     def _get_data_for_analysis(self, name: str, table_name: Optional[str], query: Optional[str], sample_size: int) -> pd.DataFrame:
         """Helper method to get data for pattern recognition analysis."""
         engine = self._get_connection(name)
@@ -3934,6 +1567,177 @@ def evaluate_patterns(name: str, table_name: Optional[str] = None, query: Option
         Comprehensive evaluation results with quality metrics and recommendations in JSON format
     """
     return _db_manager.evaluate_patterns(name, table_name, query, pattern_type, results_data, sample_size)
+
+
+# Time Series Analysis MCP Tools
+
+@mcp.tool
+def analyze_time_series_basic(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                             date_column: Optional[str] = None, value_column: Optional[str] = None,
+                             freq: Optional[str] = None, seasonal_periods: Optional[int] = None,
+                             sample_size: int = 0) -> str:
+    """
+    Perform comprehensive basic time series analysis including trend, seasonality, and stationarity tests.
+    
+    This tool provides fundamental time series analysis including trend detection, seasonality analysis,
+    stationarity testing, and autocorrelation analysis. Optimized for LLM-driven time series exploration.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table containing time series data (mutually exclusive with query)
+        query: Custom SQL query to retrieve time series data (mutually exclusive with table_name)
+        date_column: Name of the date/time column (auto-detected if None)
+        value_column: Name of the value column (auto-detected if None)
+        freq: Frequency of the time series ('D', 'H', 'M', etc.) (auto-inferred if None)
+        seasonal_periods: Number of periods in a season (auto-detected if None)
+        sample_size: Number of rows to sample for analysis (default: 0 = all rows)
+        
+    Returns:
+        Comprehensive basic time series analysis results including trend, seasonality, and stationarity metrics
+    """
+    return _db_manager.analyze_time_series_basic(name, table_name, query, date_column, value_column, 
+                                               freq, seasonal_periods, sample_size)
+
+
+@mcp.tool
+def forecast_arima(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                  date_column: Optional[str] = None, value_column: Optional[str] = None,
+                  order: Optional[str] = None, seasonal_order: Optional[str] = None,
+                  forecast_steps: int = 12, auto_arima: bool = True, sample_size: int = 0) -> str:
+    """
+    Perform ARIMA (AutoRegressive Integrated Moving Average) forecasting on time series data.
+    
+    Advanced time series forecasting using ARIMA models with automatic parameter selection,
+    model diagnostics, and comprehensive forecast evaluation. Supports both manual parameter
+    specification and automatic model selection.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table containing time series data (mutually exclusive with query)
+        query: Custom SQL query to retrieve time series data (mutually exclusive with table_name)
+        date_column: Name of the date/time column (auto-detected if None)
+        value_column: Name of the value column (auto-detected if None)
+        order: ARIMA order as 'p,d,q' (e.g., '1,1,1') (auto-selected if None and auto_arima=True)
+        seasonal_order: Seasonal order as 'P,D,Q,s' (e.g., '1,1,1,12') (auto-selected if None)
+        forecast_steps: Number of periods to forecast ahead (default: 12)
+        auto_arima: Whether to automatically select optimal ARIMA parameters (default: True)
+        sample_size: Number of rows to use for modeling (default: 0 = all rows)
+        
+    Returns:
+        ARIMA forecasting results with predictions, confidence intervals, and model diagnostics
+    """
+    return _db_manager.forecast_arima(name, table_name, query, date_column, value_column,
+                                    order, seasonal_order, forecast_steps, auto_arima, sample_size)
+
+
+@mcp.tool
+def forecast_exponential_smoothing(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                                  date_column: Optional[str] = None, value_column: Optional[str] = None,
+                                  method: str = 'auto', seasonal: Optional[str] = None,
+                                  seasonal_periods: Optional[int] = None, forecast_steps: int = 12,
+                                  sample_size: int = 0) -> str:
+    """
+    Perform exponential smoothing forecasting on time series data.
+    
+    Advanced exponential smoothing methods including Simple, Double (Holt's), and Triple (Holt-Winters)
+    exponential smoothing with automatic method selection and parameter optimization.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table containing time series data (mutually exclusive with query)
+        query: Custom SQL query to retrieve time series data (mutually exclusive with table_name)
+        date_column: Name of the date/time column (auto-detected if None)
+        value_column: Name of the value column (auto-detected if None)
+        method: Smoothing method ('simple', 'double', 'triple', 'auto') (default: 'auto')
+        seasonal: Seasonal component type ('add', 'mul', None) (auto-detected if None and method='auto')
+        seasonal_periods: Number of periods in a season (auto-detected if None)
+        forecast_steps: Number of periods to forecast ahead (default: 12)
+        sample_size: Number of rows to use for modeling (default: 0 = all rows)
+        
+    Returns:
+        Exponential smoothing forecasting results with predictions and model parameters
+    """
+    return _db_manager.forecast_exponential_smoothing(name, table_name, query, date_column, value_column,
+                                                     method, seasonal, seasonal_periods, forecast_steps, sample_size)
+
+
+@mcp.tool
+def detect_time_series_anomalies(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                                date_column: Optional[str] = None, value_column: Optional[str] = None,
+                                method: str = 'statistical', contamination: float = 0.05,
+                                window_size: Optional[int] = None, sample_size: int = 0) -> str:
+    """
+    Detect anomalies in time series data using statistical and machine learning methods.
+    
+    Advanced time series anomaly detection using multiple methods including statistical approaches,
+    Isolation Forest, and sliding window techniques. Provides detailed anomaly scoring and periods.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table containing time series data (mutually exclusive with query)
+        query: Custom SQL query to retrieve time series data (mutually exclusive with table_name)
+        date_column: Name of the date/time column (auto-detected if None)
+        value_column: Name of the value column (auto-detected if None)
+        method: Anomaly detection method ('statistical', 'isolation_forest') (default: 'statistical')
+        contamination: Expected proportion of anomalies (default: 0.05 = 5%)
+        window_size: Window size for sliding window methods (auto-calculated if None)
+        sample_size: Number of rows to analyze (default: 0 = all rows)
+        
+    Returns:
+        Time series anomaly detection results with anomaly indices, scores, and detailed periods
+    """
+    return _db_manager.detect_time_series_anomalies(name, table_name, query, date_column, value_column,
+                                                   method, contamination, window_size, sample_size)
+
+
+@mcp.tool
+def detect_change_points(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                        date_column: Optional[str] = None, value_column: Optional[str] = None,
+                        method: str = 'cusum', min_size: int = 10, sample_size: int = 0) -> str:
+    """
+    Detect change points in time series data using advanced statistical methods.
+    
+    Identifies structural breaks and regime changes in time series using CUSUM, PELT, and other
+    change point detection algorithms. Provides detailed segment analysis and change point dates.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table containing time series data (mutually exclusive with query)
+        query: Custom SQL query to retrieve time series data (mutually exclusive with table_name)
+        date_column: Name of the date/time column (auto-detected if None)
+        value_column: Name of the value column (auto-detected if None)
+        method: Change point detection method ('cusum', 'pelt') (default: 'cusum')
+        min_size: Minimum segment size between change points (default: 10)
+        sample_size: Number of rows to analyze (default: 0 = all rows)
+        
+    Returns:
+        Change point detection results with change point locations, dates, and segment analysis
+    """
+    return _db_manager.detect_change_points(name, table_name, query, date_column, value_column,
+                                          method, min_size, sample_size)
+
+
+@mcp.tool
+def analyze_multivariate_time_series(name: str, table_name: Optional[str] = None, query: Optional[str] = None,
+                                    analysis_type: str = 'var', max_lags: int = 5, sample_size: int = 0) -> str:
+    """
+    Perform multivariate time series analysis including VAR models and Granger causality tests.
+    
+    Advanced multivariate time series analysis using Vector Autoregression (VAR) models,
+    Granger causality testing, and cross-correlation analysis for multiple time series variables.
+    
+    Args:
+        name: Database connection name
+        table_name: Name of the table containing multivariate time series data (mutually exclusive with query)
+        query: Custom SQL query to retrieve multivariate time series data (mutually exclusive with table_name)
+        analysis_type: Type of analysis ('var', 'granger') (default: 'var')
+        max_lags: Maximum number of lags to consider (default: 5)
+        sample_size: Number of rows to analyze (default: 0 = all rows)
+        
+    Returns:
+        Multivariate time series analysis results with model parameters, forecasts, and causality tests
+    """
+    return _db_manager.analyze_multivariate_time_series(name, table_name, query, analysis_type, max_lags, sample_size)
 
 
 def main():
