@@ -171,6 +171,31 @@ from .pipeline_analyzer import (
     analyze_and_fix_pipeline,
 )
 
+from .domain_shims import (
+    # Domain-specific shim classes
+    BaseDomainShim,
+    StatisticalShim,
+    RegressionShim,
+    TimeSeriesShim,
+    PatternRecognitionShim,
+    
+    # Domain configuration and mapping
+    DomainShimType,
+    DomainMapping,
+    SemanticContext,
+    
+    # Factory functions
+    create_statistical_shim,
+    create_regression_shim,
+    create_time_series_shim,
+    create_pattern_recognition_shim,
+    create_all_domain_shims,
+    
+    # Utility functions
+    get_compatible_domain_shims,
+    validate_domain_shim_configuration,
+)
+
 __all__ = [
     # Core data structures
     'DataFormat',
@@ -289,6 +314,23 @@ __all__ = [
     'create_optimization_criteria',
     'create_pipeline_step',
     'analyze_and_fix_pipeline',
+    
+    # Pre-built domain shims
+    'BaseDomainShim',
+    'StatisticalShim',
+    'RegressionShim', 
+    'TimeSeriesShim',
+    'PatternRecognitionShim',
+    'DomainShimType',
+    'DomainMapping',
+    'SemanticContext',
+    'create_statistical_shim',
+    'create_regression_shim',
+    'create_time_series_shim',
+    'create_pattern_recognition_shim',
+    'create_all_domain_shims',
+    'get_compatible_domain_shims',
+    'validate_domain_shim_configuration',
 ]
 
 # Package metadata
