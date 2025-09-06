@@ -3127,6 +3127,42 @@ def create_complete_error_recovery_system(registry: Optional[ShimRegistry] = Non
     }
 
 
+def create_error_recovery_framework(registry: Optional[ShimRegistry] = None,
+                                  **kwargs) -> Tuple[ConversionErrorHandler, AlternativePathwayEngine, RollbackManager, RecoveryStrategyEngine]:
+    """
+    Create complete error recovery framework components as tuple.
+    
+    Args:
+        registry: Optional ShimRegistry for pathway discovery
+        **kwargs: Component-specific configuration options
+        
+    Returns:
+        Tuple of (error_handler, pathway_engine, rollback_manager, recovery_engine)
+    """
+    # Create individual components
+    error_handler = create_conversion_error_handler(
+        **kwargs.get("error_handler", {})
+    )
+    
+    pathway_engine = create_alternative_pathway_engine(
+        registry=registry, 
+        **kwargs.get("pathway_engine", {})
+    )
+    
+    rollback_manager = create_rollback_manager(
+        **kwargs.get("rollback_manager", {})
+    )
+    
+    recovery_engine = create_recovery_strategy_engine(
+        error_handler=error_handler,
+        pathway_engine=pathway_engine,
+        rollback_manager=rollback_manager,
+        **kwargs.get("recovery_engine", {})
+    )
+    
+    return error_handler, pathway_engine, rollback_manager, recovery_engine
+
+
 # Utility Functions
 
 def handle_pipeline_error_with_recovery(error: Exception,
