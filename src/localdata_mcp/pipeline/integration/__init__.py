@@ -85,6 +85,22 @@ from .converters import (
     create_streaming_options,
 )
 
+from .compatibility_matrix import (
+    # Core compatibility system
+    PipelineCompatibilityMatrix,
+    CompatibilityLevel,
+    DomainProfile,
+    
+    # Factory functions
+    create_compatibility_matrix,
+    create_minimal_compatibility_matrix,
+    
+    # Utility functions
+    assess_pipeline_compatibility,
+    find_optimal_format_for_domains,
+    suggest_pipeline_improvements,
+)
+
 __all__ = [
     # Core data structures
     'DataFormat',
@@ -141,6 +157,16 @@ __all__ = [
     'create_memory_efficient_options',
     'create_high_fidelity_options',
     'create_streaming_options',
+    
+    # Compatibility matrix
+    'PipelineCompatibilityMatrix',
+    'CompatibilityLevel',
+    'DomainProfile',
+    'create_compatibility_matrix',
+    'create_minimal_compatibility_matrix',
+    'assess_pipeline_compatibility',
+    'find_optimal_format_for_domains',
+    'suggest_pipeline_improvements',
     
     # Error handling
     'ConversionError',
