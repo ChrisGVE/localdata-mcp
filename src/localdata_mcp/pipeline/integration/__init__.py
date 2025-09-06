@@ -52,12 +52,18 @@ from .type_detection import (
     TypeDetectionEngine,
     FormatDetectionResult,
     SchemaInfo,
+    detect_data_format,
 )
 
 from .metadata_manager import (
     MetadataManager,
     PreservationRule,
     MetadataSchema,
+    PreservationStrategy,
+    MetadataType,
+    MetadataLineage,
+    create_preservation_rule,
+    create_metadata_schema,
 )
 
 __all__ = [
@@ -88,11 +94,17 @@ __all__ = [
     'TypeDetectionEngine',
     'FormatDetectionResult',
     'SchemaInfo',
+    'detect_data_format',
     
     # Metadata management
     'MetadataManager',
     'PreservationRule',
     'MetadataSchema',
+    'PreservationStrategy',
+    'MetadataType',
+    'MetadataLineage',
+    'create_preservation_rule',
+    'create_metadata_schema',
     
     # Error handling
     'ConversionError',
