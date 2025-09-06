@@ -36,7 +36,7 @@ import weakref
 
 from .interfaces import (
     ShimAdapter, ConversionRequest, ConversionResult, ConversionCost,
-    DataFormat, ValidationResult, ConversionRegistry
+    DataFormat, ValidationResult, ConversionRegistry, ConversionPath
 )
 from .base_adapters import BaseShimAdapter
 from .compatibility_matrix import PipelineCompatibilityMatrix
