@@ -106,7 +106,7 @@ class ConversionRequest:
     source_format: DataFormat
     target_format: DataFormat
     metadata: Dict[str, Any] = field(default_factory=dict)
-    context: ConversionContext = field(default_factory=ConversionContext)
+    context: ConversionContext = field(default_factory=lambda: ConversionContext(source_domain='unknown', target_domain='unknown'))
     format_spec: Optional[DataFormatSpec] = None
     request_id: str = field(default_factory=lambda: f"req_{int(time.time() * 1000)}")
     timestamp: datetime = field(default_factory=datetime.now)
@@ -430,6 +430,15 @@ def create_conversion_request(source_data: Any,
                             target_format: DataFormat,
                             **kwargs) -> ConversionRequest:
     """Factory function to create a conversion request."""
+    # Create context with appropriate domains if not provided
+    if 'context' not in kwargs:
+        context = ConversionContext(
+            source_domain=source_format.value.split('_')[0],  # Use format prefix as domain
+            target_domain=target_format.value.split('_')[0],
+            user_intention=f"Convert {source_format.value} to {target_format.value}"
+        )
+        kwargs['context'] = context
+    
     return ConversionRequest(
         source_data=source_data,
         source_format=source_format,

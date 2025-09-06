@@ -165,7 +165,7 @@ logging_manager = get_logging_manager()
 config_manager = get_config_manager()
 
 # Initialize logging configuration from config manager
-logging_config = config_manager.logging_config
+logging_config = config_manager.get_logging_config()
 logger = get_logger(__name__)
 
 class QueryBuffer:

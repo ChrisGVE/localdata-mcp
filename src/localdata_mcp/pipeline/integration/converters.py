@@ -18,23 +18,33 @@ import logging
 import time
 import warnings
 from typing import Any, Dict, List, Optional, Tuple, Union, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
 import pandas as pd
 from scipy import sparse
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-from .base_adapters import BaseShimAdapter, StreamingShimAdapter, ConversionContext
+from .base_adapters import BaseShimAdapter, StreamingShimAdapter
 from .interfaces import (
     DataFormat, ConversionRequest, ConversionResult, ConversionError,
-    MemoryConstraints, PerformanceRequirements
+    MemoryConstraints, PerformanceRequirements, ConversionContext
 )
 from .type_detection import TypeDetectionEngine, FormatDetectionResult
 from .metadata_manager import MetadataManager, PreservationStrategy
 from ...logging_manager import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class ConversionContextInternal:
+    """Internal conversion context for tracking conversion operations."""
+    request_id: str
+    start_time: float = field(default_factory=time.time)
+    intermediate_results: Dict[str, Any] = field(default_factory=dict)
+    performance_metrics: Dict[str, Any] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
 
 
 class ConversionQuality(Enum):
@@ -121,8 +131,114 @@ class PandasConverter(BaseShimAdapter):
                    adapter_id=adapter_id,
                    supported_conversions_count=len(supported_conversions))
     
+    def convert(self, request: ConversionRequest) -> ConversionResult:
+        """Override convert to use internal context."""
+        internal_context = ConversionContextInternal(request_id=request.request_id)
+        
+        try:
+            # Validate request if enabled
+            if self.enable_validation:
+                validation_result = self.validate_request(request)
+                if not validation_result.is_valid:
+                    return self._create_error_result_internal(
+                        request, 
+                        ConversionError.Type.SCHEMA_INVALID,
+                        f"Request validation failed: {'; '.join(validation_result.errors)}",
+                        internal_context
+                    )
+            
+            # Ensure adapter is fitted
+            if not self._fitted:
+                self.fit(request.source_data)
+            
+            # Perform the actual conversion
+            converted_data = self._perform_conversion(request, internal_context)
+            
+            # Calculate performance metrics
+            execution_time = time.time() - internal_context.start_time
+            self._update_performance_stats(execution_time)
+            
+            # Create successful result
+            result = ConversionResult(
+                converted_data=converted_data,
+                success=True,
+                original_format=request.source_format,
+                target_format=request.target_format,
+                actual_format=request.target_format,
+                metadata=self._preserve_metadata_internal(request, internal_context),
+                performance_metrics={
+                    'execution_time': execution_time,
+                    'adapter_id': self.adapter_id,
+                    **internal_context.performance_metrics
+                },
+                quality_score=self._calculate_quality_score(request, converted_data, internal_context),
+                warnings=internal_context.warnings,
+                request_id=request.request_id,
+                execution_time=execution_time
+            )
+            
+            logger.info("Conversion completed successfully",
+                       request_id=request.request_id,
+                       adapter_id=self.adapter_id,
+                       execution_time=execution_time)
+            
+            return result
+            
+        except ConversionError:
+            raise
+        except Exception as e:
+            logger.error(f"Conversion failed unexpectedly: {e}",
+                        request_id=request.request_id,
+                        adapter_id=self.adapter_id)
+            return self._create_error_result_internal(
+                request,
+                ConversionError.Type.CONVERSION_FAILED,
+                str(e),
+                internal_context
+            )
+    
+    def _preserve_metadata_internal(self, request: ConversionRequest, 
+                          context: ConversionContextInternal) -> Dict[str, Any]:
+        """Preserve and enhance metadata during conversion."""
+        preserved_metadata = request.metadata.copy()
+        
+        # Add conversion metadata
+        preserved_metadata.update({
+            'conversion_adapter': self.adapter_id,
+            'conversion_timestamp': time.time(),
+            'conversion_request_id': request.request_id,
+            'source_format': request.source_format.value,
+            'target_format': request.target_format.value,
+        })
+        
+        return preserved_metadata
+    
+    def _create_error_result_internal(self, request: ConversionRequest, 
+                           error_type: ConversionError.Type,
+                           message: str, context: ConversionContextInternal) -> ConversionResult:
+        """Create error result for failed conversions."""
+        execution_time = time.time() - context.start_time
+        
+        return ConversionResult(
+            converted_data=request.source_data,  # Return original data
+            success=False,
+            original_format=request.source_format,
+            target_format=request.target_format,
+            actual_format=request.source_format,  # No conversion happened
+            errors=[f"{error_type.value}: {message}"],
+            performance_metrics={
+                'execution_time': execution_time,
+                'adapter_id': self.adapter_id,
+                'error_type': error_type.value
+            },
+            quality_score=0.0,
+            warnings=context.warnings,
+            request_id=request.request_id,
+            execution_time=execution_time
+        )
+    
     def _perform_conversion(self, request: ConversionRequest, 
-                          context: ConversionContext) -> Any:
+                          context: ConversionContextInternal) -> Any:
         """
         Perform the actual data conversion.
         
@@ -161,7 +277,7 @@ class PandasConverter(BaseShimAdapter):
     
     def _convert_from_dataframe(self, df: pd.DataFrame, 
                               target_format: DataFormat, 
-                              context: ConversionContext) -> Any:
+                              context: ConversionContextInternal) -> Any:
         """Convert DataFrame to other formats."""
         if not isinstance(df, pd.DataFrame):
             raise ConversionError(
@@ -193,7 +309,7 @@ class PandasConverter(BaseShimAdapter):
     
     def _convert_to_dataframe(self, data: Any, 
                             source_format: DataFormat, 
-                            context: ConversionContext) -> pd.DataFrame:
+                            context: ConversionContextInternal) -> pd.DataFrame:
         """Convert other formats to DataFrame."""
         if source_format == DataFormat.NUMPY_ARRAY:
             return self._numpy_to_dataframe(data, context)
@@ -547,7 +663,7 @@ class PandasConverter(BaseShimAdapter):
             )
     
     def _calculate_quality_score(self, request: ConversionRequest, 
-                                converted_data: Any, context: ConversionContext) -> float:
+                                converted_data: Any, context: ConversionContextInternal) -> float:
         """Calculate conversion quality score."""
         base_score = 1.0
         
@@ -612,8 +728,53 @@ class NumpyConverter(BaseShimAdapter):
         
         logger.info(f"NumpyConverter initialized", adapter_id=adapter_id)
     
+    def convert(self, request: ConversionRequest) -> ConversionResult:
+        """Override convert to use internal context."""
+        internal_context = ConversionContextInternal(request_id=request.request_id)
+        
+        try:
+            # Perform the actual conversion
+            converted_data = self._perform_conversion(request, internal_context)
+            
+            # Calculate performance metrics
+            execution_time = time.time() - internal_context.start_time
+            
+            # Create successful result
+            result = ConversionResult(
+                converted_data=converted_data,
+                success=True,
+                original_format=request.source_format,
+                target_format=request.target_format,
+                actual_format=request.target_format,
+                metadata=request.metadata,
+                performance_metrics={
+                    'execution_time': execution_time,
+                    'adapter_id': self.adapter_id,
+                    **internal_context.performance_metrics
+                },
+                quality_score=1.0,  # Default quality score
+                warnings=internal_context.warnings,
+                request_id=request.request_id,
+                execution_time=execution_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"NumPy conversion failed: {e}")
+            return ConversionResult(
+                converted_data=request.source_data,
+                success=False,
+                original_format=request.source_format,
+                target_format=request.target_format,
+                actual_format=request.source_format,
+                errors=[str(e)],
+                request_id=request.request_id,
+                execution_time=time.time() - internal_context.start_time
+            )
+    
     def _perform_conversion(self, request: ConversionRequest, 
-                          context: ConversionContext) -> Any:
+                          context: ConversionContextInternal) -> Any:
         """Perform NumPy array conversion."""
         source_format = request.source_format
         target_format = request.target_format
@@ -949,8 +1110,53 @@ class SparseMatrixConverter(BaseShimAdapter):
         
         logger.info(f"SparseMatrixConverter initialized", adapter_id=adapter_id)
     
+    def convert(self, request: ConversionRequest) -> ConversionResult:
+        """Override convert to use internal context."""
+        internal_context = ConversionContextInternal(request_id=request.request_id)
+        
+        try:
+            # Perform the actual conversion
+            converted_data = self._perform_conversion(request, internal_context)
+            
+            # Calculate performance metrics
+            execution_time = time.time() - internal_context.start_time
+            
+            # Create successful result
+            result = ConversionResult(
+                converted_data=converted_data,
+                success=True,
+                original_format=request.source_format,
+                target_format=request.target_format,
+                actual_format=request.target_format,
+                metadata=request.metadata,
+                performance_metrics={
+                    'execution_time': execution_time,
+                    'adapter_id': self.adapter_id,
+                    **internal_context.performance_metrics
+                },
+                quality_score=self._calculate_quality_score(request, converted_data, internal_context),
+                warnings=internal_context.warnings,
+                request_id=request.request_id,
+                execution_time=execution_time
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Sparse conversion failed: {e}")
+            return ConversionResult(
+                converted_data=request.source_data,
+                success=False,
+                original_format=request.source_format,
+                target_format=request.target_format,
+                actual_format=request.source_format,
+                errors=[str(e)],
+                request_id=request.request_id,
+                execution_time=time.time() - internal_context.start_time
+            )
+    
     def _perform_conversion(self, request: ConversionRequest, 
-                          context: ConversionContext) -> Any:
+                          context: ConversionContextInternal) -> Any:
         """Perform sparse matrix conversion."""
         source_format = request.source_format
         target_format = request.target_format
@@ -1259,7 +1465,7 @@ class SparseMatrixConverter(BaseShimAdapter):
             )
     
     def _calculate_quality_score(self, request: ConversionRequest, 
-                                converted_data: Any, context: ConversionContext) -> float:
+                                converted_data: Any, context: ConversionContextInternal) -> float:
         """Calculate conversion quality score for sparse operations."""
         base_score = 1.0
         
