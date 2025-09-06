@@ -119,6 +119,29 @@ from .shim_registry import (
     monitor_adapter_performance,
 )
 
+from .schema_validation import (
+    # Schema validation core classes
+    SchemaInferenceEngine,
+    SchemaValidator,
+    SchemaEvolutionManager,
+    DataSchema,
+    
+    # Validation components
+    SchemaConstraint,
+    ValidationError,
+    ValidationRule,
+    TypeValidationRule,
+    RangeValidationRule,
+    NullValidationRule,
+    
+    # Results and enums
+    SchemaInferenceResult,
+    SchemaValidationResult,
+    SchemaValidationLevel,
+    SchemaConformanceLevel,
+    ValidationRuleType,
+)
+
 __all__ = [
     # Core data structures
     'DataFormat',
@@ -201,6 +224,23 @@ __all__ = [
     'create_adapter_config',
     'validate_adapter_dependencies',
     'monitor_adapter_performance',
+    
+    # Schema validation system
+    'SchemaInferenceEngine',
+    'SchemaValidator',
+    'SchemaEvolutionManager',
+    'DataSchema',
+    'SchemaConstraint',
+    'ValidationError',
+    'ValidationRule',
+    'TypeValidationRule',
+    'RangeValidationRule',
+    'NullValidationRule',
+    'SchemaInferenceResult',
+    'SchemaValidationResult',
+    'SchemaValidationLevel',
+    'SchemaConformanceLevel',
+    'ValidationRuleType',
 ]
 
 # Package metadata
