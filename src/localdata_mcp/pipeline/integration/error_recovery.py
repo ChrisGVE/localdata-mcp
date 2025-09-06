@@ -91,7 +91,7 @@ class ErrorContext:
     
     # Error details
     error_type: Union[ConversionError.Type, ErrorClassification, str] = "unknown"
-    severity: ErrorSeverity = ErrorSeverity.ERROR
+    severity: ErrorSeverity = ErrorSeverity.HIGH
     message: str = ""
     exception: Optional[Exception] = None
     
@@ -139,8 +139,8 @@ class PipelineCheckpoint:
 @dataclass
 class RecoveryPlan:
     """Plan for executing error recovery strategies."""
-    plan_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     error_context: ErrorContext
+    plan_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     
     # Recovery strategies in priority order
     strategies: List[RecoveryStrategy] = field(default_factory=list)
@@ -1168,13 +1168,13 @@ class ConversionErrorHandler:
             error_context.severity = ErrorSeverity.CRITICAL
         elif isinstance(error, TimeoutError):
             error_context.error_type = ConversionError.Type.TIMEOUT
-            error_context.severity = ErrorSeverity.ERROR
+            error_context.severity = ErrorSeverity.HIGH
         elif isinstance(error, (ValueError, TypeError)):
             error_context.error_type = ConversionError.Type.TYPE_MISMATCH
-            error_context.severity = ErrorSeverity.WARNING
+            error_context.severity = ErrorSeverity.MEDIUM
         else:
             error_context.error_type = ConversionError.Type.CONVERSION_FAILED
-            error_context.severity = ErrorSeverity.ERROR
+            error_context.severity = ErrorSeverity.HIGH
         
         # Adjust severity based on context
         if error_context.pipeline_step == "critical_conversion":
@@ -1511,7 +1511,15 @@ class AlternativePathwayEngine:
         self.enable_pathway_caching = enable_pathway_caching
         self.quality_threshold = quality_threshold
         
-        # Pathway analysis cache
+        # Pathway caching (new enhanced system)
+        self._pathway_cache: Dict[str, List[ConversionPath]] = {}
+        self._successful_pathways: Dict[str, ConversionPath] = {}
+        
+        # Performance tracking
+        self._pathway_success_rates: Dict[str, float] = defaultdict(float)
+        self._pathway_performance: Dict[str, Dict[str, float]] = defaultdict(dict)
+        
+        # Legacy pathway analysis cache (for backward compatibility)
         self.pathway_cache: Dict[str, List[AlternativePathway]] = {}
         self.success_patterns: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         
@@ -1523,9 +1531,13 @@ class AlternativePathwayEngine:
             "cache_hits": 0
         }
         
+        # Thread safety
         self._lock = threading.RLock()
         
-        logger.info("AlternativePathwayEngine initialized")
+        logger.info("AlternativePathwayEngine initialized",
+                   max_depth=max_pathway_depth,
+                   caching_enabled=enable_pathway_caching,
+                   quality_threshold=quality_threshold)
     
     def find_alternative_pathways(self,
                                 failed_conversion: ConversionRequest,
@@ -1886,31 +1898,415 @@ class AlternativePathwayEngine:
         """Clear pathway analysis cache."""
         with self._lock:
             self.pathway_cache.clear()
+            self._pathway_cache.clear()
             logger.info("Alternative pathway cache cleared")
+    
+    # Enhanced pathway discovery methods
+    
+    def find_alternative_pathways_enhanced(self, 
+                                 failed_request: ConversionRequest) -> List[ConversionPath]:
+        """
+        Find alternative conversion pathways for a failed conversion (enhanced version).
+        
+        Args:
+            failed_request: Original conversion request that failed
+            
+        Returns:
+            List of alternative conversion pathways, sorted by viability
+        """
+        start_time = time.time()
+        
+        source_format = failed_request.source_format
+        target_format = failed_request.target_format
+        
+        # Check cache first
+        cache_key = f"{source_format.value}->{target_format.value}"
+        if self.enable_pathway_caching and cache_key in self._pathway_cache:
+            cached_pathways = self._pathway_cache[cache_key]
+            logger.debug(f"Using cached pathways for {cache_key}: {len(cached_pathways)} found")
+            return cached_pathways
+        
+        logger.info(f"Finding alternative pathways: {source_format.value} -> {target_format.value}")
+        
+        # Find pathways using graph search
+        pathways = self._discover_pathways_bfs(source_format, target_format, failed_request)
+        
+        # Evaluate and sort pathways
+        evaluated_pathways = []
+        for pathway in pathways:
+            cost = self.assess_pathway_cost(pathway)
+            quality = self.assess_quality_degradation(pathway)
+            
+            # Calculate overall viability score
+            viability_score = self._calculate_viability_score(pathway, cost, quality)
+            pathway.success_probability = viability_score
+            
+            if quality.expected_quality_score >= self.quality_threshold:
+                evaluated_pathways.append(pathway)
+        
+        # Sort by viability (success probability)
+        evaluated_pathways.sort(key=lambda p: p.success_probability, reverse=True)
+        
+        # Cache successful search
+        if self.enable_pathway_caching:
+            self._pathway_cache[cache_key] = evaluated_pathways
+        
+        discovery_time = time.time() - start_time
+        logger.info(f"Found {len(evaluated_pathways)} alternative pathways in {discovery_time:.2f}s")
+        
+        return evaluated_pathways
+    
+    def assess_pathway_cost(self, pathway: ConversionPath) -> PathwayCost:
+        """
+        Assess the computational cost of a conversion pathway.
+        
+        Args:
+            pathway: Conversion pathway to assess
+            
+        Returns:
+            Detailed cost assessment
+        """
+        total_computational_cost = 0.0
+        total_time_overhead = 0.0
+        total_memory_overhead = 0.0
+        min_reliability = 1.0
+        
+        # Sum costs across all steps
+        for step in pathway.steps:
+            step_cost = step.estimated_cost
+            total_computational_cost += step_cost.computational_cost
+            total_time_overhead += step_cost.time_estimate_seconds
+            total_memory_overhead += step_cost.memory_cost_mb
+            min_reliability = min(min_reliability, step.confidence)
+        
+        # Calculate quality degradation (increases with pathway length)
+        quality_degradation = min(len(pathway.steps) * 0.05, 0.3)  # Max 30% degradation
+        
+        # Confidence decreases with pathway complexity
+        confidence = max(min_reliability * (0.95 ** len(pathway.steps)), 0.1)
+        
+        return PathwayCost(
+            computational_cost=total_computational_cost,
+            quality_degradation=quality_degradation,
+            time_overhead=total_time_overhead,
+            memory_overhead=total_memory_overhead,
+            reliability_score=min_reliability,
+            confidence=confidence
+        )
+    
+    def assess_quality_degradation(self, pathway: ConversionPath) -> QualityAssessment:
+        """
+        Assess quality degradation for a conversion pathway.
+        
+        Args:
+            pathway: Conversion pathway to assess
+            
+        Returns:
+            Quality assessment with degradation analysis
+        """
+        # Base quality starts high and degrades with each conversion step
+        base_quality = 1.0
+        cumulative_degradation = 0.0
+        metadata_preservation = 1.0
+        data_fidelity = 1.0
+        risk_factors = []
+        
+        for i, step in enumerate(pathway.steps):
+            # Each step introduces some quality loss
+            step_degradation = 0.02 + (0.01 * i)  # Increasing degradation per step
+            cumulative_degradation += step_degradation
+            
+            # Specific format conversions have known quality impacts
+            degradation_factor = self._get_format_degradation_factor(
+                step.source_format, step.target_format
+            )
+            cumulative_degradation += degradation_factor
+            
+            # Metadata preservation decreases with conversions
+            if self._loses_metadata(step.source_format, step.target_format):
+                metadata_preservation *= 0.9
+                risk_factors.append(f"Metadata loss in {step.source_format.value} -> {step.target_format.value}")
+            
+            # Data fidelity assessment
+            if self._loses_precision(step.source_format, step.target_format):
+                data_fidelity *= 0.95
+                risk_factors.append(f"Precision loss in {step.source_format.value} -> {step.target_format.value}")
+        
+        expected_quality = max(base_quality - cumulative_degradation, 0.1)
+        
+        return QualityAssessment(
+            expected_quality_score=expected_quality,
+            quality_degradation=cumulative_degradation,
+            metadata_preservation=metadata_preservation,
+            data_fidelity=data_fidelity,
+            risk_factors=risk_factors
+        )
+    
+    def cache_successful_pathway(self, pathway: ConversionPath) -> None:
+        """
+        Cache a successful conversion pathway for future reuse.
+        
+        Args:
+            pathway: Successfully executed conversion pathway
+        """
+        if not self.enable_pathway_caching:
+            return
+        
+        with self._lock:
+            cache_key = f"{pathway.source_format.value}->{pathway.target_format.value}"
+            
+            # Store successful pathway
+            self._successful_pathways[pathway.path_id] = pathway
+            
+            # Update success rate
+            current_rate = self._pathway_success_rates.get(cache_key, 0.0)
+            self._pathway_success_rates[cache_key] = min(current_rate + 0.1, 1.0)
+            
+            # Update cache with this successful pathway prioritized
+            if cache_key in self._pathway_cache:
+                cached_pathways = self._pathway_cache[cache_key]
+                # Move successful pathway to front if it exists
+                for i, cached_pathway in enumerate(cached_pathways):
+                    if cached_pathway.path_id == pathway.path_id:
+                        cached_pathways.insert(0, cached_pathways.pop(i))
+                        break
+                else:
+                    # Add new successful pathway to front
+                    cached_pathways.insert(0, pathway)
+            else:
+                self._pathway_cache[cache_key] = [pathway]
+            
+            logger.info(f"Cached successful pathway {pathway.path_id} for {cache_key}")
+    
+    def _discover_pathways_bfs(self, 
+                              source_format: DataFormat,
+                              target_format: DataFormat,
+                              original_request: ConversionRequest) -> List[ConversionPath]:
+        """Discover pathways using breadth-first search."""
+        
+        if not self.registry:
+            logger.warning("No registry available for pathway discovery")
+            return []
+        
+        pathways = []
+        visited = set()
+        
+        # BFS queue: (current_format, path_so_far, total_cost)
+        queue = deque([(source_format, [], self._create_zero_cost())])
+        
+        while queue and len(pathways) < 10:  # Limit number of pathways
+            current_format, path, current_cost = queue.popleft()
+            
+            # Skip if already visited this format in this path
+            if current_format in [step.target_format for step in path]:
+                continue
+            
+            # Skip if path is too deep
+            if len(path) >= self.max_pathway_depth:
+                continue
+            
+            # Check if we reached target
+            if current_format == target_format and path:
+                pathway = ConversionPath(
+                    source_format=source_format,
+                    target_format=target_format,
+                    steps=path,
+                    total_cost=current_cost,
+                    success_probability=0.8 ** len(path)  # Decreases with steps
+                )
+                pathways.append(pathway)
+                continue
+            
+            # Get available adapters from current format
+            available_adapters = self._get_adapters_from_format(current_format)
+            
+            for adapter in available_adapters:
+                supported_conversions = adapter.get_supported_conversions()
+                
+                for source_fmt, target_fmt in supported_conversions:
+                    if source_fmt == current_format and target_fmt != current_format:
+                        
+                        # Create dummy request for cost estimation
+                        dummy_request = ConversionRequest(
+                            source_data=None,
+                            source_format=source_fmt,
+                            target_format=target_fmt,
+                            context=original_request.context
+                        )
+                        
+                        try:
+                            step_cost = adapter.estimate_cost(dummy_request)
+                            confidence = adapter.can_convert(dummy_request)
+                        except Exception:
+                            # Use default values if estimation fails
+                            step_cost = self._create_default_cost()
+                            confidence = 0.5
+                        
+                        new_step = ConversionStep(
+                            adapter_id=adapter.adapter_id,
+                            source_format=source_fmt,
+                            target_format=target_fmt,
+                            estimated_cost=step_cost,
+                            confidence=confidence
+                        )
+                        
+                        new_path = path + [new_step]
+                        new_cost = self._add_costs(current_cost, step_cost)
+                        
+                        queue.append((target_fmt, new_path, new_cost))
+        
+        return pathways
+    
+    def _get_adapters_from_format(self, format_type: DataFormat) -> List[EnhancedShimAdapter]:
+        """Get adapters that can convert from the given format."""
+        if not self.registry:
+            return []
+        
+        available_adapters = []
+        for adapter in self.registry.get_active_adapters():
+            supported_conversions = adapter.get_supported_conversions()
+            for source_fmt, _ in supported_conversions:
+                if source_fmt == format_type:
+                    available_adapters.append(adapter)
+                    break
+        
+        return available_adapters
+    
+    def _calculate_viability_score(self, 
+                                  pathway: ConversionPath,
+                                  cost: PathwayCost,
+                                  quality: QualityAssessment) -> float:
+        """Calculate overall viability score for pathway."""
+        
+        # Base score from quality
+        quality_score = quality.expected_quality_score * 0.4
+        
+        # Reliability score
+        reliability_score = cost.reliability_score * 0.3
+        
+        # Cost efficiency (inverse of computational cost, capped)
+        cost_efficiency = max(1.0 - min(cost.computational_cost, 1.0), 0.1) * 0.2
+        
+        # Path simplicity (prefer shorter paths)
+        simplicity_score = max(1.0 - (len(pathway.steps) - 1) * 0.1, 0.1) * 0.1
+        
+        return quality_score + reliability_score + cost_efficiency + simplicity_score
+    
+    def _get_format_degradation_factor(self, 
+                                      source: DataFormat, 
+                                      target: DataFormat) -> float:
+        """Get quality degradation factor for specific format conversions."""
+        degradation_map = {
+            # High precision to low precision
+            (DataFormat.PANDAS_DATAFRAME, DataFormat.PYTHON_LIST): 0.05,
+            (DataFormat.NUMPY_ARRAY, DataFormat.PYTHON_LIST): 0.03,
+            (DataFormat.SCIPY_SPARSE, DataFormat.PANDAS_DATAFRAME): 0.02,
+            
+            # Complex to simple
+            (DataFormat.TIME_SERIES, DataFormat.PANDAS_DATAFRAME): 0.04,
+            (DataFormat.CATEGORICAL, DataFormat.NUMPY_ARRAY): 0.06,
+            
+            # Structured to unstructured
+            (DataFormat.PANDAS_DATAFRAME, DataFormat.PYTHON_DICT): 0.01,
+        }
+        
+        return degradation_map.get((source, target), 0.01)  # Default small degradation
+    
+    def _loses_metadata(self, source: DataFormat, target: DataFormat) -> bool:
+        """Check if conversion loses metadata."""
+        metadata_losing_conversions = {
+            (DataFormat.PANDAS_DATAFRAME, DataFormat.NUMPY_ARRAY),
+            (DataFormat.PANDAS_DATAFRAME, DataFormat.PYTHON_LIST),
+            (DataFormat.TIME_SERIES, DataFormat.NUMPY_ARRAY),
+            (DataFormat.CATEGORICAL, DataFormat.NUMPY_ARRAY)
+        }
+        return (source, target) in metadata_losing_conversions
+    
+    def _loses_precision(self, source: DataFormat, target: DataFormat) -> bool:
+        """Check if conversion loses numerical precision."""
+        precision_losing_conversions = {
+            (DataFormat.NUMPY_ARRAY, DataFormat.PYTHON_LIST),
+            (DataFormat.SCIPY_SPARSE, DataFormat.PYTHON_LIST),
+            (DataFormat.PANDAS_DATAFRAME, DataFormat.PYTHON_DICT)
+        }
+        return (source, target) in precision_losing_conversions
+    
+    def _create_zero_cost(self) -> ConversionCost:
+        """Create zero-cost baseline."""
+        return ConversionCost(
+            computational_cost=0.0,
+            memory_cost_mb=0.0,
+            time_estimate_seconds=0.0,
+            io_operations=0,
+            network_operations=0,
+            quality_impact=0.0
+        )
+    
+    def _create_default_cost(self) -> ConversionCost:
+        """Create default cost estimate."""
+        return ConversionCost(
+            computational_cost=0.1,
+            memory_cost_mb=10.0,
+            time_estimate_seconds=1.0,
+            io_operations=0,
+            network_operations=0,
+            quality_impact=0.02
+        )
+    
+    def _add_costs(self, cost1: ConversionCost, cost2: ConversionCost) -> ConversionCost:
+        """Add two conversion costs together."""
+        return ConversionCost(
+            computational_cost=cost1.computational_cost + cost2.computational_cost,
+            memory_cost_mb=cost1.memory_cost_mb + cost2.memory_cost_mb,
+            time_estimate_seconds=cost1.time_estimate_seconds + cost2.time_estimate_seconds,
+            io_operations=cost1.io_operations + cost2.io_operations,
+            network_operations=cost1.network_operations + cost2.network_operations,
+            quality_impact=cost1.quality_impact + cost2.quality_impact
+        )
+    
+    def get_pathway_statistics(self) -> Dict[str, Any]:
+        """Get pathway discovery and performance statistics."""
+        with self._lock:
+            return {
+                'cached_pathways': len(self._pathway_cache),
+                'successful_pathways': len(self._successful_pathways),
+                'average_success_rates': dict(self._pathway_success_rates),
+                'pathway_performance': dict(self._pathway_performance),
+                **self.stats,
+                "cache_size": len(self.pathway_cache),
+                "success_patterns": {k: len(v) for k, v in self.success_patterns.items()},
+                "cache_hit_rate": self.stats["cache_hits"] / max(self.stats["pathways_analyzed"], 1)
+            }
 
 
 class RollbackManager:
     """
-    Manager for pipeline state tracking and rollback capabilities.
+    Transaction-like state management with rollback capabilities.
     
-    Implements transactional semantics for multi-step conversions with the ability
-    to restore data integrity after partial failures and cleanup temporary resources.
+    Provides checkpointing, state restoration, and resource cleanup
+    for complex multi-step conversion operations.
     """
     
     def __init__(self,
-                 checkpoint_storage_path: Optional[str] = None,
                  max_checkpoints: int = 10,
+                 enable_disk_persistence: bool = False,
+                 checkpoint_compression: bool = True,
+                 checkpoint_storage_path: Optional[str] = None,
                  cleanup_on_success: bool = True):
         """
         Initialize RollbackManager.
         
         Args:
+            max_checkpoints: Maximum number of checkpoints to maintain
+            enable_disk_persistence: Store checkpoints on disk for recovery
+            checkpoint_compression: Compress checkpoint data to save space
             checkpoint_storage_path: Path for checkpoint storage (None for temp)
-            max_checkpoints: Maximum number of checkpoints to retain
             cleanup_on_success: Whether to cleanup checkpoints on successful completion
         """
-        self.checkpoint_storage_path = checkpoint_storage_path or tempfile.mkdtemp(prefix="localdata_checkpoints_")
         self.max_checkpoints = max_checkpoints
+        self.enable_disk_persistence = enable_disk_persistence
+        self.checkpoint_compression = checkpoint_compression
+        self.checkpoint_storage_path = checkpoint_storage_path or tempfile.mkdtemp(prefix="localdata_checkpoints_")
         self.cleanup_on_success = cleanup_on_success
         
         # Ensure storage directory exists
@@ -2685,10 +3081,10 @@ def create_conversion_error_handler(**kwargs) -> ConversionErrorHandler:
     return ConversionErrorHandler(**kwargs)
 
 
-def create_alternative_pathway_engine(pipeline_analyzer: PipelineAnalyzer,
-                                    shim_injector: ShimInjector) -> AlternativePathwayEngine:
+def create_alternative_pathway_engine(registry: Optional[ShimRegistry] = None,
+                                    **kwargs) -> AlternativePathwayEngine:
     """Create AlternativePathwayEngine with required dependencies."""
-    return AlternativePathwayEngine(pipeline_analyzer, shim_injector)
+    return AlternativePathwayEngine(registry=registry, **kwargs)
 
 
 def create_rollback_manager(**kwargs) -> RollbackManager:
@@ -2703,15 +3099,13 @@ def create_recovery_strategy_engine(error_handler: ConversionErrorHandler,
     return RecoveryStrategyEngine(error_handler, pathway_engine, rollback_manager)
 
 
-def create_complete_error_recovery_system(pipeline_analyzer: PipelineAnalyzer,
-                                        shim_injector: ShimInjector,
+def create_complete_error_recovery_system(registry: Optional[ShimRegistry] = None,
                                         **kwargs) -> Dict[str, Any]:
     """
     Create complete error recovery system with all components.
     
     Args:
-        pipeline_analyzer: Pipeline analyzer for compatibility analysis
-        shim_injector: Shim injector for alternative suggestions
+        registry: Optional ShimRegistry for adapter discovery
         **kwargs: Additional configuration options
         
     Returns:
@@ -2719,7 +3113,7 @@ def create_complete_error_recovery_system(pipeline_analyzer: PipelineAnalyzer,
     """
     # Create individual components
     error_handler = create_conversion_error_handler(**kwargs.get("error_handler", {}))
-    pathway_engine = create_alternative_pathway_engine(pipeline_analyzer, shim_injector)
+    pathway_engine = create_alternative_pathway_engine(registry=registry, **kwargs.get("pathway_engine", {}))
     rollback_manager = create_rollback_manager(**kwargs.get("rollback_manager", {}))
     recovery_engine = create_recovery_strategy_engine(error_handler, pathway_engine, rollback_manager)
     
@@ -2761,3 +3155,7 @@ def handle_pipeline_error_with_recovery(error: Exception,
     
     # Execute recovery
     return recovery_engine.execute_recovery(error_context, operation, *args, **kwargs)
+
+
+# Alias for compatibility with test framework
+RecoveryStrategyFramework = RecoveryStrategyEngine
