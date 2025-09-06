@@ -101,6 +101,24 @@ from .compatibility_matrix import (
     suggest_pipeline_improvements,
 )
 
+from .shim_registry import (
+    # Enhanced ShimAdapter and Registry
+    EnhancedShimAdapter,
+    ShimRegistry,
+    AdapterConfig,
+    AdapterMetrics,
+    HealthCheckResult,
+    AdapterLifecycleState,
+    
+    # Factory functions
+    create_shim_registry,
+    create_adapter_config,
+    
+    # Utility functions
+    validate_adapter_dependencies,
+    monitor_adapter_performance,
+)
+
 __all__ = [
     # Core data structures
     'DataFormat',
@@ -171,6 +189,18 @@ __all__ = [
     # Error handling
     'ConversionError',
     'ValidationResult',
+    
+    # Enhanced ShimAdapter and Registry
+    'EnhancedShimAdapter',
+    'ShimRegistry', 
+    'AdapterConfig',
+    'AdapterMetrics',
+    'HealthCheckResult',
+    'AdapterLifecycleState',
+    'create_shim_registry',
+    'create_adapter_config',
+    'validate_adapter_dependencies',
+    'monitor_adapter_performance',
 ]
 
 # Package metadata
