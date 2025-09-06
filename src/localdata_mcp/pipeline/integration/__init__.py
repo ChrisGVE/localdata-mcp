@@ -196,6 +196,47 @@ from .domain_shims import (
     validate_domain_shim_configuration,
 )
 
+from .performance_optimization import (
+    # Core performance optimization classes
+    ConversionCache,
+    LazyLoadingManager,
+    LazyConverter,
+    
+    # Performance data structures
+    CachedConversion,
+    CacheStatistics,
+    CacheEvictionPolicy,
+    LazyConversionState,
+    
+    # Factory functions
+    create_conversion_cache,
+    create_lazy_loading_manager,
+    create_optimized_shim_adapter,
+    create_performance_config,
+)
+
+from .error_recovery import (
+    # Core error recovery classes
+    ConversionErrorHandler,
+    AlternativePathwayEngine,
+    RollbackManager,
+    RecoveryStrategyEngine,
+    
+    # Error recovery data structures
+    ErrorClassificationEnhanced,
+    PathwayDiscoveryResult,
+    CheckpointManager,
+    RecoveryResult,
+    
+    # Factory functions
+    create_conversion_error_handler,
+    create_alternative_pathway_engine,
+    create_rollback_manager,
+    create_recovery_strategy_engine,
+    create_error_recovery_framework,
+    create_complete_error_recovery_system,
+)
+
 __all__ = [
     # Core data structures
     'DataFormat',
@@ -331,6 +372,35 @@ __all__ = [
     'create_all_domain_shims',
     'get_compatible_domain_shims',
     'validate_domain_shim_configuration',
+    
+    # Performance optimization system
+    'ConversionCache',
+    'LazyLoadingManager',
+    'LazyConverter',
+    'CachedConversion',
+    'CacheStatistics',
+    'CacheEvictionPolicy',
+    'LazyConversionState',
+    'create_conversion_cache',
+    'create_lazy_loading_manager',
+    'create_optimized_shim_adapter',
+    'create_performance_config',
+    
+    # Error recovery system
+    'ConversionErrorHandler',
+    'AlternativePathwayEngine',
+    'RollbackManager',
+    'RecoveryStrategyEngine',
+    'ErrorClassificationEnhanced',
+    'PathwayDiscoveryResult',
+    'CheckpointManager',
+    'RecoveryResult',
+    'create_conversion_error_handler',
+    'create_alternative_pathway_engine',
+    'create_rollback_manager',
+    'create_recovery_strategy_engine',
+    'create_error_recovery_framework',
+    'create_complete_error_recovery_system',
 ]
 
 # Package metadata
