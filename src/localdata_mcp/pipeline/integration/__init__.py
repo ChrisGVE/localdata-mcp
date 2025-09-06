@@ -142,6 +142,35 @@ from .schema_validation import (
     ValidationRuleType,
 )
 
+from .pipeline_analyzer import (
+    # Core pipeline analysis classes
+    PipelineAnalyzer,
+    ShimInjector,
+    PipelineValidator,
+    
+    # Data structures
+    PipelineStep,
+    PipelineConnection,
+    IncompatibilityIssue,
+    ShimRecommendation,
+    PipelineAnalysisResult,
+    OptimizationCriteria,
+    
+    # Enums
+    AnalysisType,
+    InjectionStrategy,
+    
+    # Factory functions
+    create_pipeline_analyzer,
+    create_shim_injector,
+    create_pipeline_validator,
+    create_optimization_criteria,
+    create_pipeline_step,
+    
+    # Utility functions
+    analyze_and_fix_pipeline,
+)
+
 __all__ = [
     # Core data structures
     'DataFormat',
@@ -241,6 +270,25 @@ __all__ = [
     'SchemaValidationLevel',
     'SchemaConformanceLevel',
     'ValidationRuleType',
+    
+    # Automatic shim insertion system
+    'PipelineAnalyzer',
+    'ShimInjector',
+    'PipelineValidator',
+    'PipelineStep',
+    'PipelineConnection',
+    'IncompatibilityIssue',
+    'ShimRecommendation',
+    'PipelineAnalysisResult',
+    'OptimizationCriteria',
+    'AnalysisType',
+    'InjectionStrategy',
+    'create_pipeline_analyzer',
+    'create_shim_injector',
+    'create_pipeline_validator',
+    'create_optimization_criteria',
+    'create_pipeline_step',
+    'analyze_and_fix_pipeline',
 ]
 
 # Package metadata
