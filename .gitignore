@@ -147,17 +147,13 @@ validate_test_fixes.py
 # tasks.json
 # tasks/ 
 
-# Strategic planning documents (keep local, don't track)
-DS_DOMAINS.md
-ARCHITECTURE.md
-
+# Permanent files on local storage only (as per CLAUDE.md git discipline)
 # PRD files - Product Requirement Documents (always local-only)
 *_PRD_*.txt
 *.prd.txt
 localdata-mcp-v*.txt
-20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_project_*_PRD_*.txt
 
-# Implementation summaries, reports, and research (local-only)
+# Research reports and implementation summaries (permanent local-only)
 *_IMPLEMENTATION_SUMMARY.md
 *_COMPLETION_REPORT.md
 *_VALIDATION_REPORT.md
@@ -172,7 +168,11 @@ fuzzy-logic-ml-integration-strategy.md
 dynamic-tooling-architecture.md
 TASK3_COORDINATION.md
 
-# Development documentation (not for public consumption)
+# Strategic planning documents (permanent local-only)
+DS_DOMAINS.md
+ARCHITECTURE.md
+
+# Development documentation (not for public consumption - permanent local-only)
 API_REFERENCE.md
 CONFIGURATION.md
 DATABASE_CONNECTIONS.md
@@ -182,26 +182,20 @@ TROUBLESHOOTING.md
 MIGRATION_GUIDE.md
 MCP_SPLIT.md
 
-# Experimental and demo scripts (temporary files)
-20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_*.py
-LT_20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_*.py
-20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_*.md
-LT_20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_*.md
-demo_*.py
-demonstrate_*.py
-benchmark_*.py
-integration_registry.py
-*_integration_adapter.py
-streaming_pipeline_integration.py
-llm_integration_*.py
-llm_integration_*.txt
-llm_integration_*.json
-test_phase1_*.py
+# Task Master and Claude configuration (permanent local-only)
+.taskmaster/
+CLAUDE.md
+CLAUDE.local.md
+claude.json
+.claude/
 
-# Local configuration files
+# Local configuration files (permanent local-only)
 .mcp.json
 docker-mcp-submission.yaml.local
 submission-instructions.md.local
+
+# NOTE: Temporary files (YYYYMMDD-HHMM_*) and long-term temporary files (LT_YYYYMMDD-HHMM_*) 
+# are deliberately NOT included in .gitignore so they remain visible for tracking and cleanup
 
 # Development and testing directories
 stress_testing/
