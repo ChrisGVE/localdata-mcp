@@ -149,26 +149,59 @@ validate_test_fixes.py
 
 # Strategic planning documents (keep local, don't track)
 DS_DOMAINS.md
-
-# Project-related files (research, benchmarks, test development)
-# Keep these files on disk but don't track in git
 ARCHITECTURE.md
-CLAUDE.md
-TASK3_COORDINATION.md
+
+# PRD files - Product Requirement Documents (always local-only)
+*_PRD_*.txt
+*.prd.txt
+localdata-mcp-v*.txt
+20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_project_*_PRD_*.txt
+
+# Implementation summaries, reports, and research (local-only)
+*_IMPLEMENTATION_SUMMARY.md
+*_COMPLETION_REPORT.md
+*_VALIDATION_REPORT.md
+*_SUMMARY.md
+COMPREHENSIVE_*.md
+PERFORMANCE_OPTIMIZATION_SUMMARY.md
+MULTIVARIATE_IMPLEMENTATION_SUMMARY.md
+ADVANCED_FORECASTING_IMPLEMENTATION.md
 REAL_WORLD_VALIDATION_REPORT.md
 VALIDATION_SUMMARY.md
 fuzzy-logic-ml-integration-strategy.md
 dynamic-tooling-architecture.md
-localdata-mcp-v*.txt
-*.prd.txt
-demo_token_manager.py
+TASK3_COORDINATION.md
+
+# Development documentation (not for public consumption)
+API_REFERENCE.md
+CONFIGURATION.md
+DATABASE_CONNECTIONS.md
+DOCKER_USAGE.md
+ADVANCED_EXAMPLES.md
+TROUBLESHOOTING.md
+MIGRATION_GUIDE.md
+MCP_SPLIT.md
+
+# Experimental and demo scripts (temporary files)
+20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_*.py
+LT_20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_*.py
+20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_*.md
+LT_20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_*.md
+demo_*.py
+demonstrate_*.py
+benchmark_*.py
+integration_registry.py
+*_integration_adapter.py
+streaming_pipeline_integration.py
 llm_integration_*.py
 llm_integration_*.txt
 llm_integration_*.json
 test_phase1_*.py
+
+# Local configuration files
+.mcp.json
 docker-mcp-submission.yaml.local
 submission-instructions.md.local
-.mcp.json
 
 # Development and testing directories
 stress_testing/
