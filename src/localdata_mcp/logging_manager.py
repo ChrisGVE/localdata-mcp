@@ -23,18 +23,25 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from .config_manager import LoggingConfig, LogLevel
 
 
-@dataclass
 class LogContext:
-    """Context information for structured logging."""
+    """Context information for structured logging.
 
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    session_id: Optional[str] = None
-    user_id: Optional[str] = None
-    operation: Optional[str] = None
-    component: Optional[str] = None
-    database_name: Optional[str] = None
-    query_hash: Optional[str] = None
-    start_time: Optional[float] = None
+    Accepts arbitrary keyword arguments so callers can attach any
+    context fields without needing to modify this class.
+    """
+
+    def __init__(self, **kwargs):
+        self.request_id = kwargs.pop("request_id", str(uuid.uuid4()))
+        self.session_id = kwargs.pop("session_id", None)
+        self.user_id = kwargs.pop("user_id", None)
+        self.operation = kwargs.pop("operation", None)
+        self.component = kwargs.pop("component", None)
+        self.database_name = kwargs.pop("database_name", None)
+        self.query_hash = kwargs.pop("query_hash", None)
+        self.start_time = kwargs.pop("start_time", None)
+        # Store any extra context fields
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert context to dictionary for logging."""
