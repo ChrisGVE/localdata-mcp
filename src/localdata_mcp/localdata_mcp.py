@@ -1400,6 +1400,83 @@ class DatabaseManager:
             "options": table_options,
         }
 
+    def _build_connection_summary(
+        self, engine, name: str, db_type: str, sql_flavor: str
+    ) -> dict:
+        """Build a data summary returned on connect so the LLM knows what's
+        available without issuing a broad SELECT *.
+
+        Returns table names, column schemas, row counts, and a few sample
+        values per column so the LLM can craft targeted queries.
+        """
+        summary: Dict[str, Any] = {
+            "success": True,
+            "message": f"Successfully connected to database '{name}'",
+            "connection_info": {
+                "name": name,
+                "db_type": db_type,
+                "sql_flavor": sql_flavor,
+                "total_connections": self.connection_count,
+            },
+            "tables": [],
+        }
+
+        try:
+            insp = inspect(engine)
+            table_names = insp.get_table_names()
+
+            for tbl in table_names:
+                table_meta = self._get_table_metadata(insp, tbl)
+
+                # Row count
+                safe_tbl = self._safe_table_identifier(tbl)
+                with engine.connect() as conn:
+                    row_count = conn.execute(
+                        text(f"SELECT COUNT(*) FROM {safe_tbl}")  # nosec B608
+                    ).scalar()
+
+                # Sample values: first 3 rows, truncate long strings
+                sample_rows: List[Dict[str, Any]] = []
+                try:
+                    with engine.connect() as conn:
+                        result = conn.execute(
+                            text(f"SELECT * FROM {safe_tbl} LIMIT 3")  # nosec B608
+                        )
+                        cols = list(result.keys())
+                        for row in result:
+                            sample = {}
+                            for col_name, val in zip(cols, row):
+                                if isinstance(val, str) and len(val) > 120:
+                                    val = val[:120] + "..."
+                                sample[col_name] = val
+                            sample_rows.append(sample)
+                except Exception:
+                    pass  # sample is best-effort
+
+                col_summary = []
+                for col in table_meta["columns"]:
+                    entry = {"name": col["name"], "type": col["type"]}
+                    if col.get("primary_key"):
+                        entry["primary_key"] = True
+                    if col.get("not_null"):
+                        entry["not_null"] = True
+                    col_summary.append(entry)
+
+                summary["tables"].append(
+                    {
+                        "name": tbl,
+                        "row_count": row_count,
+                        "columns": col_summary,
+                        "sample_rows": sample_rows,
+                    }
+                )
+
+        except Exception as e:
+            logger.warning(f"Could not build connection summary for '{name}': {e}")
+            summary["summary_error"] = str(e)
+
+        return summary
+
     # =========================================================
     # Requested Tools
     # =========================================================
@@ -1445,18 +1522,11 @@ class DatabaseManager:
                 f"Successfully connected to database '{name}' ({sql_flavor}). Total connections: {self.connection_count}"
             )
 
-            response = {
-                "success": True,
-                "message": f"Successfully connected to database '{name}'",
-                "connection_info": {
-                    "name": name,
-                    "db_type": db_type,
-                    "sql_flavor": sql_flavor,
-                    "total_connections": self.connection_count,
-                },
-            }
+            # Build data summary so the LLM knows what's available
+            # without needing to SELECT * and receive megabytes
+            summary = self._build_connection_summary(engine, name, db_type, sql_flavor)
 
-            return json.dumps(response, indent=2)
+            return json.dumps(summary, indent=2)
 
         except Exception as e:
             # Release semaphore on failure
