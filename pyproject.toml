@@ -1,6 +1,6 @@
 [project]
 name = "localdata-mcp"
-version = "1.4.4"
+version = "1.4.5"
 description = "A dynamic MCP server for local databases and text files."
 readme = "README.md"
 authors = [

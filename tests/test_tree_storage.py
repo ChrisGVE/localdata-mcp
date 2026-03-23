@@ -399,6 +399,64 @@ class TestTreeStorageManager:
         assert nodes_del == 0
         assert props_del == 0
 
+    # -- move_node tests --
+
+    def test_move_node_to_new_parent(self, mgr):
+        mgr.create_node("server.ssl")
+        mgr.set_property("server.ssl", "enabled", True)
+        mgr.create_node("database")
+        nodes_moved, new_path = mgr.move_node("server.ssl", "database")
+        assert new_path == "database.ssl"
+        assert nodes_moved == 1
+        assert mgr.node_exists("database.ssl")
+        assert not mgr.node_exists("server.ssl")
+        assert mgr.get_property("database.ssl", "enabled").to_python_value() is True
+
+    def test_move_subtree(self, mgr):
+        mgr.create_node("a.b.c")
+        mgr.set_property("a.b", "key", "val")
+        mgr.set_property("a.b.c", "deep", 42)
+        mgr.create_node("x")
+        nodes_moved, new_path = mgr.move_node("a.b", "x")
+        assert new_path == "x.b"
+        assert nodes_moved == 2  # b + c
+        assert mgr.node_exists("x.b")
+        assert mgr.node_exists("x.b.c")
+        assert mgr.get_property("x.b", "key").to_python_value() == "val"
+        assert mgr.get_property("x.b.c", "deep").to_python_value() == 42
+        assert not mgr.node_exists("a.b")
+        assert not mgr.node_exists("a.b.c")
+
+    def test_move_to_root(self, mgr):
+        mgr.create_node("parent.child")
+        nodes_moved, new_path = mgr.move_node("parent.child", None)
+        assert new_path == "child"
+        assert mgr.node_exists("child")
+        assert mgr.get_node("child").parent_id is None
+        assert mgr.get_node("child").depth == 0
+
+    def test_move_prevents_cycle(self, mgr):
+        mgr.create_node("a.b.c")
+        with pytest.raises(ValueError, match="own subtree"):
+            mgr.move_node("a", "a.b.c")
+        with pytest.raises(ValueError, match="own subtree"):
+            mgr.move_node("a", "a.b")
+
+    def test_move_nonexistent_raises(self, mgr):
+        with pytest.raises(ValueError, match="not found"):
+            mgr.move_node("nonexistent", None)
+
+    def test_move_to_nonexistent_parent_raises(self, mgr):
+        mgr.create_node("a")
+        with pytest.raises(ValueError, match="not found"):
+            mgr.move_node("a", "nonexistent")
+
+    def test_move_conflict_raises(self, mgr):
+        mgr.create_node("a.child")
+        mgr.create_node("b.child")
+        with pytest.raises(ValueError, match="already exists"):
+            mgr.move_node("a.child", "b")
+
     def test_set_and_get_property(self, mgr):
         mgr.create_node("server")
         mgr.set_property("server", "port", 8080)

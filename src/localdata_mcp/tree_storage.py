@@ -496,6 +496,104 @@ class TreeStorageManager:
             conn.commit()
             return (node_count, prop_count)
 
+    def move_node(self, path: str, new_parent: Optional[str] = None) -> Tuple[int, str]:
+        """Move a node (and its subtree) under a new parent.
+
+        Args:
+            path: The node to move.
+            new_parent: Target parent path, or ``None`` to make it a root node.
+
+        Returns:
+            ``(nodes_moved, new_path)`` where *new_path* is the node's
+            updated path after the move.
+
+        Raises:
+            ValueError: If the node doesn't exist, the target parent doesn't
+                exist, or the target is inside the subtree being moved.
+        """
+        node = self.get_node(path)
+        if node is None:
+            raise ValueError(f"Node not found: {path}")
+
+        # Prevent moving a node under itself or its own descendants
+        if new_parent is not None:
+            if new_parent == path or new_parent.startswith(path + "."):
+                raise ValueError(
+                    f"Cannot move '{path}' under its own subtree '{new_parent}'."
+                )
+            if not self.node_exists(new_parent):
+                raise ValueError(f"Target parent not found: {new_parent}")
+
+        segments = parse_path(path)
+        node_name = segments[-1]
+
+        if new_parent is not None:
+            new_path = build_path(parse_path(new_parent) + [node_name])
+            new_parent_node = self.get_node(new_parent)
+            new_parent_id = new_parent_node.id if new_parent_node else None
+            new_depth_base = (new_parent_node.depth + 1) if new_parent_node else 0
+        else:
+            new_path = build_path([node_name])
+            new_parent_id = None
+            new_depth_base = 0
+
+        if self.node_exists(new_path) and new_path != path:
+            raise ValueError(f"A node already exists at '{new_path}'.")
+
+        old_prefix = path
+        new_prefix = new_path
+        old_depth = node.depth
+        now = time.time()
+
+        with self.engine.connect() as conn:
+            conn.execute(text("PRAGMA foreign_keys = ON"))
+
+            # Collect all nodes to move (the node itself + descendants)
+            rows = conn.execute(
+                text(
+                    "SELECT id, path, depth FROM nodes "
+                    "WHERE path = :p OR path LIKE :prefix "
+                    "ORDER BY depth"
+                ),
+                {"p": old_prefix, "prefix": old_prefix + ".%"},
+            ).fetchall()
+
+            for row in rows:
+                nid, old_p, old_d = row[0], row[1], row[2]
+                if old_p == old_prefix:
+                    updated_path = new_prefix
+                    updated_parent_id = new_parent_id
+                else:
+                    suffix = old_p[len(old_prefix) :]  # includes leading dot
+                    updated_path = new_prefix + suffix
+                    # Parent path is everything up to the last segment
+                    parent_segs = parse_path(updated_path)[:-1]
+                    parent_path = build_path(parent_segs)
+                    parent_row = conn.execute(
+                        text("SELECT id FROM nodes WHERE path = :p"),
+                        {"p": parent_path},
+                    ).fetchone()
+                    updated_parent_id = parent_row[0] if parent_row else None
+
+                updated_depth = old_d - old_depth + new_depth_base
+
+                conn.execute(
+                    text(
+                        "UPDATE nodes SET path = :new_path, parent_id = :pid, "
+                        "depth = :depth, updated_at = :ua WHERE id = :nid"
+                    ),
+                    {
+                        "new_path": updated_path,
+                        "pid": updated_parent_id,
+                        "depth": updated_depth,
+                        "ua": now,
+                        "nid": nid,
+                    },
+                )
+
+            conn.commit()
+            return (len(rows), new_path)
+
     # -- property operations ------------------------------------------------
 
     def set_property(
