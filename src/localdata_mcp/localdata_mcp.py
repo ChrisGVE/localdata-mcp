@@ -1656,31 +1656,33 @@ class DatabaseManager:
 
     # -- Tree tool wrappers (delegating to tree_tools / tree_export) --------
 
-    def get_node(self, name: str, path: Optional[str] = None) -> str:
+    def get_node(self, name: str, path: Optional[str] = None) -> Dict[str, Any]:
         """Get node details or root summary for a tree-structured connection."""
         return tool_get_node(self._get_tree_manager(name), name, path)
 
     def get_children(
         self, name: str, path: Optional[str] = None, offset: int = 0, limit: int = 50
-    ) -> str:
+    ) -> Dict[str, Any]:
         """Get children of a node (or root nodes) with pagination."""
         return tool_get_children(
             self._get_tree_manager(name), name, path, offset, limit
         )
 
-    def set_node(self, name: str, path: str) -> str:
+    def set_node(self, name: str, path: str) -> Dict[str, Any]:
         """Create a node in a tree-structured connection."""
         return tool_set_node(self._get_tree_manager(name), name, path)
 
-    def delete_node(self, name: str, path: str) -> str:
+    def delete_node(self, name: str, path: str) -> Dict[str, Any]:
         """Delete a node and all its descendants."""
         return tool_delete_node(self._get_tree_manager(name), name, path)
 
-    def list_keys(self, name: str, path: str, offset: int = 0, limit: int = 50) -> str:
+    def list_keys(
+        self, name: str, path: str, offset: int = 0, limit: int = 50
+    ) -> Dict[str, Any]:
         """List key-value pairs at a node."""
         return tool_list_keys(self._get_tree_manager(name), name, path, offset, limit)
 
-    def get_value(self, name: str, path: str, key: str) -> str:
+    def get_value(self, name: str, path: str, key: str) -> Dict[str, Any]:
         """Get a specific property value from a node."""
         return tool_get_value(self._get_tree_manager(name), name, path, key)
 
@@ -1691,19 +1693,19 @@ class DatabaseManager:
         key: str,
         value: str,
         value_type: Optional[str] = None,
-    ) -> str:
+    ) -> Dict[str, Any]:
         """Set a property on a node (auto-creates node if needed)."""
         return tool_set_value(
             self._get_tree_manager(name), name, path, key, value, value_type
         )
 
-    def delete_key(self, name: str, path: str, key: str) -> str:
+    def delete_key(self, name: str, path: str, key: str) -> Dict[str, Any]:
         """Delete a property from a node."""
         return tool_delete_key(self._get_tree_manager(name), name, path, key)
 
     def export_structured(
         self, name: str, format: str, path: Optional[str] = None
-    ) -> str:
+    ) -> Dict[str, Any]:
         """Export tree data as TOML, JSON, or YAML."""
         return tool_export_structured(self._get_tree_manager(name), name, format, path)
 

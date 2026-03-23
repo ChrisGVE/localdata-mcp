@@ -5,7 +5,6 @@ and serialises them to the target format.
 """
 
 import json
-from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 import toml
@@ -13,10 +12,7 @@ import yaml
 
 from .tree_storage import (
     TreeStorageManager,
-    ValueType,
-    build_path,
     deserialize_value,
-    parse_path,
 )
 
 
@@ -54,8 +50,6 @@ def _children_are_array_items(manager: TreeStorageManager, parent_path: str) -> 
     children = manager.get_children(parent_path=parent_path, offset=0, limit=1)
     if not children:
         return False
-    # Check first child; if it is an array item we assume the rest are too
-    # (parsers always mark entire arrays consistently).
     return children[0].is_array_item
 
 
@@ -63,10 +57,7 @@ def _reconstruct_node(
     manager: TreeStorageManager,
     path: str,
 ) -> Any:
-    """Recursively reconstruct the subtree rooted at *path*.
-
-    Returns a dict for regular nodes and a list for array-of-tables nodes.
-    """
+    """Recursively reconstruct the subtree rooted at *path*."""
     props = _collect_properties(manager, path)
     children_count = manager.get_children_count(path)
 
@@ -74,7 +65,6 @@ def _reconstruct_node(
         return props if props else {}
 
     if _children_are_array_items(manager, path):
-        # Array of tables: collect each child as a list element
         items: List[Any] = []
         offset = 0
         limit = 200
@@ -87,11 +77,8 @@ def _reconstruct_node(
             if len(children) < limit:
                 break
             offset += limit
-        # Merge any direct properties with the array under a special key?
-        # No -- parsers store array-of-tables parent as a pure container.
         return items
 
-    # Regular children: merge properties and sub-dicts
     result: Dict[str, Any] = dict(props)
     offset = 0
     limit = 200
@@ -110,23 +97,13 @@ def reconstruct_tree(
     manager: TreeStorageManager,
     path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Walk the tree and return a nested Python dict.
-
-    Args:
-        manager: The tree storage backend.
-        path: If given, reconstruct only the subtree at this path.
-              If ``None``, reconstruct the full tree from all root nodes.
-
-    Returns:
-        A nested dict suitable for serialisation to TOML/JSON/YAML.
-    """
+    """Walk the tree and return a nested Python dict."""
     if path is not None:
         node = manager.get_node(path)
         if node is None:
             raise ValueError(f"Node not found: {path}")
         return {node.name: _reconstruct_node(manager, path)}
 
-    # Reconstruct from all root nodes
     result: Dict[str, Any] = {}
     offset = 0
     limit = 200
@@ -188,41 +165,30 @@ def tool_export_structured(
     name: str,
     format: str,
     path: Optional[str] = None,
-) -> str:
+) -> Dict[str, Any]:
     """Export tree data in the requested format.
 
-    Args:
-        manager: The tree storage backend.
-        name: Connection name (for error messages).
-        format: One of ``"toml"``, ``"json"``, or ``"yaml"``.
-        path: Optional subtree path to export.
-
-    Returns:
-        JSON-encoded string containing the exported content or an error.
+    Returns a dict with format + content (or error).
     """
     fmt = format.lower()
     if fmt not in _EXPORTERS:
-        return json.dumps(
-            {"error": f"Unsupported format '{format}'. Use toml, json, or yaml."}
-        )
+        return {"error": f"Unsupported format '{format}'. Use toml, json, or yaml."}
 
     try:
         output = _EXPORTERS[fmt](manager, path)
     except ValueError as exc:
-        return json.dumps({"error": str(exc)})
+        return {"error": str(exc)}
 
     if len(output.encode("utf-8")) > MAX_EXPORT_BYTES:
         truncated = output[: MAX_EXPORT_BYTES // 2]
-        return json.dumps(
-            {
-                "format": fmt,
-                "truncated": True,
-                "content": truncated,
-                "notice": (
-                    f"Output exceeded {MAX_EXPORT_BYTES // 1024}KB limit. "
-                    "Use a subtree path to export a smaller section."
-                ),
-            }
-        )
+        return {
+            "format": fmt,
+            "truncated": True,
+            "content": truncated,
+            "notice": (
+                f"Output exceeded {MAX_EXPORT_BYTES // 1024}KB limit. "
+                "Use a subtree path to export a smaller section."
+            ),
+        }
 
-    return json.dumps({"format": fmt, "content": output})
+    return {"format": fmt, "content": output}

@@ -79,18 +79,18 @@ NAME = "test_conn"
 
 class TestGetNode:
     def test_root_summary_empty(self, manager):
-        result = json.loads(tool_get_node(manager, NAME))
+        result = tool_get_node(manager, NAME)
         assert result["total_nodes"] == 0
         assert result["root_nodes"] == []
 
     def test_root_summary_populated(self, populated):
-        result = json.loads(tool_get_node(populated, NAME))
+        result = tool_get_node(populated, NAME)
         assert result["total_nodes"] > 0
         assert "database" in result["root_nodes"]
         assert "logging" in result["root_nodes"]
 
     def test_specific_node(self, populated):
-        result = json.loads(tool_get_node(populated, NAME, path="database"))
+        result = tool_get_node(populated, NAME, path="database")
         assert result["path"] == "database"
         assert result["name"] == "database"
         assert result["children_count"] == 0  # host/port are props, not children
@@ -98,16 +98,16 @@ class TestGetNode:
         assert "properties" in result
 
     def test_node_not_found(self, populated):
-        result = json.loads(tool_get_node(populated, NAME, path="nonexistent"))
+        result = tool_get_node(populated, NAME, path="nonexistent")
         assert "error" in result
 
     def test_parent_path(self, manager):
         parse_dict_to_tree({"a": {"b": {"c": 1}}}, manager)
-        result = json.loads(tool_get_node(manager, NAME, path="a.b"))
+        result = tool_get_node(manager, NAME, path="a.b")
         assert result["parent_path"] == "a"
 
     def test_root_node_parent_is_none(self, populated):
-        result = json.loads(tool_get_node(populated, NAME, path="database"))
+        result = tool_get_node(populated, NAME, path="database")
         assert result["parent_path"] is None
 
 
@@ -118,7 +118,7 @@ class TestGetNode:
 
 class TestGetChildren:
     def test_root_children(self, populated):
-        result = json.loads(tool_get_children(populated, NAME))
+        result = tool_get_children(populated, NAME)
         assert result["parent_path"] is None
         names = [c["name"] for c in result["children"]]
         assert "database" in names
@@ -127,20 +127,20 @@ class TestGetChildren:
     def test_pagination(self, manager):
         for i in range(5):
             manager.create_node(f"item_{i}")
-        result = json.loads(tool_get_children(manager, NAME, offset=0, limit=2))
+        result = tool_get_children(manager, NAME, offset=0, limit=2)
         assert len(result["children"]) == 2
         assert result["has_more"] is True
         assert result["total"] == 5
 
     def test_no_children(self, populated):
         # database has properties but no child nodes
-        result = json.loads(tool_get_children(populated, NAME, path="database"))
+        result = tool_get_children(populated, NAME, path="database")
         assert result["children"] == []
         assert result["has_more"] is False
 
     def test_children_of_nested(self, manager):
         parse_dict_to_tree({"a": {"b": {"x": 1}, "c": {"y": 2}}}, manager)
-        result = json.loads(tool_get_children(manager, NAME, path="a"))
+        result = tool_get_children(manager, NAME, path="a")
         names = [c["name"] for c in result["children"]]
         assert "b" in names
         assert "c" in names
@@ -153,12 +153,12 @@ class TestGetChildren:
 
 class TestSetNode:
     def test_create_simple(self, manager):
-        result = json.loads(tool_set_node(manager, NAME, "alpha"))
+        result = tool_set_node(manager, NAME, "alpha")
         assert result["created"] is True
         assert result["path"] == "alpha"
 
     def test_create_with_ancestors(self, manager):
-        result = json.loads(tool_set_node(manager, NAME, "a.b.c"))
+        result = tool_set_node(manager, NAME, "a.b.c")
         assert result["created"] is True
         assert "a" in result["ancestors_created"]
         assert "a.b" in result["ancestors_created"]
@@ -168,11 +168,11 @@ class TestSetNode:
 
     def test_idempotent(self, manager):
         tool_set_node(manager, NAME, "x")
-        result = json.loads(tool_set_node(manager, NAME, "x"))
+        result = tool_set_node(manager, NAME, "x")
         assert result["created"] is False
 
     def test_empty_path(self, manager):
-        result = json.loads(tool_set_node(manager, NAME, ""))
+        result = tool_set_node(manager, NAME, "")
         assert "error" in result
 
 
@@ -184,19 +184,19 @@ class TestSetNode:
 class TestDeleteNode:
     def test_delete_leaf(self, populated):
         # database is a leaf node (props only)
-        result = json.loads(tool_delete_node(populated, NAME, "database"))
+        result = tool_delete_node(populated, NAME, "database")
         assert result["nodes_deleted"] == 1
         assert result["properties_deleted"] == 3
 
     def test_delete_subtree(self, manager):
         parse_dict_to_tree({"a": {"b": {"c": 1, "d": 2}, "e": 3}}, manager)
-        result = json.loads(tool_delete_node(manager, NAME, "a"))
+        result = tool_delete_node(manager, NAME, "a")
         assert result["nodes_deleted"] >= 2
         assert not manager.node_exists("a")
         assert not manager.node_exists("a.b")
 
     def test_delete_not_found(self, manager):
-        result = json.loads(tool_delete_node(manager, NAME, "ghost"))
+        result = tool_delete_node(manager, NAME, "ghost")
         assert "error" in result
 
 
@@ -207,7 +207,7 @@ class TestDeleteNode:
 
 class TestListKeys:
     def test_basic(self, populated):
-        result = json.loads(tool_list_keys(populated, NAME, "database"))
+        result = tool_list_keys(populated, NAME, "database")
         keys = [k["key"] for k in result["keys"]]
         assert "host" in keys
         assert "port" in keys
@@ -217,12 +217,12 @@ class TestListKeys:
         manager.create_node("n")
         for i in range(5):
             manager.set_property("n", f"k{i}", i)
-        result = json.loads(tool_list_keys(manager, NAME, "n", offset=0, limit=2))
+        result = tool_list_keys(manager, NAME, "n", offset=0, limit=2)
         assert len(result["keys"]) == 2
         assert result["has_more"] is True
 
     def test_node_not_found(self, manager):
-        result = json.loads(tool_list_keys(manager, NAME, "missing"))
+        result = tool_list_keys(manager, NAME, "missing")
         assert "error" in result
 
 
@@ -233,17 +233,17 @@ class TestListKeys:
 
 class TestGetValue:
     def test_existing_key(self, populated):
-        result = json.loads(tool_get_value(populated, NAME, "database", "host"))
+        result = tool_get_value(populated, NAME, "database", "host")
         assert result["value"] == "localhost"
         assert result["value_type"] == "string"
 
     def test_integer_value(self, populated):
-        result = json.loads(tool_get_value(populated, NAME, "database", "port"))
+        result = tool_get_value(populated, NAME, "database", "port")
         assert result["value"] == 5432
         assert result["value_type"] == "integer"
 
     def test_missing_key(self, populated):
-        result = json.loads(tool_get_value(populated, NAME, "database", "nope"))
+        result = tool_get_value(populated, NAME, "database", "nope")
         assert "error" in result
 
 
@@ -255,33 +255,33 @@ class TestGetValue:
 class TestSetValue:
     def test_set_string(self, manager):
         manager.create_node("cfg")
-        result = json.loads(tool_set_value(manager, NAME, "cfg", "name", "hello"))
+        result = tool_set_value(manager, NAME, "cfg", "name", "hello")
         assert result["value"] == "hello"
         assert result["value_type"] == "string"
 
     def test_set_with_inference(self, manager):
         manager.create_node("cfg")
-        result = json.loads(tool_set_value(manager, NAME, "cfg", "count", "42"))
+        result = tool_set_value(manager, NAME, "cfg", "count", "42")
         assert result["value"] == 42
         assert result["value_type"] == "integer"
 
     def test_set_explicit_type(self, manager):
         manager.create_node("cfg")
-        result = json.loads(
-            tool_set_value(manager, NAME, "cfg", "flag", "true", value_type="string")
+        result = tool_set_value(
+            manager, NAME, "cfg", "flag", "true", value_type="string"
         )
         assert result["value"] == "true"
         assert result["value_type"] == "string"
 
     def test_auto_creates_node(self, manager):
-        result = json.loads(tool_set_value(manager, NAME, "new_node", "k", "v"))
+        result = tool_set_value(manager, NAME, "new_node", "k", "v")
         assert result["value"] == "v"
         assert manager.node_exists("new_node")
 
     def test_overwrite(self, manager):
         manager.create_node("n")
         tool_set_value(manager, NAME, "n", "x", "1")
-        result = json.loads(tool_set_value(manager, NAME, "n", "x", "2"))
+        result = tool_set_value(manager, NAME, "n", "x", "2")
         assert result["value"] == 2
 
 
@@ -292,14 +292,14 @@ class TestSetValue:
 
 class TestDeleteKey:
     def test_delete_existing(self, populated):
-        result = json.loads(tool_delete_key(populated, NAME, "database", "host"))
+        result = tool_delete_key(populated, NAME, "database", "host")
         assert result["deleted"] is True
         # Confirm gone
-        check = json.loads(tool_get_value(populated, NAME, "database", "host"))
+        check = tool_get_value(populated, NAME, "database", "host")
         assert "error" in check
 
     def test_delete_missing(self, populated):
-        result = json.loads(tool_delete_key(populated, NAME, "database", "nope"))
+        result = tool_delete_key(populated, NAME, "database", "nope")
         assert "error" in result
 
 
@@ -370,39 +370,35 @@ class TestExportFormats:
 
 class TestToolExportStructured:
     def test_json_format(self, populated):
-        result = json.loads(tool_export_structured(populated, NAME, "json"))
+        result = tool_export_structured(populated, NAME, "json")
         assert result["format"] == "json"
         content = json.loads(result["content"])
         assert content["database"]["host"] == "localhost"
 
     def test_yaml_format(self, populated):
-        result = json.loads(tool_export_structured(populated, NAME, "yaml"))
+        result = tool_export_structured(populated, NAME, "yaml")
         assert result["format"] == "yaml"
         content = yaml.safe_load(result["content"])
         assert content["logging"]["file"] == "/var/log/app.log"
 
     def test_toml_format(self, populated):
-        result = json.loads(tool_export_structured(populated, NAME, "toml"))
+        result = tool_export_structured(populated, NAME, "toml")
         assert result["format"] == "toml"
         content = toml.loads(result["content"])
         assert content["database"]["enabled"] is True
 
     def test_unsupported_format(self, populated):
-        result = json.loads(tool_export_structured(populated, NAME, "xml"))
+        result = tool_export_structured(populated, NAME, "xml")
         assert "error" in result
 
     def test_subtree_export(self, populated):
-        result = json.loads(
-            tool_export_structured(populated, NAME, "json", path="database")
-        )
+        result = tool_export_structured(populated, NAME, "json", path="database")
         content = json.loads(result["content"])
         assert "database" in content
         assert "logging" not in content
 
     def test_nonexistent_path(self, populated):
-        result = json.loads(
-            tool_export_structured(populated, NAME, "json", path="nope")
-        )
+        result = tool_export_structured(populated, NAME, "json", path="nope")
         assert "error" in result
 
 
@@ -441,7 +437,7 @@ class TestRoundTrip:
             tool_set_value(mgr, NAME, "database", "ssl", "true")
 
             # Export back to TOML
-            result = json.loads(tool_export_structured(mgr, NAME, "toml"))
+            result = tool_export_structured(mgr, NAME, "toml")
             exported = toml.loads(result["content"])
 
             # Original values preserved
