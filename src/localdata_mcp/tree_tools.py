@@ -212,6 +212,9 @@ def tool_set_value(
 
     if value_type is not None:
         vt = ValueType(value_type)
+        # Convert the string value to the target Python type
+        if isinstance(value, str):
+            python_value = deserialize_value(value, vt)
     elif isinstance(value, str):
         vt, python_value = infer_value_type_from_string(value)
 
