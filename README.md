@@ -17,31 +17,33 @@
 
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
 
-## What's New in v1.3.1 🚀
+## What's New in v1.4.0
 
-### Memory-Safe Query Architecture
-- **Intelligent Pre-Query Analysis**: Automatic query complexity assessment using `COUNT(*)` and sample row analysis
-- **Memory-Bounded Streaming**: Predictable memory usage with configurable limits and streaming pipeline
-- **Smart Token Management**: AI-optimized response sizes with automatic chunking for large datasets
+### Tree Storage for Structured Data
 
-### Advanced Configuration System
-- **Dual Configuration Mode**: Simple environment variables for basic setups, powerful YAML for complex scenarios
-- **Hot Configuration Reload**: Dynamic configuration updates without service restart
-- **Multi-Database Support**: Granular per-database settings with timeout and memory controls
+TOML, JSON, and YAML files are now stored as trees instead of flat tables. Each node in the hierarchy is individually addressable, with key-value properties attached to it. This means an LLM can navigate, query, edit, and export configuration files and other hierarchical data without loading megabytes of flattened content.
 
-### Enhanced Security & Performance
-- **SQL Query Validation**: Complete protection against non-SELECT operations
-- **Configurable Timeouts**: Per-database and global query timeout enforcement
-- **Structured Logging**: JSON logging with detailed query metrics and security events
-- **Connection Optimization**: Intelligent connection pooling and resource management
+### 9 New Tree Tools
 
-### Developer Experience Improvements
-- **Rich Response Metadata**: Query execution stats, memory usage, and optimization hints
-- **Progressive Data Loading**: Chunk-based access for massive datasets
-- **Enhanced Error Messages**: Actionable guidance for configuration and query issues
-- **Backward Compatibility**: 100% API compatibility with automated migration tools
+| Tool | Purpose |
+|------|---------|
+| `get_node` | View a node's properties and whether it has children |
+| `get_children` | List child nodes with pagination |
+| `set_node` | Create a node (auto-creates missing ancestors) |
+| `delete_node` | Remove a node and all descendants |
+| `list_keys` | List key-value pairs at a node |
+| `get_value` | Read a single property |
+| `set_value` | Create or update a property (type-inferred) |
+| `delete_key` | Remove a property |
+| `export_structured` | Reconstruct and export as TOML, JSON, or YAML |
 
-Ready to upgrade? See the [Migration Guide](MIGRATION_GUIDE.md) for step-by-step instructions.
+### Connection Summary on Connect
+
+When connecting to any data source, the response now includes a schema summary (table names, column types, row counts, sample rows for flat data; tree structure overview for hierarchical data). This gives the LLM enough context to write targeted queries from the start.
+
+### FastMCP v3 Compatibility
+
+Updated to work with fastmcp v3.x API for tool registration.
 
 ## Table of Contents
 
@@ -83,7 +85,7 @@ Ready to upgrade? See the [Migration Guide](MIGRATION_GUIDE.md) for step-by-step
 
 ### **Developer Experience**
 
-- **Clean Tool Surface**: 8 essential database operation tools
+- **Clean Tool Surface**: Core database tools plus 9 tree tools for structured data
 - **Error Handling**: Detailed, actionable error messages
 - **Thread Safety**: Concurrent operation support
 - **Backward Compatible**: All existing APIs preserved
@@ -163,6 +165,27 @@ connect_database("features", "feather", "./features.feather")
 connect_database("vectors", "arrow", "./vectors.arrow")
 ```
 
+#### Work with Structured Files (TOML, JSON, YAML)
+
+```python
+# Connect — returns tree summary (root nodes, depths, property counts)
+connect_database("cfg", "toml", "./config.toml")
+
+# Navigate the tree
+get_node("cfg")                          # Root summary
+get_node("cfg", "server")               # Node properties + children info
+get_children("cfg", "server")           # List child nodes
+
+# Read and write properties
+get_value("cfg", "server", "port")       # → 8080
+set_value("cfg", "server", "port", "9090")
+set_value("cfg", "monitoring.alerts", "enabled", "true")  # auto-creates node
+
+# Export back to any format
+export_structured("cfg", "toml")         # Modified TOML output
+export_structured("cfg", "json")         # Convert to JSON
+```
+
 #### Query Data
 
 ```python
@@ -188,6 +211,8 @@ clear_query_buffer("analytics_1640995200_a1b2")
 
 ## Available Tools
 
+### Core Database Tools
+
 | Tool                 | Description                              | Use Case         |
 | -------------------- | ---------------------------------------- | ---------------- |
 | `connect_database`   | Connect to databases/files               | Initial setup    |
@@ -198,6 +223,22 @@ clear_query_buffer("analytics_1640995200_a1b2")
 | `describe_database`  | Show database schema                     | Exploration      |
 | `describe_table`     | Show table structure                     | Analysis         |
 | `find_table`         | Locate tables by name                    | Navigation       |
+
+### Tree Tools (TOML, JSON, YAML)
+
+These tools are available when connected to a structured data file.
+
+| Tool                 | Description                              | Use Case         |
+| -------------------- | ---------------------------------------- | ---------------- |
+| `get_node`           | View node properties and children info   | Navigation       |
+| `get_children`       | List child nodes with pagination         | Navigation       |
+| `set_node`           | Create a node (auto-creates ancestors)   | Structure edit   |
+| `delete_node`        | Remove node and all descendants          | Structure edit   |
+| `list_keys`          | List key-value pairs at a node           | Inspection       |
+| `get_value`          | Read a single property value             | Inspection       |
+| `set_value`          | Create or update a property              | Data edit        |
+| `delete_key`         | Remove a property from a node            | Data edit        |
+| `export_structured`  | Export tree as TOML, JSON, or YAML       | Export           |
 
 ## Supported Data Sources
 
@@ -232,9 +273,9 @@ clear_query_buffer("analytics_1640995200_a1b2")
 
 - **CSV**: Large file automatic SQLite conversion
 - **TSV**: Tab-separated values with same features as CSV
-- **JSON**: Nested structure flattening
-- **YAML**: Configuration file support
-- **TOML**: Settings and config files
+- **JSON**: Tree storage with node navigation and CRUD (v1.4.0)
+- **YAML**: Tree storage with multi-document support (v1.4.0)
+- **TOML**: Tree storage with array-of-tables support (v1.4.0)
 - **XML**: Structured XML document parsing
 - **INI**: Configuration file format support
 
@@ -431,19 +472,25 @@ For comprehensive troubleshooting guidance, see [Troubleshooting Guide](TROUBLES
 
 ## Roadmap
 
+### Completed (v1.4.0)
+
+- **Tree Storage**: TOML, JSON, YAML stored as navigable trees with full CRUD
+- **9 Tree Tools**: get_node, get_children, set_node, delete_node, list_keys, get_value, set_value, delete_key, export_structured
+- **Format Conversion**: Export between TOML, JSON, and YAML
+- **Connection Summaries**: Schema/tree overview returned on connect
+- **FastMCP v3**: Updated tool registration for latest fastmcp
+
+### Completed (v1.3.x)
+
+- **Memory-Safe Streaming**: Chunked query execution with configurable limits
+- **Pre-Query Analysis**: Resource estimation before execution
+- **Structured Logging**: JSON logging with Prometheus metrics
+
 ### Completed (v1.1.0)
 
 - **Spreadsheet Formats**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with full multi-sheet support
 - **Enhanced File Formats**: XML, INI, TSV support
 - **Analytical Formats**: Parquet, Feather, Arrow support
-
-### Planned Features
-
-- **Caching Layer**: Configurable query result caching
-- **Connection Pooling**: Advanced connection management
-- **Streaming APIs**: Real-time data processing
-- **Monitoring Tools**: Connection and performance metrics
-- **Export Capabilities**: Query results to various formats
 
 ## Contributing
 
