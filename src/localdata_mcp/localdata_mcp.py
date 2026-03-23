@@ -595,6 +595,7 @@ class DatabaseManager:
                     pass  # Ignore errors during cleanup
             self.connections.clear()
             self.db_types.clear()
+            self._tree_managers.clear()
 
     def _get_engine(
         self, db_type: str, conn_string: str, sheet_name: Optional[str] = None
@@ -1780,6 +1781,8 @@ class DatabaseManager:
                 del self.db_types[name]
                 del self.query_history[name]
                 self.connection_count -= 1
+                # Clean up tree manager if present
+                self._tree_managers.pop(name, None)
 
             # Release semaphore slot
             self.connection_semaphore.release()
