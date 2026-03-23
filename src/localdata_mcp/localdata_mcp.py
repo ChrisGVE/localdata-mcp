@@ -50,6 +50,21 @@ from .config_manager import get_config_manager
 # Import backward compatibility management
 from .compatibility_manager import get_compatibility_manager
 
+# Import tree storage for structured data (TOML, JSON, YAML)
+from .tree_storage import TreeStorageManager, create_tree_schema
+from .tree_parsers import parse_toml_to_tree, parse_json_to_tree, parse_yaml_to_tree
+from .tree_tools import (
+    tool_get_node,
+    tool_get_children,
+    tool_set_node,
+    tool_delete_node,
+    tool_list_keys,
+    tool_get_value,
+    tool_set_value,
+    tool_delete_key,
+)
+from .tree_export import tool_export_structured
+
 # TOML support
 try:
     import toml
@@ -256,6 +271,9 @@ class DatabaseManager:
         # Streaming executor for memory-bounded processing
         self.streaming_executor = StreamingQueryExecutor()
 
+        # Tree storage managers for structured data (TOML, JSON, YAML)
+        self._tree_managers: Dict[str, Any] = {}  # name → TreeStorageManager
+
         # Initialize backward compatibility manager
         self.compatibility_manager = get_compatibility_manager()
 
@@ -315,6 +333,16 @@ class DatabaseManager:
         mcp_server.add_tool(self.cancel_query_operation)
         mcp_server.add_tool(self.get_data_quality_report)
         mcp_server.add_tool(self.check_compatibility)
+        # Tree tools for structured data (TOML, JSON, YAML)
+        mcp_server.add_tool(self.get_node)
+        mcp_server.add_tool(self.get_children)
+        mcp_server.add_tool(self.set_node)
+        mcp_server.add_tool(self.delete_node)
+        mcp_server.add_tool(self.list_keys)
+        mcp_server.add_tool(self.get_value)
+        mcp_server.add_tool(self.set_value)
+        mcp_server.add_tool(self.delete_key)
+        mcp_server.add_tool(self.export_structured)
 
     def _get_connection(self, name: str):
         if name not in self.connections:
@@ -619,11 +647,11 @@ class DatabaseManager:
                     "couchdb library is required for CouchDB connections. Install with: pip install couchdb"
                 )
             return self._create_couchdb_connection(conn_string)
+        elif db_type in ["json", "yaml", "toml"]:
+            sanitized_path = self._sanitize_path(conn_string)
+            return self._create_tree_engine(sanitized_path, db_type)
         elif db_type in [
             "csv",
-            "json",
-            "yaml",
-            "toml",
             "excel",
             "ods",
             "numbers",
@@ -639,6 +667,31 @@ class DatabaseManager:
             return self._create_engine_from_file(sanitized_path, db_type, sheet_name)
         else:
             raise ValueError(f"Unsupported db_type: {db_type}")
+
+    # Sentinel returned by _create_tree_engine so connect_database knows
+    # to produce a tree summary instead of a flat-table summary.
+    _TREE_ENGINE_MARKER = "__tree__"
+
+    def _create_tree_engine(self, file_path: str, file_type: str):
+        """Parse a structured file into tree storage and return the SQLite engine."""
+        engine = create_engine("sqlite:///:memory:")
+        mgr = TreeStorageManager(engine)
+
+        parsers = {
+            "toml": parse_toml_to_tree,
+            "json": parse_json_to_tree,
+            "yaml": parse_yaml_to_tree,
+        }
+        parser = parsers.get(file_type)
+        if parser is None:
+            raise ValueError(f"No tree parser for file type: {file_type}")
+        parser(file_path, mgr)
+
+        # Store the manager so tree tools can access it later.
+        # The actual connection name isn't known here — connect_database
+        # will copy it into self._tree_managers[name] after this returns.
+        self._last_tree_manager = mgr
+        return engine
 
     def _create_engine_from_file(
         self, file_path: str, file_type: str, sheet_name: Optional[str] = None
@@ -1539,6 +1592,111 @@ class DatabaseManager:
 
         return summary
 
+    def _build_tree_connection_summary(self, name: str, db_type: str) -> dict:
+        """Build a tree-structure summary for structured data connections."""
+        mgr = self._tree_managers[name]
+        stats = mgr.get_tree_stats()
+
+        # Sample structure: first few root nodes with property count and children
+        sample: Dict[str, Any] = {}
+        for root_name in stats["root_nodes"][:10]:
+            children = mgr.get_children(root_name, limit=5)
+            sample[root_name] = {
+                "properties": mgr.get_property_count(root_name),
+                "children": [c.path for c in children],
+            }
+
+        return {
+            "success": True,
+            "message": f"Successfully connected to database '{name}'",
+            "connection_info": {
+                "name": name,
+                "db_type": db_type,
+                "storage": "tree",
+                "total_connections": self.connection_count,
+            },
+            "tree_summary": {
+                "root_nodes": stats["root_nodes"],
+                "total_nodes": stats["total_nodes"],
+                "total_properties": stats["total_properties"],
+                "max_depth": stats["max_depth"],
+                "sample_structure": sample,
+            },
+            "available_tools": [
+                "get_node",
+                "get_children",
+                "set_node",
+                "delete_node",
+                "list_keys",
+                "get_value",
+                "set_value",
+                "delete_key",
+                "export_structured",
+            ],
+        }
+
+    def _get_tree_manager(self, name: str) -> "TreeStorageManager":
+        """Get the TreeStorageManager for a connection, or raise ValueError."""
+        if name not in self._tree_managers:
+            raise ValueError(
+                f"'{name}' is not a tree-structured connection. "
+                "Tree tools only work with TOML, JSON, or YAML connections."
+            )
+        return self._tree_managers[name]
+
+    # -- Tree tool wrappers (delegating to tree_tools / tree_export) --------
+
+    def get_node(self, name: str, path: Optional[str] = None) -> str:
+        """Get node details or root summary for a tree-structured connection."""
+        return tool_get_node(self._get_tree_manager(name), name, path)
+
+    def get_children(
+        self, name: str, path: Optional[str] = None, offset: int = 0, limit: int = 50
+    ) -> str:
+        """Get children of a node (or root nodes) with pagination."""
+        return tool_get_children(
+            self._get_tree_manager(name), name, path, offset, limit
+        )
+
+    def set_node(self, name: str, path: str) -> str:
+        """Create a node in a tree-structured connection."""
+        return tool_set_node(self._get_tree_manager(name), name, path)
+
+    def delete_node(self, name: str, path: str) -> str:
+        """Delete a node and all its descendants."""
+        return tool_delete_node(self._get_tree_manager(name), name, path)
+
+    def list_keys(self, name: str, path: str, offset: int = 0, limit: int = 50) -> str:
+        """List key-value pairs at a node."""
+        return tool_list_keys(self._get_tree_manager(name), name, path, offset, limit)
+
+    def get_value(self, name: str, path: str, key: str) -> str:
+        """Get a specific property value from a node."""
+        return tool_get_value(self._get_tree_manager(name), name, path, key)
+
+    def set_value(
+        self,
+        name: str,
+        path: str,
+        key: str,
+        value: str,
+        value_type: Optional[str] = None,
+    ) -> str:
+        """Set a property on a node (auto-creates node if needed)."""
+        return tool_set_value(
+            self._get_tree_manager(name), name, path, key, value, value_type
+        )
+
+    def delete_key(self, name: str, path: str, key: str) -> str:
+        """Delete a property from a node."""
+        return tool_delete_key(self._get_tree_manager(name), name, path, key)
+
+    def export_structured(
+        self, name: str, format: str, path: Optional[str] = None
+    ) -> str:
+        """Export tree data as TOML, JSON, or YAML."""
+        return tool_export_structured(self._get_tree_manager(name), name, format, path)
+
     # =========================================================
     # Requested Tools
     # =========================================================
@@ -1580,13 +1738,22 @@ class DatabaseManager:
                 self.query_history[name] = []
                 self.connection_count += 1
 
+            # Store tree manager if this was a structured file
+            if hasattr(self, "_last_tree_manager"):
+                self._tree_managers[name] = self._last_tree_manager
+                del self._last_tree_manager
+
             logger.info(
                 f"Successfully connected to database '{name}' ({sql_flavor}). Total connections: {self.connection_count}"
             )
 
-            # Build data summary so the LLM knows what's available
-            # without needing to SELECT * and receive megabytes
-            summary = self._build_connection_summary(engine, name, db_type, sql_flavor)
+            # Return tree summary for structured data, flat summary otherwise
+            if name in self._tree_managers:
+                summary = self._build_tree_connection_summary(name, db_type)
+            else:
+                summary = self._build_connection_summary(
+                    engine, name, db_type, sql_flavor
+                )
 
             return json.dumps(summary, indent=2)
 
