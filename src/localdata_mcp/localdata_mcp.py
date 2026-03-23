@@ -675,7 +675,16 @@ class DatabaseManager:
 
     def _create_tree_engine(self, file_path: str, file_type: str):
         """Parse a structured file into tree storage and return the SQLite engine."""
-        engine = create_engine("sqlite:///:memory:")
+        from sqlalchemy.pool import StaticPool
+
+        # StaticPool + check_same_thread=False ensures all threads share
+        # the same in-memory SQLite connection (the default SingletonThreadPool
+        # gives each thread its own empty database).
+        engine = create_engine(
+            "sqlite:///:memory:",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
         mgr = TreeStorageManager(engine)
 
         parsers = {
