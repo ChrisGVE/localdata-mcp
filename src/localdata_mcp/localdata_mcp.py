@@ -57,6 +57,7 @@ from .tree_tools import (
     tool_get_node,
     tool_get_children,
     tool_set_node,
+    tool_move_node,
     tool_delete_node,
     tool_list_keys,
     tool_get_value,
@@ -337,6 +338,7 @@ class DatabaseManager:
         mcp_server.add_tool(self.get_node)
         mcp_server.add_tool(self.get_children)
         mcp_server.add_tool(self.set_node)
+        mcp_server.add_tool(self.move_node)
         mcp_server.add_tool(self.delete_node)
         mcp_server.add_tool(self.list_keys)
         mcp_server.add_tool(self.get_value)
@@ -1671,6 +1673,12 @@ class DatabaseManager:
     def set_node(self, name: str, path: str) -> Dict[str, Any]:
         """Create a node in a tree-structured connection."""
         return tool_set_node(self._get_tree_manager(name), name, path)
+
+    def move_node(
+        self, name: str, path: str, new_parent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Move a node and its subtree under a new parent (or to root level)."""
+        return tool_move_node(self._get_tree_manager(name), name, path, new_parent)
 
     def delete_node(self, name: str, path: str) -> Dict[str, Any]:
         """Delete a node and all its descendants."""

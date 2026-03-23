@@ -138,6 +138,25 @@ def tool_set_node(
     }
 
 
+def tool_move_node(
+    manager: TreeStorageManager,
+    name: str,
+    path: str,
+    new_parent: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Move a node and its subtree under a new parent (or to root)."""
+    try:
+        nodes_moved, new_path = manager.move_node(path, new_parent)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {
+        "old_path": path,
+        "new_path": new_path,
+        "new_parent": new_parent,
+        "nodes_moved": nodes_moved,
+    }
+
+
 def tool_delete_node(
     manager: TreeStorageManager,
     name: str,
