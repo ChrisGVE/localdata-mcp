@@ -295,62 +295,62 @@ class TestMcpToolWrappers:
         parse_toml_to_tree(toml_file, mgr)
 
         # Root summary
-        r = json.loads(tool_get_node(mgr, "test"))
+        r = tool_get_node(mgr, "test")
         assert "root_nodes" in r
         assert r["total_nodes"] > 0
 
         # Node detail
-        r = json.loads(tool_get_node(mgr, "test", "server"))
+        r = tool_get_node(mgr, "test", "server")
         assert r["name"] == "server"
         assert r["children_count"] >= 2  # ssl, cors, routes
 
         # Children
-        r = json.loads(tool_get_children(mgr, "test", "server"))
+        r = tool_get_children(mgr, "test", "server")
         assert len(r["children"]) >= 2
 
         # Get value
-        r = json.loads(tool_get_value(mgr, "test", "server", "port"))
+        r = tool_get_value(mgr, "test", "server", "port")
         assert r["value"] == 8080
 
         # Set value (string input with type inference)
-        r = json.loads(tool_set_value(mgr, "test", "server", "port", "9090"))
+        r = tool_set_value(mgr, "test", "server", "port", "9090")
         assert r["value"] == 9090
 
         # Verify change
-        r = json.loads(tool_get_value(mgr, "test", "server", "port"))
+        r = tool_get_value(mgr, "test", "server", "port")
         assert r["value"] == 9090
 
         # List keys
-        r = json.loads(tool_list_keys(mgr, "test", "server"))
+        r = tool_list_keys(mgr, "test", "server")
         keys = [p["key"] for p in r["keys"]]
         assert "port" in keys
 
         # Set node (new)
-        r = json.loads(tool_set_node(mgr, "test", "monitoring"))
+        r = tool_set_node(mgr, "test", "monitoring")
         assert r["path"] == "monitoring"
 
         # Set value on new node
-        r = json.loads(tool_set_value(mgr, "test", "monitoring", "enabled", "true"))
+        r = tool_set_value(mgr, "test", "monitoring", "enabled", "true")
         assert r["value"] is True
 
         # Delete key
-        r = json.loads(tool_delete_key(mgr, "test", "monitoring", "enabled"))
+        r = tool_delete_key(mgr, "test", "monitoring", "enabled")
         assert r["deleted"] is True
 
         # Delete node
-        r = json.loads(tool_delete_node(mgr, "test", "monitoring"))
+        r = tool_delete_node(mgr, "test", "monitoring")
         assert r["nodes_deleted"] == 1
 
         # Export
-        r = json.loads(tool_export_structured(mgr, "test", "toml"))
+        r = tool_export_structured(mgr, "test", "toml")
         assert "content" in r
         assert "port = 9090" in r["content"]
 
-        r = json.loads(tool_export_structured(mgr, "test", "json"))
+        r = tool_export_structured(mgr, "test", "json")
         data = json.loads(r["content"])
         assert "server" in data
 
-        r = json.loads(tool_export_structured(mgr, "test", "yaml"))
+        r = tool_export_structured(mgr, "test", "yaml")
         assert "server" in r["content"]
 
     def test_error_cases(self, mgr):
@@ -362,16 +362,16 @@ class TestMcpToolWrappers:
         )
 
         # Non-existent node
-        r = json.loads(tool_get_node(mgr, "test", "nonexistent"))
+        r = tool_get_node(mgr, "test", "nonexistent")
         assert "error" in r
 
         # Non-existent key
         mgr.create_node("exists")
-        r = json.loads(tool_get_value(mgr, "test", "exists", "nope"))
+        r = tool_get_value(mgr, "test", "exists", "nope")
         assert "error" in r
 
         # Delete non-existent key returns error
-        r = json.loads(tool_delete_key(mgr, "test", "exists", "nope"))
+        r = tool_delete_key(mgr, "test", "exists", "nope")
         assert "error" in r
 
 
