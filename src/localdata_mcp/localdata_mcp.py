@@ -393,6 +393,76 @@ class DatabaseManager:
 
         return df_copy
 
+    @staticmethod
+    def _collect_leaf_rows(
+        data: Any, path: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Recursively walk a nested dict tree and collect leaf-node rows.
+
+        A "leaf" is a dict whose values are all scalars or lists of scalars
+        (no further nested dicts).  Each leaf produces one row that includes
+        the path keys that led to it plus all its own key/value pairs.
+
+        Returns an empty list if the structure has no recognisable leaf pattern
+        (caller should fall back to pd.json_normalize).
+        """
+        if path is None:
+            path = []
+        rows: List[Dict[str, Any]] = []
+
+        if not isinstance(data, dict):
+            return rows
+
+        # Check if this dict is a leaf (all values are scalars or lists of scalars)
+        is_leaf = all(not isinstance(v, dict) for v in data.values())
+
+        if is_leaf and data:
+            row: Dict[str, Any] = {}
+            # Add path levels
+            for i, key in enumerate(path):
+                row[f"level_{i}"] = key
+            # Add leaf values, converting lists to comma-separated strings
+            for k, v in data.items():
+                if isinstance(v, list):
+                    row[k] = ", ".join(str(item) for item in v) if v else ""
+                else:
+                    row[k] = v
+            rows.append(row)
+        else:
+            # Recurse into nested dicts
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    rows.extend(DatabaseManager._collect_leaf_rows(value, path + [key]))
+
+        return rows
+
+    def _normalize_nested_data(self, data: Any) -> pd.DataFrame:
+        """Normalize nested dict structures into a DataFrame.
+
+        For shallow structures (few resulting columns) uses the standard
+        pd.json_normalize.  For deeply nested hierarchical data (like
+        taxonomies) collects leaf nodes as rows instead, producing a tall
+        DataFrame rather than an ultra-wide single-row one.
+        """
+        if not isinstance(data, (dict, list)):
+            return pd.DataFrame(data)
+
+        # Try standard flattening first
+        flat = pd.json_normalize(data)
+
+        # Heuristic: if the result is very wide relative to rows, the data is
+        # deeply nested and should be row-normalised instead.
+        if len(flat.columns) > 200 and len(flat) <= 5:
+            leaf_rows = self._collect_leaf_rows(data)
+            if leaf_rows:
+                logger.info(
+                    f"Deeply nested structure detected ({len(flat.columns)} cols). "
+                    f"Row-normalising into {len(leaf_rows)} leaf rows instead."
+                )
+                return pd.DataFrame(leaf_rows)
+
+        return flat
+
     def _get_file_size(self, file_path: str) -> int:
         """Get file size in bytes."""
         try:
@@ -608,11 +678,7 @@ class DatabaseManager:
             if file_type == "yaml":
                 with open(file_path, "r") as f:
                     yaml_data = yaml.safe_load(f)
-                data = (
-                    pd.json_normalize(yaml_data)
-                    if isinstance(yaml_data, (list, dict))
-                    else pd.DataFrame(yaml_data)
-                )
+                data = self._normalize_nested_data(yaml_data)
             elif file_type == "toml":
                 if not TOML_AVAILABLE:
                     raise ValueError(
@@ -621,11 +687,7 @@ class DatabaseManager:
                     )
                 with open(file_path, "r") as f:
                     toml_data = toml.load(f)
-                data = (
-                    pd.json_normalize(toml_data)
-                    if isinstance(toml_data, (list, dict))
-                    else pd.DataFrame(toml_data)
-                )
+                data = self._normalize_nested_data(toml_data)
             elif file_type == "xml":
                 data = self._load_xml_file(file_path)
             elif file_type == "ini":
