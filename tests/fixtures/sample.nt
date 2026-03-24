@@ -1,0 +1,43 @@
+<http://example.org/software#Component> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2000/01/rdf-schema#Class> .
+<http://example.org/software#Service> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2000/01/rdf-schema#Class> .
+<http://example.org/software#Service> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/software#Component> .
+<http://example.org/software#Infrastructure> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2000/01/rdf-schema#Class> .
+<http://example.org/software#Infrastructure> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/software#Component> .
+<http://example.org/software#Utility> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2000/01/rdf-schema#Class> .
+<http://example.org/software#Utility> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/software#Component> .
+<http://example.org/software#dependsOn> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/1999/02/22-rdf-syntax-ns#Property> .
+<http://example.org/software#dependsOn> <http://www.w3.org/2000/01/rdf-schema#domain> <http://example.org/software#Component> .
+<http://example.org/software#dependsOn> <http://www.w3.org/2000/01/rdf-schema#range> <http://example.org/software#Component> .
+<http://example.org/software#hasVersion> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/1999/02/22-rdf-syntax-ns#Property> .
+<http://example.org/software#hasVersion> <http://www.w3.org/2000/01/rdf-schema#domain> <http://example.org/software#Component> .
+<http://example.org/software#hasVersion> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .
+<http://example.org/software#hasPort> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/1999/02/22-rdf-syntax-ns#Property> .
+<http://example.org/software#hasPort> <http://www.w3.org/2000/01/rdf-schema#domain> <http://example.org/software#Service> .
+<http://example.org/software#hasPort> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/software#api> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/software#Service> .
+<http://example.org/software#api> <http://www.w3.org/2000/01/rdf-schema#label> "API Gateway" .
+<http://example.org/software#api> <http://example.org/software#hasVersion> "2.1.0" .
+<http://example.org/software#api> <http://example.org/software#hasPort> "8080"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/software#api> <http://example.org/software#dependsOn> <http://example.org/software#auth> .
+<http://example.org/software#api> <http://example.org/software#dependsOn> <http://example.org/software#cache> .
+<http://example.org/software#api> <http://example.org/software#dependsOn> <http://example.org/software#logger> .
+<http://example.org/software#auth> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/software#Service> .
+<http://example.org/software#auth> <http://www.w3.org/2000/01/rdf-schema#label> "Auth Service" .
+<http://example.org/software#auth> <http://example.org/software#hasVersion> "1.4.2" .
+<http://example.org/software#auth> <http://example.org/software#hasPort> "9090"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/software#auth> <http://example.org/software#dependsOn> <http://example.org/software#database> .
+<http://example.org/software#auth> <http://example.org/software#dependsOn> <http://example.org/software#logger> .
+<http://example.org/software#cache> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/software#Infrastructure> .
+<http://example.org/software#cache> <http://www.w3.org/2000/01/rdf-schema#label> "Cache Layer" .
+<http://example.org/software#cache> <http://example.org/software#hasVersion> "3.0.1" .
+<http://example.org/software#cache> <http://example.org/software#dependsOn> <http://example.org/software#database> .
+<http://example.org/software#database> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/software#Infrastructure> .
+<http://example.org/software#database> <http://www.w3.org/2000/01/rdf-schema#label> "Database" .
+<http://example.org/software#database> <http://example.org/software#hasVersion> "5.7.0" .
+<http://example.org/software#logger> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/software#Utility> .
+<http://example.org/software#logger> <http://www.w3.org/2000/01/rdf-schema#label> "Logger" .
+<http://example.org/software#logger> <http://example.org/software#hasVersion> "1.0.0" .
+<http://example.org/software#config> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/software#Utility> .
+<http://example.org/software#config> <http://www.w3.org/2000/01/rdf-schema#label> "Config Manager" .
+<http://example.org/software#config> <http://example.org/software#hasVersion> "0.9.5" .
+<http://example.org/software#config> <http://example.org/software#dependsOn> <http://example.org/software#api> .

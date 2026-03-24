@@ -1,0 +1,18 @@
+digraph software_deps {
+    // Node definitions with attributes
+    api [label="API Gateway" color="blue" type="service"];
+    auth [label="Auth Service" color="red" type="service"];
+    cache [label="Cache Layer" color="green" type="infrastructure"];
+    database [label="Database" color="orange" type="infrastructure"];
+    logger [label="Logger" color="gray" type="utility"];
+    config [label="Config Manager" color="purple" type="utility"];
+
+    // Edges with labels and weights
+    api -> auth [label="authenticates" weight="1.0"];
+    api -> cache [label="reads" weight="0.8"];
+    api -> logger [weight="0.5"];
+    auth -> database [label="queries" weight="1.0"];
+    auth -> logger [weight="0.3"];
+    cache -> database [label="syncs" weight="0.9"];
+    config -> api [label="configures" weight="0.2"];
+}
