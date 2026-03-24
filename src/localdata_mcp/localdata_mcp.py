@@ -66,6 +66,24 @@ from .tree_tools import (
 )
 from .tree_export import tool_export_structured
 
+# Import graph tool functions
+from .graph_tools import (
+    tool_get_node_graph,
+    tool_get_neighbors,
+    tool_get_edges,
+    tool_set_node_graph,
+    tool_delete_node_graph,
+    tool_add_edge,
+    tool_remove_edge,
+    tool_find_path,
+    tool_get_graph_stats,
+    tool_get_value_graph,
+    tool_set_value_graph,
+    tool_delete_key_graph,
+    tool_list_keys_graph,
+    tool_export_graph,
+)
+
 # TOML support
 try:
     import toml
@@ -192,6 +210,14 @@ try:
 except ImportError:
     COUCHDB_AVAILABLE = False
 
+# SPARQL endpoint support
+try:
+    from SPARQLWrapper import SPARQLWrapper as _SPARQLWrapper
+
+    SPARQLWRAPPER_AVAILABLE = True
+except ImportError:
+    SPARQLWRAPPER_AVAILABLE = False
+
 # Set up logging
 # Initialize structured logging before other components
 config_manager = get_config_manager()
@@ -281,6 +307,9 @@ class DatabaseManager:
         # RDF storage managers for RDF files (Turtle, N-Triples)
         self._rdf_managers: Dict[str, Any] = {}  # name → RDFStorageManager
 
+        # SPARQL endpoint connections for remote triple stores
+        self._sparql_connections: Dict[str, Any] = {}  # name → SPARQLEndpointConnection
+
         # Initialize backward compatibility manager
         self.compatibility_manager = get_compatibility_manager()
 
@@ -351,6 +380,14 @@ class DatabaseManager:
         mcp_server.add_tool(self.set_value)
         mcp_server.add_tool(self.delete_key)
         mcp_server.add_tool(self.export_structured)
+        # Graph-only tools (new MCP endpoints)
+        mcp_server.add_tool(self.get_neighbors)
+        mcp_server.add_tool(self.get_edges)
+        mcp_server.add_tool(self.add_edge)
+        mcp_server.add_tool(self.remove_edge)
+        mcp_server.add_tool(self.find_path)
+        mcp_server.add_tool(self.get_graph_stats)
+        mcp_server.add_tool(self.export_graph)
 
     def _get_connection(self, name: str):
         if name not in self.connections:
@@ -606,6 +643,7 @@ class DatabaseManager:
             self._tree_managers.clear()
             self._graph_managers.clear()
             self._rdf_managers.clear()
+            self._sparql_connections.clear()
 
     def _get_engine(
         self, db_type: str, conn_string: str, sheet_name: Optional[str] = None
@@ -682,6 +720,13 @@ class DatabaseManager:
         ]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_engine_from_file(sanitized_path, db_type, sheet_name)
+        elif db_type == "sparql":
+            if not SPARQLWRAPPER_AVAILABLE:
+                raise ValueError(
+                    "SPARQLWrapper library is required for SPARQL endpoint connections. "
+                    "Install with: pip install SPARQLWrapper"
+                )
+            return self._create_sparql_connection(conn_string)
         else:
             raise ValueError(f"Unsupported db_type: {db_type}")
 
@@ -768,6 +813,22 @@ class DatabaseManager:
         parser(file_path, manager)
 
         self._last_rdf_manager = manager
+        return engine
+
+    def _create_sparql_connection(self, endpoint_url: str):
+        """Connect to a remote SPARQL endpoint."""
+        from sqlalchemy.pool import StaticPool
+
+        from .sparql_endpoint import SPARQLEndpointConnection
+
+        # Create a dummy SQLite engine so connect_database has something to store.
+        engine = create_engine(
+            "sqlite:///:memory:",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+        conn = SPARQLEndpointConnection(endpoint_url)
+        self._last_sparql_connection = conn
         return engine
 
     def _create_engine_from_file(
@@ -1792,10 +1853,50 @@ class DatabaseManager:
         except ValueError as exc:
             return json.dumps({"success": False, "error": str(exc)})
 
-    # -- Tree tool wrappers (delegating to tree_tools / tree_export) --------
+    def _build_sparql_connection_summary(self, name: str, db_type: str) -> dict:
+        """Build a connection summary for a SPARQL endpoint."""
+        conn = self._sparql_connections[name]
+        stats = conn.get_stats()
+        return {
+            "success": True,
+            "message": f"Successfully connected to SPARQL endpoint '{name}'",
+            "connection_info": {
+                "name": name,
+                "db_type": db_type,
+                "storage": "sparql_endpoint",
+                "endpoint_url": conn.endpoint_url,
+                "total_connections": self.connection_count,
+            },
+            "sparql_summary": stats,
+        }
+
+    def _execute_sparql_remote(self, name: str, query: str) -> str:
+        """Execute a SPARQL query against a remote endpoint."""
+        conn = self._sparql_connections[name]
+        try:
+            results = conn.execute_query(query)
+            return json.dumps(
+                {
+                    "query_type": "SPARQL",
+                    "endpoint": conn.endpoint_url,
+                    "results": results,
+                    "count": len(results),
+                }
+            )
+        except Exception as e:
+            return json.dumps({"error": str(e), "query_type": "SPARQL"})
+
+    # -- Tree/Graph tool wrappers (dispatch to tree or graph variant) ------
 
     def get_node(self, name: str, path: Optional[str] = None) -> Dict[str, Any]:
-        """Get node details or root summary for a tree-structured connection."""
+        """Get node details or summary for a tree or graph connection.
+
+        For graph connections, *path* is used as node_id.
+        """
+        if name in self._graph_managers:
+            return tool_get_node_graph(
+                self._get_graph_manager(name), name, node_id=path
+            )
         return tool_get_node(self._get_tree_manager(name), name, path)
 
     def get_children(
@@ -1806,8 +1907,17 @@ class DatabaseManager:
             self._get_tree_manager(name), name, path, offset, limit
         )
 
-    def set_node(self, name: str, path: str) -> Dict[str, Any]:
-        """Create a node in a tree-structured connection."""
+    def set_node(
+        self, name: str, path: str, label: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Create a node in a tree or graph connection.
+
+        For graph connections, *path* is used as node_id.
+        """
+        if name in self._graph_managers:
+            return tool_set_node_graph(
+                self._get_graph_manager(name), name, node_id=path, label=label
+            )
         return tool_set_node(self._get_tree_manager(name), name, path)
 
     def move_node(
@@ -1817,17 +1927,39 @@ class DatabaseManager:
         return tool_move_node(self._get_tree_manager(name), name, path, new_parent)
 
     def delete_node(self, name: str, path: str) -> Dict[str, Any]:
-        """Delete a node and all its descendants."""
+        """Delete a node and all its descendants (or cascade for graphs)."""
+        if name in self._graph_managers:
+            return tool_delete_node_graph(
+                self._get_graph_manager(name), name, node_id=path
+            )
         return tool_delete_node(self._get_tree_manager(name), name, path)
 
     def list_keys(
         self, name: str, path: str, offset: int = 0, limit: int = 50
     ) -> Dict[str, Any]:
-        """List key-value pairs at a node."""
+        """List key-value pairs at a node.
+
+        For graph connections, *path* is used as node_id.
+        """
+        if name in self._graph_managers:
+            return tool_list_keys_graph(
+                self._get_graph_manager(name),
+                name,
+                node_id=path,
+                offset=offset,
+                limit=limit,
+            )
         return tool_list_keys(self._get_tree_manager(name), name, path, offset, limit)
 
     def get_value(self, name: str, path: str, key: str) -> Dict[str, Any]:
-        """Get a specific property value from a node."""
+        """Get a specific property value from a node.
+
+        For graph connections, *path* is used as node_id.
+        """
+        if name in self._graph_managers:
+            return tool_get_value_graph(
+                self._get_graph_manager(name), name, node_id=path, key=key
+            )
         return tool_get_value(self._get_tree_manager(name), name, path, key)
 
     def set_value(
@@ -1838,13 +1970,32 @@ class DatabaseManager:
         value: str,
         value_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Set a property on a node (auto-creates node if needed)."""
+        """Set a property on a node (auto-creates node if needed).
+
+        For graph connections, *path* is used as node_id.
+        """
+        if name in self._graph_managers:
+            return tool_set_value_graph(
+                self._get_graph_manager(name),
+                name,
+                node_id=path,
+                key=key,
+                value=value,
+                value_type=value_type,
+            )
         return tool_set_value(
             self._get_tree_manager(name), name, path, key, value, value_type
         )
 
     def delete_key(self, name: str, path: str, key: str) -> Dict[str, Any]:
-        """Delete a property from a node."""
+        """Delete a property from a node.
+
+        For graph connections, *path* is used as node_id.
+        """
+        if name in self._graph_managers:
+            return tool_delete_key_graph(
+                self._get_graph_manager(name), name, node_id=path, key=key
+            )
         return tool_delete_key(self._get_tree_manager(name), name, path, key)
 
     def export_structured(
@@ -1852,6 +2003,83 @@ class DatabaseManager:
     ) -> Dict[str, Any]:
         """Export tree data as TOML, JSON, or YAML."""
         return tool_export_structured(self._get_tree_manager(name), name, format, path)
+
+    # -- Graph-only tool wrappers -------------------------------------------
+
+    def get_neighbors(
+        self,
+        name: str,
+        node_id: str,
+        direction: str = "both",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Get neighbors of a graph node with edge info."""
+        return tool_get_neighbors(
+            self._get_graph_manager(name), name, node_id, direction, offset, limit
+        )
+
+    def get_edges(
+        self,
+        name: str,
+        node_id: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """List edges in a graph, optionally filtered by node."""
+        return tool_get_edges(
+            self._get_graph_manager(name), name, node_id, offset, limit
+        )
+
+    def add_edge(
+        self,
+        name: str,
+        source: str,
+        target: str,
+        label: Optional[str] = None,
+        weight: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Add an edge to a graph (auto-creates nodes)."""
+        return tool_add_edge(
+            self._get_graph_manager(name), name, source, target, label, weight
+        )
+
+    def remove_edge(
+        self,
+        name: str,
+        source: str,
+        target: str,
+        label: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Remove an edge from a graph."""
+        return tool_remove_edge(
+            self._get_graph_manager(name), name, source, target, label
+        )
+
+    def find_path(
+        self,
+        name: str,
+        source: str,
+        target: str,
+        algorithm: str = "shortest",
+    ) -> Dict[str, Any]:
+        """Find path(s) between two graph nodes."""
+        return tool_find_path(
+            self._get_graph_manager(name), name, source, target, algorithm
+        )
+
+    def get_graph_stats(self, name: str) -> Dict[str, Any]:
+        """Get advanced graph statistics."""
+        return tool_get_graph_stats(self._get_graph_manager(name), name)
+
+    def export_graph(
+        self,
+        name: str,
+        format: str,
+        node_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Export graph as DOT, GML, or GraphML."""
+        return tool_export_graph(self._get_graph_manager(name), name, format, node_id)
 
     # =========================================================
     # Requested Tools
@@ -1909,6 +2137,11 @@ class DatabaseManager:
                 self._rdf_managers[name] = self._last_rdf_manager
                 del self._last_rdf_manager
 
+            # Store SPARQL endpoint connection if this was a SPARQL endpoint
+            if hasattr(self, "_last_sparql_connection"):
+                self._sparql_connections[name] = self._last_sparql_connection
+                del self._last_sparql_connection
+
             logger.info(
                 f"Successfully connected to database '{name}' ({sql_flavor}). Total connections: {self.connection_count}"
             )
@@ -1920,6 +2153,8 @@ class DatabaseManager:
                 summary = self._build_graph_connection_summary(name, db_type)
             elif name in self._rdf_managers:
                 summary = self._build_rdf_connection_summary(name, db_type)
+            elif name in self._sparql_connections:
+                summary = self._build_sparql_connection_summary(name, db_type)
             else:
                 summary = self._build_connection_summary(
                     engine, name, db_type, sql_flavor
@@ -1954,6 +2189,7 @@ class DatabaseManager:
                 self._tree_managers.pop(name, None)
                 self._graph_managers.pop(name, None)
                 self._rdf_managers.pop(name, None)
+                self._sparql_connections.pop(name, None)
 
             # Release semaphore slot
             self.connection_semaphore.release()
@@ -1989,6 +2225,10 @@ class DatabaseManager:
             chunk_size: Optional chunk size for pagination. If not specified, uses analysis recommendations.
             enable_analysis: Whether to perform pre-query analysis (default: True).
         """
+        # Dispatch SPARQL queries for remote SPARQL endpoints
+        if name in self._sparql_connections:
+            return self._execute_sparql_remote(name, query)
+
         # Dispatch SPARQL queries for RDF connections
         if name in self._rdf_managers:
             return self._execute_sparql(name, query)
@@ -2532,6 +2772,8 @@ class DatabaseManager:
                 entry["storage"] = "graph"
             elif name in self._rdf_managers:
                 entry["storage"] = "rdf"
+            elif name in self._sparql_connections:
+                entry["storage"] = "sparql_endpoint"
             databases.append(entry)
 
         response = {"total_connections": len(databases), "databases": databases}
@@ -2695,6 +2937,8 @@ class DatabaseManager:
             return "Graph (SQLite)"
         elif db_type in ["turtle", "ntriples"]:
             return "RDF (SPARQL)"
+        elif db_type == "sparql":
+            return "SPARQL Endpoint"
         elif db_type in [
             "csv",
             "json",
