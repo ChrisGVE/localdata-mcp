@@ -275,6 +275,12 @@ class DatabaseManager:
         # Tree storage managers for structured data (TOML, JSON, YAML)
         self._tree_managers: Dict[str, Any] = {}  # name → TreeStorageManager
 
+        # Graph storage managers for graph files (DOT, GML, GraphML)
+        self._graph_managers: Dict[str, Any] = {}  # name → GraphStorageManager
+
+        # RDF storage managers for RDF files (Turtle, N-Triples)
+        self._rdf_managers: Dict[str, Any] = {}  # name → RDFStorageManager
+
         # Initialize backward compatibility manager
         self.compatibility_manager = get_compatibility_manager()
 
@@ -598,6 +604,8 @@ class DatabaseManager:
             self.connections.clear()
             self.db_types.clear()
             self._tree_managers.clear()
+            self._graph_managers.clear()
+            self._rdf_managers.clear()
 
     def _get_engine(
         self, db_type: str, conn_string: str, sheet_name: Optional[str] = None
@@ -650,6 +658,12 @@ class DatabaseManager:
                     "couchdb library is required for CouchDB connections. Install with: pip install couchdb"
                 )
             return self._create_couchdb_connection(conn_string)
+        elif db_type in ["dot", "gml", "graphml"]:
+            sanitized_path = self._sanitize_path(conn_string)
+            return self._create_graph_engine(sanitized_path, db_type)
+        elif db_type in ["turtle", "ntriples"]:
+            sanitized_path = self._sanitize_path(conn_string)
+            return self._create_rdf_engine(sanitized_path, db_type)
         elif db_type in ["json", "yaml", "toml"]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_tree_engine(sanitized_path, db_type)
@@ -703,6 +717,57 @@ class DatabaseManager:
         # The actual connection name isn't known here — connect_database
         # will copy it into self._tree_managers[name] after this returns.
         self._last_tree_manager = mgr
+        return engine
+
+    def _create_graph_engine(self, file_path: str, file_type: str):
+        """Parse a graph file into a GraphStorageManager backed by SQLite."""
+        from sqlalchemy.pool import StaticPool
+        from .graph_storage import GraphStorageManager
+        from .graph_parsers import (
+            parse_dot_to_graph,
+            parse_gml_to_graph,
+            parse_graphml_to_graph,
+        )
+
+        engine = create_engine(
+            "sqlite:///:memory:",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+        manager = GraphStorageManager(engine)
+        parsers = {
+            "dot": parse_dot_to_graph,
+            "gml": parse_gml_to_graph,
+            "graphml": parse_graphml_to_graph,
+        }
+        parser = parsers.get(file_type)
+        if parser is None:
+            raise ValueError(f"No graph parser for file type: {file_type}")
+        parser(file_path, manager)
+
+        self._last_graph_manager = manager
+        return engine
+
+    def _create_rdf_engine(self, file_path: str, file_type: str):
+        """Parse an RDF file into an RDFStorageManager (no SQL engine needed)."""
+        from sqlalchemy.pool import StaticPool
+        from .rdf_storage import RDFStorageManager
+        from .rdf_parsers import parse_turtle_to_rdf, parse_ntriples_to_rdf
+
+        # Create a dummy SQLite engine so connect_database has something to store.
+        engine = create_engine(
+            "sqlite:///:memory:",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+        manager = RDFStorageManager()
+        parsers = {"turtle": parse_turtle_to_rdf, "ntriples": parse_ntriples_to_rdf}
+        parser = parsers.get(file_type)
+        if parser is None:
+            raise ValueError(f"No RDF parser for file type: {file_type}")
+        parser(file_path, manager)
+
+        self._last_rdf_manager = manager
         return engine
 
     def _create_engine_from_file(
@@ -1656,6 +1721,77 @@ class DatabaseManager:
             )
         return self._tree_managers[name]
 
+    def _build_graph_connection_summary(self, name: str, db_type: str) -> dict:
+        """Build a graph-structure summary for graph data connections."""
+        mgr = self._graph_managers[name]
+        stats = mgr.get_graph_stats()
+        return {
+            "success": True,
+            "message": f"Successfully connected to database '{name}'",
+            "connection_info": {
+                "name": name,
+                "db_type": db_type,
+                "storage": "graph",
+                "total_connections": self.connection_count,
+            },
+            "graph_summary": {
+                "node_count": stats["node_count"],
+                "edge_count": stats["edge_count"],
+                "property_count": stats["property_count"],
+                "is_directed": stats["is_directed"],
+                "density": stats["density"],
+            },
+        }
+
+    def _build_rdf_connection_summary(self, name: str, db_type: str) -> dict:
+        """Build an RDF summary for RDF data connections."""
+        mgr = self._rdf_managers[name]
+        stats = mgr.get_stats()
+        return {
+            "success": True,
+            "message": f"Successfully connected to database '{name}'",
+            "connection_info": {
+                "name": name,
+                "db_type": db_type,
+                "storage": "rdf",
+                "total_connections": self.connection_count,
+            },
+            "rdf_summary": {
+                "triple_count": stats["triple_count"],
+                "namespaces": stats["namespaces"],
+                "subject_count": stats["subject_count"],
+                "predicate_count": stats["predicate_count"],
+                "object_count": stats["object_count"],
+            },
+        }
+
+    def _get_graph_manager(self, name: str) -> "GraphStorageManager":
+        """Get the GraphStorageManager for a connection, or raise ValueError."""
+        if name not in self._graph_managers:
+            raise ValueError(
+                f"'{name}' is not a graph-structured connection. "
+                "Graph tools only work with DOT, GML, or GraphML connections."
+            )
+        return self._graph_managers[name]
+
+    def _get_rdf_manager(self, name: str) -> "RDFStorageManager":
+        """Get the RDFStorageManager for a connection, or raise ValueError."""
+        if name not in self._rdf_managers:
+            raise ValueError(
+                f"'{name}' is not an RDF connection. "
+                "RDF tools only work with Turtle or N-Triples connections."
+            )
+        return self._rdf_managers[name]
+
+    def _execute_sparql(self, name: str, query: str) -> str:
+        """Execute a SPARQL query against an RDF connection."""
+        mgr = self._get_rdf_manager(name)
+        try:
+            results = mgr.execute_sparql(query)
+            return json.dumps({"success": True, "results": results}, indent=2)
+        except ValueError as exc:
+            return json.dumps({"success": False, "error": str(exc)})
+
     # -- Tree tool wrappers (delegating to tree_tools / tree_export) --------
 
     def get_node(self, name: str, path: Optional[str] = None) -> Dict[str, Any]:
@@ -1763,13 +1899,27 @@ class DatabaseManager:
                 self._tree_managers[name] = self._last_tree_manager
                 del self._last_tree_manager
 
+            # Store graph manager if this was a graph file
+            if hasattr(self, "_last_graph_manager"):
+                self._graph_managers[name] = self._last_graph_manager
+                del self._last_graph_manager
+
+            # Store RDF manager if this was an RDF file
+            if hasattr(self, "_last_rdf_manager"):
+                self._rdf_managers[name] = self._last_rdf_manager
+                del self._last_rdf_manager
+
             logger.info(
                 f"Successfully connected to database '{name}' ({sql_flavor}). Total connections: {self.connection_count}"
             )
 
-            # Return tree summary for structured data, flat summary otherwise
+            # Return appropriate summary based on connection type
             if name in self._tree_managers:
                 summary = self._build_tree_connection_summary(name, db_type)
+            elif name in self._graph_managers:
+                summary = self._build_graph_connection_summary(name, db_type)
+            elif name in self._rdf_managers:
+                summary = self._build_rdf_connection_summary(name, db_type)
             else:
                 summary = self._build_connection_summary(
                     engine, name, db_type, sql_flavor
@@ -1802,6 +1952,8 @@ class DatabaseManager:
                 self.connection_count -= 1
                 # Clean up tree manager if present
                 self._tree_managers.pop(name, None)
+                self._graph_managers.pop(name, None)
+                self._rdf_managers.pop(name, None)
 
             # Release semaphore slot
             self.connection_semaphore.release()
@@ -1837,6 +1989,10 @@ class DatabaseManager:
             chunk_size: Optional chunk size for pagination. If not specified, uses analysis recommendations.
             enable_analysis: Whether to perform pre-query analysis (default: True).
         """
+        # Dispatch SPARQL queries for RDF connections
+        if name in self._rdf_managers:
+            return self._execute_sparql(name, query)
+
         try:
             # Backward compatibility check
             import inspect
@@ -2369,9 +2525,14 @@ class DatabaseManager:
         for name in self.connections.keys():
             db_type = self.db_types.get(name, "unknown")
             sql_flavor = self._get_sql_flavor(db_type, self.connections[name])
-            databases.append(
-                {"name": name, "db_type": db_type, "sql_flavor": sql_flavor}
-            )
+            entry = {"name": name, "db_type": db_type, "sql_flavor": sql_flavor}
+            if name in self._tree_managers:
+                entry["storage"] = "tree"
+            elif name in self._graph_managers:
+                entry["storage"] = "graph"
+            elif name in self._rdf_managers:
+                entry["storage"] = "rdf"
+            databases.append(entry)
 
         response = {"total_connections": len(databases), "databases": databases}
 
@@ -2530,6 +2691,10 @@ class DatabaseManager:
             return "Neo4j"
         elif db_type == "couchdb":
             return "CouchDB"
+        elif db_type in ["dot", "gml", "graphml"]:
+            return "Graph (SQLite)"
+        elif db_type in ["turtle", "ntriples"]:
+            return "RDF (SPARQL)"
         elif db_type in [
             "csv",
             "json",
