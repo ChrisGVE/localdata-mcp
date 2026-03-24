@@ -294,6 +294,16 @@ class TestFindPath:
         result = tool_find_path(populated, "test", "A", "NOPE")
         assert "error" in result
 
+    def test_find_path_with_parallel_edges(self, manager):
+        """find_path must work when parallel edges exist (MultiDiGraph)."""
+        manager.create_node("A")
+        manager.create_node("B")
+        manager.add_edge("A", "B", label="route1")
+        manager.add_edge("A", "B", label="route2")
+        result = tool_find_path(manager, "test", "A", "B")
+        assert result["path"] == ["A", "B"]
+        assert result["path_length"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Algorithm: get_graph_stats

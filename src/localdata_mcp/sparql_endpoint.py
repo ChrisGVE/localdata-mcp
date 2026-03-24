@@ -15,9 +15,6 @@ class SPARQLEndpointConnection:
     def __init__(self, endpoint_url: str, timeout: int = 60) -> None:
         self.endpoint_url = endpoint_url
         self.timeout = timeout
-        self.sparql = SPARQLWrapper(endpoint_url)
-        self.sparql.setTimeout(timeout)
-        self.sparql.setReturnFormat(JSON)
 
     def execute_query(self, query: str) -> List[Dict[str, Any]]:
         """Execute a SPARQL query and return results as list of dicts.
@@ -25,13 +22,19 @@ class SPARQLEndpointConnection:
         SELECT queries return a list of ``{var: value}`` dicts.
         ASK queries return ``[{"result": True/False}]``.
 
+        A new SPARQLWrapper instance is created per query to ensure
+        thread safety.
+
         Raises:
             ValueError: When the SPARQL query fails.
         """
-        self.sparql.setQuery(query)
+        sparql = SPARQLWrapper(self.endpoint_url)
+        sparql.setTimeout(self.timeout)
+        sparql.setReturnFormat(JSON)
+        sparql.setQuery(query)
 
         try:
-            results = self.sparql.query().convert()
+            results = sparql.query().convert()
         except Exception as e:
             raise ValueError(f"SPARQL query failed: {e}") from e
 

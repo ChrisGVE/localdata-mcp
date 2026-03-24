@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 
 import pytest
-from rdflib import BNode, Literal, URIRef
-from rdflib.namespace import XSD
+from rdflib import BNode, Graph, Literal, URIRef
+from rdflib.namespace import RDF, XSD
 
 from localdata_mcp.rdf_storage import RDFStorageManager
 
@@ -248,6 +248,45 @@ class TestNavigation:
     def test_navigation_nonexistent_predicate(self, ttl_mgr: RDFStorageManager) -> None:
         objects = ttl_mgr.get_objects(f"{SW}api", f"{SW}nonexistent")
         assert objects == []
+
+
+# ---------------------------------------------------------------------------
+# Blank node round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestBlankNodeRoundTrip:
+    """Tests for blank node handling through get_subjects and navigation."""
+
+    def test_get_subjects_blank_nodes(self, mgr: RDFStorageManager) -> None:
+        """Blank nodes in get_subjects must have the '_:' prefix."""
+        bnode = BNode("myblank")
+        mgr.graph.add((bnode, RDF.type, URIRef("http://example.org/Thing")))
+        subjects = mgr.get_subjects()
+        blank_subjects = [s for s in subjects if s.startswith("_:")]
+        assert len(blank_subjects) == 1
+        assert blank_subjects[0] == f"_:{bnode}"
+
+    def test_get_predicates_for_blank_node_subject(
+        self, mgr: RDFStorageManager
+    ) -> None:
+        """get_predicates_for_subject must resolve '_:xxx' back to BNode."""
+        bnode = BNode("roundtrip")
+        pred = URIRef("http://example.org/name")
+        mgr.graph.add((bnode, pred, Literal("test")))
+
+        # Get the blank node string from get_subjects
+        subjects = mgr.get_subjects()
+        blank_subjects = [s for s in subjects if s.startswith("_:")]
+        assert len(blank_subjects) == 1
+
+        # Use the string representation to query predicates
+        preds = mgr.get_predicates_for_subject(blank_subjects[0])
+        assert str(pred) in preds
+
+        # Also verify get_objects works
+        objects = mgr.get_objects(blank_subjects[0], str(pred))
+        assert "test" in objects
 
 
 # ---------------------------------------------------------------------------

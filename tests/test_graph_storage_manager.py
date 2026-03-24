@@ -1,7 +1,7 @@
 """Tests for GraphStorageManager CRUD operations."""
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 
 from localdata_mcp.graph_storage import (
     GraphEdge,
@@ -120,6 +120,14 @@ class TestNodeOperations:
         mgr.create_node("B")
         assert mgr.get_node_count() == 2
 
+    def test_create_node_empty_string_raises(self, mgr):
+        with pytest.raises(ValueError, match="node_id must be a non-empty string"):
+            mgr.create_node("")
+
+    def test_create_node_whitespace_only_raises(self, mgr):
+        with pytest.raises(ValueError, match="node_id must be a non-empty string"):
+            mgr.create_node("   ")
+
 
 # ---------------------------------------------------------------------------
 # Edge CRUD
@@ -211,6 +219,18 @@ class TestEdgeOperations:
         assert mgr.get_edge_count() == 0
         mgr.add_edge("A", "B")
         assert mgr.get_edge_count() == 1
+
+    def test_add_edge_empty_source_raises(self, mgr):
+        with pytest.raises(ValueError, match="source must be a non-empty string"):
+            mgr.add_edge("", "B")
+
+    def test_add_edge_empty_target_raises(self, mgr):
+        with pytest.raises(ValueError, match="target must be a non-empty string"):
+            mgr.add_edge("A", "")
+
+    def test_add_edge_whitespace_source_raises(self, mgr):
+        with pytest.raises(ValueError, match="source must be a non-empty string"):
+            mgr.add_edge("  ", "B")
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +386,38 @@ class TestPropertyOperations:
 
 
 # ---------------------------------------------------------------------------
+# Edge property cleanup on delete
+# ---------------------------------------------------------------------------
+
+
+class TestEdgePropertyCleanup:
+    def test_delete_node_cleans_edge_properties(self, mgr):
+        """Deleting a node must also remove properties on its edges."""
+        edge = mgr.add_edge("A", "B")
+        edge_id = str(edge.id)
+        mgr.set_property("edge", edge_id, "color", "red")
+        assert mgr.get_property("edge", edge_id, "color") is not None
+
+        nodes_del, edges_del, props_del = mgr.delete_node("A")
+        assert nodes_del == 1
+        assert edges_del == 1
+        # The edge property should be counted and deleted
+        assert props_del >= 1
+        assert mgr.get_property("edge", edge_id, "color") is None
+
+    def test_remove_edge_cleans_edge_properties(self, mgr):
+        """Removing an edge must also delete its properties."""
+        edge = mgr.add_edge("A", "B")
+        edge_id = str(edge.id)
+        mgr.set_property("edge", edge_id, "style", "dashed")
+        assert mgr.get_property("edge", edge_id, "style") is not None
+
+        removed = mgr.remove_edge("A", "B")
+        assert removed is True
+        assert mgr.get_property("edge", edge_id, "style") is None
+
+
+# ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
 
@@ -411,3 +463,14 @@ class TestGraphStats:
                     mgr.add_edge(s, t)
         stats = mgr.get_graph_stats()
         assert stats["density"] == pytest.approx(1.0)
+
+    def test_density_clamped(self, mgr):
+        """Density must be clamped to 1.0 even with parallel edges."""
+        # 2 nodes with multiple parallel edges -> raw density > 1.0
+        mgr.add_edge("A", "B", label="x")
+        mgr.add_edge("A", "B", label="y")
+        mgr.add_edge("B", "A", label="x")
+        mgr.add_edge("B", "A", label="y")
+        stats = mgr.get_graph_stats()
+        # 4 edges / (2 * 1) = 2.0 raw, should be clamped to 1.0
+        assert stats["density"] <= 1.0

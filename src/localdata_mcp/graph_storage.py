@@ -197,6 +197,8 @@ class GraphStorageManager:
 
     def create_node(self, node_id: str, label: Optional[str] = None) -> GraphNode:
         """Create a node or update its label if it already exists (upsert)."""
+        if not node_id or not node_id.strip():
+            raise ValueError("node_id must be a non-empty string")
         now = time.time()
         with self.engine.connect() as conn:
             conn.execute(text("PRAGMA foreign_keys = ON"))
@@ -252,20 +254,43 @@ class GraphStorageManager:
         """
         with self.engine.connect() as conn:
             conn.execute(text("PRAGMA foreign_keys = ON"))
-            edge_count = conn.execute(
-                text(
-                    "SELECT COUNT(*) FROM graph_edges "
-                    "WHERE source_id = :nid OR target_id = :nid"
-                ),
-                {"nid": node_id},
-            ).fetchone()[0]
+
+            # Collect edge IDs that will be deleted (for property cleanup)
+            edge_ids = [
+                row[0]
+                for row in conn.execute(
+                    text(
+                        "SELECT id FROM graph_edges "
+                        "WHERE source_id = :nid OR target_id = :nid"
+                    ),
+                    {"nid": node_id},
+                ).fetchall()
+            ]
+
+            edge_count = len(edge_ids)
+
+            # Delete edge properties
+            edge_prop_count = 0
+            if edge_ids:
+                for eid in edge_ids:
+                    edge_prop_count += conn.execute(
+                        text(
+                            "DELETE FROM graph_properties "
+                            "WHERE owner_type = 'edge' AND owner_id = :oid"
+                        ),
+                        {"oid": str(eid)},
+                    ).rowcount
+
+            # Delete edges
             conn.execute(
                 text(
                     "DELETE FROM graph_edges WHERE source_id = :nid OR target_id = :nid"
                 ),
                 {"nid": node_id},
             )
-            prop_count = conn.execute(
+
+            # Delete node properties
+            node_prop_count = conn.execute(
                 text(
                     "SELECT COUNT(*) FROM graph_properties "
                     "WHERE owner_type = 'node' AND owner_id = :nid"
@@ -279,12 +304,14 @@ class GraphStorageManager:
                 ),
                 {"nid": node_id},
             )
+
+            # Delete node
             result = conn.execute(
                 text("DELETE FROM graph_nodes WHERE node_id = :nid"),
                 {"nid": node_id},
             )
             conn.commit()
-            return (result.rowcount, edge_count, prop_count)
+            return (result.rowcount, edge_count, node_prop_count + edge_prop_count)
 
     def list_nodes(self, offset: int = 0, limit: int = 50) -> List[GraphNode]:
         """List nodes with pagination."""
@@ -326,6 +353,10 @@ class GraphStorageManager:
         weight: Optional[float] = None,
     ) -> GraphEdge:
         """Add an edge, auto-creating source/target nodes if needed."""
+        if not source or not source.strip():
+            raise ValueError("source must be a non-empty string")
+        if not target or not target.strip():
+            raise ValueError("target must be a non-empty string")
         now = time.time()
         with self.engine.connect() as conn:
             conn.execute(text("PRAGMA foreign_keys = ON"))
@@ -366,6 +397,16 @@ class GraphStorageManager:
         lbl_sql, lbl_params = _edge_label_clause(label)
         with self.engine.connect() as conn:
             conn.execute(text("PRAGMA foreign_keys = ON"))
+            # Find edge ID for property cleanup
+            edge_row = _find_edge(conn, source, target, label)
+            if edge_row:
+                conn.execute(
+                    text(
+                        "DELETE FROM graph_properties "
+                        "WHERE owner_type = 'edge' AND owner_id = :oid"
+                    ),
+                    {"oid": str(edge_row[0])},
+                )
             result = conn.execute(
                 text(
                     f"DELETE FROM graph_edges "
@@ -610,7 +651,9 @@ class GraphStorageManager:
             pc = conn.execute(text("SELECT COUNT(*) FROM graph_properties")).fetchone()[
                 0
             ]
+            # Density for simple directed graphs; clamped for multigraphs
             density = ec / (nc * (nc - 1)) if nc > 1 else 0.0
+            density = min(density, 1.0)
             return {
                 "node_count": nc,
                 "edge_count": ec,
