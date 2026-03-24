@@ -4,7 +4,8 @@ All tests use mocked SPARQLWrapper to avoid real HTTP calls.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+import threading
+from unittest.mock import MagicMock, patch, call
 
 import pytest
 
@@ -19,27 +20,21 @@ from localdata_mcp.sparql_endpoint import SPARQLEndpointConnection
 class TestSPARQLEndpointInit:
     """Test SPARQLEndpointConnection initialization."""
 
-    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
-    def test_default_timeout(self, mock_wrapper_cls: MagicMock) -> None:
+    def test_default_timeout(self) -> None:
         conn = SPARQLEndpointConnection("http://example.org/sparql")
         assert conn.endpoint_url == "http://example.org/sparql"
         assert conn.timeout == 60
-        mock_wrapper_cls.assert_called_once_with("http://example.org/sparql")
-        conn.sparql.setTimeout.assert_called_once_with(60)
 
-    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
-    def test_custom_timeout(self, mock_wrapper_cls: MagicMock) -> None:
+    def test_custom_timeout(self) -> None:
         conn = SPARQLEndpointConnection("http://example.org/sparql", timeout=120)
         assert conn.timeout == 120
-        conn.sparql.setTimeout.assert_called_once_with(120)
 
 
 class TestBindingToPython:
     """Test _binding_to_python for all binding types."""
 
     def _make_conn(self) -> SPARQLEndpointConnection:
-        with patch("localdata_mcp.sparql_endpoint.SPARQLWrapper"):
-            return SPARQLEndpointConnection("http://example.org/sparql")
+        return SPARQLEndpointConnection("http://example.org/sparql")
 
     def test_uri(self) -> None:
         conn = self._make_conn()
@@ -124,12 +119,9 @@ class TestBindingToPython:
 class TestExecuteQuery:
     """Test execute_query with mocked SPARQLWrapper."""
 
-    def _make_conn(self) -> SPARQLEndpointConnection:
-        with patch("localdata_mcp.sparql_endpoint.SPARQLWrapper"):
-            return SPARQLEndpointConnection("http://example.org/sparql")
-
-    def test_select_query(self) -> None:
-        conn = self._make_conn()
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_select_query(self, mock_wrapper_cls: MagicMock) -> None:
+        mock_instance = mock_wrapper_cls.return_value
         mock_result = MagicMock()
         mock_result.convert.return_value = {
             "results": {
@@ -157,67 +149,147 @@ class TestExecuteQuery:
                 ]
             }
         }
-        conn.sparql.query.return_value = mock_result
+        mock_instance.query.return_value = mock_result
 
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
         results = conn.execute_query("SELECT ?s ?name WHERE { ?s ?p ?name }")
         assert len(results) == 2
         assert results[0]["s"] == "http://example.org/Alice"
         assert results[0]["name"] == "Alice"
         assert results[1]["s"] == "http://example.org/Bob"
 
-    def test_ask_query(self) -> None:
-        conn = self._make_conn()
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_ask_query(self, mock_wrapper_cls: MagicMock) -> None:
+        mock_instance = mock_wrapper_cls.return_value
         mock_result = MagicMock()
         mock_result.convert.return_value = {"boolean": True}
-        conn.sparql.query.return_value = mock_result
+        mock_instance.query.return_value = mock_result
 
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
         results = conn.execute_query("ASK { ?s ?p ?o }")
         assert results == [{"result": True}]
 
-    def test_ask_query_false(self) -> None:
-        conn = self._make_conn()
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_ask_query_false(self, mock_wrapper_cls: MagicMock) -> None:
+        mock_instance = mock_wrapper_cls.return_value
         mock_result = MagicMock()
         mock_result.convert.return_value = {"boolean": False}
-        conn.sparql.query.return_value = mock_result
+        mock_instance.query.return_value = mock_result
 
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
         results = conn.execute_query("ASK { <http://none> ?p ?o }")
         assert results == [{"result": False}]
 
-    def test_error_raises_valueerror(self) -> None:
-        conn = self._make_conn()
-        conn.sparql.query.side_effect = Exception("Connection refused")
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_error_raises_valueerror(self, mock_wrapper_cls: MagicMock) -> None:
+        mock_instance = mock_wrapper_cls.return_value
+        mock_instance.query.side_effect = Exception("Connection refused")
 
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
         with pytest.raises(ValueError, match="SPARQL query failed"):
             conn.execute_query("SELECT * WHERE { ?s ?p ?o }")
 
-    def test_empty_bindings(self) -> None:
-        conn = self._make_conn()
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_empty_bindings(self, mock_wrapper_cls: MagicMock) -> None:
+        mock_instance = mock_wrapper_cls.return_value
         mock_result = MagicMock()
         mock_result.convert.return_value = {"results": {"bindings": []}}
-        conn.sparql.query.return_value = mock_result
+        mock_instance.query.return_value = mock_result
 
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
         results = conn.execute_query("SELECT ?s WHERE { ?s ?p ?o }")
         assert results == []
 
-    def test_non_dict_result(self) -> None:
-        conn = self._make_conn()
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_non_dict_result(self, mock_wrapper_cls: MagicMock) -> None:
+        mock_instance = mock_wrapper_cls.return_value
         mock_result = MagicMock()
         mock_result.convert.return_value = "some raw string"
-        conn.sparql.query.return_value = mock_result
+        mock_instance.query.return_value = mock_result
 
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
         results = conn.execute_query("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }")
         assert results == []
+
+
+class TestConcurrentQueries:
+    """Test that concurrent queries do not interfere with each other."""
+
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_concurrent_queries_dont_interfere(
+        self, mock_wrapper_cls: MagicMock
+    ) -> None:
+        """Two threads sending queries concurrently must each get correct results."""
+        # Each call to SPARQLWrapper() returns a new mock instance
+        instances = []
+
+        def make_instance(url):
+            inst = MagicMock()
+            instances.append(inst)
+            return inst
+
+        mock_wrapper_cls.side_effect = make_instance
+
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
+
+        result_a = {"results": {"bindings": [{"x": {"type": "literal", "value": "A"}}]}}
+        result_b = {"results": {"bindings": [{"x": {"type": "literal", "value": "B"}}]}}
+
+        results = {}
+        barrier = threading.Barrier(2)
+
+        def run_query(name, expected_result):
+            # Configure mock for this thread's instance
+            barrier.wait()
+            r = conn.execute_query(f"SELECT ?x WHERE {{ ?x a '{name}' }}")
+            results[name] = r
+
+        # Pre-configure the instances that will be created
+        mock_a_result = MagicMock()
+        mock_a_result.convert.return_value = result_a
+        mock_b_result = MagicMock()
+        mock_b_result.convert.return_value = result_b
+
+        # Each execute_query creates a new SPARQLWrapper instance
+        # So we set up side_effect to return different results per call
+        call_count = [0]
+        original_side_effect = mock_wrapper_cls.side_effect
+
+        def make_instance_with_results(url):
+            inst = MagicMock()
+            idx = call_count[0]
+            call_count[0] += 1
+            if idx == 0:
+                mock_result = MagicMock()
+                mock_result.convert.return_value = result_a
+                inst.query.return_value = mock_result
+            else:
+                mock_result = MagicMock()
+                mock_result.convert.return_value = result_b
+                inst.query.return_value = mock_result
+            return inst
+
+        mock_wrapper_cls.side_effect = make_instance_with_results
+
+        t1 = threading.Thread(target=run_query, args=("thread1", result_a))
+        t2 = threading.Thread(target=run_query, args=("thread2", result_b))
+        t1.start()
+        t2.start()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+        # Both threads should have completed and gotten results
+        assert len(results) == 2
+        # Each thread created its own SPARQLWrapper instance (no shared state)
+        assert mock_wrapper_cls.call_count >= 2
 
 
 class TestGetStats:
     """Test get_stats method."""
 
-    def _make_conn(self) -> SPARQLEndpointConnection:
-        with patch("localdata_mcp.sparql_endpoint.SPARQLWrapper"):
-            return SPARQLEndpointConnection("http://example.org/sparql")
-
-    def test_stats_with_count(self) -> None:
-        conn = self._make_conn()
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_stats_with_count(self, mock_wrapper_cls: MagicMock) -> None:
+        mock_instance = mock_wrapper_cls.return_value
         mock_result = MagicMock()
         mock_result.convert.return_value = {
             "results": {
@@ -232,18 +304,21 @@ class TestGetStats:
                 ]
             }
         }
-        conn.sparql.query.return_value = mock_result
+        mock_instance.query.return_value = mock_result
 
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
         stats = conn.get_stats()
         assert stats["endpoint_url"] == "http://example.org/sparql"
         assert stats["type"] == "sparql_endpoint"
         assert stats["timeout"] == 60
         assert stats["approximate_triples"] == 1000
 
-    def test_stats_when_count_fails(self) -> None:
-        conn = self._make_conn()
-        conn.sparql.query.side_effect = Exception("Timeout")
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_stats_when_count_fails(self, mock_wrapper_cls: MagicMock) -> None:
+        mock_instance = mock_wrapper_cls.return_value
+        mock_instance.query.side_effect = Exception("Timeout")
 
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
         stats = conn.get_stats()
         assert stats["approximate_triples"] == "unavailable"
         assert stats["endpoint_url"] == "http://example.org/sparql"

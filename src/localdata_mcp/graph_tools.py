@@ -33,13 +33,13 @@ def _property_to_dict(prop: GraphProperty) -> Dict[str, Any]:
     }
 
 
-def _storage_to_networkx(manager: GraphStorageManager) -> nx.DiGraph:
-    """Reconstruct a NetworkX DiGraph from graph storage.
+def _storage_to_networkx(manager: GraphStorageManager) -> nx.MultiDiGraph:
+    """Reconstruct a NetworkX MultiDiGraph from graph storage.
 
     Iterates over all nodes and edges in the storage manager and
-    builds a directed graph suitable for NetworkX algorithms.
+    builds a directed multigraph suitable for NetworkX algorithms.
     """
-    G = nx.DiGraph()
+    G = nx.MultiDiGraph()
 
     # Load all nodes
     offset = 0
@@ -480,8 +480,7 @@ def tool_get_graph_stats(
     result["is_dag"] = nx.is_directed_acyclic_graph(G)
 
     # Connected components on undirected view
-    undirected = G.to_undirected()
-    result["connected_components"] = nx.number_connected_components(undirected)
+    result["connected_components"] = nx.number_weakly_connected_components(G)
 
     # Degree statistics
     if node_count > 0:
@@ -597,7 +596,7 @@ def tool_list_keys_graph(
 # ---------------------------------------------------------------------------
 
 
-def _export_dot(G: nx.DiGraph) -> str:
+def _export_dot(G: nx.MultiDiGraph) -> str:
     """Export graph to DOT format via pydot."""
     import pydot
 
@@ -605,12 +604,12 @@ def _export_dot(G: nx.DiGraph) -> str:
     return P.to_string()
 
 
-def _export_gml(G: nx.DiGraph) -> str:
+def _export_gml(G: nx.MultiDiGraph) -> str:
     """Export graph to GML format."""
     return "\n".join(nx.generate_gml(G))
 
 
-def _export_graphml(G: nx.DiGraph) -> str:
+def _export_graphml(G: nx.MultiDiGraph) -> str:
     """Export graph to GraphML format."""
     return "\n".join(nx.generate_graphml(G))
 

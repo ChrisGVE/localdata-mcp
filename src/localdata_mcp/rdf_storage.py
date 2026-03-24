@@ -123,6 +123,12 @@ class RDFStorageManager:
             return f"_:{term}"
         return str(term)
 
+    def _resolve_term(self, value: str):
+        """Convert a string back to the appropriate rdflib term."""
+        if value.startswith("_:"):
+            return BNode(value[2:])
+        return URIRef(value)
+
     # -- Statistics ---------------------------------------------------------
 
     def get_stats(self) -> Dict[str, Any]:
@@ -148,26 +154,27 @@ class RDFStorageManager:
     def get_subjects(self, offset: int = 0, limit: int = 50) -> List[str]:
         """List unique subjects with pagination.
 
-        Returns URIs as strings, sorted for deterministic output.
+        Returns URIs/blank-node identifiers as strings, sorted for
+        deterministic output.
         """
-        all_subjects = sorted(set(str(s) for s in self.graph.subjects()))
-        return all_subjects[offset : offset + limit]
+        subjects = sorted(self._term_to_python(s) for s in set(self.graph.subjects()))
+        return subjects[offset : offset + limit]
 
     def get_predicates_for_subject(self, subject: str) -> List[str]:
-        """List unique predicates for a given subject URI."""
-        subj = URIRef(subject)
-        return sorted(set(str(p) for p in self.graph.predicates(subject=subj)))
+        """List unique predicates for a given subject URI or blank node."""
+        term = self._resolve_term(subject)
+        return sorted(set(str(p) for p in self.graph.predicates(subject=term)))
 
     def get_objects(self, subject: str, predicate: str) -> List[Any]:
         """Get all objects for a subject-predicate pair.
 
         Objects are converted to Python values via ``_term_to_python``.
         """
-        subj = URIRef(subject)
-        pred = URIRef(predicate)
+        s_term = self._resolve_term(subject)
+        p_term = URIRef(predicate)
         return [
             self._term_to_python(o)
-            for o in self.graph.objects(subject=subj, predicate=pred)
+            for o in self.graph.objects(subject=s_term, predicate=p_term)
         ]
 
     # -- Export -------------------------------------------------------------
