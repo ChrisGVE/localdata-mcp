@@ -1889,14 +1889,24 @@ class DatabaseManager:
     # -- Tree/Graph tool wrappers (dispatch to tree or graph variant) ------
 
     def get_node(self, name: str, path: Optional[str] = None) -> Dict[str, Any]:
-        """Get node details or summary for a tree or graph connection.
+        """Get node details or summary for a tree, graph, or RDF connection.
 
         For graph connections, *path* is used as node_id.
+        For RDF connections, *path* is used as subject URI.
         """
         if name in self._graph_managers:
             return tool_get_node_graph(
                 self._get_graph_manager(name), name, node_id=path
             )
+        if name in self._rdf_managers:
+            mgr = self._get_rdf_manager(name)
+            if path is None:
+                return mgr.get_stats()
+            predicates = mgr.get_predicates_for_subject(path)
+            result: Dict[str, Any] = {"subject": path, "predicates": {}}
+            for pred in predicates:
+                result["predicates"][pred] = mgr.get_objects(path, pred)
+            return result
         return tool_get_node(self._get_tree_manager(name), name, path)
 
     def get_children(
@@ -2001,8 +2011,41 @@ class DatabaseManager:
     def export_structured(
         self, name: str, format: str, path: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Export tree data as TOML, JSON, or YAML."""
+        """Export tree data as TOML/JSON/YAML, or RDF data as Turtle/N-Triples."""
+        if name in self._rdf_managers:
+            return self._export_rdf(name, format)
         return tool_export_structured(self._get_tree_manager(name), name, format, path)
+
+    def _export_rdf(self, name: str, format: str) -> Dict[str, Any]:
+        """Export RDF graph in Turtle or N-Triples format with size limit."""
+        from .graph_tools import MAX_EXPORT_BYTES
+
+        fmt_map = {"turtle": "turtle", "ttl": "turtle", "ntriples": "nt", "nt": "nt"}
+        fmt = fmt_map.get(format.lower())
+        if fmt is None:
+            return {
+                "error": (
+                    f"Unsupported RDF format '{format}'. "
+                    "Use turtle, ttl, ntriples, or nt."
+                )
+            }
+
+        mgr = self._get_rdf_manager(name)
+        output = mgr.serialize(format=fmt)
+
+        if len(output.encode("utf-8")) > MAX_EXPORT_BYTES:
+            truncated = output[: MAX_EXPORT_BYTES // 2]
+            return {
+                "format": fmt,
+                "truncated": True,
+                "content": truncated,
+                "notice": (
+                    f"Output exceeded {MAX_EXPORT_BYTES // 1024}KB limit. "
+                    "Use SPARQL CONSTRUCT to export a smaller subset."
+                ),
+            }
+
+        return {"format": fmt, "content": output}
 
     # -- Graph-only tool wrappers -------------------------------------------
 
@@ -2787,6 +2830,47 @@ class DatabaseManager:
         Args:
             name: The name of the database connection.
         """
+        # Graph connections
+        if name in self._graph_managers:
+            mgr = self._graph_managers[name]
+            stats = mgr.get_graph_stats()
+            first_nodes = mgr.list_nodes(offset=0, limit=20)
+            info = {
+                "name": name,
+                "storage": "graph",
+                "node_count": stats["node_count"],
+                "edge_count": stats["edge_count"],
+                "density": stats["density"],
+                "is_directed": stats["is_directed"],
+                "first_node_ids": [n.node_id for n in first_nodes],
+            }
+            return json.dumps(info, indent=2)
+
+        # RDF connections
+        if name in self._rdf_managers:
+            mgr = self._rdf_managers[name]
+            stats = mgr.get_stats()
+            info = {
+                "name": name,
+                "storage": "rdf",
+                "triple_count": stats["triple_count"],
+                "namespaces": stats["namespaces"],
+                "subject_count": stats["subject_count"],
+                "predicate_count": stats["predicate_count"],
+                "object_count": stats["object_count"],
+            }
+            return json.dumps(info, indent=2)
+
+        # SPARQL endpoint connections
+        if name in self._sparql_connections:
+            conn = self._sparql_connections[name]
+            info = {
+                "name": name,
+                "storage": "sparql_endpoint",
+                "endpoint_url": conn.endpoint_url,
+            }
+            return json.dumps(info, indent=2)
+
         try:
             engine = self._get_connection(name)
             inspector = inspect(engine)
@@ -3069,6 +3153,31 @@ class DatabaseManager:
                 "active_connections": len(self.connections),
                 "temp_files_count": len(self.temp_files),
             }
+
+            # Estimate memory for graph connections
+            graph_memory: Dict[str, Any] = {}
+            for gname, gmgr in self._graph_managers.items():
+                stats = gmgr.get_graph_stats()
+                est_bytes = stats["node_count"] * 200 + stats["edge_count"] * 150
+                graph_memory[gname] = {
+                    "node_count": stats["node_count"],
+                    "edge_count": stats["edge_count"],
+                    "estimated_bytes": est_bytes,
+                }
+            if graph_memory:
+                additional_info["graph_connections"] = graph_memory
+
+            # Estimate memory for RDF connections
+            rdf_memory: Dict[str, Any] = {}
+            for rname, rmgr in self._rdf_managers.items():
+                stats = rmgr.get_stats()
+                est_bytes = stats["triple_count"] * 300
+                rdf_memory[rname] = {
+                    "triple_count": stats["triple_count"],
+                    "estimated_bytes": est_bytes,
+                }
+            if rdf_memory:
+                additional_info["rdf_connections"] = rdf_memory
 
             # Clean up legacy query buffers if memory is high
             memory_status = management_result.get("memory_status", {})
@@ -3372,6 +3481,18 @@ class DatabaseManager:
             # Get compatibility status
             status = self.compatibility_manager.get_compatibility_status()
 
+            # Check optional library availability
+            library_checks = {}
+            for lib_name in ("networkx", "pydot", "rdflib", "SPARQLWrapper"):
+                try:
+                    mod = __import__(lib_name)
+                    library_checks[lib_name] = {
+                        "available": True,
+                        "version": getattr(mod, "__version__", "unknown"),
+                    }
+                except ImportError:
+                    library_checks[lib_name] = {"available": False}
+
             # Create report
             report = {
                 "compatibility_status": "OK"
@@ -3383,6 +3504,7 @@ class DatabaseManager:
                 "recommendations": status["recommendations"],
                 "deprecation_warnings": status["deprecation_warnings_shown"],
                 "details": status["legacy_patterns"],
+                "libraries": library_checks,
             }
 
             # Generate migration script if requested
