@@ -4,7 +4,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-from localdata_mcp.graph_storage import GraphStorageManager, create_graph_schema
+from localdata_mcp.graph_manager import GraphStorageManager
+from localdata_mcp.graph_storage import create_graph_schema
 from localdata_mcp.graph_tools import (
     tool_add_edge,
     tool_delete_key_graph,
@@ -20,6 +21,7 @@ from localdata_mcp.graph_tools import (
     tool_remove_edge,
     tool_set_node_graph,
     tool_set_value_graph,
+    MAX_EXPORT_BYTES,
 )
 
 
@@ -96,6 +98,17 @@ class TestGetNodeGraph:
         assert result["node_count"] == 0
         assert result["edge_count"] == 0
 
+    def test_get_node_property_truncation(self, manager):
+        """When a node has >10 properties, only first 10 are returned."""
+        manager.create_node("X")
+        for i in range(15):
+            manager.set_property("node", "X", f"key_{i:02d}", f"val_{i}")
+        result = tool_get_node_graph(manager, "test", node_id="X")
+        assert result["property_count"] == 15
+        assert len(result["properties"]) == 10
+        assert result["properties_truncated"] is True
+        assert "hint" in result
+
 
 # ---------------------------------------------------------------------------
 # Navigation: get_neighbors
@@ -146,6 +159,15 @@ class TestGetNeighbors:
         assert len(result["neighbors"]) == 1
         assert result["total"] == 2
         assert result["has_more"] is True
+
+    def test_self_loop_direction(self, manager):
+        """Self-loops must be classified with direction 'self'."""
+        manager.create_node("X")
+        manager.add_edge("X", "X", label="self_ref")
+        result = tool_get_neighbors(manager, "test", "X", direction="both")
+        assert result["total"] == 1
+        assert result["neighbors"][0]["direction"] == "self"
+        assert result["neighbors"][0]["neighbor_id"] == "X"
 
 
 # ---------------------------------------------------------------------------
@@ -435,3 +457,20 @@ class TestExportGraph:
     def test_export_node_not_found(self, populated):
         result = tool_export_graph(populated, "test", "dot", node_id="NOPE")
         assert "error" in result
+
+    def test_export_graph_truncation(self, manager):
+        """Large graph export must be truncated when exceeding MAX_EXPORT_BYTES."""
+        # Create enough nodes with long labels to exceed 100KB in GML output
+        for i in range(2000):
+            manager.create_node(f"node_with_long_id_{'x' * 50}_{i:04d}")
+        for i in range(1999):
+            manager.add_edge(
+                f"node_with_long_id_{'x' * 50}_{i:04d}",
+                f"node_with_long_id_{'x' * 50}_{i + 1:04d}",
+            )
+
+        result = tool_export_graph(manager, "test", "gml")
+        assert result["truncated"] is True
+        assert "notice" in result
+        # Content should be present but shorter than the full output
+        assert len(result["content"].encode("utf-8")) <= MAX_EXPORT_BYTES

@@ -13,7 +13,7 @@ from localdata_mcp.graph_parsers import (
     parse_gml_to_graph,
     parse_graphml_to_graph,
 )
-from localdata_mcp.graph_storage import GraphStorageManager
+from localdata_mcp.graph_manager import GraphStorageManager
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 DOT_PATH = os.path.join(FIXTURES_DIR, "sample.dot")

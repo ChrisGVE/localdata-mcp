@@ -4,15 +4,24 @@ Provides a thin wrapper around SPARQLWrapper for querying remote
 SPARQL endpoints such as Wikidata, DBpedia, UniProt, etc.
 """
 
+import logging
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 from SPARQLWrapper import JSON, SPARQLWrapper
+
+logger = logging.getLogger(__name__)
 
 
 class SPARQLEndpointConnection:
     """Connection to a remote SPARQL endpoint."""
 
     def __init__(self, endpoint_url: str, timeout: int = 60) -> None:
+        parsed = urlparse(endpoint_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"SPARQL endpoint URL must use http or https; got '{parsed.scheme}'"
+            )
         self.endpoint_url = endpoint_url
         self.timeout = timeout
 
@@ -26,7 +35,8 @@ class SPARQLEndpointConnection:
         thread safety.
 
         Raises:
-            ValueError: When the SPARQL query fails.
+            ValueError: When the SPARQL query fails or the response
+                format is unexpected.
         """
         sparql = SPARQLWrapper(self.endpoint_url)
         sparql.setTimeout(self.timeout)
@@ -47,7 +57,7 @@ class SPARQLEndpointConnection:
                     {var: self._binding_to_python(binding[var]) for var in binding}
                     for binding in bindings
                 ]
-        return []
+        raise ValueError(f"Unexpected SPARQL response format: {type(results).__name__}")
 
     def _binding_to_python(self, binding: Dict[str, str]) -> Any:
         """Convert a single SPARQL JSON binding value to a Python value."""
@@ -59,9 +69,15 @@ class SPARQLEndpointConnection:
         if btype == "literal":
             datatype = binding.get("datatype", "")
             if "integer" in datatype:
-                return int(value)
+                try:
+                    return int(value)
+                except (ValueError, TypeError):
+                    return value
             if "decimal" in datatype or "float" in datatype or "double" in datatype:
-                return float(value)
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return value
             if "boolean" in datatype:
                 return value.lower() == "true"
             return value
@@ -85,6 +101,9 @@ class SPARQLEndpointConnection:
             )
             if count_result:
                 stats["approximate_triples"] = count_result[0].get("count", "unknown")
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "Failed to query triple count from %s: %s", self.endpoint_url, e
+            )
             stats["approximate_triples"] = "unavailable"
         return stats

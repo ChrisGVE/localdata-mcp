@@ -636,7 +636,7 @@ class DatabaseManager:
             for name, engine in self.connections.items():
                 try:
                     engine.dispose()
-                except:
+                except Exception:
                     pass  # Ignore errors during cleanup
             self.connections.clear()
             self.db_types.clear()
@@ -758,16 +758,12 @@ class DatabaseManager:
             raise ValueError(f"No tree parser for file type: {file_type}")
         parser(file_path, mgr)
 
-        # Store the manager so tree tools can access it later.
-        # The actual connection name isn't known here — connect_database
-        # will copy it into self._tree_managers[name] after this returns.
-        self._last_tree_manager = mgr
-        return engine
+        return (engine, mgr)
 
     def _create_graph_engine(self, file_path: str, file_type: str):
         """Parse a graph file into a GraphStorageManager backed by SQLite."""
         from sqlalchemy.pool import StaticPool
-        from .graph_storage import GraphStorageManager
+        from .graph_manager import GraphStorageManager
         from .graph_parsers import (
             parse_dot_to_graph,
             parse_gml_to_graph,
@@ -790,8 +786,7 @@ class DatabaseManager:
             raise ValueError(f"No graph parser for file type: {file_type}")
         parser(file_path, manager)
 
-        self._last_graph_manager = manager
-        return engine
+        return (engine, manager)
 
     def _create_rdf_engine(self, file_path: str, file_type: str):
         """Parse an RDF file into an RDFStorageManager (no SQL engine needed)."""
@@ -812,8 +807,7 @@ class DatabaseManager:
             raise ValueError(f"No RDF parser for file type: {file_type}")
         parser(file_path, manager)
 
-        self._last_rdf_manager = manager
-        return engine
+        return (engine, manager)
 
     def _create_sparql_connection(self, endpoint_url: str):
         """Connect to a remote SPARQL endpoint."""
@@ -828,8 +822,7 @@ class DatabaseManager:
             connect_args={"check_same_thread": False},
         )
         conn = SPARQLEndpointConnection(endpoint_url)
-        self._last_sparql_connection = conn
-        return engine
+        return (engine, conn)
 
     def _create_engine_from_file(
         self, file_path: str, file_type: str, sheet_name: Optional[str] = None
@@ -1884,6 +1877,7 @@ class DatabaseManager:
                 }
             )
         except Exception as e:
+            logger.error("SPARQL query failed on '%s': %s", name, e)
             return json.dumps({"error": str(e), "query_type": "SPARQL"})
 
     # -- Tree/Graph tool wrappers (dispatch to tree or graph variant) ------
@@ -2018,7 +2012,7 @@ class DatabaseManager:
 
     def _export_rdf(self, name: str, format: str) -> Dict[str, Any]:
         """Export RDF graph in Turtle or N-Triples format with size limit."""
-        from .graph_tools import MAX_EXPORT_BYTES
+        from .graph_algorithms import MAX_EXPORT_BYTES
 
         fmt_map = {"turtle": "turtle", "ttl": "turtle", "ntriples": "nt", "nt": "nt"}
         fmt = fmt_map.get(format.lower())
@@ -2157,6 +2151,24 @@ class DatabaseManager:
 
         try:
             engine = self._get_engine(db_type, conn_string, sheet_name)
+
+            # Unpack manager from creation helpers that return (engine, manager) tuples
+            graph_manager = None
+            rdf_manager = None
+            sparql_conn = None
+            tree_manager = None
+
+            if isinstance(engine, tuple):
+                engine, extra = engine
+                if db_type in ("dot", "gml", "graphml"):
+                    graph_manager = extra
+                elif db_type in ("turtle", "ntriples"):
+                    rdf_manager = extra
+                elif db_type == "sparql":
+                    sparql_conn = extra
+                elif db_type in ("json", "yaml", "toml"):
+                    tree_manager = extra
+
             sql_flavor = self._get_sql_flavor(db_type, engine)
 
             with self.connection_lock:
@@ -2164,26 +2176,14 @@ class DatabaseManager:
                 self.db_types[name] = db_type
                 self.query_history[name] = []
                 self.connection_count += 1
-
-            # Store tree manager if this was a structured file
-            if hasattr(self, "_last_tree_manager"):
-                self._tree_managers[name] = self._last_tree_manager
-                del self._last_tree_manager
-
-            # Store graph manager if this was a graph file
-            if hasattr(self, "_last_graph_manager"):
-                self._graph_managers[name] = self._last_graph_manager
-                del self._last_graph_manager
-
-            # Store RDF manager if this was an RDF file
-            if hasattr(self, "_last_rdf_manager"):
-                self._rdf_managers[name] = self._last_rdf_manager
-                del self._last_rdf_manager
-
-            # Store SPARQL endpoint connection if this was a SPARQL endpoint
-            if hasattr(self, "_last_sparql_connection"):
-                self._sparql_connections[name] = self._last_sparql_connection
-                del self._last_sparql_connection
+                if graph_manager is not None:
+                    self._graph_managers[name] = graph_manager
+                if rdf_manager is not None:
+                    self._rdf_managers[name] = rdf_manager
+                if sparql_conn is not None:
+                    self._sparql_connections[name] = sparql_conn
+                if tree_manager is not None:
+                    self._tree_managers[name] = tree_manager
 
             logger.info(
                 f"Successfully connected to database '{name}' ({sql_flavor}). Total connections: {self.connection_count}"
@@ -2231,7 +2231,12 @@ class DatabaseManager:
                 # Clean up tree manager if present
                 self._tree_managers.pop(name, None)
                 self._graph_managers.pop(name, None)
-                self._rdf_managers.pop(name, None)
+                rdf_mgr = self._rdf_managers.pop(name, None)
+                if rdf_mgr is not None:
+                    try:
+                        rdf_mgr.graph.close()
+                    except Exception:
+                        pass  # rdflib graph close is best-effort
                 self._sparql_connections.pop(name, None)
 
             # Release semaphore slot
