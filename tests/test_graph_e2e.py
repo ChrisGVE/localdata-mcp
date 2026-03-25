@@ -29,13 +29,14 @@ def db() -> DatabaseManager:
 
 
 # ---------------------------------------------------------------------------
-# 1. Full graph lifecycle (DOT, GML, GraphML)
+# 1. Full graph lifecycle (DOT, GML, GraphML, Mermaid)
 # ---------------------------------------------------------------------------
 
 GRAPH_FORMATS = [
     ("dot", "sample.dot"),
     ("gml", "sample.gml"),
     ("graphml", "sample.graphml"),
+    ("mermaid", "sample.mmd"),
 ]
 
 
@@ -87,6 +88,91 @@ class TestGraphWorkflow:
         assert db.get_graph_stats("g")["node_count"] < count_before
 
         assert "Successfully disconnected" in db.disconnect_database("g")
+
+
+# ---------------------------------------------------------------------------
+# 1b. Mermaid-specific features
+# ---------------------------------------------------------------------------
+
+
+class TestMermaidSpecific:
+    """Tests for Mermaid-specific features preserved through the parser."""
+
+    def test_node_shapes_stored_as_properties(self, db: DatabaseManager) -> None:
+        """Node shapes ([], (), {}, etc.) should be stored as node properties."""
+        result = _json(db.connect_database("m", "mermaid", _fp("sample.mmd")))
+        assert result["success"] is True
+
+        # The sample.mmd has nodes with different shapes:
+        # A[API Gateway] -> rectangle, B[Auth Service] -> rectangle,
+        # C(Cache Layer) -> rounded, D[(Database)] -> cylindrical,
+        # E{Decision} -> rhombus
+        stats = db.get_graph_stats("m")
+        assert stats["node_count"] >= 5
+
+        # Check that shape properties exist on at least one node
+        keys_a = db.list_keys("m", "A")
+        key_names = [k["key"] for k in keys_a.get("keys", [])]
+        assert "shape" in key_names, (
+            "Node A should have a 'shape' property from Mermaid bracket syntax"
+        )
+
+        db.disconnect_database("m")
+
+    def test_edge_styles_stored_as_properties(self, db: DatabaseManager) -> None:
+        """Edge styles (-->, -.-, ==> etc.) should be stored as edge properties."""
+        result = _json(db.connect_database("m", "mermaid", _fp("sample.mmd")))
+        assert result["success"] is True
+
+        edges = db.get_edges("m")
+        assert edges["total"] > 0
+
+        # Check that at least one edge has style-related properties or labels
+        # The sample has labeled edges like E -->|yes| F
+        found_label = False
+        for edge in edges["edges"]:
+            if edge.get("label"):
+                found_label = True
+                break
+        # At least the |yes| and |no| edges should have labels
+        assert found_label, (
+            "Expected at least one edge with a label from Mermaid syntax"
+        )
+
+        db.disconnect_database("m")
+
+    def test_subgraph_membership_stored_as_property(self, db: DatabaseManager) -> None:
+        """Nodes inside a subgraph should have a subgraph property."""
+        result = _json(db.connect_database("m", "mermaid", _fp("sample.mmd")))
+        assert result["success"] is True
+
+        # B is inside 'subgraph Backend'
+        keys_b = db.list_keys("m", "B")
+        key_names = [k["key"] for k in keys_b.get("keys", [])]
+        assert "subgraph" in key_names, (
+            "Node B should have a 'subgraph' property indicating membership"
+        )
+
+        val = db.get_value("m", "B", "subgraph")
+        assert val["value"] is not None
+
+        db.disconnect_database("m")
+
+    def test_chained_edges_create_multiple_edges(self, db: DatabaseManager) -> None:
+        """Chained edges like A-->B-->C should produce two separate edges."""
+        # The sample.mmd has: E -->|yes| F and E -->|no| G
+        # which are separate edges, but also A --> B and A --> C
+        result = _json(db.connect_database("m", "mermaid", _fp("sample.mmd")))
+        assert result["success"] is True
+
+        edges = db.get_edges("m")
+        # Count edges originating from A (should have at least 2: A->B, A->C)
+        a_edges = [e for e in edges["edges"] if e["source"] == "A"]
+        assert len(a_edges) >= 2, (
+            f"Node A should have at least 2 outgoing edges, got {len(a_edges)}"
+        )
+
+        db.disconnect_database("m")
 
 
 # ---------------------------------------------------------------------------

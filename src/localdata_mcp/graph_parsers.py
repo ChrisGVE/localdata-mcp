@@ -1,8 +1,11 @@
-"""Parsers for loading DOT, GML, and GraphML files into graph storage.
+"""Parsers for loading DOT, GML, GraphML, and Mermaid files into graph storage.
 
 Each parser reads a graph file via NetworkX, then populates a
 :class:`GraphStorageManager` using :func:`_networkx_to_storage` as the
 shared conversion engine.
+
+Mermaid-specific logic lives in :mod:`localdata_mcp.mermaid_parser` and is
+re-exported here for convenience.
 """
 
 import json
@@ -205,3 +208,20 @@ def parse_graphml_to_graph(
     if not G.is_directed():
         G = G.to_directed()
     return _networkx_to_storage(G, manager)
+
+
+# Re-export Mermaid parser for convenience
+from localdata_mcp.mermaid_parser import (  # noqa: E402
+    MermaidFlowchartParser,
+    parse_mermaid_to_graph,
+)
+
+__all__ = [
+    "MermaidFlowchartParser",
+    "parse_mermaid_to_graph",
+    "parse_dot_to_graph",
+    "parse_gml_to_graph",
+    "parse_graphml_to_graph",
+    "_networkx_to_storage",
+    "_validate_file",
+]
