@@ -696,7 +696,7 @@ class DatabaseManager:
                     "couchdb library is required for CouchDB connections. Install with: pip install couchdb"
                 )
             return self._create_couchdb_connection(conn_string)
-        elif db_type in ["dot", "gml", "graphml"]:
+        elif db_type in ["dot", "gml", "graphml", "mermaid"]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_graph_engine(sanitized_path, db_type)
         elif db_type in ["turtle", "ntriples"]:
@@ -768,6 +768,7 @@ class DatabaseManager:
             parse_dot_to_graph,
             parse_gml_to_graph,
             parse_graphml_to_graph,
+            parse_mermaid_to_graph,
         )
 
         engine = create_engine(
@@ -780,6 +781,7 @@ class DatabaseManager:
             "dot": parse_dot_to_graph,
             "gml": parse_gml_to_graph,
             "graphml": parse_graphml_to_graph,
+            "mermaid": parse_mermaid_to_graph,
         }
         parser = parsers.get(file_type)
         if parser is None:
@@ -2134,7 +2136,7 @@ class DatabaseManager:
 
         Args:
             name: A unique name to identify the connection (e.g., "analytics_db", "user_data").
-            db_type: The type of the database ("sqlite", "postgresql", "mysql", "duckdb", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5").
+            db_type: The type of the database ("sqlite", "postgresql", "mysql", "duckdb", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5", "dot", "gml", "graphml", "mermaid", "turtle", "ntriples", "sparql").
             conn_string: The connection string or file path for the database.
             sheet_name: Optional sheet name to load from Excel/ODS/Numbers files, or dataset name for HDF5 files. If not specified, all sheets/datasets are loaded.
         """
@@ -2160,7 +2162,7 @@ class DatabaseManager:
 
             if isinstance(engine, tuple):
                 engine, extra = engine
-                if db_type in ("dot", "gml", "graphml"):
+                if db_type in ("dot", "gml", "graphml", "mermaid"):
                     graph_manager = extra
                 elif db_type in ("turtle", "ntriples"):
                     rdf_manager = extra
@@ -3022,7 +3024,7 @@ class DatabaseManager:
             return "Neo4j"
         elif db_type == "couchdb":
             return "CouchDB"
-        elif db_type in ["dot", "gml", "graphml"]:
+        elif db_type in ["dot", "gml", "graphml", "mermaid"]:
             return "Graph (SQLite)"
         elif db_type in ["turtle", "ntriples"]:
             return "RDF (SPARQL)"
@@ -3497,6 +3499,13 @@ class DatabaseManager:
                     }
                 except ImportError:
                     library_checks[lib_name] = {"available": False}
+
+            # Built-in parsers (no external dependency)
+            library_checks["mermaid"] = {
+                "available": True,
+                "version": "built-in",
+                "note": "Pure Python parser, no external dependency",
+            }
 
             # Create report
             report = {

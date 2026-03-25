@@ -1,0 +1,16 @@
+graph TD
+    A[API Gateway] --> B[Auth Service]
+    A --> C(Cache Layer)
+    B --> D[(Database)]
+    C --> D
+    B --> E{Decision}
+    E -->|yes| F[Process]
+    E -->|no| G[Reject]
+
+    subgraph Backend
+        B
+        D
+        E
+        F
+        G
+    end
