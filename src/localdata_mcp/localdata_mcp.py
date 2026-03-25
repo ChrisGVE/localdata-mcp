@@ -642,6 +642,11 @@ class DatabaseManager:
             self.db_types.clear()
             self._tree_managers.clear()
             self._graph_managers.clear()
+            for mgr in self._rdf_managers.values():
+                try:
+                    mgr.graph.close()
+                except Exception:
+                    pass
             self._rdf_managers.clear()
             self._sparql_connections.clear()
 
