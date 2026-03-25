@@ -190,3 +190,57 @@ class TestErrorHandling:
                     parse_mermaid_to_graph(f.name, mgr)
             finally:
                 os.unlink(f.name)
+
+
+class TestMermaidExportRoundTrip:
+    """Verify Mermaid export produces valid re-parseable output."""
+
+    def test_export_sample_mmd(self):
+        from localdata_mcp.graph_algorithms import tool_export_graph
+
+        mgr = make_manager()
+        parse_mermaid_to_graph(SAMPLE_MMD, mgr)
+        result = tool_export_graph(mgr, "test", "mermaid")
+        assert result["format"] == "mermaid"
+        content = result["content"]
+        assert content.startswith("graph TD")
+        assert "-->" in content
+
+    def test_round_trip_preserves_nodes(self):
+        from localdata_mcp.graph_algorithms import tool_export_graph
+        from localdata_mcp.mermaid_parser import MermaidFlowchartParser
+
+        mgr = make_manager()
+        parse_mermaid_to_graph(SAMPLE_MMD, mgr)
+        original_stats = mgr.get_graph_stats()
+
+        # Export to mermaid
+        result = tool_export_graph(mgr, "test", "mermaid")
+        exported_text = result["content"]
+
+        # Re-parse exported text
+        parser = MermaidFlowchartParser()
+        G2 = parser.parse(exported_text)
+
+        assert G2.number_of_nodes() == original_stats["node_count"]
+
+    def test_export_preserves_labels(self):
+        from localdata_mcp.graph_algorithms import tool_export_graph
+
+        mgr = make_manager()
+        parse_mermaid_to_graph(SAMPLE_MMD, mgr)
+        result = tool_export_graph(mgr, "test", "mermaid")
+        content = result["content"]
+        # Labels from sample.mmd should appear
+        assert "API Gateway" in content
+        assert "Auth Service" in content
+
+    def test_export_preserves_edge_labels(self):
+        from localdata_mcp.graph_algorithms import tool_export_graph
+
+        mgr = make_manager()
+        parse_mermaid_to_graph(SAMPLE_MMD, mgr)
+        result = tool_export_graph(mgr, "test", "mermaid")
+        content = result["content"]
+        assert "yes" in content
+        assert "no" in content

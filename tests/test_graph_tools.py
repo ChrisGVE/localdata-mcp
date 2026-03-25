@@ -444,6 +444,19 @@ class TestExportGraph:
         assert "content" in result
         assert "graphml" in result["content"].lower()
 
+    def test_export_mermaid(self, populated):
+        result = tool_export_graph(populated, "test", "mermaid")
+        assert result["format"] == "mermaid"
+        assert "graph" in result["content"]
+        assert "-->" in result["content"]
+        # Node IDs should appear
+        assert "A" in result["content"]
+        assert "B" in result["content"]
+
+    def test_export_mermaid_via_mmd_alias(self, populated):
+        result = tool_export_graph(populated, "test", "mmd")
+        assert result["format"] == "mermaid"
+
     def test_export_unsupported_format(self, populated):
         result = tool_export_graph(populated, "test", "csv")
         assert "error" in result
