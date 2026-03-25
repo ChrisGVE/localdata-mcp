@@ -1,6 +1,6 @@
 [project]
 name = "localdata-mcp"
-version = "1.4.5"
+version = "1.5.0"
 description = "A dynamic MCP server for local databases and text files."
 readme = "README.md"
 authors = [
@@ -44,6 +44,11 @@ dependencies = [
   "structlog>=23.0.0",  # Structured logging with JSON output
   "prometheus_client>=0.17.0",  # Metrics collection and exposition
   "python-json-logger>=2.0.0",  # Additional JSON logging capabilities
+  # Graph and RDF/SPARQL support
+  "networkx>=3.0",              # Graph algorithms and DOT/GML/GraphML I/O
+  "pydot>=2.0.0",               # DOT (Graphviz) format parsing (pure Python)
+  "rdflib>=7.0.0",              # RDF storage and SPARQL for local files
+  "SPARQLWrapper>=2.0.0",       # SPARQL endpoint HTTP client
 ]
 
 [project.optional-dependencies]
