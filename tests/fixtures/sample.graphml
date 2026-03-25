@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns
+           http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+
+  <!-- Node attributes -->
+  <key id="d0" for="node" attr.name="label" attr.type="string"/>
+  <key id="d1" for="node" attr.name="color" attr.type="string"/>
+  <key id="d2" for="node" attr.name="type" attr.type="string"/>
+
+  <!-- Edge attributes -->
+  <key id="d3" for="edge" attr.name="label" attr.type="string"/>
+  <key id="d4" for="edge" attr.name="weight" attr.type="double"/>
+
+  <graph id="software_deps" edgedefault="directed">
+
+    <node id="api">
+      <data key="d0">API Gateway</data>
+      <data key="d1">blue</data>
+      <data key="d2">service</data>
+    </node>
+    <node id="auth">
+      <data key="d0">Auth Service</data>
+      <data key="d1">red</data>
+      <data key="d2">service</data>
+    </node>
+    <node id="cache">
+      <data key="d0">Cache Layer</data>
+      <data key="d1">green</data>
+      <data key="d2">infrastructure</data>
+    </node>
+    <node id="database">
+      <data key="d0">Database</data>
+      <data key="d1">orange</data>
+      <data key="d2">infrastructure</data>
+    </node>
+    <node id="logger">
+      <data key="d0">Logger</data>
+      <data key="d1">gray</data>
+      <data key="d2">utility</data>
+    </node>
+    <node id="config">
+      <data key="d0">Config Manager</data>
+      <data key="d1">purple</data>
+      <data key="d2">utility</data>
+    </node>
+
+    <edge source="api" target="auth">
+      <data key="d3">authenticates</data>
+      <data key="d4">1.0</data>
+    </edge>
+    <edge source="api" target="cache">
+      <data key="d3">reads</data>
+      <data key="d4">0.8</data>
+    </edge>
+    <edge source="api" target="logger">
+      <data key="d4">0.5</data>
+    </edge>
+    <edge source="auth" target="database">
+      <data key="d3">queries</data>
+      <data key="d4">1.0</data>
+    </edge>
+    <edge source="auth" target="logger">
+      <data key="d4">0.3</data>
+    </edge>
+    <edge source="cache" target="database">
+      <data key="d3">syncs</data>
+      <data key="d4">0.9</data>
+    </edge>
+    <edge source="config" target="api">
+      <data key="d3">configures</data>
+      <data key="d4">0.2</data>
+    </edge>
+
+  </graph>
+</graphml>

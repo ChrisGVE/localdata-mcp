@@ -1,0 +1,55 @@
+@prefix sw: <http://example.org/software#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Classes
+sw:Component rdf:type rdfs:Class .
+sw:Service rdf:type rdfs:Class ;
+    rdfs:subClassOf sw:Component .
+sw:Infrastructure rdf:type rdfs:Class ;
+    rdfs:subClassOf sw:Component .
+sw:Utility rdf:type rdfs:Class ;
+    rdfs:subClassOf sw:Component .
+
+# Properties
+sw:dependsOn rdf:type rdf:Property ;
+    rdfs:domain sw:Component ;
+    rdfs:range sw:Component .
+sw:hasVersion rdf:type rdf:Property ;
+    rdfs:domain sw:Component ;
+    rdfs:range xsd:string .
+sw:hasPort rdf:type rdf:Property ;
+    rdfs:domain sw:Service ;
+    rdfs:range xsd:integer .
+
+# Instances
+sw:api rdf:type sw:Service ;
+    rdfs:label "API Gateway" ;
+    sw:hasVersion "2.1.0" ;
+    sw:hasPort 8080 ;
+    sw:dependsOn sw:auth, sw:cache, sw:logger .
+
+sw:auth rdf:type sw:Service ;
+    rdfs:label "Auth Service" ;
+    sw:hasVersion "1.4.2" ;
+    sw:hasPort 9090 ;
+    sw:dependsOn sw:database, sw:logger .
+
+sw:cache rdf:type sw:Infrastructure ;
+    rdfs:label "Cache Layer" ;
+    sw:hasVersion "3.0.1" ;
+    sw:dependsOn sw:database .
+
+sw:database rdf:type sw:Infrastructure ;
+    rdfs:label "Database" ;
+    sw:hasVersion "5.7.0" .
+
+sw:logger rdf:type sw:Utility ;
+    rdfs:label "Logger" ;
+    sw:hasVersion "1.0.0" .
+
+sw:config rdf:type sw:Utility ;
+    rdfs:label "Config Manager" ;
+    sw:hasVersion "0.9.5" ;
+    sw:dependsOn sw:api .
