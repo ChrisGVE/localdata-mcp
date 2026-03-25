@@ -204,10 +204,74 @@ def _export_graphml(G: nx.MultiDiGraph) -> str:
     return "\n".join(nx.generate_graphml(G))
 
 
+def _export_mermaid(G: nx.MultiDiGraph) -> str:
+    """Export graph to Mermaid flowchart syntax."""
+    # Reverse shape mapping: shape name → Mermaid syntax wrappers
+    _SHAPE_WRAP = {
+        "rectangle": ("[", "]"),
+        "rounded": ("(", ")"),
+        "diamond": ("{", "}"),
+        "circle": ("((", "))"),
+        "stadium": ("([", "])"),
+        "subroutine": ("[[", "]]"),
+        "database": ("[(", ")]"),
+        "asymmetric": (">", "]"),
+    }
+    # Reverse edge style mapping: (style, directed) → Mermaid operator
+    _STYLE_OP = {
+        ("solid", True): "-->",
+        ("solid", False): "---",
+        ("thick", True): "==>",
+        ("dotted", True): "-.->",
+    }
+
+    direction = G.graph.get("direction", "TD")
+    lines = [f"graph {direction}"]
+
+    # Emit node declarations with shapes and labels
+    for node_id in sorted(G.nodes()):
+        attrs = G.nodes[node_id]
+        label = attrs.get("label", "")
+        shape = attrs.get("shape", "rectangle")
+        left, right = _SHAPE_WRAP.get(shape, ("[", "]"))
+        if label and label != node_id:
+            lines.append(f"    {node_id}{left}{label}{right}")
+        elif shape != "rectangle":
+            lines.append(f"    {node_id}{left}{node_id}{right}")
+
+    # Group nodes by subgraph
+    subgraphs: Dict[str, List[str]] = {}
+    for node_id in G.nodes():
+        sg = G.nodes[node_id].get("subgraph")
+        if sg:
+            subgraphs.setdefault(sg, []).append(node_id)
+
+    # Emit subgraph blocks
+    for sg_name, members in sorted(subgraphs.items()):
+        lines.append(f"    subgraph {sg_name}")
+        for m in sorted(members):
+            lines.append(f"        {m}")
+        lines.append("    end")
+
+    # Emit edges
+    for u, v, data in G.edges(data=True):
+        style = data.get("edge_style", "solid")
+        directed = data.get("directed", True)
+        op = _STYLE_OP.get((style, directed), "-->")
+        label = data.get("label", "")
+        if label:
+            lines.append(f"    {u} {op}|{label}| {v}")
+        else:
+            lines.append(f"    {u} {op} {v}")
+
+    return "\n".join(lines) + "\n"
+
+
 _GRAPH_EXPORTERS = {
     "dot": _export_dot,
     "gml": _export_gml,
     "graphml": _export_graphml,
+    "mermaid": _export_mermaid,
 }
 
 
@@ -217,14 +281,20 @@ def tool_export_graph(
     format: str,
     node_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Export graph data in the requested format (dot, gml, graphml).
+    """Export graph data in the requested format (dot, gml, graphml, mermaid).
 
     When *node_id* is provided, exports only the ego graph (the node
     and its immediate neighbors).
     """
     fmt = format.lower()
+    if fmt == "mmd":
+        fmt = "mermaid"
     if fmt not in _GRAPH_EXPORTERS:
-        return {"error": (f"Unsupported format '{format}'. Use dot, gml, or graphml.")}
+        return {
+            "error": (
+                f"Unsupported format '{format}'. Use dot, gml, graphml, or mermaid."
+            )
+        }
 
     G = _storage_to_networkx(manager)
 
