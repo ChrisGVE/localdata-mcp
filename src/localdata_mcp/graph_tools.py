@@ -1,22 +1,29 @@
-"""MCP tool functions for graph navigation, mutation, and export.
+"""MCP tool functions for graph navigation, mutation, and properties.
 
 Each function takes a :class:`GraphStorageManager` plus tool-specific
 parameters and returns a dict (FastMCP v3 handles serialization).
+
+Algorithm tools (find_path, get_graph_stats, export_graph) live in
+:mod:`graph_algorithms` but are re-exported here for backward
+compatibility.
 """
 
 from typing import Any, Dict, List, Optional
 
-import networkx as nx
 from sqlalchemy import text
 
-from .graph_storage import GraphStorageManager, GraphProperty
+from .graph_manager import GraphStorageManager
+from .graph_storage import GraphProperty
 from .tree_storage import ValueType, deserialize_value, infer_value_type_from_string
 
-# ---------------------------------------------------------------------------
-# Maximum export payload size (bytes)
-# ---------------------------------------------------------------------------
-
-MAX_EXPORT_BYTES = 100 * 1024  # 100 KB
+# Re-export algorithm tools and MAX_EXPORT_BYTES for backward compatibility
+from .graph_algorithms import (  # noqa: F401
+    MAX_EXPORT_BYTES,
+    _storage_to_networkx,
+    tool_export_graph,
+    tool_find_path,
+    tool_get_graph_stats,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -31,46 +38,6 @@ def _property_to_dict(prop: GraphProperty) -> Dict[str, Any]:
         "value": deserialize_value(prop.value, prop.value_type),
         "value_type": prop.value_type.value,
     }
-
-
-def _storage_to_networkx(manager: GraphStorageManager) -> nx.MultiDiGraph:
-    """Reconstruct a NetworkX MultiDiGraph from graph storage.
-
-    Iterates over all nodes and edges in the storage manager and
-    builds a directed multigraph suitable for NetworkX algorithms.
-    """
-    G = nx.MultiDiGraph()
-
-    # Load all nodes
-    offset = 0
-    limit = 500
-    while True:
-        nodes = manager.list_nodes(offset=offset, limit=limit)
-        for node in nodes:
-            attrs: Dict[str, Any] = {}
-            if node.label:
-                attrs["label"] = node.label
-            G.add_node(node.node_id, **attrs)
-        if len(nodes) < limit:
-            break
-        offset += limit
-
-    # Load all edges
-    offset = 0
-    while True:
-        edges = manager.list_edges(offset=offset, limit=limit)
-        for edge in edges:
-            attrs = {}
-            if edge.label:
-                attrs["label"] = edge.label
-            if edge.weight is not None:
-                attrs["weight"] = edge.weight
-            G.add_edge(edge.source_id, edge.target_id, **attrs)
-        if len(edges) < limit:
-            break
-        offset += limit
-
-    return G
 
 
 def _get_degree_info(manager: GraphStorageManager, node_id: str) -> Dict[str, int]:
@@ -168,6 +135,7 @@ def tool_get_neighbors(
         return {"error": f"Invalid direction: {direction}. Use 'in', 'out', or 'both'."}
 
     # Query edges with direction info
+    total = 0
     items: List[Dict[str, Any]] = []
     with manager.engine.connect() as conn:
         if direction == "out":
@@ -235,7 +203,17 @@ def tool_get_neighbors(
             ).fetchone()[0]
             for r in rows:
                 m = r._mapping
-                if m["source_id"] == node_id:
+                if m["source_id"] == m["target_id"] == node_id:
+                    # Self-loop
+                    items.append(
+                        {
+                            "neighbor_id": node_id,
+                            "edge_label": m["label"],
+                            "edge_weight": m["weight"],
+                            "direction": "self",
+                        }
+                    )
+                elif m["source_id"] == node_id:
                     items.append(
                         {
                             "neighbor_id": m["target_id"],
@@ -387,125 +365,6 @@ def tool_remove_edge(
 
 
 # ---------------------------------------------------------------------------
-# Algorithm tools
-# ---------------------------------------------------------------------------
-
-
-def tool_find_path(
-    manager: GraphStorageManager,
-    name: str,
-    source: str,
-    target: str,
-    algorithm: str = "shortest",
-) -> Dict[str, Any]:
-    """Find path(s) between two nodes using NetworkX.
-
-    Supports "shortest" (single shortest path) and "all" (up to 10
-    simple paths with max depth 20).
-    """
-    if algorithm not in ("shortest", "all"):
-        return {"error": (f"Unknown algorithm: {algorithm}. Use 'shortest' or 'all'.")}
-
-    if not manager.node_exists(source):
-        return {"error": f"Source node not found: {source}"}
-    if not manager.node_exists(target):
-        return {"error": f"Target node not found: {target}"}
-
-    G = _storage_to_networkx(manager)
-
-    if algorithm == "shortest":
-        try:
-            path = nx.shortest_path(G, source, target)
-        except nx.NetworkXNoPath:
-            return {
-                "source": source,
-                "target": target,
-                "algorithm": algorithm,
-                "path": None,
-                "path_length": None,
-                "message": "No path exists between source and target.",
-            }
-        return {
-            "source": source,
-            "target": target,
-            "algorithm": algorithm,
-            "path": path,
-            "path_length": len(path) - 1,
-        }
-
-    # algorithm == "all"
-    try:
-        all_paths = list(nx.all_simple_paths(G, source, target, cutoff=20))
-    except nx.NetworkXNoPath:
-        all_paths = []
-
-    # Limit to 10 paths
-    paths = all_paths[:10]
-    return {
-        "source": source,
-        "target": target,
-        "algorithm": algorithm,
-        "paths": paths,
-        "paths_count": len(paths),
-        "total_paths_found": len(all_paths),
-        "truncated": len(all_paths) > 10,
-    }
-
-
-def tool_get_graph_stats(
-    manager: GraphStorageManager,
-    name: str,
-) -> Dict[str, Any]:
-    """Compute advanced graph statistics using NetworkX."""
-    basic = manager.get_graph_stats()
-    node_count = basic["node_count"]
-    edge_count = basic["edge_count"]
-
-    result: Dict[str, Any] = {
-        "node_count": node_count,
-        "edge_count": edge_count,
-        "density": basic["density"],
-    }
-
-    # Skip expensive NetworkX calculations for large graphs
-    if node_count > 10000:
-        result["warning"] = (
-            f"Graph has {node_count} nodes; skipping expensive "
-            "NetworkX calculations (is_dag, components, degree stats)."
-        )
-        return result
-
-    G = _storage_to_networkx(manager)
-
-    result["is_dag"] = nx.is_directed_acyclic_graph(G)
-
-    # Connected components on undirected view
-    result["connected_components"] = nx.number_weakly_connected_components(G)
-
-    # Degree statistics
-    if node_count > 0:
-        in_degrees = dict(G.in_degree())
-        out_degrees = dict(G.out_degree())
-        total_degree = sum(in_degrees.values()) + sum(out_degrees.values())
-        result["average_degree"] = total_degree / node_count
-
-        max_in_node = max(in_degrees, key=in_degrees.get)
-        max_out_node = max(out_degrees, key=out_degrees.get)
-        result["max_in_degree"] = {
-            "node_id": max_in_node,
-            "in_degree": in_degrees[max_in_node],
-        }
-        result["max_out_degree"] = {
-            "node_id": max_out_node,
-            "out_degree": out_degrees[max_out_node],
-        }
-    else:
-        result["average_degree"] = 0.0
-
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Property tools
 # ---------------------------------------------------------------------------
 
@@ -589,75 +448,3 @@ def tool_list_keys_graph(
         "limit": limit,
         "has_more": (offset + limit) < total,
     }
-
-
-# ---------------------------------------------------------------------------
-# Graph export
-# ---------------------------------------------------------------------------
-
-
-def _export_dot(G: nx.MultiDiGraph) -> str:
-    """Export graph to DOT format via pydot."""
-    import pydot
-
-    P = nx.drawing.nx_pydot.to_pydot(G)
-    return P.to_string()
-
-
-def _export_gml(G: nx.MultiDiGraph) -> str:
-    """Export graph to GML format."""
-    return "\n".join(nx.generate_gml(G))
-
-
-def _export_graphml(G: nx.MultiDiGraph) -> str:
-    """Export graph to GraphML format."""
-    return "\n".join(nx.generate_graphml(G))
-
-
-_GRAPH_EXPORTERS = {
-    "dot": _export_dot,
-    "gml": _export_gml,
-    "graphml": _export_graphml,
-}
-
-
-def tool_export_graph(
-    manager: GraphStorageManager,
-    name: str,
-    format: str,
-    node_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Export graph data in the requested format (dot, gml, graphml).
-
-    When *node_id* is provided, exports only the ego graph (the node
-    and its immediate neighbors).
-    """
-    fmt = format.lower()
-    if fmt not in _GRAPH_EXPORTERS:
-        return {"error": (f"Unsupported format '{format}'. Use dot, gml, or graphml.")}
-
-    G = _storage_to_networkx(manager)
-
-    if node_id is not None:
-        if node_id not in G:
-            return {"error": f"Node not found: {node_id}"}
-        G = nx.ego_graph(G, node_id)
-
-    try:
-        output = _GRAPH_EXPORTERS[fmt](G)
-    except Exception as exc:
-        return {"error": f"Export failed: {exc}"}
-
-    if len(output.encode("utf-8")) > MAX_EXPORT_BYTES:
-        truncated = output[: MAX_EXPORT_BYTES // 2]
-        return {
-            "format": fmt,
-            "truncated": True,
-            "content": truncated,
-            "notice": (
-                f"Output exceeded {MAX_EXPORT_BYTES // 1024}KB limit. "
-                "Use node_id to export a smaller subgraph."
-            ),
-        }
-
-    return {"format": fmt, "content": output}

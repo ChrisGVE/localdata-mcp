@@ -3,11 +3,11 @@
 import pytest
 from sqlalchemy import create_engine, event, text
 
+from localdata_mcp.graph_manager import GraphStorageManager
 from localdata_mcp.graph_storage import (
     GraphEdge,
     GraphNode,
     GraphProperty,
-    GraphStorageManager,
 )
 from localdata_mcp.tree_storage import ValueType
 

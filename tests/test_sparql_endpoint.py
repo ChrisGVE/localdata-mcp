@@ -29,6 +29,26 @@ class TestSPARQLEndpointInit:
         conn = SPARQLEndpointConnection("http://example.org/sparql", timeout=120)
         assert conn.timeout == 120
 
+    def test_url_validation_rejects_file_scheme(self) -> None:
+        """URLs with file:// scheme must be rejected."""
+        with pytest.raises(ValueError, match="http or https"):
+            SPARQLEndpointConnection("file:///etc/passwd")
+
+    def test_url_validation_rejects_ftp_scheme(self) -> None:
+        """URLs with ftp:// scheme must be rejected."""
+        with pytest.raises(ValueError, match="http or https"):
+            SPARQLEndpointConnection("ftp://example.org/sparql")
+
+    def test_url_validation_rejects_empty_scheme(self) -> None:
+        """URLs without a scheme must be rejected."""
+        with pytest.raises(ValueError, match="http or https"):
+            SPARQLEndpointConnection("example.org/sparql")
+
+    def test_url_validation_accepts_https(self) -> None:
+        """HTTPS URLs must be accepted."""
+        conn = SPARQLEndpointConnection("https://example.org/sparql")
+        assert conn.endpoint_url == "https://example.org/sparql"
+
 
 class TestBindingToPython:
     """Test _binding_to_python for all binding types."""
@@ -114,6 +134,32 @@ class TestBindingToPython:
         conn = self._make_conn()
         result = conn._binding_to_python({"type": "unknown", "value": "foo"})
         assert result == "foo"
+
+    def test_malformed_integer(self) -> None:
+        """Malformed integer values must fall back to the raw string."""
+        conn = self._make_conn()
+        result = conn._binding_to_python(
+            {
+                "type": "literal",
+                "value": "not_a_number",
+                "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+            }
+        )
+        assert result == "not_a_number"
+        assert isinstance(result, str)
+
+    def test_malformed_float(self) -> None:
+        """Malformed float values must fall back to the raw string."""
+        conn = self._make_conn()
+        result = conn._binding_to_python(
+            {
+                "type": "literal",
+                "value": "NaN_broken",
+                "datatype": "http://www.w3.org/2001/XMLSchema#double",
+            }
+        )
+        assert result == "NaN_broken"
+        assert isinstance(result, str)
 
 
 class TestExecuteQuery:
@@ -201,15 +247,30 @@ class TestExecuteQuery:
         assert results == []
 
     @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
-    def test_non_dict_result(self, mock_wrapper_cls: MagicMock) -> None:
+    def test_unexpected_response_format_raises(
+        self, mock_wrapper_cls: MagicMock
+    ) -> None:
+        """Non-standard response formats must raise ValueError."""
         mock_instance = mock_wrapper_cls.return_value
         mock_result = MagicMock()
         mock_result.convert.return_value = "some raw string"
         mock_instance.query.return_value = mock_result
 
         conn = SPARQLEndpointConnection("http://example.org/sparql")
-        results = conn.execute_query("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }")
-        assert results == []
+        with pytest.raises(ValueError, match="Unexpected SPARQL response format"):
+            conn.execute_query("CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }")
+
+    @patch("localdata_mcp.sparql_endpoint.SPARQLWrapper")
+    def test_unexpected_dict_format_raises(self, mock_wrapper_cls: MagicMock) -> None:
+        """Dict response without 'boolean' or 'results' must raise ValueError."""
+        mock_instance = mock_wrapper_cls.return_value
+        mock_result = MagicMock()
+        mock_result.convert.return_value = {"unexpected_key": "value"}
+        mock_instance.query.return_value = mock_result
+
+        conn = SPARQLEndpointConnection("http://example.org/sparql")
+        with pytest.raises(ValueError, match="Unexpected SPARQL response format"):
+            conn.execute_query("SELECT ?s WHERE { ?s ?p ?o }")
 
 
 class TestConcurrentQueries:

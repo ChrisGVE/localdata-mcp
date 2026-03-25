@@ -6,14 +6,15 @@ shared conversion engine.
 """
 
 import json
+import logging
 import os
 from typing import Any, Dict
 
 import networkx as nx
-import pydot
 
-from localdata_mcp.graph_storage import GraphStorageManager
+from localdata_mcp.graph_manager import GraphStorageManager
 
+logger = logging.getLogger(__name__)
 
 # Fields handled specially during node/edge import (not stored as properties)
 _NODE_SKIP_KEYS = {"label"}
@@ -23,10 +24,10 @@ _EDGE_SKIP_KEYS = {"label", "weight"}
 def _coerce_value(value: Any) -> Any:
     """Convert non-primitive values to a JSON string for storage.
 
-    Dicts and lists-of-dicts are serialized so that
+    Dicts, lists, and lists-of-dicts are serialized so that
     :func:`infer_value_type` never encounters an unsupported type.
     """
-    if isinstance(value, dict):
+    if isinstance(value, (dict, list)):
         return json.dumps(value)
     return value
 
@@ -77,6 +78,12 @@ def _networkx_to_storage(
             try:
                 weight = float(str(raw_weight).strip('"'))
             except (ValueError, TypeError):
+                logger.warning(
+                    "Unparseable edge weight %r on edge %s→%s; storing as None",
+                    raw_weight,
+                    src,
+                    tgt,
+                )
                 weight = None
 
         edge = manager.add_edge(src, tgt, label=label, weight=weight)
@@ -128,6 +135,8 @@ def parse_dot_to_graph(
     Raises:
         ValueError: If the file is missing or cannot be parsed.
     """
+    import pydot
+
     _validate_file(file_path)
     try:
         graphs = pydot.graph_from_dot_file(file_path)

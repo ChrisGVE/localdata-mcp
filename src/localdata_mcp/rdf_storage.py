@@ -5,17 +5,22 @@ support, SPARQL query execution, and graph navigation methods that
 bridge to the tool interface.
 """
 
+import logging
+import os
 from typing import Any, Dict, List
 
 import rdflib
 from rdflib import BNode, Graph, Literal, URIRef
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Supported formats
 # ---------------------------------------------------------------------------
 
 _VALID_FORMATS = {"turtle", "nt"}
+
+MAX_RDF_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
 
 
 def _validate_format(fmt: str) -> None:
@@ -55,6 +60,13 @@ class RDFStorageManager:
             ``predicate_count``, and ``object_count``.
         """
         _validate_format(format)
+        file_size = os.path.getsize(file_path)
+        if file_size > MAX_RDF_FILE_BYTES:
+            logger.warning(
+                "RDF file %s is %d MB; loading entirely into memory",
+                file_path,
+                file_size // (1024 * 1024),
+            )
         self.graph.parse(file_path, format=format)
         return {
             "triple_count": len(self.graph),
@@ -117,7 +129,8 @@ class RDFStorageManager:
         if isinstance(term, Literal):
             try:
                 return term.toPython()
-            except Exception:
+            except Exception as e:
+                logger.warning("Failed to convert RDF literal %r: %s", term, e)
                 return str(term)
         if isinstance(term, BNode):
             return f"_:{term}"
