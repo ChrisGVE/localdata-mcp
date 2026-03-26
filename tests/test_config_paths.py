@@ -4,9 +4,14 @@ import warnings
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+import yaml
+
 from localdata_mcp.config_paths import (
+    DEFAULT_CONFIG_TEMPLATE,
     ConfigLocationType,
     ConfigPathInfo,
+    create_default_config,
     emit_deprecation_warning,
     get_config_paths,
     get_recommended_path,
@@ -337,3 +342,67 @@ class TestDeprecationWarningIntegration:
             emit_deprecation_warning(Path("~/.localdata.yaml"))
             assert len(w) == 1
             assert issubclass(w[0].category, DeprecationWarning)
+
+
+class TestCreateDefaultConfig:
+    def test_create_default_config_at_recommended_path(self, tmp_path):
+        target = tmp_path / "config.yaml"
+        with patch(
+            "localdata_mcp.config_paths.get_recommended_path",
+            return_value=target,
+        ):
+            result = create_default_config()
+        assert result == target
+        assert target.exists()
+
+    def test_create_default_config_custom_path(self, tmp_path):
+        target = tmp_path / "custom.yaml"
+        result = create_default_config(path=target)
+        assert result == target
+        assert target.exists()
+        assert target.read_text(encoding="utf-8") == DEFAULT_CONFIG_TEMPLATE
+
+    def test_create_default_config_creates_parents(self, tmp_path):
+        target = tmp_path / "deeply" / "nested" / "dir" / "config.yaml"
+        result = create_default_config(path=target)
+        assert result == target
+        assert target.exists()
+
+    def test_create_default_config_no_overwrite(self, tmp_path):
+        target = tmp_path / "config.yaml"
+        target.write_text("existing content")
+        with pytest.raises(FileExistsError, match="already exists"):
+            create_default_config(path=target)
+
+    def test_create_default_config_content(self, tmp_path):
+        target = tmp_path / "config.yaml"
+        create_default_config(path=target)
+        text = target.read_text(encoding="utf-8")
+        # Uncomment only YAML config lines (# key: or #   indented)
+        import re
+
+        lines = []
+        for line in text.splitlines():
+            m = re.match(r"^# (\w+:.*|  .+)$", line)
+            if m:
+                lines.append(m.group(1))
+        uncommented = "\n".join(lines)
+        parsed = yaml.safe_load(uncommented)
+        assert isinstance(parsed, dict)
+        assert "staging" in parsed
+        assert "memory" in parsed
+        assert "query" in parsed
+
+    def test_default_config_template_has_all_sections(self):
+        expected_sections = [
+            "databases",
+            "staging",
+            "memory",
+            "query",
+            "connections",
+            "security",
+            "logging",
+            "performance",
+        ]
+        for section in expected_sections:
+            assert f"# {section}:" in DEFAULT_CONFIG_TEMPLATE
