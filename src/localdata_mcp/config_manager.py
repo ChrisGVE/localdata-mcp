@@ -603,6 +603,60 @@ class ConfigManager:
             except ValueError:
                 print(f"Warning: Invalid memory limit: {memory_limit}")
 
+        # New section env var overrides
+        section_vars = {
+            "LOCALDATA_STAGING_MAX_CONCURRENT": ("staging", "max_concurrent", int),
+            "LOCALDATA_STAGING_MAX_SIZE_MB": ("staging", "max_size_mb", int),
+            "LOCALDATA_STAGING_MAX_TOTAL_MB": ("staging", "max_total_mb", int),
+            "LOCALDATA_STAGING_TIMEOUT_MINUTES": ("staging", "timeout_minutes", int),
+            "LOCALDATA_STAGING_EVICTION_POLICY": ("staging", "eviction_policy", str),
+            "LOCALDATA_MEMORY_MAX_BUDGET_MB": ("memory", "max_budget_mb", int),
+            "LOCALDATA_MEMORY_BUDGET_PERCENT": ("memory", "budget_percent", int),
+            "LOCALDATA_MEMORY_LOW_THRESHOLD_GB": (
+                "memory",
+                "low_memory_threshold_gb",
+                float,
+            ),
+            "LOCALDATA_QUERY_CHUNK_SIZE": ("query", "default_chunk_size", int),
+            "LOCALDATA_QUERY_BUFFER_TIMEOUT": (
+                "query",
+                "buffer_timeout_seconds",
+                int,
+            ),
+            "LOCALDATA_QUERY_BLOB_HANDLING": ("query", "blob_handling", str),
+            "LOCALDATA_QUERY_BLOB_MAX_SIZE_MB": ("query", "blob_max_size_mb", int),
+            "LOCALDATA_QUERY_PREFLIGHT_DEFAULT": ("query", "preflight_default", bool),
+            "LOCALDATA_CONNECTIONS_MAX_CONCURRENT": (
+                "connections",
+                "max_concurrent",
+                int,
+            ),
+            "LOCALDATA_CONNECTIONS_TIMEOUT": ("connections", "timeout_seconds", int),
+            "LOCALDATA_SECURITY_MAX_QUERY_LENGTH": (
+                "security",
+                "max_query_length",
+                int,
+            ),
+        }
+
+        for env_name, (section, key, type_fn) in section_vars.items():
+            value = os.getenv(env_name)
+            if value is not None:
+                if section not in env_config:
+                    env_config[section] = {}
+                try:
+                    if type_fn is bool:
+                        env_config[section][key] = value.lower() in (
+                            "true",
+                            "1",
+                            "yes",
+                            "on",
+                        )
+                    else:
+                        env_config[section][key] = type_fn(value)
+                except (ValueError, TypeError):
+                    print(f"Warning: Invalid value for {env_name}: {value}")
+
         return env_config
 
     def _substitute_env_vars(self, content: str) -> str:
@@ -644,7 +698,29 @@ class ConfigManager:
             LocalDataConfig(**self._config_data)
         except PydanticValidationError as e:
             print(f"Configuration validation errors: {e}")
-            # Don't raise exception - allow partial configs to work
+
+        # Validate new config sections via their dataclasses
+        from .config_schemas import (
+            StagingConfig,
+            MemoryConfig,
+            QueryConfig,
+            ConnectionsConfig,
+            SecurityConfig,
+        )
+
+        for section, cls in [
+            ("staging", StagingConfig),
+            ("memory", MemoryConfig),
+            ("query", QueryConfig),
+            ("connections", ConnectionsConfig),
+            ("security", SecurityConfig),
+        ]:
+            data = self._config_data.get(section, {})
+            if data:
+                try:
+                    cls(**data)
+                except (ValueError, TypeError) as e:
+                    print(f"Configuration validation error in '{section}': {e}")
 
     def _start_reload_thread(self) -> None:
         """Start background thread for automatic config reloading."""
