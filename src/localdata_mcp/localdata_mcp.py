@@ -3592,6 +3592,12 @@ def _parse_cli_args() -> argparse.Namespace:
         default=False,
         help="Migrate legacy configuration to YAML format",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Force overwrite during migration",
+    )
     args, _ = parser.parse_known_args(sys.argv[1:])
     return args
 
@@ -3601,7 +3607,25 @@ def main():
     args = _parse_cli_args()
 
     if args.migrate_config:
-        print("Migration not yet implemented")
+        from .config_paths import get_recommended_path, migrate_config
+
+        try:
+            source = Path("~/.localdata.yaml").expanduser()
+            dest = get_recommended_path()
+            if args.force and dest.exists():
+                dest.unlink()
+            print(f"Migrating config from {source} to {dest}...")
+            migrate_config(source=source, dest=dest)
+            print(f"Config migrated successfully to {dest}")
+        except FileNotFoundError:
+            print("No legacy config found at ~/.localdata.yaml")
+            sys.exit(1)
+        except FileExistsError:
+            print(f"Config already exists at {dest}. Use --force to overwrite.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Migration failed: {e}")
+            sys.exit(1)
         sys.exit(0)
 
     if args.config:

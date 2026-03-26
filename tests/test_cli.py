@@ -1,6 +1,7 @@
 """Tests for CLI argument parsing in main()."""
 
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -74,6 +75,21 @@ class TestParseCLIArgs:
             with pytest.raises(SystemExit) as exc_info:
                 _parse_cli_args()
             assert exc_info.value.code == 0
+
+    def test_force_flag(self):
+        from localdata_mcp.localdata_mcp import _parse_cli_args
+
+        with patch.object(sys, "argv", ["prog", "--migrate-config", "--force"]):
+            args = _parse_cli_args()
+            assert args.force is True
+            assert args.migrate_config is True
+
+    def test_force_flag_default(self):
+        from localdata_mcp.localdata_mcp import _parse_cli_args
+
+        with patch.object(sys, "argv", ["prog"]):
+            args = _parse_cli_args()
+            assert args.force is False
 
     def test_unknown_args_ignored(self):
         """parse_known_args should not fail on unknown arguments."""
@@ -150,16 +166,147 @@ class TestMain:
         mock_mcp.run.assert_called_once_with(transport="stdio")
 
     @patch("localdata_mcp.localdata_mcp.initialize_config")
-    def test_migrate_config_placeholder(self, mock_init_config, capsys):
+    def test_migrate_config_success(self, mock_init_config, tmp_path, capsys):
         from localdata_mcp.localdata_mcp import main
 
-        with patch.object(sys, "argv", ["prog", "--migrate-config"]):
+        source = tmp_path / ".localdata.yaml"
+        source.write_text("databases: {}")
+        dest = tmp_path / "localdata" / "config.yaml"
+
+        mock_migrate = MagicMock(return_value=True)
+        mock_get_path = MagicMock(return_value=dest)
+
+        with (
+            patch.object(sys, "argv", ["prog", "--migrate-config"]),
+            patch("localdata_mcp.localdata_mcp.Path", wraps=Path) as mock_path,
+            patch(
+                "localdata_mcp.config_paths.get_recommended_path",
+                mock_get_path,
+            ),
+            patch(
+                "localdata_mcp.config_paths.migrate_config",
+                mock_migrate,
+            ),
+        ):
+            # Make Path("~/.localdata.yaml").expanduser() return our tmp source
+            original_path = Path.__new__
+
+            def path_new(cls, *args, **kwargs):
+                return original_path(cls, *args, **kwargs)
+
+            mock_path.side_effect = lambda p: Path(p)
+            # We need to intercept the expanduser call on the result
+            with patch.object(
+                Path,
+                "expanduser",
+                return_value=source,
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+                assert exc_info.value.code == 0
+
+        output = capsys.readouterr().out
+        assert "Config migrated successfully" in output
+        mock_migrate.assert_called_once_with(source=source, dest=dest)
+        mock_init_config.assert_not_called()
+
+    @patch("localdata_mcp.localdata_mcp.initialize_config")
+    def test_migrate_config_no_source(self, mock_init_config, tmp_path, capsys):
+        from localdata_mcp.localdata_mcp import main
+
+        source = tmp_path / ".localdata.yaml"  # does not exist
+        dest = tmp_path / "localdata" / "config.yaml"
+
+        mock_migrate = MagicMock(side_effect=FileNotFoundError("not found"))
+        mock_get_path = MagicMock(return_value=dest)
+
+        with (
+            patch.object(sys, "argv", ["prog", "--migrate-config"]),
+            patch(
+                "localdata_mcp.config_paths.get_recommended_path",
+                mock_get_path,
+            ),
+            patch(
+                "localdata_mcp.config_paths.migrate_config",
+                mock_migrate,
+            ),
+            patch.object(Path, "expanduser", return_value=source),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+
+        output = capsys.readouterr().out
+        assert "No legacy config found" in output
+        mock_init_config.assert_not_called()
+
+    @patch("localdata_mcp.localdata_mcp.initialize_config")
+    def test_migrate_config_dest_exists(self, mock_init_config, tmp_path, capsys):
+        from localdata_mcp.localdata_mcp import main
+
+        source = tmp_path / ".localdata.yaml"
+        source.write_text("databases: {}")
+        dest = tmp_path / "localdata" / "config.yaml"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("existing config")
+
+        mock_migrate = MagicMock(side_effect=FileExistsError(f"exists: {dest}"))
+        mock_get_path = MagicMock(return_value=dest)
+
+        with (
+            patch.object(sys, "argv", ["prog", "--migrate-config"]),
+            patch(
+                "localdata_mcp.config_paths.get_recommended_path",
+                mock_get_path,
+            ),
+            patch(
+                "localdata_mcp.config_paths.migrate_config",
+                mock_migrate,
+            ),
+            patch.object(Path, "expanduser", return_value=source),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+
+        output = capsys.readouterr().out
+        assert "--force" in output
+        mock_init_config.assert_not_called()
+
+    @patch("localdata_mcp.localdata_mcp.initialize_config")
+    def test_migrate_config_force_overwrites(self, mock_init_config, tmp_path, capsys):
+        from localdata_mcp.localdata_mcp import main
+
+        source = tmp_path / ".localdata.yaml"
+        source.write_text("databases: {}")
+        dest = tmp_path / "localdata" / "config.yaml"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("existing config")
+
+        mock_migrate = MagicMock(return_value=True)
+        mock_get_path = MagicMock(return_value=dest)
+
+        with (
+            patch.object(sys, "argv", ["prog", "--migrate-config", "--force"]),
+            patch(
+                "localdata_mcp.config_paths.get_recommended_path",
+                mock_get_path,
+            ),
+            patch(
+                "localdata_mcp.config_paths.migrate_config",
+                mock_migrate,
+            ),
+            patch.object(Path, "expanduser", return_value=source),
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code == 0
 
         output = capsys.readouterr().out
-        assert "Migration not yet implemented" in output
+        assert "Config migrated successfully" in output
+        # --force should have removed dest before calling migrate
+        assert not dest.exists()
+        mock_migrate.assert_called_once_with(source=source, dest=dest)
         mock_init_config.assert_not_called()
 
     @patch("localdata_mcp.localdata_mcp.mcp")
