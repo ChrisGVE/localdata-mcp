@@ -471,6 +471,44 @@ class TestExportGraph:
         result = tool_export_graph(populated, "test", "dot", node_id="NOPE")
         assert "error" in result
 
+    def test_export_graphml_includes_node_metadata(self, populated):
+        """GraphML export must include node properties as data attributes."""
+        result = tool_export_graph(populated, "test", "graphml")
+        content = result["content"]
+        # Node A has age=30 and city=NYC set as properties
+        assert "age" in content
+        assert "city" in content
+        assert "30" in content
+        assert "NYC" in content
+
+    def test_export_gml_includes_node_metadata(self, populated):
+        """GML export must include node properties as node attributes."""
+        result = tool_export_graph(populated, "test", "gml")
+        content = result["content"]
+        assert "age" in content
+        assert "city" in content
+
+    def test_export_dot_includes_node_metadata(self, populated):
+        """DOT export must include node properties as node attributes."""
+        result = tool_export_graph(populated, "test", "dot")
+        content = result["content"]
+        assert "age" in content
+        assert "city" in content
+
+    def test_export_graphml_includes_edge_metadata(self, manager):
+        """GraphML export must include edge properties as data attributes."""
+        manager.create_node("X", label="NodeX")
+        manager.create_node("Y", label="NodeY")
+        edge = manager.add_edge("X", "Y", label="connects")
+        manager.set_property("edge", str(edge.id), "since", "2024")
+        manager.set_property("edge", str(edge.id), "strength", 0.9)
+
+        result = tool_export_graph(manager, "test", "graphml")
+        content = result["content"]
+        assert "since" in content
+        assert "2024" in content
+        assert "strength" in content
+
     def test_export_graph_truncation(self, manager):
         """Large graph export must be truncated when exceeding MAX_EXPORT_BYTES."""
         # Create enough nodes with long labels to exceed 100KB in GML output
