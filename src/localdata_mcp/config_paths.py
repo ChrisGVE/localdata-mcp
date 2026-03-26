@@ -141,6 +141,75 @@ def get_recommended_path() -> Path:
     return Path(xdg).expanduser() / "localdata" / "config.yaml"
 
 
+DEFAULT_CONFIG_TEMPLATE = """\
+# LocalData MCP Configuration
+# See https://localdata-mcp.readthedocs.io/en/latest/configuration.html
+
+# databases:
+#   my_postgres:
+#     type: postgresql
+#     connection_string: postgresql://user:pass@host:5432/db
+
+# staging:
+#   max_concurrent: 10
+#   max_size_mb: 2048
+#   max_total_mb: 10240
+#   timeout_minutes: 30
+#   eviction_policy: lru
+
+# memory:
+#   max_budget_mb: 512
+#   budget_percent: 10
+#   low_memory_threshold_gb: 1.0
+
+# query:
+#   default_chunk_size: 100
+#   buffer_timeout_seconds: 600
+#   blob_handling: exclude
+#   blob_max_size_mb: 5
+#   preflight_default: false
+
+# connections:
+#   max_concurrent: 10
+#   timeout_seconds: 30
+
+# security:
+#   allowed_paths: ["."]
+#   max_query_length: 10000
+#   blocked_keywords: []
+
+# logging:
+#   level: info
+#   console_output: true
+
+# performance:
+#   memory_limit_mb: 2048
+#   chunk_size: 100
+"""
+
+
+def create_default_config(path: Optional[Path] = None) -> Path:
+    """Create a default configuration file with all sections commented out.
+
+    Args:
+        path: Where to write the file. Defaults to ``get_recommended_path()``.
+
+    Returns:
+        The path of the created file.
+
+    Raises:
+        FileExistsError: If a file already exists at *path*.
+    """
+    if path is None:
+        path = get_recommended_path()
+    if path.exists():
+        raise FileExistsError(f"Config file already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(DEFAULT_CONFIG_TEMPLATE, encoding="utf-8")
+    logger.info("Created default config at %s", path)
+    return path
+
+
 def emit_deprecation_warning(legacy_path: Path) -> None:
     """Warn when a legacy config location is in use."""
     recommended = get_recommended_path()
