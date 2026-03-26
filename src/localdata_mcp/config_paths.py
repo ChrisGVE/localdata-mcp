@@ -9,6 +9,7 @@ XDG_CONFIG_HOME on Linux, ~/Library/Application Support on macOS,
 import logging
 import os
 import platform
+import shutil
 import warnings
 from dataclasses import dataclass
 from enum import Enum
@@ -220,3 +221,45 @@ def emit_deprecation_warning(legacy_path: Path) -> None:
         legacy_path,
         recommended,
     )
+
+
+def migrate_config(
+    source: Optional[Path] = None,
+    dest: Optional[Path] = None,
+    backup: bool = True,
+) -> bool:
+    """Migrate a configuration file from a legacy location to the recommended path.
+
+    Args:
+        source: Path to the existing config file.  Defaults to
+            ``~/.localdata.yaml``.
+        dest: Where to place the migrated file.  Defaults to
+            :func:`get_recommended_path`.
+        backup: When *True* (the default), copy *source* to
+            ``<source>.yaml.bak`` before migrating.
+
+    Returns:
+        ``True`` on successful migration.
+
+    Raises:
+        FileNotFoundError: If *source* does not exist.
+        FileExistsError: If *dest* already exists.
+    """
+    if source is None:
+        source = Path("~/.localdata.yaml").expanduser()
+    if dest is None:
+        dest = get_recommended_path()
+
+    if not source.exists():
+        raise FileNotFoundError(f"Source config not found: {source}")
+    if dest.exists():
+        raise FileExistsError(f"Destination config already exists: {dest}")
+
+    if backup:
+        shutil.copy2(source, source.with_suffix(".yaml.bak"))
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, dest)
+
+    logger.info("Migrated config from %s to %s", source, dest)
+    return True
