@@ -12,7 +12,11 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+
+if TYPE_CHECKING:
+    from .graph_manager import GraphStorageManager
+    from .rdf_storage import RDFStorageManager
 
 import pandas as pd
 import yaml
@@ -1826,7 +1830,7 @@ class DatabaseManager:
             },
         }
 
-    def _get_graph_manager(self, name: str) -> "GraphStorageManager":
+    def _get_graph_manager(self, name: str) -> "GraphStorageManager":  # noqa: F821
         """Get the GraphStorageManager for a connection, or raise ValueError."""
         if name not in self._graph_managers:
             raise ValueError(
@@ -1835,7 +1839,7 @@ class DatabaseManager:
             )
         return self._graph_managers[name]
 
-    def _get_rdf_manager(self, name: str) -> "RDFStorageManager":
+    def _get_rdf_manager(self, name: str) -> "RDFStorageManager":  # noqa: F821
         """Get the RDFStorageManager for a connection, or raise ValueError."""
         if name not in self._rdf_managers:
             raise ValueError(
@@ -2790,22 +2794,6 @@ class DatabaseManager:
 
         except Exception as e:
             return f"An error occurred while retrieving query chunk: {e}"
-
-        # @mcp.tool  # COMMENTED OUT - Debugging tool for v1.4.0 dynamic tooling
-        # def get_query_history(self, name: str) -> str:
-        """
-        Get the recent query history for a specific database connection.
-
-        Args:
-            name: The name of the database connection.
-        """
-        try:
-            history = self.query_history.get(name, [])
-            if not history:
-                return f"No query history found for database '{name}'."
-            return "\n".join(history)
-        except Exception as e:
-            return f"An error occurred: {e}"
 
     def list_databases(self) -> str:
         """

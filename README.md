@@ -5,13 +5,15 @@
 # LocalData MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![GitHub Release](https://img.shields.io/github/v/release/ChrisGVE/localdata-mcp)](https://github.com/ChrisGVE/localdata-mcp/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/ChrisGVE/localdata-mcp/ci.yml?branch=main&label=CI)](https://github.com/ChrisGVE/localdata-mcp/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/localdata-mcp.svg)](https://pypi.org/project/localdata-mcp/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Documentation](https://img.shields.io/badge/docs-readthedocs-blue.svg)](https://localdata-mcp.readthedocs.io)
 [![FastMCP](https://img.shields.io/badge/FastMCP-Compatible-green.svg)](https://github.com/jlowin/fastmcp)
 [![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/cd737717-02f3-4388-bab7-5ec7cbe40713)
-![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
-![GitHub forks](https://img.shields.io/github/forks/ChrisGVE/localdata-mcp?style=social)
 ![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
+![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
 
 **A comprehensive MCP server for databases, spreadsheets, structured data files, and directed graphs with security features, performance optimization, and extensive format support.**
 
