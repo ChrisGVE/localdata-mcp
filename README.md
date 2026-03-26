@@ -13,43 +13,56 @@
 ![GitHub forks](https://img.shields.io/github/forks/ChrisGVE/localdata-mcp?style=social)
 ![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
 
-**A comprehensive MCP server for databases, spreadsheets, and structured data files with security features, performance optimization, and extensive format support.**
+**A comprehensive MCP server for databases, spreadsheets, structured data files, and directed graphs with security features, performance optimization, and extensive format support.**
 
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
 
-## What's New in v1.4.0
+## What's New in v1.5.x
 
-### Tree Storage for Structured Data
+### Graph Storage for Directed Graphs
 
-TOML, JSON, and YAML files are now stored as trees instead of flat tables. Each node in the hierarchy is individually addressable, with key-value properties attached to it. This means an LLM can navigate, query, edit, and export configuration files and other hierarchical data without loading megabytes of flattened content.
+DOT, GML, GraphML, and Mermaid files are stored as directed multigraphs backed by SQLite. Nodes and edges carry typed metadata properties, and the full graph is available for algorithmic analysis via NetworkX.
 
-### 9 New Tree Tools
+### 14 Graph Tools
 
 | Tool | Purpose |
 |------|---------|
-| `get_node` | View a node's properties and whether it has children |
-| `get_children` | List child nodes with pagination |
-| `set_node` | Create a node (auto-creates missing ancestors) |
-| `delete_node` | Remove a node and all descendants |
-| `list_keys` | List key-value pairs at a node |
-| `get_value` | Read a single property |
-| `set_value` | Create or update a property (type-inferred) |
+| `set_node` | Create or update a graph node |
+| `delete_node` | Remove a node and cascade edges/properties |
+| `get_node` | Inspect a node and its properties |
+| `add_edge` | Create an edge (auto-creates endpoints) |
+| `remove_edge` | Remove an edge by source/target/label |
+| `get_edges` | List edges for a node |
+| `get_neighbors` | List adjacent nodes by direction |
+| `get_value` | Read a property from a node |
+| `set_value` | Set a typed property on a node |
 | `delete_key` | Remove a property |
-| `export_structured` | Reconstruct and export as TOML, JSON, or YAML |
+| `list_keys` | List properties on a node |
+| `find_path` | Shortest or all-paths between two nodes |
+| `get_graph_stats` | Node/edge counts, density, DAG check, degree stats |
+| `export_graph` | Export as DOT, GML, GraphML, or Mermaid |
 
-### Connection Summary on Connect
+### Graph Validation Warnings
 
-When connecting to any data source, the response now includes a schema summary (table names, column types, row counts, sample rows for flat data; tree structure overview for hierarchical data). This gives the LLM enough context to write targeted queries from the start.
+Import and edit operations automatically check for 13 categories of issues:
 
-### FastMCP v3 Compatibility
+- **Structural**: self-loops, duplicate edges, orphan nodes, missing edge labels, cycles, disconnected components
+- **Semantic**: contradictory edges (A→B and B→A with same label), conflicting parallel labels on the same pair
+- **Property**: duplicate node ID casing, missing common properties, near-duplicate labels (fuzzy matching)
+- **DAG-specific**: redundant transitive edges, diamond ambiguity (unintended polyhierarchy)
 
-Updated to work with fastmcp v3.x API for tool registration.
+Warnings are returned in the `"warnings"` key of tool responses. Expensive checks (cycle detection, transitive reduction) are skipped automatically for graphs exceeding 10,000 nodes.
+
+### Metadata-Preserving Export
+
+Graph exports (GraphML, GML, DOT) now include all node and edge metadata properties, not just labels and weights.
 
 ## Table of Contents
 
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Available Tools](#available-tools)
+- [Working with Graphs](#working-with-graphs)
 - [Supported Data Sources](#supported-data-sources)
 - [Security Features](#security-features)
 - [Performance & Scalability](#performance--scalability)
@@ -67,6 +80,7 @@ Updated to work with fastmcp v3.x API for tool registration.
 - **Modern Databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j, CouchDB
 - **Spreadsheets**: Excel (.xlsx/.xls), LibreOffice Calc (.ods), Apple Numbers (.numbers)
 - **Structured Files**: CSV, TSV, JSON, YAML, TOML, XML, INI
+- **Graph Files**: DOT (Graphviz), GML, GraphML, Mermaid flowcharts
 - **Analytical Formats**: Parquet, Feather, Arrow, HDF5
 
 ### **Advanced Security**
@@ -85,7 +99,7 @@ Updated to work with fastmcp v3.x API for tool registration.
 
 ### **Developer Experience**
 
-- **Clean Tool Surface**: Core database tools plus 9 tree tools for structured data
+- **Clean Tool Surface**: Core database tools, 9 tree tools, and 14 graph tools
 - **Error Handling**: Detailed, actionable error messages
 - **Thread Safety**: Concurrent operation support
 - **Backward Compatible**: All existing APIs preserved
@@ -240,6 +254,66 @@ These tools are available when connected to a structured data file.
 | `delete_key`         | Remove a property from a node            | Data edit        |
 | `export_structured`  | Export tree as TOML, JSON, or YAML       | Export           |
 
+### Graph Tools (DOT, GML, GraphML, Mermaid)
+
+These tools are available when connected to a graph file.
+
+| Tool                 | Description                              | Use Case         |
+| -------------------- | ---------------------------------------- | ---------------- |
+| `set_node`           | Create or update a graph node            | Structure edit   |
+| `delete_node`        | Remove node, cascade edges and properties| Structure edit   |
+| `get_node`           | Inspect a node's label and properties    | Navigation       |
+| `add_edge`           | Create a directed edge between nodes     | Structure edit   |
+| `remove_edge`        | Remove an edge by source/target/label    | Structure edit   |
+| `get_edges`          | List edges for a node                    | Navigation       |
+| `get_neighbors`      | List adjacent nodes (in/out/both)        | Navigation       |
+| `get_value`          | Read a typed property from a node        | Inspection       |
+| `set_value`          | Set a typed property on a node           | Data edit        |
+| `delete_key`         | Remove a property from a node            | Data edit        |
+| `list_keys`          | List properties on a node with pagination| Inspection       |
+| `find_path`          | Find shortest or all paths between nodes | Analysis         |
+| `get_graph_stats`    | Node/edge counts, density, DAG test      | Analysis         |
+| `export_graph`       | Export as DOT, GML, GraphML, or Mermaid  | Export           |
+
+## Working with Graphs
+
+```python
+# Connect to a graph file
+connect_database("taxonomy", "graphml", "./knowledge_graph.graphml")
+connect_database("flow", "dot", "./pipeline.dot")
+connect_database("diagram", "mermaid", "./architecture.mmd")
+
+# Navigate the graph
+get_node("taxonomy", "machine_learning")
+get_neighbors("taxonomy", "machine_learning", direction="out")
+get_edges("taxonomy", node_id="machine_learning")
+
+# Edit nodes and edges
+set_node("taxonomy", "deep_learning", label="Deep Learning")
+add_edge("taxonomy", "machine_learning", "deep_learning", label="broader")
+set_value("taxonomy", "deep_learning", "field", "Computer Science")
+
+# Algorithmic analysis
+find_path("taxonomy", "statistics", "neural_networks")
+get_graph_stats("taxonomy")
+
+# Export to any supported format (includes metadata)
+export_graph("taxonomy", "graphml")
+export_graph("taxonomy", "mermaid")
+```
+
+Mutation and import operations return validation warnings when issues are detected:
+
+```python
+# Adding a self-loop returns a warning
+add_edge("taxonomy", "A", "A", label="related")
+# → {"source": "A", "target": "A", ..., "warnings": [{"code": "self_loop", ...}]}
+
+# Importing a file with issues reports them all
+connect_database("g", "dot", "./messy_graph.dot")
+# → {"node_count": 42, ..., "warnings": [{"code": "orphan_nodes", ...}, ...]}
+```
+
 ## Supported Data Sources
 
 **Detailed Connection Guide**: See [Database Connections Guide](DATABASE_CONNECTIONS.md) for setup instructions, connection strings, and security practices.
@@ -278,6 +352,13 @@ These tools are available when connected to a structured data file.
 - **TOML**: Tree storage with array-of-tables support (v1.4.0)
 - **XML**: Structured XML document parsing
 - **INI**: Configuration file format support
+
+#### Graph Formats (v1.5.0)
+
+- **DOT** (Graphviz): Directed and undirected graph descriptions
+- **GML**: Graph Modelling Language with nested attributes
+- **GraphML**: XML-based format with typed node/edge properties
+- **Mermaid**: Flowchart syntax with subgraphs, edge labels, and node shapes
 
 #### Analytical Formats
 
@@ -472,6 +553,14 @@ For comprehensive troubleshooting guidance, see [Troubleshooting Guide](TROUBLES
 
 ## Roadmap
 
+### Completed (v1.5.x)
+
+- **Graph Storage**: DOT, GML, GraphML, and Mermaid files stored as directed multigraphs
+- **14 Graph Tools**: Node/edge CRUD, path finding, graph statistics, multi-format export
+- **Graph Validation**: 13 automated checks for structural, semantic, property, and DAG issues
+- **Metadata-Preserving Export**: Graph exports include all node/edge properties
+- **Mermaid Round-Trip**: Parse and export Mermaid flowcharts with subgraphs
+
 ### Completed (v1.4.0)
 
 - **Tree Storage**: TOML, JSON, YAML stored as navigable trees with full CRUD
@@ -522,7 +611,7 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Tags
 
-`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `mongodb` `spreadsheet` `excel` `xlsx` `ods` `csv` `tsv` `json` `yaml` `toml` `xml` `ini` `parquet` `feather` `arrow` `ai` `machine-learning` `data-integration` `python` `security` `performance`
+`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `mongodb` `spreadsheet` `excel` `xlsx` `ods` `csv` `tsv` `json` `yaml` `toml` `xml` `ini` `parquet` `feather` `arrow` `graph` `graphml` `dot` `gml` `mermaid` `ai` `machine-learning` `data-integration` `python` `security` `performance`
 
 ---
 
