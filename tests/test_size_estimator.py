@@ -1,5 +1,7 @@
 """Tests for the size estimation engine foundation."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from localdata_mcp.size_estimator import (
@@ -7,8 +9,11 @@ from localdata_mcp.size_estimator import (
     COLUMN_TYPE_BYTES,
     ColumnSizeInfo,
     SizeEstimate,
+    SizeEstimator,
     extract_tables_from_query,
+    get_column_size_info,
     get_type_byte_size,
+    normalize_sqlalchemy_type,
     normalize_type_string,
 )
 
@@ -169,3 +174,146 @@ class TestExtractTablesFromQuery:
     def test_extract_tables_cte_returns_empty(self):
         result = extract_tables_from_query("WITH cte AS (SELECT 1) SELECT * FROM cte")
         assert result == []
+
+
+class TestNormalizeSQLAlchemyType:
+    """Tests for normalize_sqlalchemy_type."""
+
+    @staticmethod
+    def _make_type(name: str):
+        """Create a fake SQLAlchemy type object with the given class name."""
+        cls = type(name, (), {})
+        return cls()
+
+    def test_integer_type(self):
+        assert normalize_sqlalchemy_type(self._make_type("Integer")) == "INTEGER"
+
+    def test_string_type(self):
+        assert normalize_sqlalchemy_type(self._make_type("String")) == "VARCHAR"
+
+    def test_text_type(self):
+        assert normalize_sqlalchemy_type(self._make_type("Text")) == "TEXT"
+
+    def test_boolean_type(self):
+        assert normalize_sqlalchemy_type(self._make_type("Boolean")) == "BOOLEAN"
+
+    def test_largebinary_type(self):
+        assert normalize_sqlalchemy_type(self._make_type("LargeBinary")) == "BLOB"
+
+    def test_unknown_type(self):
+        assert normalize_sqlalchemy_type(self._make_type("CustomType")) == "CUSTOMTYPE"
+
+
+class TestGetColumnSizeInfo:
+    """Tests for get_column_size_info helper."""
+
+    def test_varchar_column(self):
+        info = get_column_size_info("name", "VARCHAR", max_length=100)
+        assert info.name == "name"
+        assert info.type_name == "VARCHAR"
+        assert info.estimated_bytes == 100
+        assert info.is_blob is False
+        assert info.max_length == 100
+
+    def test_integer_column(self):
+        info = get_column_size_info("id", "INTEGER")
+        assert info.estimated_bytes == 8
+        assert info.is_blob is False
+
+    def test_blob_column(self):
+        info = get_column_size_info("data", "BLOB")
+        assert info.estimated_bytes == 0
+        assert info.is_blob is True
+
+    def test_unknown_type_defaults_256(self):
+        info = get_column_size_info("mystery", "UNKNOWN_TYPE")
+        assert info.estimated_bytes == 256
+        assert info.is_blob is False
+
+
+class TestSizeEstimator:
+    """Tests for the SizeEstimator class."""
+
+    def _make_engine(self, dialect_name: str = "sqlite") -> MagicMock:
+        engine = MagicMock()
+        engine.dialect.name = dialect_name
+        return engine
+
+    def test_init_without_engine(self):
+        est = SizeEstimator()
+        assert est.dialect == "unknown"
+
+    def test_init_with_engine(self):
+        est = SizeEstimator(engine=self._make_engine("sqlite"))
+        assert est.dialect == "sqlite"
+
+    def test_estimate_no_columns_heuristic(self):
+        est = SizeEstimator()
+        result = est.estimate_result_size("SELECT * FROM t")
+        assert result.estimated_rows == 1000
+        assert result.estimated_bytes_per_row == 256
+        assert result.estimated_total_bytes == 1000 * 256
+        assert result.confidence == "low"
+        assert result.source == "heuristic"
+
+    def test_estimate_with_columns(self):
+        est = SizeEstimator()
+        cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+            ColumnSizeInfo(name="name", type_name="VARCHAR", estimated_bytes=100),
+        ]
+        result = est.estimate_result_size("SELECT * FROM t", columns=cols)
+        assert result.estimated_bytes_per_row == 108
+        assert result.estimated_total_bytes == 1000 * 108
+
+    def test_estimate_with_blob_columns(self):
+        est = SizeEstimator()
+        cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+            ColumnSizeInfo(
+                name="photo", type_name="BLOB", estimated_bytes=0, is_blob=True
+            ),
+        ]
+        result = est.estimate_result_size("SELECT * FROM t", columns=cols)
+        assert result.blob_columns == ["photo"]
+        assert result.estimated_bytes_per_row == 8
+
+    def test_estimate_with_row_count(self):
+        est = SizeEstimator()
+        cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+        ]
+        result = est.estimate_result_size(
+            "SELECT * FROM t", columns=cols, estimated_rows=500
+        )
+        assert result.estimated_rows == 500
+        assert result.estimated_total_bytes == 500 * 8
+
+    def test_cache_columns(self):
+        est = SizeEstimator()
+        cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+        ]
+        query = "SELECT id FROM t"
+        est.cache_columns(query, cols)
+        result = est.estimate_result_size(query)
+        assert result.estimated_bytes_per_row == 8
+        assert result.source == "metadata_only"
+
+    def test_confidence_with_rows(self):
+        est = SizeEstimator()
+        cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+        ]
+        result = est.estimate_result_size(
+            "SELECT * FROM t", columns=cols, estimated_rows=200
+        )
+        assert result.confidence == "medium"
+
+    def test_confidence_without_rows(self):
+        est = SizeEstimator()
+        cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+        ]
+        result = est.estimate_result_size("SELECT * FROM t", columns=cols)
+        assert result.confidence == "low"

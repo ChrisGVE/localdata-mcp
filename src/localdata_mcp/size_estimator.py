@@ -117,6 +117,31 @@ def normalize_type_string(type_str: str) -> str:
     return _TYPE_ALIASES.get(type_str.lower(), _TYPE_ALIASES.get(base.lower(), base))
 
 
+def normalize_sqlalchemy_type(type_obj: Any) -> str:
+    """Normalize a SQLAlchemy TypeEngine to canonical type name."""
+    type_name = type(type_obj).__name__.upper()
+    sa_type_map = {
+        "INTEGER": "INTEGER",
+        "SMALLINTEGER": "SMALLINT",
+        "BIGINTEGER": "BIGINT",
+        "FLOAT": "FLOAT",
+        "NUMERIC": "NUMERIC",
+        "BOOLEAN": "BOOLEAN",
+        "STRING": "VARCHAR",
+        "TEXT": "TEXT",
+        "UNICODE": "VARCHAR",
+        "UNICODETEXT": "TEXT",
+        "DATE": "DATE",
+        "DATETIME": "DATETIME",
+        "TIME": "TIME",
+        "LARGEBINARY": "BLOB",
+        "BLOB": "BLOB",
+        "NVARCHAR": "NVARCHAR",
+        "NSTRING": "NVARCHAR",
+    }
+    return sa_type_map.get(type_name, type_name)
+
+
 def get_type_byte_size(
     type_name: str, max_length: Optional[int] = None
 ) -> Union[int, str]:
@@ -126,6 +151,21 @@ def get_type_byte_size(
     if callable(size):
         return size(max_length)
     return size
+
+
+def get_column_size_info(
+    name: str, type_name: str, max_length: Optional[int] = None
+) -> ColumnSizeInfo:
+    """Create a ColumnSizeInfo from column name and type."""
+    size = get_type_byte_size(type_name, max_length)
+    is_blob = size == BLOB_FLAG
+    return ColumnSizeInfo(
+        name=name,
+        type_name=type_name,
+        estimated_bytes=0 if is_blob else size,
+        is_blob=is_blob,
+        max_length=max_length,
+    )
 
 
 _FROM_PATTERN = re.compile(
@@ -161,3 +201,56 @@ def extract_tables_from_query(
             else:
                 tables.append((raw, None))
     return tables
+
+
+class SizeEstimator:
+    """Estimates query result memory footprint."""
+
+    def __init__(self, engine: Any = None):
+        self._engine = engine
+        self._dialect = engine.dialect.name if engine else "unknown"
+        self._column_cache: Dict[str, List[ColumnSizeInfo]] = {}
+
+    @property
+    def dialect(self) -> str:
+        return self._dialect
+
+    def estimate_result_size(
+        self,
+        query: str,
+        columns: Optional[List[ColumnSizeInfo]] = None,
+        estimated_rows: Optional[int] = None,
+    ) -> SizeEstimate:
+        """Estimate result size from column info and row estimate.
+
+        If columns not provided, uses cache or returns heuristic estimate.
+        If estimated_rows not provided, defaults to 1000.
+        """
+        if columns is None:
+            columns = self._column_cache.get(query, [])
+
+        if not columns:
+            return SizeEstimate(
+                estimated_rows=estimated_rows or 1000,
+                estimated_bytes_per_row=256,
+                estimated_total_bytes=(estimated_rows or 1000) * 256,
+                confidence="low",
+                source="heuristic",
+            )
+
+        blob_columns = [c.name for c in columns if c.is_blob]
+        bytes_per_row = sum(c.estimated_bytes for c in columns if not c.is_blob)
+        rows = estimated_rows or 1000
+
+        return SizeEstimate(
+            estimated_rows=rows,
+            estimated_bytes_per_row=bytes_per_row,
+            estimated_total_bytes=rows * bytes_per_row,
+            blob_columns=blob_columns,
+            confidence="medium" if estimated_rows else "low",
+            source="metadata_only",
+        )
+
+    def cache_columns(self, query: str, columns: List[ColumnSizeInfo]) -> None:
+        """Cache column info for a query."""
+        self._column_cache[query] = columns
