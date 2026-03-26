@@ -258,7 +258,6 @@ def parse_mermaid_to_graph(
     except UnicodeDecodeError as e:
         raise ValueError(f"Failed to read Mermaid file {file_path}: {e}") from e
     G = MermaidFlowchartParser().parse(text)
-    from localdata_mcp.graph_parsers import _networkx_to_storage
+    from localdata_mcp.graph_parsers import _store_and_validate
 
-    _networkx_to_storage(G, manager)
-    return manager.get_graph_stats()
+    return _store_and_validate(G, manager)
