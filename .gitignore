@@ -1,3 +1,6 @@
+# Sphinx
+docs/_build/
+
 # Python
 __pycache__/
 *.py[cod]
