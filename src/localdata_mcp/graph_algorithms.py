@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import networkx as nx
 
 from .graph_manager import GraphStorageManager
+from .tree_storage import deserialize_value
 
 MAX_EXPORT_BYTES = 100 * 1024  # 100 KB
 
@@ -21,8 +22,38 @@ def _storage_to_networkx(manager: GraphStorageManager) -> nx.MultiDiGraph:
     return G
 
 
+def _load_node_properties(manager: GraphStorageManager, node_id: str) -> Dict[str, Any]:
+    """Fetch all properties for a node and return as a deserialized dict."""
+    props: Dict[str, Any] = {}
+    offset = 0
+    limit = 500
+    while True:
+        batch = manager.list_properties("node", node_id, offset=offset, limit=limit)
+        for prop in batch:
+            props[prop.key] = deserialize_value(prop.value, prop.value_type)
+        if len(batch) < limit:
+            break
+        offset += limit
+    return props
+
+
+def _load_edge_properties(manager: GraphStorageManager, edge_id: str) -> Dict[str, Any]:
+    """Fetch all properties for an edge and return as a deserialized dict."""
+    props: Dict[str, Any] = {}
+    offset = 0
+    limit = 500
+    while True:
+        batch = manager.list_properties("edge", edge_id, offset=offset, limit=limit)
+        for prop in batch:
+            props[prop.key] = deserialize_value(prop.value, prop.value_type)
+        if len(batch) < limit:
+            break
+        offset += limit
+    return props
+
+
 def _load_nodes(G: nx.MultiDiGraph, manager: GraphStorageManager) -> None:
-    """Load all nodes from storage into *G*."""
+    """Load all nodes from storage into *G*, including metadata properties."""
     offset = 0
     limit = 500
     while True:
@@ -31,6 +62,7 @@ def _load_nodes(G: nx.MultiDiGraph, manager: GraphStorageManager) -> None:
             attrs: Dict[str, Any] = {}
             if node.label:
                 attrs["label"] = node.label
+            attrs.update(_load_node_properties(manager, node.node_id))
             G.add_node(node.node_id, **attrs)
         if len(nodes) < limit:
             break
@@ -38,7 +70,7 @@ def _load_nodes(G: nx.MultiDiGraph, manager: GraphStorageManager) -> None:
 
 
 def _load_edges(G: nx.MultiDiGraph, manager: GraphStorageManager) -> None:
-    """Load all edges from storage into *G*."""
+    """Load all edges from storage into *G*, including metadata properties."""
     offset = 0
     limit = 500
     while True:
@@ -49,6 +81,7 @@ def _load_edges(G: nx.MultiDiGraph, manager: GraphStorageManager) -> None:
                 attrs["label"] = edge.label
             if edge.weight is not None:
                 attrs["weight"] = edge.weight
+            attrs.update(_load_edge_properties(manager, str(edge.id)))
             G.add_edge(edge.source_id, edge.target_id, **attrs)
         if len(edges) < limit:
             break
