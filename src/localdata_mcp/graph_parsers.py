@@ -35,6 +35,20 @@ def _coerce_value(value: Any) -> Any:
     return value
 
 
+def _store_and_validate(
+    G: nx.DiGraph,
+    manager: GraphStorageManager,
+) -> Dict[str, Any]:
+    """Store a NetworkX graph and run validation, returning stats."""
+    stats = _networkx_to_storage(G, manager)
+    from .graph_validation import validate_graph
+
+    warnings = validate_graph(manager)
+    if warnings:
+        stats["warnings"] = warnings
+    return stats
+
+
 def _networkx_to_storage(
     G: nx.DiGraph,
     manager: GraphStorageManager,
@@ -152,7 +166,7 @@ def parse_dot_to_graph(
     G: nx.DiGraph = nx.drawing.nx_pydot.from_pydot(graphs[0])
     if not G.is_directed():
         G = G.to_directed()
-    return _networkx_to_storage(G, manager)
+    return _store_and_validate(G, manager)
 
 
 def parse_gml_to_graph(
@@ -180,7 +194,7 @@ def parse_gml_to_graph(
     if not G.is_directed():
         G = G.to_directed()
     _normalize_gml_attrs(G)
-    return _networkx_to_storage(G, manager)
+    return _store_and_validate(G, manager)
 
 
 def parse_graphml_to_graph(
@@ -207,7 +221,7 @@ def parse_graphml_to_graph(
 
     if not G.is_directed():
         G = G.to_directed()
-    return _networkx_to_storage(G, manager)
+    return _store_and_validate(G, manager)
 
 
 # Re-export Mermaid parser for convenience
