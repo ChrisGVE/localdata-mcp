@@ -26,12 +26,26 @@ cd localdata-mcp
 pip install -e .
 ```
 
+### What's included
+
+The base install covers SQL databases (SQLite, PostgreSQL, MySQL, DuckDB), all spreadsheet formats, flat files (CSV, TSV, Parquet, Feather, Arrow, HDF5), structured data (JSON, YAML, TOML, XML, INI), and directed graphs (DOT, GML, GraphML, Mermaid). No extras needed for these.
+
 ### Optional dependencies
 
-For remote database support (Redis, MongoDB, Elasticsearch, InfluxDB, Neo4j, CouchDB):
+Support for Redis, MongoDB, Elasticsearch, InfluxDB, Neo4j, and CouchDB requires the `modern-databases` extra. These are not installed by default.
 
 ```bash
-pip install localdata-mcp[modern-databases]
+# pip
+pip install "localdata-mcp[modern-databases]"
+
+# uv tool
+uv tool install "localdata-mcp[modern-databases]"
+
+# uvx (note the --from syntax)
+uvx --from "localdata-mcp[modern-databases]" localdata-mcp
+
+# pipx
+pipx install "localdata-mcp[modern-databases]"
 ```
 
 ## MCP client configuration
