@@ -388,6 +388,41 @@ class ConfigManager:
             memory_warning_threshold=perf_data.get("memory_warning_threshold", 0.85),
         )
 
+    def get_staging_config(self):
+        """Get staging database configuration."""
+        from .config_schemas import StagingConfig
+
+        data = self._config_data.get("staging", {})
+        return StagingConfig(**data) if data else StagingConfig()
+
+    def get_memory_config(self):
+        """Get memory budget configuration."""
+        from .config_schemas import MemoryConfig
+
+        data = self._config_data.get("memory", {})
+        return MemoryConfig(**data) if data else MemoryConfig()
+
+    def get_query_config(self):
+        """Get query execution configuration."""
+        from .config_schemas import QueryConfig
+
+        data = self._config_data.get("query", {})
+        return QueryConfig(**data) if data else QueryConfig()
+
+    def get_connections_config(self):
+        """Get connections configuration."""
+        from .config_schemas import ConnectionsConfig
+
+        data = self._config_data.get("connections", {})
+        return ConnectionsConfig(**data) if data else ConnectionsConfig()
+
+    def get_security_config(self):
+        """Get security configuration."""
+        from .config_schemas import SecurityConfig
+
+        data = self._config_data.get("security", {})
+        return SecurityConfig(**data) if data else SecurityConfig()
+
     def has_config_changed(self) -> bool:
         """Check if any configuration files have been modified since last reload."""
         for file_path, last_mtime in self._file_mtimes.items():
