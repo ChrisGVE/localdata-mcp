@@ -1,12 +1,15 @@
 """LocalData MCP - Database connection and query management."""
 
+import argparse
 import atexit
 import configparser
 import hashlib
+import importlib.metadata
 import json
 import logging
 import os
 import psutil
+import sys
 import tempfile
 import threading
 import time
@@ -49,7 +52,7 @@ from .response_metadata import (
 
 # Import structured logging system
 from .logging_manager import get_logging_manager, get_logger
-from .config_manager import get_config_manager
+from .config_manager import get_config_manager, initialize_config
 
 # Import backward compatibility management
 from .compatibility_manager import get_compatibility_manager
@@ -3556,25 +3559,69 @@ class DatabaseManager:
             return f"Error checking compatibility: {e}"
 
 
+def _get_version() -> str:
+    """Return package version from metadata, with fallback."""
+    try:
+        return importlib.metadata.version("localdata-mcp")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _parse_cli_args() -> argparse.Namespace:
+    """Parse CLI arguments without consuming stdin (needed for MCP stdio transport)."""
+    parser = argparse.ArgumentParser(
+        description="LocalData MCP server",
+        prog="localdata-mcp",
+    )
+    parser.add_argument(
+        "--config",
+        "-c",
+        type=str,
+        default=None,
+        help="Path to YAML configuration file (highest precedence)",
+    )
+    parser.add_argument(
+        "--version",
+        "-V",
+        action="version",
+        version=f"localdata-mcp {_get_version()}",
+    )
+    parser.add_argument(
+        "--migrate-config",
+        action="store_true",
+        default=False,
+        help="Migrate legacy configuration to YAML format",
+    )
+    args, _ = parser.parse_known_args(sys.argv[1:])
+    return args
+
+
 def main():
     """Main entry point with structured logging initialization."""
+    args = _parse_cli_args()
+
+    if args.migrate_config:
+        print("Migration not yet implemented")
+        sys.exit(0)
+
+    if args.config:
+        initialize_config(config_file=args.config)
+
     try:
-        # Log system startup with structured logging
+        version = _get_version()
         with logging_manager.context(
             operation="system_startup", component="localdata_mcp"
         ):
             logger.info(
                 "LocalData MCP starting up",
-                version="1.3.1",
+                version=version,
                 structured_logging_enabled=True,
                 metrics_enabled=logging_config.enable_metrics,
                 security_logging_enabled=logging_config.enable_security_logging,
             )
 
-        # Initialize database manager
         manager = DatabaseManager()
 
-        # Log successful initialization
         with logging_manager.context(
             operation="system_ready", component="localdata_mcp"
         ):
@@ -3587,7 +3634,6 @@ def main():
                 else None,
             )
 
-        # Start MCP server
         mcp.run(transport="stdio")
 
     except Exception as e:
