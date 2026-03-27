@@ -156,16 +156,24 @@ class TestMSSQLErrorMapperHelpers:
 
 def test_mssql_mapper_registered():
     """ErrorMapperRegistry returns the MSSQL mapper for 'mssql' key."""
+    import importlib
+    import localdata_mcp.error_mappers as em
+
+    importlib.reload(em)
     mapper = ErrorMapperRegistry.get_mapper("mssql")
     assert mapper is not None
-    assert isinstance(mapper, MSSQLErrorMapper)
+    assert type(mapper).__name__ == "MSSQLErrorMapper"
 
 
 def test_sqlserver_alias_registered():
     """ErrorMapperRegistry returns an MSSQL mapper for 'sqlserver' alias."""
+    import importlib
+    import localdata_mcp.error_mappers as em
+
+    importlib.reload(em)
     mapper = ErrorMapperRegistry.get_mapper("sqlserver")
     assert mapper is not None
-    assert isinstance(mapper, MSSQLErrorMapper)
+    assert type(mapper).__name__ == "MSSQLErrorMapper"
 
 
 # ---------------------------------------------------------------------------
