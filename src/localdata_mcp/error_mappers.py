@@ -1,11 +1,12 @@
-"""Database-specific error mappers for SQLite, PostgreSQL, MySQL, and DuckDB.
+"""Database-specific error mappers for SQLite, PostgreSQL, MySQL, DuckDB, and MSSQL.
 
 Each mapper translates raw database exceptions into StructuredErrorResponse
 instances using backend-specific heuristics (message parsing, SQLSTATE codes,
 error numbers, or exception class names).
 """
 
-from typing import Dict, List, Tuple
+import re
+from typing import Dict, List, Optional, Tuple
 
 from .error_handler import ErrorCategory
 from .error_classification import (
@@ -285,3 +286,78 @@ ErrorMapperRegistry.register("postgres", PostgreSQLErrorMapper())
 ErrorMapperRegistry.register("mysql", MySQLErrorMapper())
 ErrorMapperRegistry.register("mariadb", MySQLErrorMapper())
 ErrorMapperRegistry.register("duckdb", DuckDBErrorMapper())
+
+
+# ---------------------------------------------------------------------------
+# MS SQL Server
+# ---------------------------------------------------------------------------
+
+_MSSQL_CODE_MAP: Dict[int, Tuple[ErrorCategory, str]] = {
+    18456: (ErrorCategory.AUTH_ERROR, "Login failed"),
+    18452: (ErrorCategory.AUTH_ERROR, "Login from untrusted domain"),
+    208: (ErrorCategory.SCHEMA_ERROR, "Invalid object name"),
+    207: (ErrorCategory.SCHEMA_ERROR, "Invalid column name"),
+    102: (ErrorCategory.SYNTAX_ERROR, "Incorrect syntax"),
+    156: (ErrorCategory.SYNTAX_ERROR, "Incorrect syntax near keyword"),
+    1205: (ErrorCategory.TRANSIENT_ERROR, "Transaction deadlocked"),
+    1222: (ErrorCategory.TRANSIENT_ERROR, "Lock request timeout"),
+    547: (ErrorCategory.CONSTRAINT_ERROR, "Constraint violation"),
+    2627: (ErrorCategory.CONSTRAINT_ERROR, "Unique key violation"),
+    2601: (ErrorCategory.CONSTRAINT_ERROR, "Duplicate key"),
+    1105: (ErrorCategory.RESOURCE_ERROR, "Could not allocate space"),
+    9002: (ErrorCategory.RESOURCE_ERROR, "Transaction log full"),
+}
+
+_MSSQL_SUGGESTIONS: Dict[ErrorCategory, str] = {
+    ErrorCategory.AUTH_ERROR: "Check SQL Server credentials and login permissions",
+    ErrorCategory.SCHEMA_ERROR: "Verify object and column names in the database",
+    ErrorCategory.SYNTAX_ERROR: "Check T-SQL syntax",
+    ErrorCategory.RESOURCE_ERROR: "Check SQL Server disk space and log file size",
+    ErrorCategory.TRANSIENT_ERROR: "Retry the operation",
+    ErrorCategory.CONNECTION_ERROR: "Check SQL Server availability and network",
+    ErrorCategory.CONSTRAINT_ERROR: "Check data constraints and unique keys",
+}
+
+
+class MSSQLErrorMapper(DatabaseErrorMapper):
+    """Maps MS SQL Server error numbers and severity to structured responses."""
+
+    def map_error(self, exception: Exception) -> StructuredErrorResponse:
+        errno = self._extract_errno(exception)
+        severity = self._extract_severity(exception)
+
+        if errno is not None and errno in _MSSQL_CODE_MAP:
+            cat, desc = _MSSQL_CODE_MAP[errno]
+        elif severity is not None and severity >= 20:
+            cat, desc = ErrorCategory.CONNECTION_ERROR, "Fatal error"
+        elif severity is not None and severity >= 17:
+            cat, desc = ErrorCategory.RESOURCE_ERROR, "Resource error"
+        else:
+            return GenericDatabaseErrorMapper().map_error(exception)
+
+        return StructuredErrorResponse(
+            error_type=cat,
+            is_retryable=cat
+            in (ErrorCategory.TRANSIENT_ERROR, ErrorCategory.CONNECTION_ERROR),
+            message=desc,
+            suggestion=_MSSQL_SUGGESTIONS.get(cat, "Check database state"),
+            database_error_code=str(errno) if errno is not None else None,
+        )
+
+    def _extract_errno(self, exc: Exception) -> Optional[int]:
+        """Extract error number from pymssql or pyodbc exception."""
+        # pymssql: exc.args = (errno, message)
+        if hasattr(exc, "args") and exc.args and isinstance(exc.args[0], int):
+            return exc.args[0]
+        # Try parsing from message string
+        m = re.search(r"Msg (\d+)", str(exc))
+        return int(m.group(1)) if m else None
+
+    def _extract_severity(self, exc: Exception) -> Optional[int]:
+        """Extract severity level from exception message."""
+        m = re.search(r"Severity (\d+)", str(exc))
+        return int(m.group(1)) if m else None
+
+
+ErrorMapperRegistry.register("mssql", MSSQLErrorMapper())
+ErrorMapperRegistry.register("sqlserver", MSSQLErrorMapper())
