@@ -2,8 +2,12 @@
 
 from localdata_mcp.markdown_export import (
     MAX_EXPORT_BYTES,
+    _render_properties_markdown,
+    _tree_node_to_markdown,
     escape_markdown_cell,
     escape_markdown_text,
+    export_query_results_markdown,
+    export_tree_markdown,
     generate_markdown_table,
 )
 
@@ -190,3 +194,183 @@ class TestMarkdownTable:
         )
         lines = result.split("\n")
         assert lines[2] == "| only_one |  |  |"
+
+
+class TestExportQueryResultsMarkdown:
+    """Tests for export_query_results_markdown."""
+
+    def test_basic_export(self):
+        result = export_query_results_markdown(
+            columns=["Name", "Age"],
+            rows=[["Alice", 30], ["Bob", 25]],
+        )
+        assert result["format"] == "markdown"
+        assert "| Name | Age |" in result["content"]
+        assert "| Alice | 30 |" in result["content"]
+
+    def test_with_query_header(self):
+        result = export_query_results_markdown(
+            columns=["Id"],
+            rows=[[1]],
+            query="SELECT * FROM users",
+        )
+        assert "**Query**: `SELECT * FROM users`" in result["content"]
+
+    def test_without_query_header(self):
+        result = export_query_results_markdown(
+            columns=["Id"],
+            rows=[[1]],
+            query=None,
+        )
+        assert "Query" not in result["content"]
+
+    def test_numeric_right_alignment(self):
+        result = export_query_results_markdown(
+            columns=["Name", "Score"],
+            rows=[["Alice", 95], ["Bob", 80]],
+        )
+        lines = result["content"].split("\n")
+        separator = [l for l in lines if "---" in l][0]
+        # First column (str) left, second column (int) right
+        assert "---:" in separator
+        parts = separator.split("|")
+        # parts: ['', ' --- ', ' ---: ', '']
+        assert parts[1].strip() == "---"
+        assert parts[2].strip() == "---:"
+
+    def test_truncation_flag(self):
+        rows = [[i] for i in range(10)]
+        result = export_query_results_markdown(
+            columns=["Val"],
+            rows=rows,
+            max_rows=5,
+        )
+        assert result["truncated"] is True
+        assert result["total_rows"] == 10
+
+    def test_total_rows_from_param(self):
+        rows = [[i] for i in range(10)]
+        result = export_query_results_markdown(
+            columns=["Val"],
+            rows=rows,
+            total_rows=1000,
+        )
+        assert result["total_rows"] == 1000
+        assert result["truncated"] is True
+        assert "1000" in result["content"]
+
+    def test_empty_results(self):
+        result = export_query_results_markdown(
+            columns=["A", "B"],
+            rows=[],
+        )
+        assert result["format"] == "markdown"
+        assert result["truncated"] is False
+        assert result["total_rows"] == 0
+        assert "| A | B |" in result["content"]
+
+    def test_returns_dict_structure(self):
+        result = export_query_results_markdown(
+            columns=["X"],
+            rows=[[1]],
+        )
+        assert set(result.keys()) == {"format", "content", "truncated", "total_rows"}
+
+
+class TestTreeNodeToMarkdown:
+    """Tests for _tree_node_to_markdown."""
+
+    def test_simple_node(self):
+        node = {"name": "Root"}
+        lines = _tree_node_to_markdown(node, depth=1)
+        assert lines[0] == "## Root"
+
+    def test_nested_nodes(self):
+        node = {
+            "name": "Parent",
+            "children": [{"name": "Child"}],
+        }
+        lines = _tree_node_to_markdown(node, depth=1)
+        assert "## Parent" in lines
+        assert "### Child" in lines
+
+    def test_deep_nesting_beyond_headings(self):
+        """Depth > 6 should use bullet points instead of headings."""
+        node = {"name": "Deep"}
+        lines = _tree_node_to_markdown(node, depth=7)
+        assert any("- **Deep**" in line for line in lines)
+        assert not any(line.startswith("#") for line in lines)
+
+    def test_leaf_with_value(self):
+        node = {"name": "Leaf", "value": 42}
+        lines = _tree_node_to_markdown(node, depth=1)
+        assert "## Leaf" in lines
+        assert any("42" in line for line in lines)
+
+
+class TestRenderProperties:
+    """Tests for _render_properties_markdown."""
+
+    def test_simple_properties(self):
+        props = {"color": "red", "size": 10}
+        lines = _render_properties_markdown(props)
+        assert len(lines) == 2
+        assert any("color" in line and "red" in line for line in lines)
+        assert any("size" in line and "10" in line for line in lines)
+
+    def test_list_property(self):
+        props = {"tags": ["a", "b", "c"]}
+        lines = _render_properties_markdown(props)
+        assert any("tags" in line for line in lines)
+        assert any("1. a" in line for line in lines)
+        assert any("2. b" in line for line in lines)
+        assert any("3. c" in line for line in lines)
+
+    def test_dict_property(self):
+        props = {"nested": {"x": 1}}
+        lines = _render_properties_markdown(props)
+        assert len(lines) == 1
+        assert "`" in lines[0]  # dict shown inline with backticks
+
+
+class TestExportTreeMarkdown:
+    """Tests for export_tree_markdown."""
+
+    def test_basic_tree_export(self):
+        tree = {
+            "name": "Root",
+            "children": [{"name": "A"}, {"name": "B"}],
+        }
+        result = export_tree_markdown(tree)
+        assert result["format"] == "markdown"
+        assert "## Root" in result["content"]
+        assert "### A" in result["content"]
+        assert "### B" in result["content"]
+
+    def test_with_title(self):
+        tree = {"name": "Node"}
+        result = export_tree_markdown(tree, title="My Tree")
+        assert result["content"].startswith("# My Tree")
+
+    def test_list_of_nodes(self):
+        nodes = [{"name": "First"}, {"name": "Second"}]
+        result = export_tree_markdown(nodes)
+        assert "## First" in result["content"]
+        assert "## Second" in result["content"]
+
+    def test_truncation_large_tree(self):
+        """A tree that exceeds MAX_EXPORT_BYTES should be truncated."""
+        big_value = "x" * 1000
+        children = [{"name": f"child_{i}", "value": big_value} for i in range(200)]
+        tree = {"name": "Big", "children": children}
+        result = export_tree_markdown(tree)
+        assert result["truncated"] is True
+        assert "truncated due to size limits" in result["content"]
+        assert len(result["content"].encode("utf-8")) <= (
+            MAX_EXPORT_BYTES + 200  # small overhead from truncation message
+        )
+
+    def test_empty_tree(self):
+        result = export_tree_markdown({})
+        assert result["format"] == "markdown"
+        assert result["truncated"] is False
