@@ -1,5 +1,6 @@
 """Tests for the size estimation engine foundation."""
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -498,3 +499,184 @@ class TestEstimateWithExtraction:
         est._extract_column_info.assert_called_once_with("SELECT * FROM t")
         assert result.estimated_bytes_per_row == 16
         assert result.source == "metadata_only"
+
+
+class TestExplainParsers:
+    """Tests for EXPLAIN parsers and the _run_explain dispatcher."""
+
+    @staticmethod
+    def _mock_engine(dialect: str = "sqlite") -> MagicMock:
+        engine = MagicMock()
+        engine.dialect.name = dialect
+        return engine
+
+    @staticmethod
+    def _mock_conn_with_rows(rows, engine):
+        """Wire up engine.connect() context manager to return rows."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = rows
+        mock_result.scalar.return_value = rows[0] if rows else None
+        mock_result.keys.return_value = ["id", "select_type", "table", "type", "rows"]
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        engine.connect.return_value = mock_conn
+        return mock_result
+
+    def test_sqlite_explain_with_index(self):
+        from localdata_mcp._explain_parsers import parse_explain_sqlite
+
+        engine = self._mock_engine()
+        rows = [("0", "0", "0", "SEARCH users USING INDEX idx_name")]
+        self._mock_conn_with_rows(rows, engine)
+        result = parse_explain_sqlite(engine, "SELECT * FROM users WHERE name='a'")
+        assert result is not None
+        assert result["scan_type"] == "index"
+        assert result["confidence"] == 0.5
+
+    def test_sqlite_explain_scan(self):
+        from localdata_mcp._explain_parsers import parse_explain_sqlite
+
+        engine = self._mock_engine()
+        rows = [("0", "0", "0", "SCAN users")]
+        self._mock_conn_with_rows(rows, engine)
+        result = parse_explain_sqlite(engine, "SELECT * FROM users")
+        assert result is not None
+        assert result["scan_type"] == "scan"
+        assert result["confidence"] == 0.3
+
+    def test_sqlite_explain_failure(self):
+        from localdata_mcp._explain_parsers import parse_explain_sqlite
+
+        engine = self._mock_engine()
+        engine.connect.side_effect = RuntimeError("fail")
+        result = parse_explain_sqlite(engine, "SELECT 1")
+        assert result is None
+
+    def test_postgresql_explain_json(self):
+        from localdata_mcp._explain_parsers import parse_explain_postgresql
+
+        engine = self._mock_engine("postgresql")
+        import json
+
+        plan_json = json.dumps(
+            [{"Plan": {"Node Type": "Seq Scan", "Plan Rows": 500, "Total Cost": 10.5}}]
+        )
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = plan_json
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        engine.connect.return_value = mock_conn
+        result = parse_explain_postgresql(engine, "SELECT * FROM users")
+        assert result is not None
+        assert result["estimated_rows"] == 500
+        assert result["confidence"] == 0.7
+        assert result["scan_type"] == "Seq Scan"
+
+    def test_mysql_explain_rows(self):
+        from localdata_mcp._explain_parsers import parse_explain_mysql
+
+        engine = self._mock_engine("mysql")
+        mock_row = MagicMock()
+        mock_row._mapping = {"rows": 100, "type": "ref"}
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [mock_row]
+        mock_result.keys.return_value = ["type", "rows"]
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        engine.connect.return_value = mock_conn
+        result = parse_explain_mysql(engine, "SELECT * FROM users")
+        assert result is not None
+        assert result["estimated_rows"] == 100
+        assert result["confidence"] == 0.7
+        assert result["scan_type"] == "ref"
+
+    def test_run_explain_sqlite_dialect(self):
+        engine = self._mock_engine("sqlite")
+        rows = [("0", "0", "0", "SCAN users")]
+        self._mock_conn_with_rows(rows, engine)
+        est = SizeEstimator(engine=engine)
+        result = est._run_explain("SELECT * FROM users")
+        assert result is not None
+        assert result["scan_type"] == "scan"
+
+    def test_run_explain_unknown_dialect(self):
+        engine = self._mock_engine("duckdb")
+        est = SizeEstimator(engine=engine)
+        result = est._run_explain("SELECT * FROM users")
+        assert result is None
+
+
+class TestHeuristics:
+    """Tests for _estimate_rows_heuristic."""
+
+    @staticmethod
+    def _mock_engine(dialect: str = "sqlite") -> MagicMock:
+        engine = MagicMock()
+        engine.dialect.name = dialect
+        return engine
+
+    def test_heuristic_with_count(self):
+        engine = self._mock_engine()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 5000
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        engine.connect.return_value = mock_conn
+        est = SizeEstimator(engine=engine)
+        rows, conf = est._estimate_rows_heuristic("SELECT * FROM users")
+        assert rows == 5000
+        assert conf == "low"
+
+    def test_heuristic_with_where(self):
+        engine = self._mock_engine()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 5000
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        engine.connect.return_value = mock_conn
+        est = SizeEstimator(engine=engine)
+        rows, conf = est._estimate_rows_heuristic("SELECT * FROM users WHERE active=1")
+        assert rows == 500  # 10% of 5000
+        assert conf == "low"
+
+    def test_heuristic_default(self):
+        est = SizeEstimator()  # no engine
+        rows, conf = est._estimate_rows_heuristic("SELECT * FROM users")
+        assert rows == 1000
+        assert conf == "low"
+
+
+class TestSampleEstimation:
+    """Tests for estimate_from_sample."""
+
+    def test_estimate_from_sample(self):
+        est = SizeEstimator()
+        sample = [[1, "hello", 3.14], [2, "world", 2.72]]
+        cols = ["id", "name", "val"]
+        result = est.estimate_from_sample(sample, cols, total_rows=1000)
+        assert result.estimated_rows == 1000
+        assert result.confidence == "high"
+        assert result.source == "metadata_only"
+        expected_bytes = sum(sys.getsizeof(c) for row in sample for c in row)
+        expected_bpr = expected_bytes // 2
+        assert result.estimated_bytes_per_row == expected_bpr
+        assert result.estimated_total_bytes == 1000 * expected_bpr
+
+    def test_estimate_from_empty_sample(self):
+        est = SizeEstimator()
+        result = est.estimate_from_sample([], ["id"], total_rows=500)
+        assert result.estimated_rows == 500
+        assert result.estimated_bytes_per_row == 256
+        assert result.estimated_total_bytes == 500 * 256
+        assert result.confidence == "low"
+        assert result.source == "heuristic"
