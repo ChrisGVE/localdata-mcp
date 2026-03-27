@@ -2295,6 +2295,9 @@ class DatabaseManager:
             conn = self._get_connection(name)
             conn.dispose()
 
+            # Cascade-clean staging databases for this connection
+            staging_cleaned = get_staging_manager().cleanup_by_parent(name)
+
             with self.connection_lock:
                 del self.connections[name]
                 del self.db_types[name]
@@ -2317,7 +2320,15 @@ class DatabaseManager:
             logger.info(
                 f"Successfully disconnected from database '{name}'. Total connections: {self.connection_count}"
             )
-            return f"Successfully disconnected from database '{name}'."
+            msg = f"Successfully disconnected from database '{name}'."
+            if staging_cleaned:
+                msg += f" Cleaned {staging_cleaned} staging database(s)."
+            return json.dumps(
+                {
+                    "message": msg,
+                    "staging_cleaned": staging_cleaned,
+                }
+            )
         except ValueError as e:
             logger.error(f"Database '{name}' not found for disconnection: {e}")
             return str(e)
@@ -2860,11 +2871,14 @@ class DatabaseManager:
         except Exception as e:
             return f"An error occurred while retrieving query chunk: {e}"
 
-    def list_databases(self) -> str:
+    def list_databases(self, include_staging: bool = False) -> str:
         """
         List all available database connections with their SQL flavor information.
+
+        Args:
+            include_staging: When True, append active staging databases to the list.
         """
-        if not self.connections:
+        if not self.connections and not include_staging:
             return json.dumps(
                 {"message": "No databases are currently connected.", "databases": []}
             )
@@ -2885,6 +2899,10 @@ class DatabaseManager:
             databases.append(entry)
 
         response = {"total_connections": len(databases), "databases": databases}
+
+        if include_staging:
+            staging_entries = get_staging_manager().list_staging()
+            response["staging_databases"] = staging_entries
 
         return json.dumps(response, indent=2)
 
