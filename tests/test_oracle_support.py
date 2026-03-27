@@ -124,9 +124,13 @@ def test_oracle_error_mapper_no_ora_code(mapper):
 
 def test_oracle_mapper_registered():
     """The Oracle mapper is registered in ErrorMapperRegistry."""
+    import importlib
+    import localdata_mcp.error_mappers as em
+
+    importlib.reload(em)
     mapper = ErrorMapperRegistry.get_mapper("oracle")
     assert mapper is not None
-    assert isinstance(mapper, OracleErrorMapper)
+    assert type(mapper).__name__ == "OracleErrorMapper"
 
 
 # ---------------------------------------------------------------------------
