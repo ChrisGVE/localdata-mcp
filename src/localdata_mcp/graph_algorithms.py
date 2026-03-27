@@ -240,15 +240,58 @@ def _resolve_format(format: str) -> tuple:
         "gml": _export_gml,
         "graphml": _export_graphml,
         "mermaid": export_mermaid,
+        "markdown": "markdown",
+        "md": "markdown",
     }
     fmt = format.lower()
     if fmt == "mmd":
         fmt = "mermaid"
     if fmt not in exporters:
         return None, {
-            "error": f"Unsupported format '{format}'. Use dot, gml, graphml, or mermaid."
+            "error": (
+                f"Unsupported format '{format}'. "
+                "Use dot, gml, graphml, mermaid, or markdown."
+            )
         }
     return fmt, exporters
+
+
+def _export_graph_as_markdown(
+    manager: GraphStorageManager, name: str
+) -> Dict[str, Any]:
+    """Export graph as markdown using graph_markdown_export."""
+    from .graph_markdown_export import export_graph_markdown
+
+    stats = manager.get_graph_stats()
+    nodes: List[Dict[str, Any]] = []
+    offset = 0
+    while True:
+        batch = manager.list_nodes(offset=offset, limit=500)
+        for n in batch:
+            props = _load_node_properties(manager, n.node_id)
+            nodes.append({"id": n.node_id, "label": n.label or "", "properties": props})
+        if len(batch) < 500:
+            break
+        offset += 500
+
+    edges: List[Dict[str, Any]] = []
+    offset = 0
+    while True:
+        batch = manager.list_edges(offset=offset, limit=500)
+        for e in batch:
+            edges.append(
+                {
+                    "source": e.source_id,
+                    "target": e.target_id,
+                    "label": e.label or "-",
+                    "weight": e.weight if e.weight is not None else "-",
+                }
+            )
+        if len(batch) < 500:
+            break
+        offset += 500
+
+    return export_graph_markdown(nodes, edges, stats=stats, title=name)
 
 
 def tool_export_graph(
@@ -261,6 +304,10 @@ def tool_export_graph(
     fmt, exporters = _resolve_format(format)
     if fmt is None:
         return exporters  # error dict
+
+    # Markdown uses its own pipeline (not NetworkX graph object)
+    if fmt == "markdown":
+        return _export_graph_as_markdown(manager, name)
 
     G = _storage_to_networkx(manager)
     if node_id is not None:
