@@ -44,6 +44,7 @@ class DatabaseType(str, Enum):
     NEO4J = "neo4j"
     COUCHDB = "couchdb"
     ORACLE = "oracle"
+    MSSQL = "mssql"
     # File formats
     CSV = "csv"
     JSON = "json"
