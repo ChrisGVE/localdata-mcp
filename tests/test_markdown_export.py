@@ -8,6 +8,7 @@ from localdata_mcp.markdown_export import (
     escape_markdown_text,
     export_query_results_markdown,
     export_tree_markdown,
+    format_query_results_as_markdown,
     generate_markdown_table,
 )
 
@@ -307,6 +308,20 @@ class TestTreeNodeToMarkdown:
         assert "## Leaf" in lines
         assert any("42" in line for line in lines)
 
+    def test_node_with_properties(self):
+        """A node with a properties dict should render bullet points."""
+        node = {"name": "Config", "properties": {"env": "prod", "debug": False}}
+        lines = _tree_node_to_markdown(node, depth=1)
+        assert "## Config" in lines
+        assert any("env" in line and "prod" in line for line in lines)
+        assert any("debug" in line and "False" in line for line in lines)
+
+    def test_node_with_key_fallback(self):
+        """A node with 'key' instead of 'name' should still render."""
+        node = {"key": "FallbackName"}
+        lines = _tree_node_to_markdown(node, depth=1)
+        assert any("FallbackName" in line for line in lines)
+
 
 class TestRenderProperties:
     """Tests for _render_properties_markdown."""
@@ -374,3 +389,46 @@ class TestExportTreeMarkdown:
         result = export_tree_markdown({})
         assert result["format"] == "markdown"
         assert result["truncated"] is False
+
+
+class TestFormatQueryResultsAsMarkdown:
+    """Tests for the execute_query bridge helper."""
+
+    def test_basic_conversion(self):
+        data = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
+        result = format_query_results_as_markdown(data)
+        assert result["format"] == "markdown"
+        assert "| name | age |" in result["content"]
+        assert "Alice" in result["content"]
+        assert result["total_rows"] == 2
+
+    def test_empty_data(self):
+        result = format_query_results_as_markdown([])
+        assert result["format"] == "markdown"
+        assert result["total_rows"] == 0
+
+    def test_with_query_string(self):
+        data = [{"id": 1}]
+        result = format_query_results_as_markdown(data, query="SELECT id FROM t")
+        assert "**Query**: `SELECT id FROM t`" in result["content"]
+
+    def test_with_total_rows(self):
+        data = [{"x": i} for i in range(5)]
+        result = format_query_results_as_markdown(data, total_rows=500)
+        assert result["total_rows"] == 500
+        assert result["truncated"] is True
+
+    def test_max_rows_respected(self):
+        data = [{"v": i} for i in range(20)]
+        result = format_query_results_as_markdown(data, max_rows=5)
+        assert result["truncated"] is True
+        assert "15 more rows" in result["content"]
+
+    def test_preserves_column_order(self):
+        data = [{"z_col": 1, "a_col": 2}]
+        result = format_query_results_as_markdown(data)
+        lines = result["content"].split("\n")
+        header = lines[0]
+        z_pos = header.index("z_col")
+        a_pos = header.index("a_col")
+        assert z_pos < a_pos
