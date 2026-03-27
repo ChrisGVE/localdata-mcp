@@ -4,12 +4,20 @@ import threading
 
 import pytest
 
-from localdata_mcp.error_handler import ErrorCategory
+from localdata_mcp.error_handler import (
+    ErrorCategory,
+    ErrorHandler,
+    ErrorSeverity,
+    LocalDataError,
+)
 from localdata_mcp.error_classification import (
     DatabaseErrorMapper,
     ErrorMapperRegistry,
     GenericDatabaseErrorMapper,
     StructuredErrorResponse,
+    classify_error,
+    get_error_suggestion,
+    is_error_retryable,
 )
 
 
@@ -277,3 +285,118 @@ class TestGenericDatabaseErrorMapper:
     def test_suggestion_is_populated(self) -> None:
         resp = self.mapper.map_error(Exception("deadlock detected"))
         assert resp.suggestion != ""
+
+
+# ---------------------------------------------------------------------------
+# 132.11 — ErrorHandler.classify_database_error
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyDatabaseError:
+    def setup_method(self) -> None:
+        """Ensure database-specific mappers are registered."""
+        from localdata_mcp.error_mappers import SQLiteErrorMapper
+
+        if ErrorMapperRegistry.get_mapper("sqlite") is None:
+            ErrorMapperRegistry.register("sqlite", SQLiteErrorMapper())
+        if ErrorMapperRegistry.get_mapper("generic") is None:
+            ErrorMapperRegistry.register("generic", GenericDatabaseErrorMapper())
+
+    def test_classify_with_sqlite_type(self) -> None:
+        handler = ErrorHandler()
+        exc = Exception("no such table: users")
+        resp = handler.classify_database_error(exc, db_type="sqlite")
+        assert resp.error_type is ErrorCategory.SCHEMA_ERROR
+
+    def test_classify_with_unknown_type_uses_generic(self) -> None:
+        handler = ErrorHandler()
+        exc = Exception("syntax error near SELECT")
+        resp = handler.classify_database_error(exc, db_type="oracle")
+        assert resp.error_type is ErrorCategory.SYNTAX_ERROR
+
+    def test_classify_sets_database_name(self) -> None:
+        handler = ErrorHandler()
+        exc = Exception("connection refused")
+        resp = handler.classify_database_error(
+            exc, db_type="generic", database_name="mydb"
+        )
+        assert resp.database == "mydb"
+
+
+# ---------------------------------------------------------------------------
+# 132.12 — Helper functions
+# ---------------------------------------------------------------------------
+
+
+class TestHelperFunctions:
+    def test_classify_error_returns_response(self) -> None:
+        resp = classify_error(Exception("syntax error"))
+        assert isinstance(resp, StructuredErrorResponse)
+        assert resp.error_type is ErrorCategory.SYNTAX_ERROR
+
+    def test_is_error_retryable_true(self) -> None:
+        assert is_error_retryable(Exception("deadlock detected")) is True
+
+    def test_is_error_retryable_false(self) -> None:
+        assert is_error_retryable(Exception("syntax error")) is False
+
+    def test_get_error_suggestion_not_empty(self) -> None:
+        suggestion = get_error_suggestion(Exception("connection refused"))
+        assert isinstance(suggestion, str)
+        assert len(suggestion) > 0
+
+
+# ---------------------------------------------------------------------------
+# 132.13 — LocalDataError.to_structured_response
+# ---------------------------------------------------------------------------
+
+
+class TestLocalDataErrorConversion:
+    def test_connection_error_maps_to_connection_error(self) -> None:
+        err = LocalDataError(
+            message="conn lost",
+            category=ErrorCategory.CONNECTION,
+        )
+        resp = err.to_structured_response()
+        assert resp.error_type is ErrorCategory.CONNECTION_ERROR
+
+    def test_timeout_maps_to_transient(self) -> None:
+        err = LocalDataError(
+            message="timed out",
+            category=ErrorCategory.TIMEOUT,
+        )
+        resp = err.to_structured_response()
+        assert resp.error_type is ErrorCategory.TRANSIENT_ERROR
+
+    def test_resource_maps_to_resource(self) -> None:
+        err = LocalDataError(
+            message="out of memory",
+            category=ErrorCategory.RESOURCE_EXHAUSTION,
+        )
+        resp = err.to_structured_response()
+        assert resp.error_type is ErrorCategory.RESOURCE_ERROR
+
+    def test_auth_maps_to_auth_error(self) -> None:
+        err = LocalDataError(
+            message="bad creds",
+            category=ErrorCategory.AUTHENTICATION,
+        )
+        resp = err.to_structured_response()
+        assert resp.error_type is ErrorCategory.AUTH_ERROR
+
+    def test_is_retryable_for_transient(self) -> None:
+        err = LocalDataError(
+            message="timed out",
+            category=ErrorCategory.TIMEOUT,
+        )
+        resp = err.to_structured_response()
+        assert resp.is_retryable is True
+
+    def test_suggestion_from_recovery_suggestions(self) -> None:
+        err = LocalDataError(
+            message="conn lost",
+            category=ErrorCategory.CONNECTION,
+            recovery_suggestions=["Try reconnecting", "Check host"],
+        )
+        resp = err.to_structured_response()
+        assert resp.suggestion == "Try reconnecting"

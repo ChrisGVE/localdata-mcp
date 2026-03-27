@@ -131,6 +131,36 @@ class LocalDataError(Exception):
             "timestamp": self.timestamp,
         }
 
+    def to_structured_response(self) -> "StructuredErrorResponse":
+        """Convert to StructuredErrorResponse for LLM communication."""
+        from .error_classification import StructuredErrorResponse
+
+        # Map legacy categories to new ones
+        category_map = {
+            ErrorCategory.CONNECTION: ErrorCategory.CONNECTION_ERROR,
+            ErrorCategory.TIMEOUT: ErrorCategory.TRANSIENT_ERROR,
+            ErrorCategory.RESOURCE_EXHAUSTION: ErrorCategory.RESOURCE_ERROR,
+            ErrorCategory.AUTHENTICATION: ErrorCategory.AUTH_ERROR,
+            ErrorCategory.SECURITY_VIOLATION: ErrorCategory.AUTH_ERROR,
+        }
+        error_type = category_map.get(self.category, self.category)
+
+        is_retryable = error_type in (
+            ErrorCategory.TRANSIENT_ERROR,
+            ErrorCategory.CONNECTION_ERROR,
+        )
+
+        suggestion = self.recovery_suggestions[0] if self.recovery_suggestions else ""
+
+        return StructuredErrorResponse(
+            error_type=error_type,
+            is_retryable=is_retryable,
+            message=self.message,
+            suggestion=suggestion,
+            database_error_code=self.error_code,
+            database=self.database_name,
+        )
+
     def __str__(self) -> str:
         return f"[{self.category.value.upper()}] {self.message}"
 
@@ -1424,6 +1454,29 @@ class ErrorHandler:
             "error_statistics": error_stats,
             "timestamp": time.time(),
         }
+
+    def classify_database_error(
+        self,
+        exception: Exception,
+        db_type: str = "generic",
+        database_name: Optional[str] = None,
+    ) -> "StructuredErrorResponse":
+        """Classify a database exception into a structured error response."""
+        from .error_classification import ErrorMapperRegistry, StructuredErrorResponse
+
+        mapper = ErrorMapperRegistry.get_or_default(db_type)
+        response = mapper.map_error(exception)
+        if database_name:
+            response.database = database_name
+
+        logger.warning(
+            "Database error classified",
+            error_type=response.error_type.value,
+            is_retryable=response.is_retryable,
+            database=database_name,
+            db_type=db_type,
+        )
+        return response
 
     def _convert_to_localdata_error(
         self, error: Exception, context: Dict[str, Any]
