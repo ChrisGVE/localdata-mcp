@@ -1,0 +1,287 @@
+"""Database-specific error mappers for SQLite, PostgreSQL, MySQL, and DuckDB.
+
+Each mapper translates raw database exceptions into StructuredErrorResponse
+instances using backend-specific heuristics (message parsing, SQLSTATE codes,
+error numbers, or exception class names).
+"""
+
+from typing import Dict, List, Tuple
+
+from .error_handler import ErrorCategory
+from .error_classification import (
+    DatabaseErrorMapper,
+    ErrorMapperRegistry,
+    GenericDatabaseErrorMapper,
+    StructuredErrorResponse,
+)
+
+
+# ---------------------------------------------------------------------------
+# SQLite
+# ---------------------------------------------------------------------------
+
+
+class SQLiteErrorMapper(DatabaseErrorMapper):
+    """Maps sqlite3 exceptions using message-based heuristics."""
+
+    def map_error(self, exception: Exception) -> StructuredErrorResponse:
+        msg = str(exception).lower()
+        if "authorization" in msg or "readonly" in msg:
+            return StructuredErrorResponse(
+                error_type=ErrorCategory.AUTH_ERROR,
+                message=str(exception),
+                suggestion="Check database file permissions or WAL mode.",
+            )
+        if "locked" in msg or "busy" in msg:
+            return StructuredErrorResponse(
+                error_type=ErrorCategory.TRANSIENT_ERROR,
+                is_retryable=True,
+                message=str(exception),
+                suggestion="Retry after a brief wait; the database is locked.",
+            )
+        if "disk" in msg or "full" in msg or "no space" in msg:
+            return StructuredErrorResponse(
+                error_type=ErrorCategory.RESOURCE_ERROR,
+                message=str(exception),
+                suggestion="Free disk space or reduce write volume.",
+            )
+        if (
+            "constraint" in msg
+            or "unique" in msg
+            or "foreign key" in msg
+            or "not null" in msg
+        ):
+            return StructuredErrorResponse(
+                error_type=ErrorCategory.CONSTRAINT_ERROR,
+                message=str(exception),
+                suggestion="The operation violates a SQLite constraint.",
+            )
+        if "no such table" in msg or "no such column" in msg:
+            return StructuredErrorResponse(
+                error_type=ErrorCategory.SCHEMA_ERROR,
+                message=str(exception),
+                suggestion="Verify table/column names in the SQLite database.",
+            )
+        if "syntax" in msg or "near" in msg:
+            return StructuredErrorResponse(
+                error_type=ErrorCategory.SYNTAX_ERROR,
+                message=str(exception),
+                suggestion="Review the SQL statement for syntax errors.",
+            )
+        return StructuredErrorResponse(
+            error_type=ErrorCategory.QUERY_EXECUTION,
+            message=str(exception),
+            suggestion="Check query and database state.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL
+# ---------------------------------------------------------------------------
+
+_PG_PREFIX_MAP: List[Tuple[str, ErrorCategory, bool, str]] = [
+    (
+        "28",
+        ErrorCategory.AUTH_ERROR,
+        False,
+        "Check PostgreSQL user credentials and pg_hba.conf.",
+    ),
+    (
+        "08",
+        ErrorCategory.CONNECTION_ERROR,
+        True,
+        "Verify the PostgreSQL server is reachable.",
+    ),
+    (
+        "23",
+        ErrorCategory.CONSTRAINT_ERROR,
+        False,
+        "The operation violates a PostgreSQL constraint.",
+    ),
+    (
+        "40",
+        ErrorCategory.TRANSIENT_ERROR,
+        True,
+        "Retry the transaction; a serialisation or deadlock conflict occurred.",
+    ),
+    (
+        "53",
+        ErrorCategory.RESOURCE_ERROR,
+        False,
+        "The PostgreSQL server is low on resources.",
+    ),
+]
+
+
+class PostgreSQLErrorMapper(DatabaseErrorMapper):
+    """Maps PostgreSQL exceptions using SQLSTATE (pgcode) prefixes."""
+
+    def map_error(self, exception: Exception) -> StructuredErrorResponse:
+        pgcode = getattr(exception, "pgcode", None) or getattr(
+            getattr(exception, "__cause__", None),
+            "pgcode",
+            None,
+        )
+        if pgcode:
+            if pgcode == "42601":
+                return StructuredErrorResponse(
+                    error_type=ErrorCategory.SYNTAX_ERROR,
+                    message=str(exception),
+                    suggestion="Review the SQL syntax.",
+                    database_error_code=pgcode,
+                )
+            if pgcode.startswith("42"):
+                return StructuredErrorResponse(
+                    error_type=ErrorCategory.SCHEMA_ERROR,
+                    message=str(exception),
+                    suggestion="Verify table/column names in the PostgreSQL schema.",
+                    database_error_code=pgcode,
+                )
+            for prefix, cat, retryable, suggestion in _PG_PREFIX_MAP:
+                if pgcode.startswith(prefix):
+                    return StructuredErrorResponse(
+                        error_type=cat,
+                        is_retryable=retryable,
+                        message=str(exception),
+                        suggestion=suggestion,
+                        database_error_code=pgcode,
+                    )
+        return GenericDatabaseErrorMapper().map_error(exception)
+
+
+# ---------------------------------------------------------------------------
+# MySQL / MariaDB
+# ---------------------------------------------------------------------------
+
+_MYSQL_CODE_MAP: Dict[int, Tuple[ErrorCategory, bool, str]] = {
+    1044: (ErrorCategory.AUTH_ERROR, False, "Check MySQL database-level privileges."),
+    1045: (ErrorCategory.AUTH_ERROR, False, "Check MySQL user credentials."),
+    1146: (ErrorCategory.SCHEMA_ERROR, False, "The referenced table does not exist."),
+    1054: (ErrorCategory.SCHEMA_ERROR, False, "The referenced column does not exist."),
+    1064: (ErrorCategory.SYNTAX_ERROR, False, "Review the SQL syntax."),
+    1205: (
+        ErrorCategory.TRANSIENT_ERROR,
+        True,
+        "Lock wait timeout; retry the transaction.",
+    ),
+    1114: (
+        ErrorCategory.RESOURCE_ERROR,
+        False,
+        "The table is full; free space or increase limits.",
+    ),
+    1062: (
+        ErrorCategory.CONSTRAINT_ERROR,
+        False,
+        "Duplicate entry violates a unique constraint.",
+    ),
+    1452: (ErrorCategory.CONSTRAINT_ERROR, False, "Foreign key constraint violated."),
+    2002: (
+        ErrorCategory.CONNECTION_ERROR,
+        True,
+        "Cannot connect to MySQL server via socket.",
+    ),
+    2003: (
+        ErrorCategory.CONNECTION_ERROR,
+        True,
+        "Cannot connect to MySQL server; check host/port.",
+    ),
+    2006: (
+        ErrorCategory.CONNECTION_ERROR,
+        True,
+        "MySQL server has gone away; reconnect.",
+    ),
+}
+
+
+class MySQLErrorMapper(DatabaseErrorMapper):
+    """Maps MySQL/MariaDB exceptions using error numbers (errno)."""
+
+    def map_error(self, exception: Exception) -> StructuredErrorResponse:
+        errno = getattr(exception, "errno", None)
+        if errno is None and exception.args and isinstance(exception.args[0], int):
+            errno = exception.args[0]
+        if errno and errno in _MYSQL_CODE_MAP:
+            cat, retryable, suggestion = _MYSQL_CODE_MAP[errno]
+            return StructuredErrorResponse(
+                error_type=cat,
+                is_retryable=retryable,
+                message=str(exception),
+                suggestion=suggestion,
+                database_error_code=str(errno),
+            )
+        return GenericDatabaseErrorMapper().map_error(exception)
+
+
+# ---------------------------------------------------------------------------
+# DuckDB
+# ---------------------------------------------------------------------------
+
+_DUCKDB_TYPE_MAP: Dict[str, Tuple[ErrorCategory, bool, str]] = {
+    "ParserException": (
+        ErrorCategory.SYNTAX_ERROR,
+        False,
+        "Review the SQL syntax for DuckDB.",
+    ),
+    "CatalogException": (
+        ErrorCategory.SCHEMA_ERROR,
+        False,
+        "The referenced catalog object does not exist.",
+    ),
+    "BinderException": (
+        ErrorCategory.SCHEMA_ERROR,
+        False,
+        "A column or table reference could not be resolved.",
+    ),
+    "ConstraintException": (
+        ErrorCategory.CONSTRAINT_ERROR,
+        False,
+        "A DuckDB constraint was violated.",
+    ),
+    "OutOfMemoryException": (
+        ErrorCategory.RESOURCE_ERROR,
+        False,
+        "DuckDB ran out of memory; reduce query scope.",
+    ),
+}
+
+
+class DuckDBErrorMapper(DatabaseErrorMapper):
+    """Maps DuckDB exceptions by exception class name."""
+
+    def map_error(self, exception: Exception) -> StructuredErrorResponse:
+        cls_name = type(exception).__name__
+        if cls_name in _DUCKDB_TYPE_MAP:
+            cat, retryable, suggestion = _DUCKDB_TYPE_MAP[cls_name]
+            return StructuredErrorResponse(
+                error_type=cat,
+                is_retryable=retryable,
+                message=str(exception),
+                suggestion=suggestion,
+            )
+        if cls_name == "IOException":
+            msg = str(exception).lower()
+            if "memory" in msg or "space" in msg:
+                return StructuredErrorResponse(
+                    error_type=ErrorCategory.RESOURCE_ERROR,
+                    message=str(exception),
+                    suggestion="Check available disk space or memory.",
+                )
+            return StructuredErrorResponse(
+                error_type=ErrorCategory.CONNECTION_ERROR,
+                is_retryable=True,
+                message=str(exception),
+                suggestion="Check file or network accessibility.",
+            )
+        return GenericDatabaseErrorMapper().map_error(exception)
+
+
+# ---------------------------------------------------------------------------
+# Register built-in mappers
+# ---------------------------------------------------------------------------
+
+ErrorMapperRegistry.register("sqlite", SQLiteErrorMapper())
+ErrorMapperRegistry.register("postgresql", PostgreSQLErrorMapper())
+ErrorMapperRegistry.register("postgres", PostgreSQLErrorMapper())
+ErrorMapperRegistry.register("mysql", MySQLErrorMapper())
+ErrorMapperRegistry.register("mariadb", MySQLErrorMapper())
+ErrorMapperRegistry.register("duckdb", DuckDBErrorMapper())
