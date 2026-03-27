@@ -57,6 +57,9 @@ from .config_manager import get_config_manager, initialize_config
 # Import backward compatibility management
 from .compatibility_manager import get_compatibility_manager
 
+# Import structured error classification
+from .error_classification import classify_error
+
 # Import tree storage for structured data (TOML, JSON, YAML)
 from .tree_storage import TreeStorageManager, create_tree_schema
 from .tree_parsers import parse_toml_to_tree, parse_json_to_tree, parse_yaml_to_tree
@@ -2223,7 +2226,9 @@ class DatabaseManager:
             # Release semaphore on failure
             self.connection_semaphore.release()
             logger.error(f"Failed to connect to database '{name}': {e}")
-            return f"Failed to connect to database '{name}': {e}"
+            structured = classify_error(e, db_type)
+            structured.database = name
+            return json.dumps(structured.to_dict())
 
     def disconnect_database(self, name: str):
         """
@@ -2590,10 +2595,14 @@ class DatabaseManager:
                 logger.error(
                     f"Streaming execution failed for database '{name}': {streaming_error}"
                 )
-                return f"Streaming execution error: {streaming_error}"
+                db_type = self.db_types.get(name, "generic")
+                structured = classify_error(streaming_error, db_type)
+                return json.dumps(structured.to_dict())
 
         except Exception as e:
-            return f"An error occurred while executing the query: {e}"
+            db_type = self.db_types.get(name, "generic")
+            structured = classify_error(e, db_type)
+            return json.dumps(structured.to_dict())
 
     def analyze_query_preview(self, name: str, query: str) -> str:
         """
