@@ -20,5 +20,6 @@ LocalData MCP gives LLM agents direct access to local data sources through the [
 getting-started
 configuration
 data-sources/index
+error-classification
 changelog
 ```
