@@ -2,8 +2,10 @@
 
 import logging
 import os
+import shutil
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -51,6 +53,8 @@ class StagingManager:
         self._lock = threading.RLock()
         self._config = config or self._load_config()
         self._running = True
+        self._cleanup_thread: Optional[threading.Thread] = None
+        self._start_cleanup_thread()
 
     def _load_config(self) -> Dict[str, Any]:
         """Load staging configuration from config manager."""
@@ -171,3 +175,70 @@ class StagingManager:
                 )
             logger.info("Removed staging database: %s", name)
             return True
+
+    def get_staging(self, name: str) -> Optional[StagingDatabase]:
+        """Retrieve staging database and update last_accessed."""
+        with self._lock:
+            staging = self._staging_dbs.get(name)
+            if staging:
+                staging.last_accessed = datetime.now()
+            return staging
+
+    def touch_staging(self, name: str) -> bool:
+        """Update last_accessed without returning full object."""
+        with self._lock:
+            staging = self._staging_dbs.get(name)
+            if staging:
+                staging.last_accessed = datetime.now()
+                return True
+            return False
+
+    def check_disk_space(self) -> Dict[str, Any]:
+        """Check available disk space in temp directory."""
+        usage = shutil.disk_usage(tempfile.gettempdir())
+        staging_bytes = sum(s.size_bytes for s in self._staging_dbs.values())
+        return {
+            "total_gb": round(usage.total / (1024**3), 2),
+            "available_gb": round(usage.free / (1024**3), 2),
+            "used_percent": round((usage.used / usage.total) * 100, 1),
+            "used_by_staging_mb": round(staging_bytes / (1024**2), 2),
+            "can_create_staging": usage.free > 500 * 1024 * 1024,
+        }
+
+    def _start_cleanup_thread(self) -> None:
+        """Start background thread for expired staging cleanup."""
+        self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
+        self._cleanup_thread.start()
+
+    def _cleanup_loop(self) -> None:
+        """Periodically remove expired staging databases."""
+        while self._running:
+            time.sleep(60)
+            try:
+                with self._lock:
+                    now = datetime.now()
+                    expired = [
+                        name
+                        for name, s in self._staging_dbs.items()
+                        if s.expires_at and now > s.expires_at
+                    ]
+                for name in expired:
+                    self.remove_staging(name)
+                    logger.info("Auto-cleaned expired staging: %s", name)
+            except Exception as e:
+                logger.debug("Cleanup loop error: %s", e)
+
+    def stop(self) -> None:
+        """Stop the staging manager and clean up all databases."""
+        self._running = False
+        if self._cleanup_thread and self._cleanup_thread.is_alive():
+            self._cleanup_thread.join(timeout=5)
+        self._cleanup_all()
+
+    def _cleanup_all(self) -> None:
+        """Remove all staging databases."""
+        with self._lock:
+            names = list(self._staging_dbs.keys())
+        for name in names:
+            self.remove_staging(name)
+        logger.info("Cleaned up %d staging databases", len(names))
