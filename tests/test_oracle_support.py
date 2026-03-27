@@ -127,3 +127,165 @@ def test_oracle_mapper_registered():
     mapper = ErrorMapperRegistry.get_mapper("oracle")
     assert mapper is not None
     assert isinstance(mapper, OracleErrorMapper)
+
+
+# ---------------------------------------------------------------------------
+# 138.5: TNS alias validation
+# ---------------------------------------------------------------------------
+
+
+def test_validate_tns_config_with_env():
+    """_validate_tns_config returns True when TNS_ADMIN is set."""
+    from localdata_mcp.oracle_support import _validate_tns_config
+
+    with patch.dict("os.environ", {"TNS_ADMIN": "/opt/oracle/network/admin"}):
+        assert _validate_tns_config() is True
+
+
+def test_validate_tns_config_without_env():
+    """_validate_tns_config returns False when TNS_ADMIN is unset."""
+    from localdata_mcp.oracle_support import _validate_tns_config
+
+    with patch.dict("os.environ", {}, clear=True):
+        assert _validate_tns_config() is False
+
+
+# ---------------------------------------------------------------------------
+# 138.6: Wallet auth — invalid path
+# ---------------------------------------------------------------------------
+
+
+def test_create_oracle_engine_wallet_invalid_path():
+    """create_oracle_engine raises ValueError for nonexistent wallet path."""
+    import localdata_mcp.oracle_support as mod
+
+    original = mod.ORACLEDB_AVAILABLE
+    mod.ORACLEDB_AVAILABLE = True
+    try:
+        with patch.dict(
+            "sys.modules",
+            {"oracledb": sys.modules.get("oracledb", __import__("types"))},
+        ):
+            with pytest.raises(ValueError, match="Wallet path does not exist"):
+                mod.create_oracle_engine(
+                    "oracle+oracledb://user:pass@host/db",
+                    auth={
+                        "method": "wallet",
+                        "wallet_path": "/nonexistent/wallet/path",
+                    },
+                )
+    finally:
+        mod.ORACLEDB_AVAILABLE = original
+
+
+# ---------------------------------------------------------------------------
+# 138.9: Certificate auth
+# ---------------------------------------------------------------------------
+
+
+def test_create_oracle_engine_certificate_auth():
+    """create_oracle_engine passes cert/key paths in connect_args."""
+    from unittest.mock import MagicMock
+
+    import localdata_mcp.oracle_support as mod
+
+    original = mod.ORACLEDB_AVAILABLE
+    mod.ORACLEDB_AVAILABLE = True
+
+    mock_create_engine = MagicMock()
+
+    try:
+        with patch("localdata_mcp.oracle_support.ORACLEDB_AVAILABLE", True):
+            with patch.dict("sys.modules", {"oracledb": MagicMock()}):
+                with patch("sqlalchemy.create_engine", mock_create_engine):
+                    mod.create_oracle_engine(
+                        "oracle+oracledb://user:pass@host/db",
+                        auth={
+                            "method": "certificate",
+                            "cert_path": "/path/to/cert.pem",
+                            "key_path": "/path/to/key.pem",
+                        },
+                    )
+        call_kwargs = mock_create_engine.call_args
+        connect_args = call_kwargs.kwargs.get(
+            "connect_args", call_kwargs[1].get("connect_args", {})
+        )
+        assert connect_args["ssl_client_cert"] == "/path/to/cert.pem"
+        assert connect_args["ssl_client_key"] == "/path/to/key.pem"
+    finally:
+        mod.ORACLEDB_AVAILABLE = original
+
+
+# ---------------------------------------------------------------------------
+# 138.14: Oracle EXPLAIN parser
+# ---------------------------------------------------------------------------
+
+
+def test_parse_explain_oracle_success():
+    """parse_explain_oracle returns estimated rows from mocked output."""
+    from unittest.mock import MagicMock
+
+    from localdata_mcp._explain_parsers import parse_explain_oracle
+
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+    mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
+
+    xplan_rows = [
+        ("Plan hash value: 12345",),
+        ("--------------------------------------------",),
+        ("| Id  | Operation         | Name  | Rows  |",),
+        ("--------------------------------------------",),
+        ("|   0 | SELECT STATEMENT  |       |   500 |",),
+        ("|   1 |  TABLE ACCESS FULL| USERS |   500 |",),
+        ("--------------------------------------------",),
+    ]
+    mock_result = MagicMock()
+    mock_result.fetchall.return_value = xplan_rows
+    mock_conn.execute.side_effect = [MagicMock(), mock_result]
+
+    result = parse_explain_oracle(mock_engine, "SELECT * FROM users")
+    assert result is not None
+    assert result["estimated_rows"] == 500
+    assert result["confidence"] == 0.7
+    assert result["scan_type"] == "oracle_plan"
+
+
+def test_parse_explain_oracle_failure():
+    """parse_explain_oracle returns None on exception."""
+    from unittest.mock import MagicMock
+
+    from localdata_mcp._explain_parsers import parse_explain_oracle
+
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+    mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
+    mock_conn.execute.side_effect = Exception("ORA-00942: table does not exist")
+
+    result = parse_explain_oracle(mock_engine, "SELECT * FROM nonexistent")
+    assert result is None
+
+
+def test_extract_oracle_rows():
+    """_extract_oracle_rows parses row counts from DBMS_XPLAN output."""
+    from localdata_mcp._explain_parsers import _extract_oracle_rows
+
+    rows = [
+        ("| Id  | Operation         | Name  | Rows  |",),
+        ("|   0 | SELECT STATEMENT  |       |  1200 |",),
+        ("|   1 |  TABLE ACCESS FULL| EMP   |  1200 |",),
+    ]
+    assert _extract_oracle_rows(rows) == 1200
+
+
+def test_extract_oracle_rows_no_match():
+    """_extract_oracle_rows returns None when no row count is found."""
+    from localdata_mcp._explain_parsers import _extract_oracle_rows
+
+    rows = [
+        ("Plan hash value: 12345",),
+        ("--------------------------------------------",),
+    ]
+    assert _extract_oracle_rows(rows) is None
