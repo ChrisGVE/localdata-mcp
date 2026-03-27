@@ -215,6 +215,43 @@ def export_tree_markdown(
     }
 
 
+def format_query_results_as_markdown(
+    data: List[Dict[str, Any]],
+    total_rows: Optional[int] = None,
+    query: Optional[str] = None,
+    max_rows: int = 50,
+) -> Dict[str, Any]:
+    """Convert execute_query response data to markdown.
+
+    This is a convenience bridge: it accepts the ``data`` list (list of
+    row-dicts as returned in the execute_query JSON response) and delegates
+    to :func:`export_query_results_markdown`.
+
+    Args:
+        data: List of row dicts (``[{"col": val, ...}, ...]``).
+        total_rows: Total rows in the full result set.
+        query: Original SQL query string.
+        max_rows: Maximum rows to render.
+
+    Returns:
+        Dict with 'format', 'content', 'truncated', 'total_rows'.
+    """
+    if not data:
+        return export_query_results_markdown(
+            columns=[], rows=[], total_rows=0, query=query, max_rows=max_rows
+        )
+
+    columns = list(data[0].keys())
+    rows = [[row.get(col) for col in columns] for row in data]
+    return export_query_results_markdown(
+        columns=columns,
+        rows=rows,
+        total_rows=total_rows,
+        query=query,
+        max_rows=max_rows,
+    )
+
+
 def export_query_results_markdown(
     columns: List[str],
     rows: List[List[Any]],

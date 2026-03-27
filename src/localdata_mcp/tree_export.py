@@ -186,6 +186,10 @@ def tool_export_structured(
     Returns a dict with format + content (or error).
     """
     fmt = format.lower()
+    # Resolve aliases (e.g. "md" -> "markdown")
+    _ALIASES = {"md": "markdown"}
+    fmt = _ALIASES.get(fmt, fmt)
+
     if fmt not in _EXPORTERS:
         return {
             "error": f"Unsupported format '{format}'. Use toml, json, yaml, or markdown."

@@ -253,6 +253,10 @@ def _resolve_format(format: str) -> tuple:
                 "Use dot, gml, graphml, mermaid, or markdown."
             )
         }
+    # Resolve aliases (e.g. "md" -> "markdown")
+    resolved = exporters[fmt]
+    if isinstance(resolved, str):
+        fmt = resolved
     return fmt, exporters
 
 
