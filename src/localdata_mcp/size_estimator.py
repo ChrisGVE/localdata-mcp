@@ -1,11 +1,8 @@
-"""Result size estimation engine for LocalData MCP.
-
-Combines column type metadata with estimated row counts to predict
-memory requirements before query execution.
-"""
+"""Result size estimation: column type metadata + row count estimation."""
 
 import logging
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -184,39 +181,116 @@ class SizeEstimator:
 
         return columns
 
+    def _run_explain(self, query: str) -> Optional[Dict[str, Any]]:
+        """Run EXPLAIN and return normalized result."""
+        from ._explain_parsers import (
+            parse_explain_mysql,
+            parse_explain_postgresql,
+            parse_explain_sqlite,
+        )
+
+        parsers = {
+            "sqlite": parse_explain_sqlite,
+            "postgresql": parse_explain_postgresql,
+            "mysql": parse_explain_mysql,
+        }
+        parser = parsers.get(self._dialect)
+        return parser(self._engine, query) if parser and self._engine else None
+
+    def _estimate_rows_heuristic(self, query: str) -> Tuple[int, str]:
+        """Estimate rows using heuristics when EXPLAIN unavailable."""
+        tables = extract_tables_from_query(query)
+        if tables and self._engine:
+            try:
+                from sqlalchemy import text
+
+                table_name = tables[0][0]
+                with self._engine.connect() as conn:
+                    count = conn.execute(
+                        text(f"SELECT COUNT(*) FROM {table_name}")
+                    ).scalar()
+                    if count is not None:
+                        if "WHERE" in query.upper():
+                            return max(1, int(count * 0.1)), "low"
+                        return int(count), "low"
+            except Exception:
+                pass
+        return 1000, "low"
+
+    def _resolve_rows(
+        self,
+        query: str,
+        estimated_rows: Optional[int],
+        use_explain: bool,
+    ) -> Tuple[int, str]:
+        """Resolve row count via EXPLAIN, heuristic, or default."""
+        confidence = "low"
+        if estimated_rows is not None:
+            return estimated_rows, "medium"
+        if use_explain:
+            explain = self._run_explain(query)
+            if explain and explain.get("estimated_rows"):
+                conf = "high" if explain.get("confidence", 0) > 0.6 else "medium"
+                return explain["estimated_rows"], conf
+        rows, confidence = self._estimate_rows_heuristic(query)
+        return rows, confidence
+
+    def estimate_from_sample(
+        self,
+        sample_rows: List[List[Any]],
+        column_names: List[str],
+        total_rows: int,
+    ) -> SizeEstimate:
+        """Estimate size from an actual data sample."""
+        if not sample_rows:
+            return SizeEstimate(
+                estimated_rows=total_rows,
+                estimated_bytes_per_row=256,
+                estimated_total_bytes=total_rows * 256,
+                confidence="low",
+                source="heuristic",
+            )
+        total_bytes = sum(sys.getsizeof(cell) for row in sample_rows for cell in row)
+        bpr = total_bytes // len(sample_rows)
+        return SizeEstimate(
+            estimated_rows=total_rows,
+            estimated_bytes_per_row=bpr,
+            estimated_total_bytes=total_rows * bpr,
+            confidence="high",
+            source="metadata_only",
+        )
+
     def estimate_result_size(
         self,
         query: str,
         columns: Optional[List[ColumnSizeInfo]] = None,
         estimated_rows: Optional[int] = None,
+        use_explain: bool = True,
     ) -> SizeEstimate:
         """Estimate result size from column info and row estimate.
 
-        If columns not provided, extracts via reflection or result proxy.
-        If estimated_rows not provided, defaults to 1000.
+        Tries EXPLAIN then heuristics when estimated_rows not provided.
         """
         if columns is None:
             columns = self._extract_column_info(query)
+        rows, confidence = self._resolve_rows(query, estimated_rows, use_explain)
 
         if not columns:
             return SizeEstimate(
-                estimated_rows=estimated_rows or 1000,
+                estimated_rows=rows,
                 estimated_bytes_per_row=256,
-                estimated_total_bytes=(estimated_rows or 1000) * 256,
-                confidence="low",
+                estimated_total_bytes=rows * 256,
+                confidence=confidence,
                 source="heuristic",
             )
-
         blob_columns = [c.name for c in columns if c.is_blob]
-        bytes_per_row = sum(c.estimated_bytes for c in columns if not c.is_blob)
-        rows = estimated_rows or 1000
-
+        bpr = sum(c.estimated_bytes for c in columns if not c.is_blob)
         return SizeEstimate(
             estimated_rows=rows,
-            estimated_bytes_per_row=bytes_per_row,
-            estimated_total_bytes=rows * bytes_per_row,
+            estimated_bytes_per_row=bpr,
+            estimated_total_bytes=rows * bpr,
             blob_columns=blob_columns,
-            confidence="medium" if estimated_rows else "low",
+            confidence=confidence,
             source="metadata_only",
         )
 
