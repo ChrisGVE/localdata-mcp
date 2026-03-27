@@ -87,3 +87,36 @@ def parse_explain_mysql(engine: Any, query: str) -> Optional[Dict[str, Any]]:
             }
     except Exception:
         return None
+
+
+def _extract_oracle_rows(rows) -> Optional[int]:
+    """Extract row estimate from DBMS_XPLAN output."""
+    import re
+
+    for row in rows:
+        line = str(row[0]) if row else ""
+        m = re.search(r"\|\s*(\d+)\s*\|?\s*$", line)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def parse_explain_oracle(engine: Any, query: str) -> Optional[Dict[str, Any]]:
+    """Parse Oracle EXPLAIN PLAN output."""
+    try:
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            conn.execute(text(f"EXPLAIN PLAN FOR {query}"))
+            result = conn.execute(
+                text("SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY(format => 'BASIC ROWS'))")
+            )
+            rows = result.fetchall()
+            estimated_rows = _extract_oracle_rows(rows)
+            return {
+                "estimated_rows": estimated_rows,
+                "confidence": 0.7,
+                "scan_type": "oracle_plan",
+            }
+    except Exception:
+        return None
