@@ -163,3 +163,30 @@ class GenericDatabaseErrorMapper(DatabaseErrorMapper):
 
 # Auto-register the generic mapper so get_or_default always has a fallback.
 ErrorMapperRegistry.register("generic", GenericDatabaseErrorMapper())
+
+
+# ---------------------------------------------------------------------------
+# Standalone helper functions
+# ---------------------------------------------------------------------------
+
+
+def classify_error(
+    exception: Exception, db_type: str = "generic"
+) -> StructuredErrorResponse:
+    """Classify a database exception (standalone helper)."""
+    mapper = ErrorMapperRegistry.get_or_default(db_type)
+    return mapper.map_error(exception)
+
+
+def is_error_retryable(exception: Exception, db_type: str = "generic") -> bool:
+    """Check if an error is retryable."""
+    return classify_error(exception, db_type).is_retryable
+
+
+def get_error_suggestion(exception: Exception, db_type: str = "generic") -> str:
+    """Get an actionable suggestion for handling an error."""
+    return classify_error(exception, db_type).suggestion
+
+
+# Import database-specific mappers to trigger their registration.
+from . import error_mappers as _error_mappers  # noqa: E402, F401
