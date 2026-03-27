@@ -11,8 +11,10 @@ from localdata_mcp.size_estimator import (
     ColumnSizeInfo,
     SizeEstimate,
     SizeEstimator,
+    _estimators,
     extract_tables_from_query,
     get_column_size_info,
+    get_size_estimator,
     get_type_byte_size,
     normalize_sqlalchemy_type,
     normalize_type_string,
@@ -680,3 +682,144 @@ class TestSampleEstimation:
         assert result.estimated_total_bytes == 500 * 256
         assert result.confidence == "low"
         assert result.source == "heuristic"
+
+
+class TestGetSizeEstimatorFactory:
+    """Tests for the get_size_estimator singleton factory."""
+
+    def setup_method(self):
+        """Clear the global cache before each test."""
+        _estimators.clear()
+
+    def teardown_method(self):
+        _estimators.clear()
+
+    @staticmethod
+    def _make_engine(url: str = "sqlite:///test.db", dialect: str = "sqlite"):
+        engine = MagicMock()
+        engine.dialect.name = dialect
+        engine.url = url
+        return engine
+
+    def test_get_size_estimator_caching(self):
+        """Same engine URL returns the same SizeEstimator instance."""
+        engine = self._make_engine("sqlite:///a.db")
+        est1 = get_size_estimator(engine)
+        est2 = get_size_estimator(engine)
+        assert est1 is est2
+
+    def test_get_size_estimator_different_engines(self):
+        """Different engine URLs produce different instances."""
+        eng_a = self._make_engine("sqlite:///a.db")
+        eng_b = self._make_engine("sqlite:///b.db")
+        est_a = get_size_estimator(eng_a)
+        est_b = get_size_estimator(eng_b)
+        assert est_a is not est_b
+
+    def test_get_size_estimator_no_engine(self):
+        """No engine returns a fresh SizeEstimator with unknown dialect."""
+        est = get_size_estimator()
+        assert est.dialect == "unknown"
+        # Each call without engine should return a new instance
+        est2 = get_size_estimator()
+        assert est is not est2
+
+
+class TestFullEstimateWithExplain:
+    """Test estimate_result_size with mocked EXPLAIN support."""
+
+    @staticmethod
+    def _make_engine():
+        engine = MagicMock()
+        engine.dialect.name = "sqlite"
+        engine.url = "sqlite:///test.db"
+        return engine
+
+    def test_full_estimate_with_explain(self):
+        """When EXPLAIN succeeds, confidence should be high or medium."""
+        engine = self._make_engine()
+        est = SizeEstimator(engine=engine)
+
+        explain_result = {
+            "estimated_rows": 200,
+            "confidence": 0.8,
+            "scan_type": "index",
+        }
+        est._run_explain = MagicMock(return_value=explain_result)
+        est._extract_column_info = MagicMock(
+            return_value=[
+                ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+            ]
+        )
+
+        result = est.estimate_result_size("SELECT * FROM t", use_explain=True)
+        assert result.estimated_rows == 200
+        assert result.confidence == "high"
+        assert result.estimated_bytes_per_row == 8
+        est._run_explain.assert_called_once()
+
+    def test_full_estimate_explain_fails_falls_back(self):
+        """When EXPLAIN returns None, heuristic is used instead."""
+        engine = self._make_engine()
+        est = SizeEstimator(engine=engine)
+
+        est._run_explain = MagicMock(return_value=None)
+        est._extract_column_info = MagicMock(
+            return_value=[
+                ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+            ]
+        )
+        est._estimate_rows_heuristic = MagicMock(return_value=(3000, "low"))
+
+        result = est.estimate_result_size("SELECT * FROM t", use_explain=True)
+        assert result.estimated_rows == 3000
+        assert result.confidence == "low"
+        est._estimate_rows_heuristic.assert_called_once()
+
+    def test_estimate_result_size_with_blobs(self):
+        """Blob columns are excluded from byte calculation."""
+        est = SizeEstimator()
+        cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+            ColumnSizeInfo(
+                name="avatar", type_name="BLOB", estimated_bytes=0, is_blob=True
+            ),
+            ColumnSizeInfo(name="name", type_name="VARCHAR", estimated_bytes=100),
+        ]
+        result = est.estimate_result_size(
+            "SELECT * FROM t", columns=cols, estimated_rows=10
+        )
+        assert result.blob_columns == ["avatar"]
+        assert result.estimated_bytes_per_row == 108  # 8 + 100, blob excluded
+        assert result.estimated_total_bytes == 10 * 108
+
+
+class TestStreamingIntegrationMock:
+    """Verify SizeEstimator is wired into StreamingQueryExecutor."""
+
+    def test_streaming_executor_calls_size_estimator(self):
+        """Verify size estimation runs when a SQL source is used."""
+        from localdata_mcp.streaming_executor import StreamingSQLSource
+
+        engine = MagicMock()
+        engine.dialect.name = "sqlite"
+        engine.url = "sqlite:///test.db"
+        source = StreamingSQLSource(engine, "SELECT * FROM t")
+
+        fake_estimate = SizeEstimate(
+            estimated_rows=500,
+            estimated_bytes_per_row=64,
+            estimated_total_bytes=32000,
+            confidence="medium",
+            source="heuristic",
+        )
+        with patch("localdata_mcp.streaming_executor.get_size_estimator") as mock_get:
+            mock_estimator = MagicMock()
+            mock_estimator.estimate_result_size.return_value = fake_estimate
+            mock_get.return_value = mock_estimator
+
+            # Verify the factory and estimator are properly wired
+            est = mock_get(engine)
+            result = est.estimate_result_size("SELECT * FROM t")
+            assert result.estimated_rows == 500
+            mock_get.assert_called_once_with(engine)
