@@ -83,6 +83,9 @@ def create_mssql_engine(connection_string: str, auth: Optional[Dict[str, Any]] =
             if not token:
                 raise ValueError("Azure AD auth requires 'token' in auth dict")
             connect_args["attrs_before"] = {1256: token}
+        elif method == "certificate":
+            connect_args["encrypt"] = "yes"
+            connect_args["trustServerCertificate"] = auth.get("trust_server_cert", "no")
         elif method == "kerberos":
             connect_args["Trusted_Connection"] = "yes"
 
