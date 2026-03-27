@@ -1,6 +1,6 @@
 """Tests for the size estimation engine foundation."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -317,3 +317,184 @@ class TestSizeEstimator:
         ]
         result = est.estimate_result_size("SELECT * FROM t", columns=cols)
         assert result.confidence == "low"
+
+
+class TestExtractTableColumns:
+    """Tests for SizeEstimator._extract_table_columns."""
+
+    def _make_engine(self) -> MagicMock:
+        engine = MagicMock()
+        engine.dialect.name = "sqlite"
+        return engine
+
+    def test_extract_columns_from_reflection(self):
+        """Mock Inspector returning column defs produces ColumnSizeInfo list."""
+        engine = self._make_engine()
+        type_obj = MagicMock()
+        type_obj.length = None
+
+        mock_inspector = MagicMock()
+        mock_inspector.get_columns.return_value = [
+            {"name": "id", "type": type_obj},
+            {"name": "name", "type": type_obj},
+        ]
+
+        est = SizeEstimator(engine=engine)
+        with (
+            patch("sqlalchemy.inspect", return_value=mock_inspector),
+            patch(
+                "localdata_mcp.size_estimator.normalize_sqlalchemy_type",
+                return_value="INTEGER",
+            ),
+        ):
+            result = est._extract_table_columns("users")
+
+        assert len(result) == 2
+        assert result[0].name == "id"
+        assert result[1].name == "name"
+
+    def test_extract_columns_no_engine(self):
+        """Returns empty list when no engine is set."""
+        est = SizeEstimator()
+        result = est._extract_table_columns("users")
+        assert result == []
+
+    def test_extract_columns_reflection_failure(self):
+        """Returns empty list when Inspector raises an exception."""
+        engine = self._make_engine()
+        est = SizeEstimator(engine=engine)
+
+        with patch(
+            "sqlalchemy.inspect",
+            side_effect=RuntimeError("reflection failed"),
+        ):
+            result = est._extract_table_columns("users")
+        assert result == []
+
+
+class TestExtractColumnsFromResult:
+    """Tests for SizeEstimator._extract_columns_from_result."""
+
+    def _make_engine(self) -> MagicMock:
+        engine = MagicMock()
+        engine.dialect.name = "sqlite"
+        return engine
+
+    def test_extract_from_result_proxy(self):
+        """Mock engine + connection returning column keys."""
+        engine = self._make_engine()
+        mock_result = MagicMock()
+        mock_result.keys.return_value = ["id", "name", "email"]
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        engine.connect.return_value = mock_conn
+
+        est = SizeEstimator(engine=engine)
+        result = est._extract_columns_from_result("SELECT * FROM users")
+
+        assert len(result) == 3
+        assert result[0].name == "id"
+        assert result[1].name == "name"
+        assert result[2].name == "email"
+        for col in result:
+            assert col.type_name == "VARCHAR"
+
+    def test_extract_from_result_no_engine(self):
+        """Returns empty list when no engine is set."""
+        est = SizeEstimator()
+        result = est._extract_columns_from_result("SELECT * FROM t")
+        assert result == []
+
+
+class TestExtractColumnInfo:
+    """Tests for SizeEstimator._extract_column_info."""
+
+    def _make_engine(self) -> MagicMock:
+        engine = MagicMock()
+        engine.dialect.name = "sqlite"
+        return engine
+
+    def test_uses_table_reflection_first(self):
+        """When table reflection succeeds, result proxy is not called."""
+        engine = self._make_engine()
+        est = SizeEstimator(engine=engine)
+
+        reflection_cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+        ]
+        est._extract_table_columns = MagicMock(return_value=reflection_cols)
+        est._extract_columns_from_result = MagicMock(return_value=[])
+
+        result = est._extract_column_info("SELECT * FROM users")
+
+        est._extract_table_columns.assert_called_once_with("users", None)
+        est._extract_columns_from_result.assert_not_called()
+        assert result == reflection_cols
+
+    def test_falls_back_to_result_proxy(self):
+        """When reflection returns empty, falls back to result proxy."""
+        engine = self._make_engine()
+        est = SizeEstimator(engine=engine)
+
+        proxy_cols = [
+            ColumnSizeInfo(name="col1", type_name="VARCHAR", estimated_bytes=256),
+        ]
+        est._extract_table_columns = MagicMock(return_value=[])
+        est._extract_columns_from_result = MagicMock(return_value=proxy_cols)
+
+        result = est._extract_column_info("SELECT * FROM users")
+
+        est._extract_table_columns.assert_called_once()
+        est._extract_columns_from_result.assert_called_once()
+        assert result == proxy_cols
+
+    def test_caches_results(self):
+        """Second call with same query uses cache, no re-extraction."""
+        engine = self._make_engine()
+        est = SizeEstimator(engine=engine)
+
+        reflection_cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+        ]
+        est._extract_table_columns = MagicMock(return_value=reflection_cols)
+        est._extract_columns_from_result = MagicMock(return_value=[])
+
+        # First call populates cache
+        result1 = est._extract_column_info("SELECT * FROM users")
+        # Second call should use cache
+        result2 = est._extract_column_info("SELECT * FROM users")
+
+        assert est._extract_table_columns.call_count == 1
+        assert result1 == result2
+
+    def test_empty_for_complex_query(self):
+        """Subquery returns empty tables, falls through to result proxy."""
+        est = SizeEstimator()  # no engine
+        result = est._extract_column_info("SELECT * FROM (SELECT id FROM users) AS sub")
+        assert result == []
+
+
+class TestEstimateWithExtraction:
+    """Tests for estimate_result_size using _extract_column_info."""
+
+    def test_estimate_uses_extract_when_no_columns(self):
+        """Verify _extract_column_info is called when columns not provided."""
+        engine = MagicMock()
+        engine.dialect.name = "sqlite"
+        est = SizeEstimator(engine=engine)
+
+        extracted_cols = [
+            ColumnSizeInfo(name="id", type_name="INTEGER", estimated_bytes=8),
+            ColumnSizeInfo(name="val", type_name="FLOAT", estimated_bytes=8),
+        ]
+        est._extract_column_info = MagicMock(return_value=extracted_cols)
+
+        result = est.estimate_result_size("SELECT * FROM t")
+
+        est._extract_column_info.assert_called_once_with("SELECT * FROM t")
+        assert result.estimated_bytes_per_row == 16
+        assert result.source == "metadata_only"
