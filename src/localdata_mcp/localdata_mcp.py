@@ -57,6 +57,9 @@ from .config_manager import get_config_manager, initialize_config
 # Import backward compatibility management
 from .compatibility_manager import get_compatibility_manager
 
+# Import staging manager singleton
+from .staging_manager import get_staging_manager
+
 # Import structured error classification
 from .error_classification import classify_error
 
@@ -227,6 +230,22 @@ try:
     SPARQLWRAPPER_AVAILABLE = True
 except ImportError:
     SPARQLWRAPPER_AVAILABLE = False
+
+# Oracle support (optional enterprise dependency)
+try:
+    from .oracle_support import ORACLEDB_AVAILABLE
+except ImportError:
+    ORACLEDB_AVAILABLE = False
+
+# MS SQL Server support (optional enterprise dependency)
+try:
+    from .mssql_support import PYMSSQL_AVAILABLE, PYODBC_AVAILABLE
+
+    MSSQL_AVAILABLE = PYMSSQL_AVAILABLE or PYODBC_AVAILABLE
+except ImportError:
+    PYMSSQL_AVAILABLE = False
+    PYODBC_AVAILABLE = False
+    MSSQL_AVAILABLE = False
 
 # Set up logging
 # Initialize structured logging before other components
@@ -735,6 +754,40 @@ class DatabaseManager:
         ]:
             sanitized_path = self._sanitize_path(conn_string)
             return self._create_engine_from_file(sanitized_path, db_type, sheet_name)
+        elif db_type == "oracle":
+            if not ORACLEDB_AVAILABLE:
+                raise ValueError(
+                    "Oracle requires 'oracledb'. "
+                    "Install with: pip install localdata-mcp[enterprise]"
+                )
+            from .oracle_support import create_oracle_engine
+
+            auth = None
+            if sheet_name:
+                import json as _json
+
+                try:
+                    auth = _json.loads(sheet_name)
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+            return create_oracle_engine(conn_string, auth=auth)
+        elif db_type == "mssql":
+            if not MSSQL_AVAILABLE:
+                raise ValueError(
+                    "MS SQL requires 'pymssql' or 'pyodbc'. "
+                    "Install with: pip install localdata-mcp[enterprise]"
+                )
+            from .mssql_support import create_mssql_engine
+
+            auth = None
+            if sheet_name:
+                import json as _json
+
+                try:
+                    auth = _json.loads(sheet_name)
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+            return create_mssql_engine(conn_string, auth=auth)
         elif db_type == "sparql":
             if not SPARQLWRAPPER_AVAILABLE:
                 raise ValueError(
