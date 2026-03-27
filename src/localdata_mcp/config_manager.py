@@ -43,6 +43,7 @@ class DatabaseType(str, Enum):
     INFLUXDB = "influxdb"
     NEO4J = "neo4j"
     COUCHDB = "couchdb"
+    ORACLE = "oracle"
     # File formats
     CSV = "csv"
     JSON = "json"

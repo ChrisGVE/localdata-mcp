@@ -1,10 +1,11 @@
-"""Database-specific error mappers for SQLite, PostgreSQL, MySQL, and DuckDB.
+"""Database-specific error mappers for SQLite, PostgreSQL, MySQL, DuckDB, and Oracle.
 
 Each mapper translates raw database exceptions into StructuredErrorResponse
 instances using backend-specific heuristics (message parsing, SQLSTATE codes,
 error numbers, or exception class names).
 """
 
+import re
 from typing import Dict, List, Tuple
 
 from .error_handler import ErrorCategory
@@ -285,3 +286,94 @@ ErrorMapperRegistry.register("postgres", PostgreSQLErrorMapper())
 ErrorMapperRegistry.register("mysql", MySQLErrorMapper())
 ErrorMapperRegistry.register("mariadb", MySQLErrorMapper())
 ErrorMapperRegistry.register("duckdb", DuckDBErrorMapper())
+
+
+# ---------------------------------------------------------------------------
+# Oracle
+# ---------------------------------------------------------------------------
+
+_ORACLE_CODE_MAP: Dict[str, Tuple[ErrorCategory, bool, str]] = {
+    "ORA-01017": (ErrorCategory.AUTH_ERROR, False, "Invalid username/password"),
+    "ORA-01031": (ErrorCategory.AUTH_ERROR, False, "Insufficient privileges"),
+    "ORA-01045": (
+        ErrorCategory.AUTH_ERROR,
+        False,
+        "User lacks CREATE SESSION privilege",
+    ),
+    "ORA-00942": (
+        ErrorCategory.SCHEMA_ERROR,
+        False,
+        "Table or view does not exist",
+    ),
+    "ORA-00904": (ErrorCategory.SCHEMA_ERROR, False, "Invalid identifier"),
+    "ORA-00900": (ErrorCategory.SYNTAX_ERROR, False, "Invalid SQL statement"),
+    "ORA-00933": (
+        ErrorCategory.SYNTAX_ERROR,
+        False,
+        "SQL command not properly ended",
+    ),
+    "ORA-01653": (
+        ErrorCategory.RESOURCE_ERROR,
+        False,
+        "Unable to extend table",
+    ),
+    "ORA-04031": (
+        ErrorCategory.RESOURCE_ERROR,
+        False,
+        "Unable to allocate shared memory",
+    ),
+    "ORA-00060": (ErrorCategory.TRANSIENT_ERROR, True, "Deadlock detected"),
+    "ORA-08177": (
+        ErrorCategory.TRANSIENT_ERROR,
+        True,
+        "Serialization failure",
+    ),
+    "ORA-03113": (
+        ErrorCategory.CONNECTION_ERROR,
+        True,
+        "End-of-file on communication channel",
+    ),
+    "ORA-03114": (
+        ErrorCategory.CONNECTION_ERROR,
+        True,
+        "Not connected to Oracle",
+    ),
+    "ORA-12541": (ErrorCategory.CONNECTION_ERROR, True, "No listener"),
+    "ORA-12154": (
+        ErrorCategory.CONNECTION_ERROR,
+        True,
+        "TNS could not resolve connect identifier",
+    ),
+}
+
+_ORACLE_SUGGESTIONS: Dict[ErrorCategory, str] = {
+    ErrorCategory.AUTH_ERROR: "Check Oracle credentials and privileges",
+    ErrorCategory.SCHEMA_ERROR: "Verify table/column names in Oracle catalog",
+    ErrorCategory.SYNTAX_ERROR: "Check Oracle SQL syntax",
+    ErrorCategory.RESOURCE_ERROR: ("Check Oracle tablespace and memory allocation"),
+    ErrorCategory.TRANSIENT_ERROR: "Retry the operation",
+    ErrorCategory.CONNECTION_ERROR: ("Check Oracle listener and network connectivity"),
+}
+
+
+class OracleErrorMapper(DatabaseErrorMapper):
+    """Maps Oracle ORA-XXXXX error codes to structured error responses."""
+
+    def map_error(self, exception: Exception) -> StructuredErrorResponse:
+        msg = str(exception)
+        match = re.search(r"ORA-\d{5}", msg)
+        if match:
+            code = match.group()
+            if code in _ORACLE_CODE_MAP:
+                cat, retryable, desc = _ORACLE_CODE_MAP[code]
+                return StructuredErrorResponse(
+                    error_type=cat,
+                    is_retryable=retryable,
+                    message=desc,
+                    suggestion=_ORACLE_SUGGESTIONS.get(cat, "Check database state"),
+                    database_error_code=code,
+                )
+        return GenericDatabaseErrorMapper().map_error(exception)
+
+
+ErrorMapperRegistry.register("oracle", OracleErrorMapper())
