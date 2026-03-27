@@ -30,7 +30,7 @@ def create_mssql_engine(connection_string: str, auth: Optional[Dict[str, Any]] =
         connection_string: SQLAlchemy-style connection URL for MS SQL Server.
         auth: Optional dict with authentication method and parameters.
             Supported methods: "password" (default), "trusted", "azure_ad",
-            "kerberos".
+            "kerberos", "certificate".
 
     Returns:
         A SQLAlchemy Engine instance configured for MS SQL Server.
