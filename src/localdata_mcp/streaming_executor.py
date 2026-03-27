@@ -37,6 +37,9 @@ from .logging_manager import get_logging_manager, get_logger
 # Import structured error classification
 from .error_classification import classify_error
 
+# Import size estimator for pre-execution result size estimation
+from .size_estimator import get_size_estimator, SizeEstimate
+
 # Get structured logger
 logger = get_logger(__name__)
 
@@ -538,6 +541,25 @@ class StreamingQueryExecutor:
         memory_status = self._get_memory_status()
         chunk_size = initial_chunk_size or memory_status.recommended_chunk_size
 
+        # Optional size estimation for smarter chunk sizing
+        size_estimate: Optional[SizeEstimate] = None
+        if isinstance(source, StreamingSQLSource) and source.engine is not None:
+            try:
+                estimator = get_size_estimator(source.engine)
+                size_estimate = estimator.estimate_result_size(source.query)
+                if size_estimate.estimated_total_bytes > 100 * 1024 * 1024:
+                    chunk_size = min(chunk_size, 500)
+                elif size_estimate.estimated_total_bytes > 10 * 1024 * 1024:
+                    chunk_size = min(chunk_size, 2000)
+                logger.debug(
+                    "Size estimate available",
+                    estimated_rows=size_estimate.estimated_rows,
+                    estimated_bytes=size_estimate.estimated_total_bytes,
+                    confidence=size_estimate.confidence,
+                )
+            except Exception as exc:
+                logger.debug("Size estimation failed, continuing without: %s", exc)
+
         with logging_manager.context(
             request_id=request_id,
             operation="streaming_execution_start",
@@ -572,6 +594,15 @@ class StreamingQueryExecutor:
                 result, metadata = self._execute_streaming_internal(
                     source, query_id, chunk_size, memory_status
                 )
+
+            # Attach size estimate to metadata if available
+            if size_estimate is not None:
+                metadata["size_estimate"] = {
+                    "estimated_rows": size_estimate.estimated_rows,
+                    "estimated_total_bytes": size_estimate.estimated_total_bytes,
+                    "confidence": size_estimate.confidence,
+                    "source": size_estimate.source,
+                }
 
             # Log successful completion with performance metrics
             execution_time = time.time() - start_time
