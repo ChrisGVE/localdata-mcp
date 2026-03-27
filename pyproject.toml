@@ -75,6 +75,10 @@ modern-databases = [
   "neo4j>=5.0.0",           # Neo4j graph database
   "couchdb>=1.2.0",         # CouchDB document database
 ]
+enterprise = [
+  "oracledb>=2.0.0",        # Oracle Database support
+  "pymssql>=2.2.0",         # MS SQL Server support
+]
 
 [project.urls]
 Homepage = "https://github.com/chrisgve/localdata-mcp"
