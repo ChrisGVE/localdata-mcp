@@ -1,6 +1,8 @@
 """Oracle Database support for LocalData MCP using oracledb driver."""
 
 import logging
+import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -13,15 +15,21 @@ except ImportError:
     ORACLEDB_AVAILABLE = False
 
 
+def _validate_tns_config() -> bool:
+    """Check if TNS_ADMIN is configured."""
+    return bool(os.environ.get("TNS_ADMIN"))
+
+
 def create_oracle_engine(connection_string: str, auth: Optional[Dict[str, Any]] = None):
     """Create a SQLAlchemy engine for Oracle Database.
 
-    Supports: basic auth, TNS aliases, Oracle Wallet, Kerberos.
+    Supports: basic auth, TNS aliases, Oracle Wallet, Kerberos, certificate.
 
     Args:
         connection_string: SQLAlchemy-style connection URL for Oracle.
         auth: Optional dict with authentication method and parameters.
-            Supported methods: "password" (default), "wallet", "kerberos".
+            Supported methods: "password" (default), "wallet", "kerberos",
+            "certificate".
 
     Returns:
         A SQLAlchemy Engine instance configured for Oracle.
@@ -29,6 +37,7 @@ def create_oracle_engine(connection_string: str, auth: Optional[Dict[str, Any]] 
     Raises:
         ImportError: If oracledb is not installed.
         RuntimeError: If Kerberos auth requires an unavailable Oracle Client.
+        ValueError: If wallet path does not exist.
     """
     if not ORACLEDB_AVAILABLE:
         raise ImportError(
@@ -44,6 +53,8 @@ def create_oracle_engine(connection_string: str, auth: Optional[Dict[str, Any]] 
         method = auth.get("method", "password")
         if method == "wallet":
             wallet_path = auth.get("wallet_path", "")
+            if not Path(wallet_path).is_dir():
+                raise ValueError(f"Wallet path does not exist: {wallet_path}")
             connect_args["config_dir"] = wallet_path
             connect_args["wallet_location"] = wallet_path
         elif method == "kerberos":
@@ -51,6 +62,13 @@ def create_oracle_engine(connection_string: str, auth: Optional[Dict[str, Any]] 
                 _oracledb.init_oracle_client()
             except Exception as e:
                 raise RuntimeError(f"Kerberos requires Oracle Client: {e}") from e
+        elif method == "certificate":
+            cert_path = auth.get("cert_path")
+            key_path = auth.get("key_path")
+            if cert_path:
+                connect_args["ssl_client_cert"] = cert_path
+            if key_path:
+                connect_args["ssl_client_key"] = key_path
 
     # Ensure oracle+oracledb:// prefix
     if connection_string.startswith("oracle://"):
