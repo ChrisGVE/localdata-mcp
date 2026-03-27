@@ -289,3 +289,157 @@ def test_extract_oracle_rows_no_match():
         ("--------------------------------------------",),
     ]
     assert _extract_oracle_rows(rows) is None
+
+
+# ---------------------------------------------------------------------------
+# 138.17-19: Connection manager integration and health check
+# ---------------------------------------------------------------------------
+
+
+def test_connection_manager_oracle_type():
+    """_create_enhanced_engine handles Oracle config via create_oracle_engine."""
+    from unittest.mock import MagicMock, patch as _patch
+
+    from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
+    from localdata_mcp.connection_manager import EnhancedConnectionManager
+
+    config = DatabaseConfig(
+        name="ora_test",
+        type=DatabaseType.ORACLE,
+        connection_string="oracle+oracledb://user:pass@host/db",
+        metadata={"auth": {"method": "password"}},
+    )
+
+    mock_engine = MagicMock()
+
+    with _patch("localdata_mcp.oracle_support.ORACLEDB_AVAILABLE", True):
+        with _patch(
+            "localdata_mcp.oracle_support.create_oracle_engine",
+            return_value=mock_engine,
+        ) as mock_create:
+            mgr = EnhancedConnectionManager.__new__(EnhancedConnectionManager)
+            # Stub out _setup_engine_events to avoid SQLAlchemy event
+            # registration on a MagicMock engine.
+            mgr._setup_engine_events = MagicMock()
+            engine = mgr._create_enhanced_engine("ora_test", config)
+            mock_create.assert_called_once_with(
+                "oracle+oracledb://user:pass@host/db",
+                auth={"method": "password"},
+            )
+            assert engine is mock_engine
+
+
+def test_connection_manager_oracle_no_driver():
+    """_create_enhanced_engine raises ValueError when oracledb is missing."""
+    from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
+    from localdata_mcp.connection_manager import EnhancedConnectionManager
+    from unittest.mock import patch as _patch
+
+    config = DatabaseConfig(
+        name="ora_test",
+        type=DatabaseType.ORACLE,
+        connection_string="oracle+oracledb://user:pass@host/db",
+    )
+
+    with _patch("localdata_mcp.oracle_support.ORACLEDB_AVAILABLE", False):
+        mgr = EnhancedConnectionManager.__new__(EnhancedConnectionManager)
+        with pytest.raises(ValueError, match="oracledb"):
+            mgr._create_enhanced_engine("ora_test", config)
+
+
+def test_health_check_uses_dual():
+    """_perform_health_check uses SELECT 1 FROM DUAL for Oracle databases."""
+    from unittest.mock import MagicMock, patch as _patch, call
+
+    from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
+    from localdata_mcp.connection_manager import (
+        EnhancedConnectionManager,
+        ConnectionMetrics,
+    )
+
+    config = DatabaseConfig(
+        name="ora_hc",
+        type=DatabaseType.ORACLE,
+        connection_string="oracle+oracledb://user:pass@host/db",
+    )
+
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+    mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
+
+    mgr = EnhancedConnectionManager.__new__(EnhancedConnectionManager)
+    mgr._engines = {"ora_hc": mock_engine}
+    mgr._db_configs = {"ora_hc": config}
+    mgr._metrics = {"ora_hc": ConnectionMetrics()}
+    mgr._lock = __import__("threading").RLock()
+
+    result = mgr._perform_health_check("ora_hc")
+
+    # Verify the SQL executed was SELECT 1 FROM DUAL
+    executed_sql = mock_conn.execute.call_args[0][0]
+    assert str(executed_sql) == "SELECT 1 FROM DUAL"
+    assert result.is_healthy
+
+
+# ---------------------------------------------------------------------------
+# 138.18: _get_engine Oracle integration
+# ---------------------------------------------------------------------------
+
+
+def test_get_engine_oracle():
+    """_get_engine returns engine from create_oracle_engine for oracle type."""
+    from unittest.mock import MagicMock, patch as _patch
+
+    mock_engine = MagicMock()
+
+    with _patch("localdata_mcp.localdata_mcp.ORACLEDB_AVAILABLE", True):
+        with _patch(
+            "localdata_mcp.oracle_support.create_oracle_engine",
+            return_value=mock_engine,
+        ) as mock_create:
+            from localdata_mcp.localdata_mcp import DatabaseManager
+
+            mcp_instance = DatabaseManager.__new__(DatabaseManager)
+            engine = mcp_instance._get_engine("oracle", "oracle+oracledb://u:p@h/d")
+            mock_create.assert_called_once_with("oracle+oracledb://u:p@h/d", auth=None)
+            assert engine is mock_engine
+
+
+def test_get_engine_oracle_no_driver():
+    """_get_engine raises ValueError when oracledb is unavailable."""
+    from unittest.mock import patch as _patch
+
+    with _patch("localdata_mcp.localdata_mcp.ORACLEDB_AVAILABLE", False):
+        from localdata_mcp.localdata_mcp import DatabaseManager
+
+        mcp_instance = DatabaseManager.__new__(DatabaseManager)
+        with pytest.raises(ValueError, match="oracledb"):
+            mcp_instance._get_engine("oracle", "oracle+oracledb://u:p@h/d")
+
+
+def test_oracle_auth_from_sheet_name_json():
+    """_get_engine parses JSON auth from sheet_name parameter."""
+    import json
+    from unittest.mock import MagicMock, patch as _patch
+
+    auth_dict = {"method": "wallet", "wallet_path": "/opt/wallet"}
+    mock_engine = MagicMock()
+
+    with _patch("localdata_mcp.localdata_mcp.ORACLEDB_AVAILABLE", True):
+        with _patch(
+            "localdata_mcp.oracle_support.create_oracle_engine",
+            return_value=mock_engine,
+        ) as mock_create:
+            from localdata_mcp.localdata_mcp import DatabaseManager
+
+            mcp_instance = DatabaseManager.__new__(DatabaseManager)
+            engine = mcp_instance._get_engine(
+                "oracle",
+                "oracle+oracledb://u:p@h/d",
+                sheet_name=json.dumps(auth_dict),
+            )
+            mock_create.assert_called_once_with(
+                "oracle+oracledb://u:p@h/d", auth=auth_dict
+            )
+            assert engine is mock_engine
