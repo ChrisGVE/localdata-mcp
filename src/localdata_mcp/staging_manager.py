@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -56,62 +56,43 @@ class StagingManager:
         self._cleanup_thread: Optional[threading.Thread] = None
         self._start_cleanup_thread()
 
+    _DEFAULTS = {
+        "max_concurrent": 10,
+        "max_size_mb": 2048,
+        "max_total_mb": 10240,
+        "timeout_minutes": 30,
+    }
+
     def _load_config(self) -> Dict[str, Any]:
         """Load staging configuration from config manager."""
         try:
             from .config_manager import get_config_manager
 
             cfg = get_config_manager().get_staging_config()
-            return {
-                "max_concurrent": cfg.max_concurrent,
-                "max_size_mb": cfg.max_size_mb,
-                "max_total_mb": cfg.max_total_mb,
-                "timeout_minutes": cfg.timeout_minutes,
-            }
+            return {k: getattr(cfg, k) for k in self._DEFAULTS}
         except Exception:
-            return {
-                "max_concurrent": 10,
-                "max_size_mb": 2048,
-                "max_total_mb": 10240,
-                "timeout_minutes": 30,
-            }
+            return dict(self._DEFAULTS)
 
     @property
     def max_concurrent(self) -> int:
-        """Maximum number of concurrent staging databases."""
         return self._config.get("max_concurrent", 10)
 
     @property
     def max_size_mb(self) -> int:
-        """Maximum size in MB for a single staging database."""
         return self._config.get("max_size_mb", 2048)
 
     @property
     def max_total_mb(self) -> int:
-        """Maximum total size in MB for all staging databases."""
         return self._config.get("max_total_mb", 10240)
 
     @property
     def timeout_minutes(self) -> int:
-        """Timeout in minutes before a staging database expires."""
         return self._config.get("timeout_minutes", 30)
 
     def create_staging(
         self, parent_connection: str, source_query: str
     ) -> StagingDatabase:
-        """Create a new staging database.
-
-        If the maximum number of concurrent staging databases is reached,
-        the least recently used one is evicted first. Similarly, if total
-        size exceeds the configured limit, eviction is triggered.
-
-        Args:
-            parent_connection: Name of the parent database connection.
-            source_query: The SQL query that populates this staging db.
-
-        Returns:
-            The newly created StagingDatabase instance.
-        """
+        """Create a new staging database, evicting LRU if at capacity."""
         with self._lock:
             if len(self._staging_dbs) >= self.max_concurrent:
                 self._evict_lru()
@@ -153,14 +134,7 @@ class StagingManager:
         self.remove_staging(oldest.name)
 
     def remove_staging(self, name: str) -> bool:
-        """Remove a staging database and clean up its file.
-
-        Args:
-            name: The name of the staging database to remove.
-
-        Returns:
-            True if the staging database was found and removed, False otherwise.
-        """
+        """Remove a staging database and delete its file."""
         with self._lock:
             staging = self._staging_dbs.pop(name, None)
             if staging is None:
@@ -192,6 +166,67 @@ class StagingManager:
                 staging.last_accessed = datetime.now()
                 return True
             return False
+
+    def list_staging(
+        self, parent_connection: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """List active staging databases, optionally filtered by parent."""
+        with self._lock:
+            entries = list(self._staging_dbs.values())
+        if parent_connection:
+            entries = [s for s in entries if s.parent_connection == parent_connection]
+        entries.sort(key=lambda s: s.created_at, reverse=True)
+        return [s.to_dict() for s in entries]
+
+    def update_staging_size(self, name: str, row_count: int) -> bool:
+        """Update size and row count for a staging database."""
+        with self._lock:
+            staging = self._staging_dbs.get(name)
+            if not staging:
+                return False
+            try:
+                staging.size_bytes = staging.file_path.stat().st_size
+            except OSError:
+                pass
+            staging.row_count = row_count
+            staging.last_accessed = datetime.now()
+            return True
+
+    def get_staging_by_parent(self, parent_connection: str) -> List[StagingDatabase]:
+        """Get all staging databases for a parent connection."""
+        with self._lock:
+            return [
+                s
+                for s in self._staging_dbs.values()
+                if s.parent_connection == parent_connection
+            ]
+
+    def cleanup_by_parent(self, parent_connection: str) -> int:
+        """Remove all staging databases for a parent connection."""
+        targets = self.get_staging_by_parent(parent_connection)
+        return sum(1 for s in targets if self.remove_staging(s.name))
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get staging system health status."""
+        with self._lock:
+            dbs = list(self._staging_dbs.values())
+        total_bytes = sum(s.size_bytes for s in dbs)
+        oldest = min(dbs, key=lambda s: s.created_at) if dbs else None
+        return {
+            "active_count": len(dbs),
+            "total_size_mb": round(total_bytes / (1024**2), 2),
+            "disk_space": self.check_disk_space(),
+            "config": {
+                "max_concurrent": self.max_concurrent,
+                "max_size_mb": self.max_size_mb,
+                "max_total_mb": self.max_total_mb,
+                "timeout_minutes": self.timeout_minutes,
+            },
+            "oldest_staging": oldest.name if oldest else None,
+            "cleanup_thread_alive": bool(
+                self._cleanup_thread and self._cleanup_thread.is_alive()
+            ),
+        }
 
     def check_disk_space(self) -> Dict[str, Any]:
         """Check available disk space in temp directory."""
@@ -242,3 +277,25 @@ class StagingManager:
         for name in names:
             self.remove_staging(name)
         logger.info("Cleaned up %d staging databases", len(names))
+
+
+_staging_manager: Optional[StagingManager] = None
+
+
+def get_staging_manager() -> StagingManager:
+    """Return the singleton StagingManager, creating one if needed."""
+    global _staging_manager
+    if _staging_manager is None:
+        _staging_manager = StagingManager()
+    return _staging_manager
+
+
+def initialize_staging_manager(
+    config: Optional[Dict[str, Any]] = None,
+) -> StagingManager:
+    """Create (or recreate) the singleton StagingManager with given config."""
+    global _staging_manager
+    if _staging_manager is not None:
+        _staging_manager.stop()
+    _staging_manager = StagingManager(config=config)
+    return _staging_manager
