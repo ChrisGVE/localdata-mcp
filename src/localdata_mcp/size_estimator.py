@@ -297,3 +297,24 @@ class SizeEstimator:
     def cache_columns(self, query: str, columns: List[ColumnSizeInfo]) -> None:
         """Cache column info for a query."""
         self._column_cache[query] = columns
+
+
+# ---------------------------------------------------------------------------
+# Singleton factory — one SizeEstimator per engine URL
+# ---------------------------------------------------------------------------
+_estimators: Dict[str, SizeEstimator] = {}
+
+
+def get_size_estimator(engine: Any = None) -> SizeEstimator:
+    """Get or create a SizeEstimator, cached by engine URL.
+
+    When *engine* is ``None`` the returned estimator has dialect "unknown"
+    and cannot run EXPLAIN or table reflection, but heuristic estimation
+    still works.
+    """
+    if engine is None:
+        return SizeEstimator()
+    key = str(engine.url)
+    if key not in _estimators:
+        _estimators[key] = SizeEstimator(engine)
+    return _estimators[key]
