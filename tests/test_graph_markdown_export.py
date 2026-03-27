@@ -82,6 +82,28 @@ class TestEdgeTable:
         result = _generate_edge_table_markdown([])
         assert result == "*No edges*"
 
+    def test_edge_without_label(self):
+        """An edge missing the 'label' key should show '-'."""
+        edges = [{"source": "A", "target": "B", "weight": 2.0}]
+        result = _generate_edge_table_markdown(edges)
+        assert "| A | B | - | 2.0 |" in result
+
+
+class TestNodeTableFallback:
+    """Additional node table tests for fallback behavior."""
+
+    def test_node_with_name_instead_of_label(self):
+        """Node using 'name' field instead of 'label' should still render."""
+        nodes = [{"id": "N1", "name": "NameOnly", "properties": {}}]
+        result = _generate_node_table_markdown(nodes)
+        assert "NameOnly" in result
+
+    def test_node_with_neither_label_nor_name(self):
+        """Node with neither 'label' nor 'name' should render empty label."""
+        nodes = [{"id": "N2", "properties": {}}]
+        result = _generate_node_table_markdown(nodes)
+        assert "| N2 |" in result
+
 
 class TestMermaidBlock:
     """Tests for _generate_mermaid_block."""
