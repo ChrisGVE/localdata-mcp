@@ -1,19 +1,22 @@
-"""Tests for MS SQL Server support: driver detection, engine creation, and error mapping."""
+"""Tests for MS SQL Server support: driver detection, engine creation, error mapping, and SHOWPLAN."""
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from localdata_mcp._explain_parsers import _parse_showplan_xml, parse_explain_mssql
 from localdata_mcp.config_manager import DatabaseType
-from localdata_mcp.mssql_support import (
-    PYMSSQL_AVAILABLE,
-    PYODBC_AVAILABLE,
-    create_mssql_engine,
-)
 from localdata_mcp.error_classification import (
     ErrorMapperRegistry,
     StructuredErrorResponse,
 )
 from localdata_mcp.error_handler import ErrorCategory
 from localdata_mcp.error_mappers import MSSQLErrorMapper
+from localdata_mcp.mssql_support import (
+    PYMSSQL_AVAILABLE,
+    PYODBC_AVAILABLE,
+    create_mssql_engine,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -163,3 +166,136 @@ def test_sqlserver_alias_registered():
     mapper = ErrorMapperRegistry.get_mapper("sqlserver")
     assert mapper is not None
     assert isinstance(mapper, MSSQLErrorMapper)
+
+
+# ---------------------------------------------------------------------------
+# Certificate / TLS auth (139.10)
+# ---------------------------------------------------------------------------
+
+
+def test_create_mssql_engine_certificate_auth(monkeypatch):
+    """Certificate auth sets encrypt and trustServerCertificate connect_args."""
+    import localdata_mcp.mssql_support as mod
+
+    monkeypatch.setattr(mod, "PYMSSQL_AVAILABLE", True)
+
+    captured = {}
+    original_create_engine = None
+
+    def fake_create_engine(url, **kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    with patch("sqlalchemy.create_engine", side_effect=fake_create_engine):
+        create_mssql_engine(
+            "mssql+pymssql://user:pass@host/db",
+            auth={"method": "certificate", "trust_server_cert": "yes"},
+        )
+
+    assert captured["connect_args"]["encrypt"] == "yes"
+    assert captured["connect_args"]["trustServerCertificate"] == "yes"
+
+
+def test_create_mssql_engine_certificate_auth_default_trust(monkeypatch):
+    """Certificate auth defaults trustServerCertificate to 'no'."""
+    import localdata_mcp.mssql_support as mod
+
+    monkeypatch.setattr(mod, "PYMSSQL_AVAILABLE", True)
+
+    captured = {}
+
+    def fake_create_engine(url, **kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    with patch("sqlalchemy.create_engine", side_effect=fake_create_engine):
+        create_mssql_engine(
+            "mssql+pymssql://user:pass@host/db",
+            auth={"method": "certificate"},
+        )
+
+    assert captured["connect_args"]["trustServerCertificate"] == "no"
+
+
+# ---------------------------------------------------------------------------
+# SHOWPLAN XML parsing (139.11)
+# ---------------------------------------------------------------------------
+
+SAMPLE_SHOWPLAN = """<?xml version="1.0" encoding="utf-16"?>
+<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan">
+  <BatchSequence>
+    <Batch>
+      <Statements>
+        <StmtSimple>
+          <QueryPlan>
+            <RelOp EstimateRows="42" />
+          </QueryPlan>
+        </StmtSimple>
+      </Statements>
+    </Batch>
+  </BatchSequence>
+</ShowPlanXML>"""
+
+SAMPLE_SHOWPLAN_MULTI = """<?xml version="1.0" encoding="utf-16"?>
+<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan">
+  <BatchSequence>
+    <Batch>
+      <Statements>
+        <StmtSimple>
+          <QueryPlan>
+            <RelOp EstimateRows="100">
+              <RelOp EstimateRows="50" />
+            </RelOp>
+          </QueryPlan>
+        </StmtSimple>
+      </Statements>
+    </Batch>
+  </BatchSequence>
+</ShowPlanXML>"""
+
+
+def test_parse_showplan_xml_basic():
+    """Extracts EstimateRows from valid SHOWPLAN XML."""
+    assert _parse_showplan_xml(SAMPLE_SHOWPLAN) == 42
+
+
+def test_parse_showplan_xml_invalid():
+    """Returns 1000 default for unparseable XML."""
+    assert _parse_showplan_xml("not xml at all<<<") == 1000
+
+
+def test_parse_showplan_xml_multiple_relops():
+    """Picks the first EstimateRows when multiple RelOp elements exist."""
+    assert _parse_showplan_xml(SAMPLE_SHOWPLAN_MULTI) == 100
+
+
+def test_parse_explain_mssql_success():
+    """parse_explain_mssql returns estimated_rows from mocked SHOWPLAN_XML."""
+    mock_conn = MagicMock()
+    mock_result = MagicMock()
+    mock_result.fetchone.return_value = (SAMPLE_SHOWPLAN,)
+    mock_conn.execute.side_effect = [
+        None,  # SET SHOWPLAN_XML ON
+        mock_result,  # query execution
+        None,  # SET SHOWPLAN_XML OFF
+    ]
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value = mock_conn
+
+    result = parse_explain_mssql(mock_engine, "SELECT * FROM t")
+    assert result is not None
+    assert result["estimated_rows"] == 42
+    assert result["confidence"] == 0.8
+    assert result["scan_type"] == "showplan"
+
+
+def test_parse_explain_mssql_failure():
+    """parse_explain_mssql returns None when engine.connect() raises."""
+    mock_engine = MagicMock()
+    mock_engine.connect.side_effect = Exception("connection failed")
+
+    result = parse_explain_mssql(mock_engine, "SELECT 1")
+    assert result is None

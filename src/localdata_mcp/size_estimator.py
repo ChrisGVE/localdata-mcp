@@ -184,7 +184,9 @@ class SizeEstimator:
     def _run_explain(self, query: str) -> Optional[Dict[str, Any]]:
         """Run EXPLAIN and return normalized result."""
         from ._explain_parsers import (
+            parse_explain_mssql,
             parse_explain_mysql,
+            parse_explain_oracle,
             parse_explain_postgresql,
             parse_explain_sqlite,
         )
@@ -193,6 +195,8 @@ class SizeEstimator:
             "sqlite": parse_explain_sqlite,
             "postgresql": parse_explain_postgresql,
             "mysql": parse_explain_mysql,
+            "mssql": parse_explain_mssql,
+            "oracle": parse_explain_oracle,
         }
         parser = parsers.get(self._dialect)
         return parser(self._engine, query) if parser and self._engine else None
