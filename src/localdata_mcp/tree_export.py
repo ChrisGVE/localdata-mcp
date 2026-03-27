@@ -153,10 +153,25 @@ def export_yaml(
 # MCP tool entry point
 # ---------------------------------------------------------------------------
 
+
+def _export_markdown(
+    manager: TreeStorageManager,
+    path: Optional[str] = None,
+) -> str:
+    """Export the tree (or subtree) as markdown via markdown_export."""
+    from .markdown_export import export_tree_markdown
+
+    tree = reconstruct_tree(manager, path)
+    result = export_tree_markdown(tree)
+    return result["content"]
+
+
 _EXPORTERS = {
     "toml": export_toml,
     "json": export_json,
     "yaml": export_yaml,
+    "markdown": _export_markdown,
+    "md": _export_markdown,
 }
 
 
@@ -172,7 +187,9 @@ def tool_export_structured(
     """
     fmt = format.lower()
     if fmt not in _EXPORTERS:
-        return {"error": f"Unsupported format '{format}'. Use toml, json, or yaml."}
+        return {
+            "error": f"Unsupported format '{format}'. Use toml, json, yaml, or markdown."
+        }
 
     try:
         output = _EXPORTERS[fmt](manager, path)
