@@ -98,7 +98,7 @@ Each key under `databases` defines a named data source. Required fields: `type` 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `type` | `str` | *(required)* | One of: `sqlite`, `postgresql`, `mysql`, `duckdb`, `redis`, `elasticsearch`, `mongodb`, `influxdb`, `neo4j`, `couchdb`, `csv`, `json`, `yaml`, `toml`, `excel`, `ods`, `numbers`, `xml`, `ini`, `tsv`, `parquet`, `feather`, `arrow`, `hdf5` |
+| `type` | `str` | *(required)* | One of: `sqlite`, `postgresql`, `mysql`, `duckdb`, `mssql`, `oracle`, `redis`, `elasticsearch`, `mongodb`, `influxdb`, `neo4j`, `couchdb`, `csv`, `json`, `yaml`, `toml`, `excel`, `ods`, `numbers`, `xml`, `ini`, `tsv`, `parquet`, `feather`, `arrow`, `hdf5` |
 | `connection_string` | `str` | *(required)* | Connection URI or file path |
 | `sheet_name` | `str` | `null` | Sheet or dataset name (Excel, ODS, Numbers, HDF5) |
 | `enabled` | `bool` | `true` | Whether this source is active |
@@ -236,6 +236,28 @@ performance:
   memory_limit_mb: 1024
   chunk_size: 50
 ```
+
+### MS SQL Server
+
+Connect to a SQL Server instance. Requires the `enterprise` extra (`pip install localdata-mcp[enterprise]`). Authentication parameters can be passed via the `metadata.auth` field:
+
+```yaml
+databases:
+  erp:
+    type: mssql
+    connection_string: mssql+pymssql://${MSSQL_USER}:${MSSQL_PASS}@sqlserver.internal/erp_db
+    max_connections: 15
+    query_timeout: 120
+
+  erp_kerberos:
+    type: mssql
+    connection_string: mssql+pyodbc://sqlserver.internal/erp_db
+    metadata:
+      auth:
+        method: kerberos
+```
+
+Supported `auth.method` values: `password` (default), `trusted`, `azure_ad`, `kerberos`, `certificate`.
 
 ### Production
 

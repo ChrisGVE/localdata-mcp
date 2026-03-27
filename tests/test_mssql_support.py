@@ -299,3 +299,120 @@ def test_parse_explain_mssql_failure():
 
     result = parse_explain_mssql(mock_engine, "SELECT 1")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Connection manager integration (139.17-18)
+# ---------------------------------------------------------------------------
+
+
+class TestConnectionManagerMSSQLType:
+    """Verify _create_enhanced_engine handles MSSQL config."""
+
+    @patch(
+        "localdata_mcp.connection_manager.EnhancedConnectionManager._setup_engine_events"
+    )
+    @patch("localdata_mcp.mssql_support.create_mssql_engine")
+    def test_connection_manager_mssql_type(self, mock_create, mock_events, monkeypatch):
+        """_create_enhanced_engine delegates to create_mssql_engine for MSSQL."""
+        import localdata_mcp.mssql_support as mod
+
+        monkeypatch.setattr(mod, "PYMSSQL_AVAILABLE", True)
+
+        mock_engine = MagicMock()
+        mock_create.return_value = mock_engine
+
+        from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
+        from localdata_mcp.connection_manager import EnhancedConnectionManager
+
+        mgr = EnhancedConnectionManager.__new__(EnhancedConnectionManager)
+        mgr._lock = __import__("threading").RLock()
+
+        config = DatabaseConfig(
+            name="testmssql",
+            type=DatabaseType.MSSQL,
+            connection_string="mssql://user:pass@host/db",
+            enabled=True,
+        )
+        engine = mgr._create_enhanced_engine("testmssql", config)
+        mock_create.assert_called_once_with("mssql://user:pass@host/db", auth=None)
+        assert engine is mock_engine
+
+    @patch(
+        "localdata_mcp.connection_manager.EnhancedConnectionManager._setup_engine_events"
+    )
+    @patch("localdata_mcp.mssql_support.create_mssql_engine")
+    def test_mssql_auth_from_metadata(self, mock_create, mock_events, monkeypatch):
+        """Auth dict is extracted from config.metadata and forwarded."""
+        import localdata_mcp.mssql_support as mod
+
+        monkeypatch.setattr(mod, "PYMSSQL_AVAILABLE", True)
+        mock_create.return_value = MagicMock()
+
+        from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
+        from localdata_mcp.connection_manager import EnhancedConnectionManager
+
+        mgr = EnhancedConnectionManager.__new__(EnhancedConnectionManager)
+        mgr._lock = __import__("threading").RLock()
+
+        auth_dict = {"method": "kerberos"}
+        config = DatabaseConfig(
+            name="testmssql",
+            type=DatabaseType.MSSQL,
+            connection_string="mssql://host/db",
+            enabled=True,
+            metadata={"auth": auth_dict},
+        )
+        mgr._create_enhanced_engine("testmssql", config)
+        mock_create.assert_called_once_with("mssql://host/db", auth=auth_dict)
+
+    def test_connection_manager_mssql_no_driver(self, monkeypatch):
+        """ValueError raised when neither pymssql nor pyodbc is available."""
+        import localdata_mcp.mssql_support as mod
+
+        monkeypatch.setattr(mod, "PYMSSQL_AVAILABLE", False)
+        monkeypatch.setattr(mod, "PYODBC_AVAILABLE", False)
+
+        from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
+        from localdata_mcp.connection_manager import EnhancedConnectionManager
+
+        mgr = EnhancedConnectionManager.__new__(EnhancedConnectionManager)
+        mgr._lock = __import__("threading").RLock()
+
+        config = DatabaseConfig(
+            name="testmssql",
+            type=DatabaseType.MSSQL,
+            connection_string="mssql://host/db",
+            enabled=True,
+        )
+        with pytest.raises(ValueError, match="pymssql.*pyodbc"):
+            mgr._create_enhanced_engine("testmssql", config)
+
+
+class TestGetEngineMSSQL:
+    """Verify _get_engine in localdata_mcp.py handles mssql type."""
+
+    @patch("localdata_mcp.mssql_support.create_mssql_engine")
+    def test_get_engine_mssql(self, mock_create, monkeypatch):
+        """_get_engine returns the engine from create_mssql_engine for mssql type."""
+        import localdata_mcp.localdata_mcp as main_mod
+
+        monkeypatch.setattr(main_mod, "MSSQL_AVAILABLE", True)
+        mock_engine = MagicMock()
+        mock_create.return_value = mock_engine
+
+        # Create a minimal instance to call _get_engine on
+        instance = object.__new__(main_mod.DatabaseManager)
+        result = instance._get_engine("mssql", "mssql://user:pass@host/db")
+        mock_create.assert_called_once_with("mssql://user:pass@host/db", auth=None)
+        assert result is mock_engine
+
+    def test_get_engine_mssql_no_driver(self, monkeypatch):
+        """_get_engine raises ValueError when MSSQL_AVAILABLE is False."""
+        import localdata_mcp.localdata_mcp as main_mod
+
+        monkeypatch.setattr(main_mod, "MSSQL_AVAILABLE", False)
+
+        instance = object.__new__(main_mod.DatabaseManager)
+        with pytest.raises(ValueError, match="pymssql.*pyodbc"):
+            instance._get_engine("mssql", "mssql://host/db")
