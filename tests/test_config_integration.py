@@ -177,4 +177,35 @@ class TestConfigIntegration:
         )
         mgr = ConfigManager(config_file=str(explicit))
         assert mgr.get_database_config("explicit_db") is not None
+
+    def test_global_config_merged_with_project_local(self, tmp_path, monkeypatch):
+        """Project-local config overrides global config values."""
+        # Create XDG user config (global)
+        xdg_dir = tmp_path / "xdg" / "localdata"
+        xdg_dir.mkdir(parents=True)
+        global_cfg = xdg_dir / "config.yaml"
+        global_cfg.write_text(
+            "staging:\n  max_concurrent: 5\n  max_size_mb: 1024\n"
+            "security:\n  readonly: false\n"
+        )
+
+        # Create project-local config (overrides)
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        local_cfg = project_dir / ".localdata.yaml"
+        local_cfg.write_text("security:\n  readonly: true\n")
+
+        monkeypatch.chdir(project_dir)
+        env = {"XDG_CONFIG_HOME": str(tmp_path / "xdg"), "LOCALDATA_CONFIG": ""}
+        with patch.dict("os.environ", env, clear=False):
+            mgr = ConfigManager()
+
+        # Project-local readonly=true overrides global readonly=false
+        security = mgr.get_security_config()
+        assert security.readonly is True
+
+        # Global staging config is preserved (not in project-local)
+        staging = mgr.get_staging_config()
+        assert staging.max_concurrent == 5
+        assert staging.max_size_mb == 1024
         assert mgr.get_database_config("local_db") is None
