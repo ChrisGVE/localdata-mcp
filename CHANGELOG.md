@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- sphinx-start -->
 
+## [1.7.0] - 2026-03-28
+
+### Added
+
+#### Regex Search & Transform Tools
+- `search_data` MCP tool: search query results for regex patterns with column filtering, case sensitivity, and match position tracking
+- `transform_data` MCP tool: apply regex find/replace to query result columns with capture group support and change sampling
+- ReDoS (Regular Expression Denial of Service) prevention via `sre_parse` AST analysis detecting nested quantifiers and dangerous patterns
+- Pattern complexity scoring with configurable limits (200 char max, 10 groups max)
+- Timeout-protected execution (5 second default) via ThreadPoolExecutor
+
+#### Enhanced Graph & Tree Export
+- Graph hierarchy export (`style="hierarchy"`): renders DAGs as indented trees with multi-parent annotations (`also child of: X`)
+- Graph detailed export (`style="detailed"`): full node property sections with incoming/outgoing edge tables
+- Graph adjacency list export (`style="adjacency"`): compact `A -> B [label]` format for token efficiency
+- Tree export with path breadcrumbs (`include_path=True`): shows `root > parent > child` navigation context
+- Cycle detection with automatic fallback to adjacency list for non-DAG graphs
+
+#### Schema Export
+- `export_schema` MCP tool with four output formats:
+  - JSON Schema with type mapping, required fields, maxLength, x-primary-key, x-foreign-keys, x-indexes
+  - Python dataclass definitions with Optional fields for nullable columns
+  - TypeScript interfaces with optional property markers
+  - SQL DDL with CREATE TABLE, PRIMARY KEY, FOREIGN KEY, CREATE INDEX statements
+- `SchemaIntrospector` class using SQLAlchemy Inspector for cross-database schema extraction
+
+#### Query Audit Log
+- `get_query_log` MCP tool: retrieve recent query execution history with database, status, and time filters
+- `get_error_log` MCP tool: filtered view of errors and timeouts with structured classification
+- In-memory ring buffer (configurable max 1000 entries) with thread-safe deque
+- Automatic audit recording integrated into `execute_query` with timing and error capture
+- Query hash generation for deduplication statistics
+
+#### Readonly Mode
+- `security.readonly: true` configuration option that hard-blocks write-disguised-as-read SQL
+- Detects SELECT INTO, CREATE TABLE AS SELECT, COPY TO, INSERT ALL, MERGE INTO, OUTPUT INTO
+- Database-specific pattern coverage for Oracle, MS SQL, PostgreSQL, MySQL
+
 ## [1.6.0] - 2026-03-28
 
 ### Added
