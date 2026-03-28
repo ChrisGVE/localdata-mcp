@@ -656,6 +656,31 @@ class ConfigManager:
                 "max_query_length",
                 int,
             ),
+            "LOCALDATA_DISK_BUDGET_MAX_STAGING_MB": (
+                "disk_budget",
+                "max_staging_size_mb",
+                int,
+            ),
+            "LOCALDATA_DISK_BUDGET_MAX_TOTAL_MB": (
+                "disk_budget",
+                "max_total_staging_mb",
+                int,
+            ),
+            "LOCALDATA_DISK_BUDGET_WARNING_THRESHOLD": (
+                "disk_budget",
+                "disk_warning_threshold",
+                float,
+            ),
+            "LOCALDATA_DISK_BUDGET_HEADROOM_MB": (
+                "disk_budget",
+                "headroom_mb",
+                int,
+            ),
+            "LOCALDATA_DISK_BUDGET_CHECK_INTERVAL": (
+                "disk_budget",
+                "check_interval_rows",
+                int,
+            ),
         }
 
         for env_name, (section, key, type_fn) in section_vars.items():
@@ -725,6 +750,7 @@ class ConfigManager:
             QueryConfig,
             ConnectionsConfig,
             SecurityConfig,
+            DiskBudgetConfig,
         )
 
         for section, cls in [
@@ -733,6 +759,7 @@ class ConfigManager:
             ("query", QueryConfig),
             ("connections", ConnectionsConfig),
             ("security", SecurityConfig),
+            ("disk_budget", DiskBudgetConfig),
         ]:
             data = self._config_data.get(section, {})
             if data:
