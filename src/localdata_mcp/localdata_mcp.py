@@ -3757,6 +3757,24 @@ def _parse_cli_args() -> argparse.Namespace:
         default=False,
         help="Force overwrite during migration",
     )
+    parser.add_argument(
+        "--validate-config",
+        action="store_true",
+        default=False,
+        help="Validate configuration and exit",
+    )
+    parser.add_argument(
+        "--show-config",
+        action="store_true",
+        default=False,
+        help="Show resolved configuration and exit",
+    )
+    parser.add_argument(
+        "--init-config",
+        action="store_true",
+        default=False,
+        help="Create default config file and exit",
+    )
     args, _ = parser.parse_known_args(sys.argv[1:])
     return args
 
@@ -3785,6 +3803,66 @@ def main():
         except Exception as e:
             print(f"Migration failed: {e}")
             sys.exit(1)
+        sys.exit(0)
+
+    if args.init_config:
+        from .config_paths import create_default_config
+
+        try:
+            path = create_default_config()
+            print(f"Default config created at {path}")
+        except FileExistsError:
+            print(
+                f"Config file already exists. Remove it first or use a different path."
+            )
+            sys.exit(1)
+        except Exception as e:
+            print(f"Failed to create config: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
+    if args.validate_config:
+        try:
+            mgr = get_config_manager()
+            mgr._validate_config()
+            print("Configuration is valid.")
+        except Exception as e:
+            print(f"Configuration validation failed: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
+    if args.show_config:
+        import copy
+        import re as _re
+
+        mgr = get_config_manager()
+        data = copy.deepcopy(mgr._config_data)
+
+        def _redact(obj):
+            """Recursively redact sensitive values."""
+            if isinstance(obj, dict):
+                for key in obj:
+                    if any(
+                        s in key.lower()
+                        for s in (
+                            "password",
+                            "secret",
+                            "token",
+                            "connection_string",
+                            "key_path",
+                            "cert_path",
+                            "wallet_path",
+                        )
+                    ):
+                        obj[key] = "***REDACTED***"
+                    else:
+                        _redact(obj[key])
+            elif isinstance(obj, list):
+                for item in obj:
+                    _redact(item)
+
+        _redact(data)
+        print(yaml.dump(data, default_flow_style=False, sort_keys=True))
         sys.exit(0)
 
     if args.config:
