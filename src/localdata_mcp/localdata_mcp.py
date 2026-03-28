@@ -2370,6 +2370,7 @@ class DatabaseManager:
         chunk_size: Optional[int] = None,
         enable_analysis: bool = True,
         include_blobs: bool = False,
+        preflight: bool = False,
     ) -> str:
         """
         Execute a SQL query and return results as JSON.
@@ -2384,6 +2385,7 @@ class DatabaseManager:
             chunk_size: Optional chunk size for pagination. If not specified, uses analysis recommendations.
             enable_analysis: Whether to perform pre-query analysis (default: True).
             include_blobs: When True, base64-encode small BLOBs in results. When False (default), replace BLOBs with informative placeholders.
+            preflight: When True, run EXPLAIN without executing and return size/row estimates.
         """
         # Dispatch SPARQL queries for remote SPARQL endpoints
         if name in self._sparql_connections:
@@ -2392,6 +2394,10 @@ class DatabaseManager:
         # Dispatch SPARQL queries for RDF connections
         if name in self._rdf_managers:
             return self._execute_sparql(name, query)
+
+        # Pre-flight estimation mode: EXPLAIN only, no execution
+        if preflight:
+            return self._execute_preflight(name, query)
 
         try:
             # Backward compatibility check
@@ -2730,6 +2736,38 @@ class DatabaseManager:
             db_type = self.db_types.get(name, "generic")
             structured = classify_error(e, db_type)
             return json.dumps(structured.to_dict())
+
+    def _execute_preflight(self, name: str, query: str) -> str:
+        """Run EXPLAIN without executing, return estimates."""
+        from .explain_parser import PreflightResult, generate_suggestion, run_explain
+        from .size_estimator import get_size_estimator
+
+        engine = self._get_connection(name)
+
+        try:
+            explain = run_explain(engine, query)
+            estimator = get_size_estimator(engine)
+
+            estimated_rows = explain.estimated_rows if explain else None
+            size_est = estimator.estimate_result_size(
+                query, estimated_rows=estimated_rows
+            )
+
+            size_mb = round(size_est.estimated_total_bytes / (1024 * 1024), 2)
+            suggestion = generate_suggestion(estimated_rows, size_mb)
+
+            result = PreflightResult(
+                estimated_rows=estimated_rows,
+                estimated_size_bytes=size_est.estimated_total_bytes,
+                estimated_size_mb=size_mb,
+                scan_type=explain.scan_type if explain else None,
+                confidence=explain.confidence if explain else 0.0,
+                suggestion=suggestion,
+            )
+            return json.dumps(result.to_dict(), indent=2)
+        except Exception as e:
+            result = PreflightResult(error=str(e))
+            return json.dumps(result.to_dict(), indent=2)
 
     def analyze_query_preview(self, name: str, query: str) -> str:
         """

@@ -152,3 +152,78 @@ class TestParsersRegistered:
         assert "sqlite" in _PARSER_REGISTRY
         assert "postgresql" in _PARSER_REGISTRY
         assert "mysql" in _PARSER_REGISTRY
+
+
+class TestExecutePreflight:
+    """Tests for the preflight parameter on execute_query."""
+
+    def _make_manager(self):
+        """Create a DatabaseManager with an in-memory SQLite DB."""
+        import json as _json
+
+        from sqlalchemy import create_engine, text
+
+        from localdata_mcp.localdata_mcp import DatabaseManager
+
+        mgr = DatabaseManager()
+        engine = create_engine("sqlite:///:memory:")
+        with engine.connect() as conn:
+            conn.execute(text("CREATE TABLE t (id INTEGER, val TEXT)"))
+            conn.execute(text("INSERT INTO t VALUES (1, 'a'), (2, 'b')"))
+            conn.commit()
+        mgr.connections["testdb"] = engine
+        mgr.db_types["testdb"] = "sqlite"
+        return mgr
+
+    def test_preflight_with_sqlite(self):
+        """Preflight against in-memory SQLite returns valid result."""
+        import json
+
+        mgr = self._make_manager()
+        result = mgr.execute_query("testdb", "SELECT * FROM t", preflight=True)
+        data = json.loads(result)
+        assert data["preflight"] is True
+
+    def test_preflight_returns_json(self):
+        """Preflight returns valid JSON with expected keys."""
+        import json
+
+        mgr = self._make_manager()
+        data = json.loads(
+            mgr.execute_query("testdb", "SELECT * FROM t", preflight=True)
+        )
+        for key in ("preflight", "estimated_rows", "estimated_size_mb", "confidence"):
+            assert key in data
+
+    def test_preflight_error_handling(self):
+        """Invalid query returns error in preflight response, not an exception."""
+        import json
+
+        mgr = self._make_manager()
+        data = json.loads(
+            mgr.execute_query(
+                "testdb", "SELECT * FROM nonexistent_table_xyz", preflight=True
+            )
+        )
+        assert data["preflight"] is True
+        assert isinstance(data, dict)
+
+    def test_preflight_suggestion_present(self):
+        """Preflight result includes suggestion field."""
+        import json
+
+        mgr = self._make_manager()
+        data = json.loads(
+            mgr.execute_query("testdb", "SELECT * FROM t", preflight=True)
+        )
+        assert "suggestion" in data or "error" in data
+
+    def test_preflight_false_executes_normally(self):
+        """Default preflight=False executes the query normally."""
+        import json
+
+        mgr = self._make_manager()
+        result = mgr.execute_query("testdb", "SELECT * FROM t", preflight=False)
+        data = json.loads(result)
+        # Normal execution returns rows, not preflight metadata
+        assert "preflight" not in data or data.get("preflight") is not True
