@@ -461,35 +461,58 @@ class ConfigManager:
         }
 
     def _load_yaml_config(self) -> Optional[Dict[str, Any]]:
-        """Load configuration from YAML files with OS-aware discovery."""
+        """Load configuration from YAML files with OS-aware discovery.
+
+        Loads the highest-priority file found. If a project-local config
+        exists alongside a user/system config, both are loaded and merged
+        (project-local values override global ones).
+        """
         from .config_paths import emit_deprecation_warning, get_config_paths
 
         if self._config_file:
-            candidates = [Path(self._config_file).expanduser()]
-            legacy_flags = [False]
-        else:
-            infos = get_config_paths()
-            candidates = [info.path for info in infos]
-            legacy_flags = [info.is_legacy for info in infos]
+            # Explicit --config flag: use only that file
+            expanded = Path(self._config_file).expanduser()
+            if not expanded.exists():
+                return None
+            try:
+                with open(expanded, "r") as f:
+                    content = self._substitute_env_vars(f.read())
+                self._file_mtimes[str(expanded)] = os.path.getmtime(expanded)
+                return yaml.safe_load(content)
+            except Exception as e:
+                print(f"Warning: Could not load config file {expanded}: {e}")
+                return None
 
-        for path, is_legacy in zip(candidates, legacy_flags):
-            expanded = path.expanduser()
+        infos = get_config_paths()
+
+        # Separate project-local from global configs
+        project_local = None
+        global_config = None
+
+        for info in infos:
+            expanded = info.path.expanduser()
             if not expanded.exists():
                 continue
             try:
                 with open(expanded, "r") as f:
-                    content = f.read()
-                content = self._substitute_env_vars(content)
-                yaml_data = yaml.safe_load(content)
+                    content = self._substitute_env_vars(f.read())
+                data = yaml.safe_load(content)
                 self._file_mtimes[str(expanded)] = os.path.getmtime(expanded)
-                if is_legacy:
+                if info.is_legacy:
                     emit_deprecation_warning(expanded)
-                return yaml_data
+                if info.location_type.value == "project_local":
+                    project_local = data
+                elif global_config is None:
+                    global_config = data
             except Exception as e:
-                print(f"Warning: Could not load config file {path}: {e}")
+                print(f"Warning: Could not load config file {info.path}: {e}")
                 continue
 
-        return None
+        if global_config and project_local:
+            # Merge: global first, project-local overrides
+            self._merge_config(global_config)
+            return project_local  # will be merged on top by reload_config
+        return project_local or global_config
 
     def _load_env_config(self) -> Dict[str, Any]:
         """Load configuration from environment variables with backward compatibility."""
