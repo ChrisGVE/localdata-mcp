@@ -121,6 +121,49 @@ DuckDB errors are classified by the Python exception class name:
 | `IOException` (memory/space) | `RESOURCE_ERROR` |
 | `IOException` (other) | `CONNECTION_ERROR` |
 
+### Oracle
+
+Oracle errors are classified by their ORA-XXXXX error codes:
+
+| Error code | Category | Notes |
+|---|---|---|
+| `ORA-01017` | `AUTH_ERROR` | Invalid username/password |
+| `ORA-01031` | `AUTH_ERROR` | Insufficient privileges |
+| `ORA-01045` | `AUTH_ERROR` | User lacks CREATE SESSION privilege |
+| `ORA-00942` | `SCHEMA_ERROR` | Table or view does not exist |
+| `ORA-00904` | `SCHEMA_ERROR` | Invalid identifier |
+| `ORA-00900` | `SYNTAX_ERROR` | Invalid SQL statement |
+| `ORA-00933` | `SYNTAX_ERROR` | SQL command not properly ended |
+| `ORA-01653` | `RESOURCE_ERROR` | Unable to extend table |
+| `ORA-04031` | `RESOURCE_ERROR` | Unable to allocate shared memory |
+| `ORA-00060` | `TRANSIENT_ERROR` | Deadlock detected (retryable) |
+| `ORA-08177` | `TRANSIENT_ERROR` | Serialization failure (retryable) |
+| `ORA-03113` | `CONNECTION_ERROR` | End-of-file on communication channel (retryable) |
+| `ORA-03114` | `CONNECTION_ERROR` | Not connected to Oracle (retryable) |
+| `ORA-12541` | `CONNECTION_ERROR` | No listener (retryable) |
+| `ORA-12154` | `CONNECTION_ERROR` | TNS could not resolve connect identifier (retryable) |
+
+### MS SQL Server
+
+MSSQL errors are classified by their numeric error code (`Msg`) and severity level:
+
+| Error code | Category | Notes |
+|---|---|---|
+| 18456 | `AUTH_ERROR` | Login failed |
+| 18452 | `AUTH_ERROR` | Login from untrusted domain |
+| 208 | `SCHEMA_ERROR` | Invalid object name |
+| 207 | `SCHEMA_ERROR` | Invalid column name |
+| 102, 156 | `SYNTAX_ERROR` | Incorrect syntax |
+| 1205 | `TRANSIENT_ERROR` | Transaction deadlocked (retryable) |
+| 1222 | `TRANSIENT_ERROR` | Lock request timeout (retryable) |
+| 547, 2627, 2601 | `CONSTRAINT_ERROR` | Constraint / unique key violation |
+| 1105 | `RESOURCE_ERROR` | Could not allocate space |
+| 9002 | `RESOURCE_ERROR` | Transaction log full |
+
+When the error code is not in the table, severity is used as a fallback:
+- Severity >= 20: `CONNECTION_ERROR` (fatal error)
+- Severity >= 17: `RESOURCE_ERROR`
+
 ## Integration guide
 
 To add a mapper for a new database backend:

@@ -1,10 +1,10 @@
 # Configuration
 
-LocalData MCP supports configuration through YAML files, environment variables, or a combination of both. Environment variables always override YAML values, and YAML values override built-in defaults.
+LocalData MCP supports configuration through YAML files, environment variables, or a combination of both. Values are resolved in layers: built-in defaults are loaded first, then YAML files are merged on top, and environment variables override everything.
 
 ## Config file locations
 
-The server searches for configuration files in the following order and uses the **first one found**:
+The server searches for configuration files in the following order and **merges** them together (later layers override earlier ones):
 
 | Priority | Path | Platform | Description |
 |----------|------|----------|-------------|
@@ -17,6 +17,17 @@ The server searches for configuration files in the following order and uses the 
 | 5 (lowest) | `~/.localdata.yaml` | All | Legacy (deprecated) |
 
 On Linux, `$XDG_CONFIG_HOME` defaults to `~/.config` when unset.
+
+### How merging works
+
+When no explicit `--config` flag is given, the server loads files in two passes:
+
+1. **Global config** — the highest-priority user or system file found (XDG, AppData, `/etc`, or legacy).
+2. **Project-local config** — `./.localdata.yaml`, if present, is deep-merged on top of the global config. Only the keys you set in the project file are overridden; everything else is inherited from the global config.
+
+If you pass `--config PATH` (or set `LOCALDATA_CONFIG`), that single file is used and the discovery process is skipped entirely.
+
+Environment variables are applied last and override any value set in YAML.
 
 Using the legacy path (`~/.localdata.yaml`) emits a deprecation warning at startup. See [Migration guide](#migration-guide) for how to move to the recommended location.
 
@@ -88,6 +99,7 @@ Define databases with the pattern `LOCALDATA_DB_<NAME>_<PROPERTY>`:
 
 | Variable | Maps to | Type | Default |
 |----------|---------|------|---------|
+| `LOCALDATA_SECURITY_RESTRICT_PATHS` | `security.restrict_paths` | `bool` | `true` |
 | `LOCALDATA_SECURITY_MAX_QUERY_LENGTH` | `security.max_query_length` | `int` | `10000` |
 
 ### Disk budget
@@ -190,7 +202,9 @@ Controls query and path security.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `allowed_paths` | `list[str]` | `["."]` | Directories the server can access |
+| `restrict_paths` | `bool` | `true` | When enabled, file access is limited to `allowed_paths` |
+| `allowed_paths` | `list[str]` | `["."]` | Directories the server can access (only enforced when `restrict_paths` is true) |
+| `readonly` | `bool` | `false` | Block all write-oriented SQL operations (see [Readonly mode](#readonly-mode)) |
 | `max_query_length` | `int` | `10000` | Maximum allowed SQL query length in characters |
 | `blocked_keywords` | `list[str]` | `[]` | SQL keywords to reject (e.g., `["DROP", "TRUNCATE"]`) |
 
@@ -521,6 +535,97 @@ performance:
   memory_limit_mb: 4096
   memory_warning_threshold: 0.90
 ```
+
+## Readonly mode
+
+When `security.readonly` is set to `true`, the server rejects any SQL statement that would write data as a side effect. This goes beyond the standard `blocked_keywords` list and catches patterns that embed writes inside otherwise valid `SELECT` statements:
+
+| Blocked pattern | Example |
+|---|---|
+| `SELECT ... INTO` | `SELECT * INTO backup FROM orders` |
+| `CREATE TABLE ... AS SELECT` | `CREATE TABLE tmp AS SELECT ...` |
+| `COPY ... TO` | `COPY orders TO '/tmp/out.csv'` |
+| `INSERT ALL` | `INSERT ALL INTO t1 ... INTO t2 ...` |
+| `MERGE INTO` | `MERGE INTO target USING source ...` |
+| `OUTPUT INTO` | `DELETE ... OUTPUT deleted.* INTO @table` |
+| `SELECT INTO #temp` | `SELECT id INTO #tmp FROM orders` |
+
+Standard DML (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `TRUNCATE`) is already blocked by the query validator regardless of this setting.
+
+## Tools reference (v1.7.0)
+
+The following tools were added in v1.7.0.
+
+### `search_data`
+
+Search query results using a regular expression. Runs the given SQL query, then matches `pattern` against the specified columns (or all columns if none are specified).
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | `str` | yes | Connected database name |
+| `query` | `str` | yes | SQL query to execute |
+| `pattern` | `str` | yes | Regular expression to match |
+| `columns` | `str` | no | Comma-separated column names to search (default: all) |
+| `max_matches` | `int` | no | Maximum number of matches to return |
+
+### `transform_data`
+
+Apply a regex find-and-replace to a column in query results. Executes the SQL query, transforms matching values in the specified column, and returns the modified data.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | `str` | yes | Connected database name |
+| `query` | `str` | yes | SQL query to execute |
+| `column` | `str` | yes | Column to transform |
+| `find` | `str` | yes | Regex pattern to find |
+| `replace` | `str` | yes | Replacement string (supports backreferences) |
+| `max_rows` | `int` | no | Maximum rows to process |
+
+### `export_schema`
+
+Export database schema in a structured format. Useful for generating type definitions or documentation from a live database.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | `str` | yes | Connected database name |
+| `tables` | `str` | no | Comma-separated table names (default: all tables) |
+| `format` | `str` | no | Output format: `json_schema` (default), `python`, `typescript`, `sql_ddl` |
+
+### `get_query_log`
+
+Retrieve the recent query execution history for auditing or debugging.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `database` | `str` | no | Filter by database name |
+| `limit` | `int` | no | Maximum entries to return (default: 50) |
+| `status` | `str` | no | Filter by status (e.g., `success`, `error`) |
+| `since_minutes` | `int` | no | Only include entries from the last N minutes (default: 60) |
+
+### `get_error_log`
+
+Retrieve the recent error history.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `database` | `str` | no | Filter by database name |
+| `limit` | `int` | no | Maximum entries to return (default: 50) |
+| `since_minutes` | `int` | no | Only include entries from the last N minutes (default: 60) |
+
+## Graph export formats
+
+The `export_graph` tool supports a `style` parameter for markdown output. In addition to the default `summary` style, the following styles are available:
+
+| Style | Description |
+|---|---|
+| `summary` | Default. Compact overview with node and edge counts, plus a sample of each. |
+| `hierarchy` | Indented tree layout rooted at source nodes. Suitable for DAGs and organizational charts. |
+| `adjacency` | Compact adjacency-list format: each node followed by its outgoing neighbors. |
+| `detailed` | Full per-node listing with all attributes and edge details. Respects `max_rows` for large graphs. |
+
+## Tree breadcrumb paths
+
+When exporting structured data (JSON, YAML, TOML) as a tree, pass `include_path=true` to add a breadcrumb trail to each node. The breadcrumb shows the full path from the root, formatted as `parent > child > leaf`, which helps orient the reader in deeply nested structures.
 
 ## Migration guide
 
