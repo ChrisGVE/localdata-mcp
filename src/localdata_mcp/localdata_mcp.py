@@ -680,7 +680,11 @@ class DatabaseManager:
             self._sparql_connections.clear()
 
     def _get_engine(
-        self, db_type: str, conn_string: str, sheet_name: Optional[str] = None
+        self,
+        db_type: str,
+        conn_string: str,
+        sheet_name: Optional[str] = None,
+        auth: Optional[Dict[str, Any]] = None,
     ):
         if db_type == "sqlite":
             return create_engine(f"sqlite:///{conn_string}")
@@ -762,15 +766,16 @@ class DatabaseManager:
                 )
             from .oracle_support import create_oracle_engine
 
-            auth = None
-            if sheet_name:
+            # Use auth param; fall back to legacy sheet_name JSON for compat
+            oracle_auth = auth
+            if oracle_auth is None and sheet_name:
                 import json as _json
 
                 try:
-                    auth = _json.loads(sheet_name)
+                    oracle_auth = _json.loads(sheet_name)
                 except (_json.JSONDecodeError, TypeError):
                     pass
-            return create_oracle_engine(conn_string, auth=auth)
+            return create_oracle_engine(conn_string, auth=oracle_auth)
         elif db_type == "mssql":
             if not MSSQL_AVAILABLE:
                 raise ValueError(
@@ -779,15 +784,16 @@ class DatabaseManager:
                 )
             from .mssql_support import create_mssql_engine
 
-            auth = None
-            if sheet_name:
+            # Use auth param; fall back to legacy sheet_name JSON for compat
+            mssql_auth = auth
+            if mssql_auth is None and sheet_name:
                 import json as _json
 
                 try:
-                    auth = _json.loads(sheet_name)
+                    mssql_auth = _json.loads(sheet_name)
                 except (_json.JSONDecodeError, TypeError):
                     pass
-            return create_mssql_engine(conn_string, auth=auth)
+            return create_mssql_engine(conn_string, auth=mssql_auth)
         elif db_type == "sparql":
             if not SPARQLWRAPPER_AVAILABLE:
                 raise ValueError(
@@ -2198,6 +2204,7 @@ class DatabaseManager:
         db_type: str,
         conn_string: str,
         sheet_name: Optional[str] = None,
+        auth: Optional[str] = None,
     ):
         """
         Open a connection to a database.
@@ -2207,6 +2214,7 @@ class DatabaseManager:
             db_type: The type of the database ("sqlite", "postgresql", "mysql", "duckdb", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5", "dot", "gml", "graphml", "mermaid", "turtle", "ntriples", "sparql").
             conn_string: The connection string or file path for the database.
             sheet_name: Optional sheet name to load from Excel/ODS/Numbers files, or dataset name for HDF5 files. If not specified, all sheets/datasets are loaded.
+            auth: Optional JSON string with authentication config. Example: '{"method": "wallet", "wallet_path": "/opt/oracle/wallet"}' or '{"method": "kerberos"}'.
         """
         logger.info(f"Attempting to connect to database '{name}' of type '{db_type}'")
 
@@ -2220,7 +2228,26 @@ class DatabaseManager:
             return f"Error: Maximum number of concurrent connections (10) reached. Please disconnect a database first."
 
         try:
-            engine = self._get_engine(db_type, conn_string, sheet_name)
+            # Validate auth configuration if provided
+            auth_dict = None
+            if auth:
+                import json as json_mod
+
+                auth_dict = json_mod.loads(auth) if isinstance(auth, str) else auth
+                from .auth_manager import AuthSecurityValidator, log_auth_attempt
+
+                validator = AuthSecurityValidator()
+                try:
+                    auth_config = validator.validate(auth_dict, db_type)
+                    log_auth_attempt(db_type, auth_config.method.value, True, name)
+                except (ValueError, Exception) as e:
+                    log_auth_attempt(
+                        db_type, auth_dict.get("method", "unknown"), False, name
+                    )
+                    self.connection_semaphore.release()
+                    return json.dumps({"error": str(e)})
+
+            engine = self._get_engine(db_type, conn_string, sheet_name, auth_dict)
 
             # Unpack manager from creation helpers that return (engine, manager) tuples
             graph_manager = None
@@ -2342,6 +2369,7 @@ class DatabaseManager:
         query: str,
         chunk_size: Optional[int] = None,
         enable_analysis: bool = True,
+        include_blobs: bool = False,
     ) -> str:
         """
         Execute a SQL query and return results as JSON.
@@ -2355,6 +2383,7 @@ class DatabaseManager:
             query: The SQL query to execute.
             chunk_size: Optional chunk size for pagination. If not specified, uses analysis recommendations.
             enable_analysis: Whether to perform pre-query analysis (default: True).
+            include_blobs: When True, base64-encode small BLOBs in results. When False (default), replace BLOBs with informative placeholders.
         """
         # Dispatch SPARQL queries for remote SPARQL endpoints
         if name in self._sparql_connections:
@@ -2485,6 +2514,24 @@ class DatabaseManager:
                         }
                     return json.dumps(empty_response)
 
+                # Detect BLOB columns from query result dtypes
+                blob_columns = []
+                blob_warnings = []
+                try:
+                    engine_obj = self._get_connection(name)
+                    insp = inspect(engine_obj)
+                    from .blob_handler import is_blob_type, process_blob_columns
+
+                    # Extract table names from query for column type lookup
+                    for tbl in insp.get_table_names():
+                        for col_info in insp.get_columns(tbl):
+                            if col_info["name"] in first_chunk.columns and is_blob_type(
+                                col_info["type"]
+                            ):
+                                blob_columns.append(col_info["name"])
+                except Exception:
+                    pass  # BLOB detection is best-effort
+
                 # Generate enhanced response metadata
                 metadata_generator = get_metadata_generator()
                 enhanced_metadata = metadata_generator.generate_metadata(
@@ -2541,7 +2588,12 @@ class DatabaseManager:
                                 "buffer_complete", False
                             ),
                         },
-                        "data": json.loads(first_chunk.to_json(orient="records")),
+                        "data": self._process_blob_data(
+                            json.loads(first_chunk.to_json(orient="records")),
+                            blob_columns,
+                            include_blobs,
+                            blob_warnings,
+                        ),
                         "pagination": {
                             "use_next_chunk": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size=100)",
                             "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size='all')",
@@ -2585,6 +2637,9 @@ class DatabaseManager:
                             "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s",
                         }
 
+                    if blob_warnings:
+                        response["blob_warnings"] = blob_warnings
+
                     return json.dumps(response, indent=2)
                 else:
                     # Small result set - return all results
@@ -2613,7 +2668,12 @@ class DatabaseManager:
                             "chunked": False,
                             "streaming": True,
                         },
-                        "data": json.loads(first_chunk.to_json(orient="records")),
+                        "data": self._process_blob_data(
+                            json.loads(first_chunk.to_json(orient="records")),
+                            blob_columns,
+                            include_blobs,
+                            blob_warnings,
+                        ),
                         "streaming_metadata": streaming_metadata,
                         "enhanced_metadata": {
                             "llm_summary": llm_protocol.get_summary(),
@@ -2649,6 +2709,9 @@ class DatabaseManager:
                             "recommendations": query_analysis.recommendations,
                             "analysis_time": f"{query_analysis.analysis_time_seconds:.3f}s",
                         }
+
+                    if blob_warnings:
+                        response["blob_warnings"] = blob_warnings
 
                     return json.dumps(response, indent=2)
 
@@ -3039,6 +3102,22 @@ class DatabaseManager:
         except OSError:
             # File might not exist anymore
             return True
+
+    def _process_blob_data(
+        self,
+        data: List[Dict[str, Any]],
+        blob_columns: List[str],
+        include_blobs: bool,
+        blob_warnings: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Process BLOB columns in result data, returning modified rows."""
+        if not blob_columns or not data:
+            return data
+        from .blob_handler import process_blob_columns
+
+        processed, warnings = process_blob_columns(data, blob_columns, include_blobs)
+        blob_warnings.extend(warnings)
+        return processed
 
     def _check_memory_usage(self) -> Dict[str, Any]:
         """Check current memory usage and available memory."""
