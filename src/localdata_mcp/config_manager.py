@@ -425,6 +425,13 @@ class ConfigManager:
         data = self._config_data.get("security", {})
         return SecurityConfig(**data) if data else SecurityConfig()
 
+    def get_disk_budget_config(self):
+        """Get disk budget configuration."""
+        from .config_schemas import DiskBudgetConfig
+
+        data = self._config_data.get("disk_budget", {})
+        return DiskBudgetConfig(**data) if data else DiskBudgetConfig()
+
     def has_config_changed(self) -> bool:
         """Check if any configuration files have been modified since last reload."""
         for file_path, last_mtime in self._file_mtimes.items():

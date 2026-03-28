@@ -138,3 +138,32 @@ class SecurityConfig:
             raise ValueError(
                 f"max_query_length must be positive, got {self.max_query_length}"
             )
+
+
+@dataclass
+class DiskBudgetConfig:
+    """Disk budget settings for staging databases."""
+
+    max_staging_size_mb: int = 2048
+    max_total_staging_mb: int = 10240
+    disk_warning_threshold: float = 0.90
+    headroom_mb: int = 500
+    check_interval_rows: int = 1000
+
+    def __post_init__(self):
+        if self.max_staging_size_mb <= 0:
+            raise ValueError(
+                f"max_staging_size_mb must be positive, got {self.max_staging_size_mb}"
+            )
+        if self.max_total_staging_mb < self.max_staging_size_mb:
+            raise ValueError("max_total_staging_mb must be >= max_staging_size_mb")
+        if not 0 < self.disk_warning_threshold <= 1:
+            raise ValueError(
+                f"disk_warning_threshold must be 0-1, got {self.disk_warning_threshold}"
+            )
+        if self.headroom_mb <= 0:
+            raise ValueError(f"headroom_mb must be positive, got {self.headroom_mb}")
+        if self.check_interval_rows <= 0:
+            raise ValueError(
+                f"check_interval_rows must be positive, got {self.check_interval_rows}"
+            )
