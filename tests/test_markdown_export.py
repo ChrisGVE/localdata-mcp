@@ -390,6 +390,24 @@ class TestExportTreeMarkdown:
         assert result["format"] == "markdown"
         assert result["truncated"] is False
 
+    def test_tree_with_path_breadcrumbs(self):
+        """include_path=True shows 'parent > child' breadcrumb."""
+        tree = {
+            "name": "Root",
+            "children": [{"name": "Child"}],
+        }
+        result = export_tree_markdown(tree, include_path=True)
+        assert "Root > Child" in result["content"]
+
+    def test_tree_without_path_default(self):
+        """Default (include_path=False) does not show breadcrumbs."""
+        tree = {
+            "name": "Root",
+            "children": [{"name": "Child"}],
+        }
+        result = export_tree_markdown(tree)
+        assert "Root > Child" not in result["content"]
+
 
 class TestFormatQueryResultsAsMarkdown:
     """Tests for the execute_query bridge helper."""
