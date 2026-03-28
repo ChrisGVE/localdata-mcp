@@ -146,13 +146,24 @@ def _tree_node_to_markdown(
     node: Dict[str, Any],
     depth: int = 1,
     max_heading_depth: int = 6,
+    include_path: bool = False,
+    _path: Optional[List[str]] = None,
 ) -> List[str]:
-    """Convert a tree node dict to markdown lines using heading hierarchy."""
+    """Convert a tree node dict to markdown lines using heading hierarchy.
+
+    Args:
+        include_path: When True, show breadcrumb path (parent > child).
+    """
     lines: List[str] = []
     name = node.get("name", node.get("key", ""))
+    path = list(_path or [])
+    path.append(str(name))
 
     if depth <= max_heading_depth:
-        lines.append(f"{'#' * (depth + 1)} {name}")
+        heading = f"{'#' * (depth + 1)} {name}"
+        if include_path and len(path) > 1:
+            heading += f"  \n*{' > '.join(path)}*"
+        lines.append(heading)
     else:
         indent = "  " * (depth - max_heading_depth)
         lines.append(f"{indent}- **{name}**")
@@ -170,7 +181,12 @@ def _tree_node_to_markdown(
     # Recurse into children
     children = node.get("children", [])
     for child in children:
-        lines.extend(_tree_node_to_markdown(child, depth + 1, max_heading_depth))
+        lines.extend(
+            _tree_node_to_markdown(
+                child, depth + 1, max_heading_depth,
+                include_path=include_path, _path=path,
+            )
+        )
 
     return lines
 
@@ -178,6 +194,7 @@ def _tree_node_to_markdown(
 def export_tree_markdown(
     tree_data: Dict[str, Any],
     title: Optional[str] = None,
+    include_path: bool = False,
 ) -> Dict[str, Any]:
     """Export structured tree data as markdown.
 
@@ -185,6 +202,7 @@ def export_tree_markdown(
         tree_data: Nested dict representing the tree
             (with "name", "children", "properties" keys).
         title: Optional title for the document.
+        include_path: When True, show breadcrumb path on each node.
 
     Returns:
         Dict with 'format', 'content', 'truncated'.
@@ -194,10 +212,14 @@ def export_tree_markdown(
         parts.append(f"# {title}\n")
 
     if isinstance(tree_data, dict):
-        parts.extend(_tree_node_to_markdown(tree_data, depth=1))
+        parts.extend(
+            _tree_node_to_markdown(tree_data, depth=1, include_path=include_path)
+        )
     elif isinstance(tree_data, list):
         for item in tree_data:
-            parts.extend(_tree_node_to_markdown(item, depth=1))
+            parts.extend(
+                _tree_node_to_markdown(item, depth=1, include_path=include_path)
+            )
 
     content = "\n".join(parts)
     truncated = False

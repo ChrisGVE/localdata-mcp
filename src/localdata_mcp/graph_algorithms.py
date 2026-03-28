@@ -242,6 +242,9 @@ def _resolve_format(format: str) -> tuple:
         "mermaid": export_mermaid,
         "markdown": "markdown",
         "md": "markdown",
+        "hierarchy": "markdown:hierarchy",
+        "adjacency": "markdown:adjacency",
+        "detailed": "markdown:detailed",
     }
     fmt = format.lower()
     if fmt == "mmd":
@@ -250,7 +253,8 @@ def _resolve_format(format: str) -> tuple:
         return None, {
             "error": (
                 f"Unsupported format '{format}'. "
-                "Use dot, gml, graphml, mermaid, or markdown."
+                "Use dot, gml, graphml, mermaid, markdown, "
+                "hierarchy, adjacency, or detailed."
             )
         }
     # Resolve aliases (e.g. "md" -> "markdown")
@@ -261,7 +265,7 @@ def _resolve_format(format: str) -> tuple:
 
 
 def _export_graph_as_markdown(
-    manager: GraphStorageManager, name: str
+    manager: GraphStorageManager, name: str, style: str = "summary"
 ) -> Dict[str, Any]:
     """Export graph as markdown using graph_markdown_export."""
     from .graph_markdown_export import export_graph_markdown
@@ -295,7 +299,7 @@ def _export_graph_as_markdown(
             break
         offset += 500
 
-    return export_graph_markdown(nodes, edges, stats=stats, title=name)
+    return export_graph_markdown(nodes, edges, stats=stats, title=name, style=style)
 
 
 def tool_export_graph(
@@ -309,9 +313,12 @@ def tool_export_graph(
     if fmt is None:
         return exporters  # error dict
 
-    # Markdown uses its own pipeline (not NetworkX graph object)
+    # Markdown variants use their own pipeline (not NetworkX graph object)
     if fmt == "markdown":
         return _export_graph_as_markdown(manager, name)
+    if fmt.startswith("markdown:"):
+        style = fmt.split(":", 1)[1]
+        return _export_graph_as_markdown(manager, name, style=style)
 
     G = _storage_to_networkx(manager)
     if node_id is not None:
