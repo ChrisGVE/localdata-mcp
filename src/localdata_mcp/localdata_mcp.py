@@ -417,6 +417,14 @@ class DatabaseManager:
         mcp_server.add_tool(self.find_path)
         mcp_server.add_tool(self.get_graph_stats)
         mcp_server.add_tool(self.export_graph)
+        # Regex tools
+        mcp_server.add_tool(self.search_data)
+        mcp_server.add_tool(self.transform_data)
+        # Schema export tool
+        mcp_server.add_tool(self.export_schema)
+        # Query audit tools
+        mcp_server.add_tool(self.get_query_log)
+        mcp_server.add_tool(self.get_error_log)
 
     def _get_connection(self, name: str):
         if name not in self.connections:
@@ -424,6 +432,34 @@ class DatabaseManager:
                 f"Database '{name}' is not connected. Use 'connect_database' first."
             )
         return self.connections[name]
+
+    def _record_audit(
+        self,
+        database: str,
+        query: str,
+        status: str,
+        start_time: float,
+        rows_returned: Optional[int] = None,
+        error_type: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """Record a query execution in the audit buffer."""
+        try:
+            from .query_audit import get_query_audit_buffer
+
+            duration_ms = (time.time() - start_time) * 1000
+            buf = get_query_audit_buffer()
+            buf.record_query(
+                database=database,
+                query=query,
+                status=status,
+                duration_ms=duration_ms,
+                rows_returned=rows_returned,
+                error_type=error_type,
+                error_message=error_message,
+            )
+        except Exception:
+            logger.debug("Failed to record audit entry", exc_info=True)
 
     def _sanitize_path(self, file_path: str):
         """Enhanced path security - restrict to current working directory and subdirectories only."""
@@ -2195,6 +2231,177 @@ class DatabaseManager:
         return tool_export_graph(self._get_graph_manager(name), name, format, node_id)
 
     # =========================================================
+    # Regex Tools
+    # =========================================================
+
+    def search_data(
+        self,
+        name: str,
+        query: str,
+        pattern: str,
+        columns: Optional[str] = None,
+        case_sensitive: bool = True,
+        max_matches: int = 100,
+    ) -> str:
+        """Search query results for regex pattern matches.
+
+        Args:
+            name: Database connection name.
+            query: SQL query to execute and search within.
+            pattern: Regex pattern to search for.
+            columns: Comma-separated column names to search (empty = all).
+            case_sensitive: Whether search is case-sensitive.
+            max_matches: Maximum matches to return.
+        """
+        from .regex_tools import search_data as _search
+
+        engine = self._get_connection(name)
+        with engine.connect() as conn:
+            df = pd.read_sql(text(query), conn)
+        data = json.loads(df.to_json(orient="records"))
+        col_list = [c.strip() for c in columns.split(",")] if columns else None
+        result = _search(data, pattern, col_list, case_sensitive, max_matches)
+        return json.dumps(result)
+
+    def transform_data(
+        self,
+        name: str,
+        query: str,
+        column: str,
+        find: str,
+        replace: str,
+        max_rows: int = 1000,
+    ) -> str:
+        """Apply regex find/replace to a column in query results.
+
+        Args:
+            name: Database connection name.
+            query: SQL query to execute.
+            column: Column name to apply transformation on.
+            find: Regex pattern to find.
+            replace: Replacement string.
+            max_rows: Maximum rows to process.
+        """
+        from .regex_tools import transform_data as _transform
+
+        engine = self._get_connection(name)
+        with engine.connect() as conn:
+            df = pd.read_sql(text(query), conn)
+        data = json.loads(df.to_json(orient="records"))
+        result = _transform(data, column, find, replace, max_rows)
+        return json.dumps(result)
+
+    # =========================================================
+    # Schema Export Tools
+    # =========================================================
+
+    def export_schema(
+        self,
+        name: str,
+        tables: Optional[str] = None,
+        format: str = "json_schema",
+    ) -> str:
+        """Export database schema in various formats.
+
+        Args:
+            name: Database connection name.
+            tables: Comma-separated table names (empty = all).
+            format: Export format: json_schema, python, typescript, sql_ddl.
+        """
+        from .schema_export import (
+            SchemaIntrospector,
+            export_json_schema,
+            export_python_dataclass,
+            export_sql_ddl,
+            export_typescript,
+        )
+
+        engine = self._get_connection(name)
+        introspector = SchemaIntrospector(engine)
+        table_list = [t.strip() for t in tables.split(",")] if tables else None
+        exporters = {
+            "json_schema": lambda: json.dumps(
+                export_json_schema(introspector, table_list)
+            ),
+            "python": lambda: export_python_dataclass(introspector, table_list),
+            "typescript": lambda: export_typescript(introspector, table_list),
+            "sql_ddl": lambda: export_sql_ddl(introspector, table_list),
+        }
+        exporter = exporters.get(format)
+        if exporter is None:
+            return json.dumps(
+                {"error": f"Unknown format '{format}'. Use: {', '.join(exporters)}"}
+            )
+        return exporter()
+
+    # =========================================================
+    # Query Audit Tools
+    # =========================================================
+
+    def get_query_log(
+        self,
+        database: Optional[str] = None,
+        limit: int = 50,
+        status: Optional[str] = None,
+        since_minutes: int = 60,
+    ) -> str:
+        """Get recent query execution history.
+
+        Args:
+            database: Filter by database name (empty = all).
+            limit: Maximum entries to return.
+            status: Filter by status: success, error, timeout (empty = all).
+            since_minutes: Look back this many minutes.
+        """
+        from .query_audit import get_query_audit_buffer
+
+        buffer = get_query_audit_buffer()
+        entries = buffer.get_entries(
+            database=database,
+            status=status,
+            since_minutes=since_minutes,
+            limit=limit,
+        )
+        return json.dumps(
+            {"entries": [e.to_dict() for e in entries], "total_entries": len(entries)}
+        )
+
+    def get_error_log(
+        self,
+        database: Optional[str] = None,
+        limit: int = 50,
+        since_minutes: int = 60,
+    ) -> str:
+        """Get recent error and timeout history.
+
+        Args:
+            database: Filter by database name (empty = all).
+            limit: Maximum entries to return.
+            since_minutes: Look back this many minutes.
+        """
+        from .query_audit import get_query_audit_buffer
+
+        buffer = get_query_audit_buffer()
+        errors = buffer.get_entries(
+            database=database,
+            status="error",
+            since_minutes=since_minutes,
+            limit=limit,
+        )
+        timeouts = buffer.get_entries(
+            database=database,
+            status="timeout",
+            since_minutes=since_minutes,
+            limit=limit,
+        )
+        combined = sorted(errors + timeouts, key=lambda e: e.timestamp, reverse=True)[
+            :limit
+        ]
+        return json.dumps(
+            {"entries": [e.to_dict() for e in combined], "total_entries": len(combined)}
+        )
+
+    # =========================================================
     # Requested Tools
     # =========================================================
 
@@ -2481,6 +2688,7 @@ class DatabaseManager:
             self._cleanup_expired_buffers()
 
             # Use streaming execution for memory-bounded processing
+            _query_start_time = time.time()
             query_id = self._generate_query_id(name, query)
 
             # Create streaming source
@@ -2646,6 +2854,13 @@ class DatabaseManager:
                     if blob_warnings:
                         response["blob_warnings"] = blob_warnings
 
+                    self._record_audit(
+                        name,
+                        query,
+                        "success",
+                        _query_start_time,
+                        rows_returned=estimated_total,
+                    )
                     return json.dumps(response, indent=2)
                 else:
                     # Small result set - return all results
@@ -2719,14 +2934,37 @@ class DatabaseManager:
                     if blob_warnings:
                         response["blob_warnings"] = blob_warnings
 
+                    self._record_audit(
+                        name,
+                        query,
+                        "success",
+                        _query_start_time,
+                        rows_returned=len(first_chunk),
+                    )
                     return json.dumps(response, indent=2)
 
             except QueryTimeoutError as timeout_error:
                 logger.error(f"Query timed out for database '{name}': {timeout_error}")
+                self._record_audit(
+                    name,
+                    query,
+                    "timeout",
+                    _query_start_time,
+                    error_type="QueryTimeoutError",
+                    error_message=str(timeout_error),
+                )
                 return f"Query Timeout Error: {timeout_error.message} (execution time: {timeout_error.execution_time:.1f}s, reason: {timeout_error.timeout_reason.value})"
             except Exception as streaming_error:
                 logger.error(
                     f"Streaming execution failed for database '{name}': {streaming_error}"
+                )
+                self._record_audit(
+                    name,
+                    query,
+                    "error",
+                    _query_start_time,
+                    error_type=type(streaming_error).__name__,
+                    error_message=str(streaming_error),
                 )
                 db_type = self.db_types.get(name, "generic")
                 structured = classify_error(streaming_error, db_type)
