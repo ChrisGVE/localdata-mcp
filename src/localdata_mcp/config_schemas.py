@@ -137,6 +137,7 @@ class SecurityConfig:
     """Security settings."""
 
     allowed_paths: List[str] = None  # type: ignore[assignment]
+    restrict_paths: bool = True
     max_query_length: int = 10000
     blocked_keywords: List[str] = None  # type: ignore[assignment]
     readonly: bool = False

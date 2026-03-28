@@ -176,8 +176,10 @@ DEFAULT_CONFIG_TEMPLATE = """\
 
 # security:
 #   allowed_paths: ["."]
+#   restrict_paths: true
 #   max_query_length: 10000
 #   blocked_keywords: []
+#   readonly: false
 
 # logging:
 #   level: info
