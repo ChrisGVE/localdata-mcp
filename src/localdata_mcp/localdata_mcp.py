@@ -28,7 +28,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.sql import quoted_name
 
 # Import SQL query parser for security validation
-from .query_parser import parse_and_validate_sql, SQLSecurityError
+from .query_parser import parse_and_validate_sql, SQLSecurityError, check_readonly
 
 # Import query analyzer for pre-execution analysis
 from .query_analyzer import analyze_query, QueryAnalysis
@@ -2632,6 +2632,21 @@ class DatabaseManager:
             # Security validation: Only allow SELECT queries
             try:
                 validated_query = parse_and_validate_sql(query)
+                # Readonly mode enforcement
+                try:
+                    sec_cfg = get_config_manager().get_security_config()
+                    if sec_cfg.readonly:
+                        blocked = check_readonly(validated_query)
+                        if blocked:
+                            return json.dumps(
+                                {
+                                    "error": "Write operations are disabled in readonly mode",
+                                    "blocked_pattern": blocked,
+                                    "suggestion": "Remove the write clause to make this a read-only query",
+                                }
+                            )
+                except Exception:
+                    pass
                 logger.info(f"SQL query validation passed for database '{name}'")
             except SQLSecurityError as e:
                 logger.warning(f"SQL query blocked for database '{name}': {e}")
@@ -3023,6 +3038,19 @@ class DatabaseManager:
             # Security validation: Only allow SELECT queries
             try:
                 validated_query = parse_and_validate_sql(query)
+                try:
+                    sec_cfg = get_config_manager().get_security_config()
+                    if sec_cfg.readonly:
+                        blocked = check_readonly(validated_query)
+                        if blocked:
+                            return json.dumps(
+                                {
+                                    "error": "Write operations are disabled in readonly mode",
+                                    "blocked_pattern": blocked,
+                                }
+                            )
+                except Exception:
+                    pass
                 logger.info(
                     f"SQL query validation passed for preview analysis on database '{name}'"
                 )
