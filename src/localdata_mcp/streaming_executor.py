@@ -37,6 +37,9 @@ from .logging_manager import get_logging_manager, get_logger
 # Import structured error classification
 from .error_classification import classify_error
 
+# Import disk monitor for disk space checks during streaming
+from .disk_monitor import DiskMonitor
+
 # Import size estimator for pre-execution result size estimation
 from .size_estimator import get_size_estimator, SizeEstimate
 
@@ -461,6 +464,7 @@ class StreamingQueryExecutor:
         query_id: str,
         initial_chunk_size: Optional[int] = None,
         database_name: Optional[str] = None,
+        disk_monitor: Optional[DiskMonitor] = None,
     ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """Execute streaming query with adaptive memory management and timeout control.
 
@@ -469,6 +473,7 @@ class StreamingQueryExecutor:
             query_id: Unique identifier for buffering
             initial_chunk_size: Initial chunk size (adaptive if None)
             database_name: Name of the database for timeout configuration
+            disk_monitor: Optional disk space monitor for abort-on-full
 
         Returns:
             Tuple of (first_chunk_df, metadata_dict)
@@ -588,11 +593,16 @@ class StreamingQueryExecutor:
                         context,
                         timeout_manager,
                         operation_id,
+                        disk_monitor=disk_monitor,
                     )
             else:
                 # Execute without timeout management for backward compatibility
                 result, metadata = self._execute_streaming_internal(
-                    source, query_id, chunk_size, memory_status
+                    source,
+                    query_id,
+                    chunk_size,
+                    memory_status,
+                    disk_monitor=disk_monitor,
                 )
 
             # Attach size estimate to metadata if available
@@ -668,6 +678,7 @@ class StreamingQueryExecutor:
         timeout_context: Dict[str, Any],
         timeout_manager,
         operation_id: str,
+        disk_monitor: Optional[DiskMonitor] = None,
     ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """Internal streaming execution with timeout checking.
 
@@ -679,6 +690,7 @@ class StreamingQueryExecutor:
             timeout_context: Timeout context from manager
             timeout_manager: Timeout manager instance
             operation_id: Operation identifier for timeout tracking
+            disk_monitor: Optional disk space monitor for abort-on-full
 
         Returns:
             Tuple of (first_chunk_df, metadata_dict)
@@ -698,6 +710,8 @@ class StreamingQueryExecutor:
         first_chunk = None
         total_rows_processed = 0
         chunk_number = 0
+        truncated = False
+        abort_reason: Optional[str] = None
 
         try:
             chunk_iterator = source.get_chunk_iterator(chunk_size)
@@ -756,6 +770,16 @@ class StreamingQueryExecutor:
                     chunk_size = self._adapt_chunk_size(
                         chunk_size, metrics, current_memory
                     )
+
+                # Check disk budget after processing each chunk
+                if disk_monitor:
+                    can_continue, reason = disk_monitor.check_can_continue(
+                        total_rows_processed
+                    )
+                    if not can_continue:
+                        truncated = True
+                        abort_reason = reason
+                        break
 
                 # Additional timeout check after chunk processing
                 if timeout_manager.is_cancelled(operation_id):
@@ -820,6 +844,13 @@ class StreamingQueryExecutor:
             "buffer_complete": result_buffer.is_complete,
         }
 
+        # Add disk-monitor truncation metadata when applicable
+        if truncated:
+            metadata["truncated"] = True
+            metadata["abort_reason"] = abort_reason
+            metadata["suggestion"] = "Add LIMIT, WHERE clause, or use aggregation"
+            metadata["disk_monitor_active"] = True
+
         # Enhance metadata with TokenManager insights
         if first_chunk is not None and len(first_chunk) > 0:
             metadata.update(
@@ -839,6 +870,7 @@ class StreamingQueryExecutor:
         query_id: str,
         chunk_size: int,
         memory_status: MemoryStatus,
+        disk_monitor: Optional[DiskMonitor] = None,
     ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """Internal streaming execution without timeout management (backward compatibility).
 
@@ -847,6 +879,7 @@ class StreamingQueryExecutor:
             query_id: Query identifier
             chunk_size: Initial chunk size
             memory_status: Current memory status
+            disk_monitor: Optional disk space monitor for abort-on-full
 
         Returns:
             Tuple of (first_chunk_df, metadata_dict)
@@ -865,6 +898,8 @@ class StreamingQueryExecutor:
         first_chunk = None
         total_rows_processed = 0
         chunk_number = 0
+        truncated = False
+        abort_reason: Optional[str] = None
 
         try:
             chunk_iterator = source.get_chunk_iterator(chunk_size)
@@ -919,6 +954,16 @@ class StreamingQueryExecutor:
                         chunk_size, metrics, current_memory
                     )
 
+                # Check disk budget after processing each chunk
+                if disk_monitor:
+                    can_continue, reason = disk_monitor.check_can_continue(
+                        total_rows_processed
+                    )
+                    if not can_continue:
+                        truncated = True
+                        abort_reason = reason
+                        break
+
                 # Break if we have enough data for initial response and memory is getting tight
                 if (
                     chunk_number >= 3
@@ -957,6 +1002,13 @@ class StreamingQueryExecutor:
             "streaming": True,
             "buffer_complete": result_buffer.is_complete,
         }
+
+        # Add disk-monitor truncation metadata when applicable
+        if truncated:
+            metadata["truncated"] = True
+            metadata["abort_reason"] = abort_reason
+            metadata["suggestion"] = "Add LIMIT, WHERE clause, or use aggregation"
+            metadata["disk_monitor_active"] = True
 
         # Enhance metadata with TokenManager insights
         if first_chunk is not None and len(first_chunk) > 0:
