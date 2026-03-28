@@ -139,6 +139,7 @@ class SecurityConfig:
     allowed_paths: List[str] = None  # type: ignore[assignment]
     max_query_length: int = 10000
     blocked_keywords: List[str] = None  # type: ignore[assignment]
+    readonly: bool = False
 
     def __post_init__(self):
         if self.allowed_paths is None:
