@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- sphinx-start -->
 
+## [1.6.0] - 2026-03-28
+
+### Added
+
+#### Enterprise Database Support
+- Oracle Database support via `oracledb` driver with password, Oracle Wallet, Kerberos, and certificate authentication
+- MS SQL Server support via `pymssql`/`pyodbc` with SQL Auth, Windows Integrated Auth, Azure AD, Kerberos, and certificate authentication
+- Enterprise authentication framework (`auth` parameter on `connect_database`) with support matrix per database type
+- Oracle and MSSQL error mappers with ORA-XXXXX and Msg/Severity code classification
+
+#### Configuration System Upgrade
+- OS-aware configuration paths: XDG on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows
+- Legacy `~/.localdata.yaml` path deprecated with migration support
+- New config sections: `staging`, `memory`, `query`, `connections`, `security`, `disk_budget`
+- Environment variable overrides for all new config sections (`LOCALDATA_STAGING_*`, `LOCALDATA_MEMORY_*`, etc.)
+- CLI flags: `--config`, `--version`, `--migrate-config`, `--force`, `--validate-config`, `--show-config`, `--init-config`
+- Default config file creation with `create_default_config()`
+
+#### Structured Error Classification
+- `StructuredErrorResponse` with `error_type`, `is_retryable`, `message`, `suggestion` for LLM agents
+- Database-specific error mappers for SQLite, PostgreSQL, MySQL, DuckDB, Oracle, MS SQL
+- Error mapper registry with pluggable architecture for custom databases
+- Structured errors integrated into `execute_query`, `connect_database`, and streaming executor
+- Helper functions: `classify_error()`, `is_error_retryable()`, `get_error_suggestion()`
+
+#### Query Execution Intelligence
+- Size estimation engine combining column type metadata with EXPLAIN row estimates
+- EXPLAIN parsers for SQLite, PostgreSQL, MySQL, Oracle (DBMS_XPLAN), MS SQL (SHOWPLAN_XML)
+- Pre-flight query estimation via `preflight=True` parameter on `execute_query`
+- Memory-aware execution with `MemoryBudget` auto-calculated from available RAM (10%, max 512MB)
+- Aggressive mode when RAM drops below 1GB (5%, max 128MB)
+- BLOB column detection with placeholder handling (`[BLOB: size, mime_type]`) and opt-in base64 encoding
+
+#### Staging and Disk Management
+- Staging database manager with LRU eviction for large query results
+- Disk space monitoring during streaming with configurable thresholds
+- Graceful abort with partial results when disk limits are reached
+- `include_staging` parameter for `list_databases` to show staging databases
+- Cascade cleanup of staging databases on `disconnect_database`
+
+#### Markdown Export
+- Markdown table export for query results with alignment and truncation
+- Tree/structured data export as heading hierarchy
+- Graph export with summary stats, node/edge tables, and Mermaid diagram embedding
+- Registered as `markdown`/`md` format in `export_structured` and `export_graph`
+
+#### Documentation and Testing
+- Comprehensive configuration reference (`docs/configuration.md`)
+- Error classification reference (`docs/error-classification.md`)
+- Docker-based integration testing infrastructure (`docker-compose.test.yml`)
+- 663 tests across 26 test files
+
 ## [1.5.2] - 2026-03-26
 
 ### Added
