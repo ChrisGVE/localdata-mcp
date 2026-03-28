@@ -626,6 +626,16 @@ class ConfigManager:
                 "low_memory_threshold_gb",
                 float,
             ),
+            "LOCALDATA_MEMORY_AGGRESSIVE_PERCENT": (
+                "memory",
+                "aggressive_budget_percent",
+                int,
+            ),
+            "LOCALDATA_MEMORY_AGGRESSIVE_MAX_MB": (
+                "memory",
+                "aggressive_max_mb",
+                int,
+            ),
             "LOCALDATA_QUERY_CHUNK_SIZE": ("query", "default_chunk_size", int),
             "LOCALDATA_QUERY_BUFFER_TIMEOUT": (
                 "query",

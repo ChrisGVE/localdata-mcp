@@ -60,6 +60,8 @@ class MemoryConfig:
     max_budget_mb: int = 512
     budget_percent: int = 10
     low_memory_threshold_gb: float = 1.0
+    aggressive_budget_percent: int = 5
+    aggressive_max_mb: int = 128
 
     def __post_init__(self):
         if self.max_budget_mb <= 0:
@@ -72,6 +74,15 @@ class MemoryConfig:
             raise ValueError(
                 f"low_memory_threshold_gb must be positive, "
                 f"got {self.low_memory_threshold_gb}"
+            )
+        if not 1 <= self.aggressive_budget_percent <= 100:
+            raise ValueError(
+                f"aggressive_budget_percent must be 1-100, "
+                f"got {self.aggressive_budget_percent}"
+            )
+        if self.aggressive_max_mb <= 0:
+            raise ValueError(
+                f"aggressive_max_mb must be positive, got {self.aggressive_max_mb}"
             )
 
 
