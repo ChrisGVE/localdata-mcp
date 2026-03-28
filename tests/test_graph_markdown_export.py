@@ -6,6 +6,9 @@ from localdata_mcp.graph_markdown_export import (
     _generate_mermaid_block,
     _generate_node_table_markdown,
     export_graph_markdown,
+    generate_adjacency_markdown,
+    generate_detailed_markdown,
+    generate_hierarchy_markdown,
 )
 from localdata_mcp.markdown_export import MAX_EXPORT_BYTES
 
@@ -196,3 +199,129 @@ class TestExportGraphMarkdown:
         result = export_graph_markdown(self._sample_nodes(), self._sample_edges())
         assert "## Graph Summary" not in result["content"]
         assert "## Nodes" in result["content"]
+
+class TestHierarchyFormat:
+    """Tests for generate_hierarchy_markdown."""
+
+    def test_hierarchy_simple_tree(self):
+        nodes = [
+            {"id": "1", "label": "Root", "properties": {}},
+            {"id": "2", "label": "Child", "properties": {}},
+        ]
+        edges = [{"source": "1", "target": "2"}]
+        result = generate_hierarchy_markdown(nodes, edges)
+        assert "## Graph Hierarchy" in result
+        assert "- **Root**" in result
+        assert "  - **Child**" in result
+
+    def test_hierarchy_dag_multi_parent(self):
+        """Diamond pattern: A->C, B->C should annotate C."""
+        nodes = [
+            {"id": "A", "label": "A", "properties": {}},
+            {"id": "B", "label": "B", "properties": {}},
+            {"id": "C", "label": "C", "properties": {}},
+        ]
+        edges = [
+            {"source": "A", "target": "C"},
+            {"source": "B", "target": "C"},
+        ]
+        result = generate_hierarchy_markdown(nodes, edges)
+        assert "also child of" in result or "see above" in result
+
+    def test_hierarchy_cyclic_fallback(self):
+        """Cycle: A->B->A should fall back to adjacency list."""
+        nodes = [
+            {"id": "A", "label": "A", "properties": {}},
+            {"id": "B", "label": "B", "properties": {}},
+        ]
+        edges = [
+            {"source": "A", "target": "B"},
+            {"source": "B", "target": "A"},
+        ]
+        result = generate_hierarchy_markdown(nodes, edges)
+        assert "## Adjacency List" in result
+
+    def test_hierarchy_properties(self):
+        nodes = [
+            {"id": "1", "label": "Root", "properties": {"env": "prod"}},
+        ]
+        edges = []
+        result = generate_hierarchy_markdown(nodes, edges)
+        assert "env: prod" in result
+
+
+class TestAdjacencyFormat:
+    """Tests for generate_adjacency_markdown."""
+
+    def test_adjacency_list_format(self):
+        nodes = [
+            {"id": "A", "label": "Alice"},
+            {"id": "B", "label": "Bob"},
+        ]
+        edges = [{"source": "A", "target": "B"}]
+        result = generate_adjacency_markdown(nodes, edges)
+        assert "## Adjacency List" in result
+        assert "Alice -> Bob" in result
+
+    def test_adjacency_with_labels(self):
+        nodes = [
+            {"id": "A", "label": "Alice"},
+            {"id": "B", "label": "Bob"},
+        ]
+        edges = [{"source": "A", "target": "B", "label": "knows"}]
+        result = generate_adjacency_markdown(nodes, edges)
+        assert "Alice -> Bob [knows]" in result
+
+
+class TestDetailedFormat:
+    """Tests for generate_detailed_markdown."""
+
+    def test_detailed_node_properties(self):
+        nodes = [
+            {
+                "id": "1",
+                "label": "Server",
+                "properties": {"ip": "10.0.0.1", "os": "linux"},
+            },
+        ]
+        edges = []
+        result = generate_detailed_markdown(nodes, edges)
+        assert "### Server (id: 1)" in result
+        assert "- **ip**: 10.0.0.1" in result
+        assert "- **os**: linux" in result
+
+    def test_detailed_edges_out(self):
+        nodes = [
+            {"id": "A", "label": "A", "properties": {}},
+            {"id": "B", "label": "B", "properties": {}},
+        ]
+        edges = [{"source": "A", "target": "B", "label": "calls"}]
+        result = generate_detailed_markdown(nodes, edges)
+        assert "**Edges out:**" in result
+        assert "-> B [calls]" in result
+
+
+class TestExportStyleParameter:
+    """Tests for style parameter routing in export_graph_markdown."""
+
+    def _nodes(self):
+        return [
+            {"id": "A", "label": "A", "properties": {}},
+            {"id": "B", "label": "B", "properties": {}},
+        ]
+
+    def _edges(self):
+        return [{"source": "A", "target": "B"}]
+
+    def test_export_style_parameter(self):
+        for style in ("hierarchy", "adjacency", "detailed"):
+            result = export_graph_markdown(self._nodes(), self._edges(), style=style)
+            assert result["format"] == "markdown"
+            assert isinstance(result["content"], str)
+            assert len(result["content"]) > 0
+
+    def test_backward_compat(self):
+        """Default style='summary' produces the original table-based output."""
+        result = export_graph_markdown(self._nodes(), self._edges())
+        assert "## Nodes" in result["content"]
+        assert "## Edges" in result["content"]
