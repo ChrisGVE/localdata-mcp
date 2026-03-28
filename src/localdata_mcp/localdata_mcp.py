@@ -462,27 +462,45 @@ class DatabaseManager:
             logger.debug("Failed to record audit entry", exc_info=True)
 
     def _sanitize_path(self, file_path: str):
-        """Enhanced path security - restrict to current working directory and subdirectories only."""
-        base_dir = Path(os.getcwd()).resolve()
+        """Path security — restrict file access to configured allowed paths.
+
+        When ``security.restrict_paths`` is True (default), only files within
+        ``security.allowed_paths`` are accessible.  Set ``restrict_paths: false``
+        in config to allow unrestricted file access.
+        """
         try:
-            # Resolve the path to handle symlinks and relative paths
             abs_file_path = Path(file_path).resolve()
         except (OSError, ValueError) as e:
             raise ValueError(f"Invalid path '{file_path}': {e}")
 
-        # Security check: ensure path is within base directory
+        # Check restriction setting
         try:
-            abs_file_path.relative_to(base_dir)
-        except ValueError:
-            raise ValueError(
-                f"Path '{file_path}' is outside the allowed directory. Only current directory and subdirectories are allowed."
-            )
+            sec_cfg = get_config_manager().get_security_config()
+        except Exception:
+            sec_cfg = None
 
-        # Check if file exists
+        if sec_cfg and sec_cfg.restrict_paths:
+            allowed = [Path(p).resolve() for p in sec_cfg.allowed_paths]
+            if not any(self._is_within(abs_file_path, base) for base in allowed):
+                raise ValueError(
+                    f"Path '{file_path}' is outside allowed directories: "
+                    f"{sec_cfg.allowed_paths}. Set security.restrict_paths: false "
+                    f"to disable, or add the directory to security.allowed_paths."
+                )
+
         if not abs_file_path.is_file():
             raise ValueError(f"File not found at path '{file_path}'.")
 
         return str(abs_file_path)
+
+    @staticmethod
+    def _is_within(path: Path, base: Path) -> bool:
+        """Check if path is within base directory."""
+        try:
+            path.relative_to(base)
+            return True
+        except ValueError:
+            return False
 
     def _serialize_complex_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """Serialize complex nested objects (dict, list) in DataFrame columns to JSON strings.

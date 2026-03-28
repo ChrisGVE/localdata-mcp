@@ -679,6 +679,11 @@ class ConfigManager:
                 "max_query_length",
                 int,
             ),
+            "LOCALDATA_SECURITY_RESTRICT_PATHS": (
+                "security",
+                "restrict_paths",
+                bool,
+            ),
             "LOCALDATA_DISK_BUDGET_MAX_STAGING_MB": (
                 "disk_budget",
                 "max_staging_size_mb",
