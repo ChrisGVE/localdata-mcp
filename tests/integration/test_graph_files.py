@@ -25,10 +25,14 @@ SAMPLE_GML = """graph [
 ]"""
 
 SAMPLE_GRAPHML = """<?xml version="1.0" encoding="UTF-8"?>
-<graphml xmlns="http://graphml.graphstruct.org/graphml">
-  <graph id="G" edgedefault="directed">
-    <node id="n0"><data key="label">Start</data></node>
-    <node id="n1"><data key="label">End</data></node>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns
+         http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+  <key id="d0" for="node" attr.name="label" attr.type="string"/>
+  <graph edgedefault="directed">
+    <node id="n0"><data key="d0">Start</data></node>
+    <node id="n1"><data key="d0">End</data></node>
     <edge source="n0" target="n1"/>
   </graph>
 </graphml>"""
@@ -132,7 +136,8 @@ class TestDOTGraph:
             {"name": "dot_node", "db_type": "dot", "conn_string": path},
         )
         try:
-            result = call_tool("get_node", {"name": "dot_node", "node_id": "A"})
+            # For graph connections, get_node uses 'path' as node_id
+            result = call_tool("get_node", {"name": "dot_node", "path": "A"})
             assert result["node_id"] == "A"
             assert result["out_degree"] == 2
         finally:
@@ -164,10 +169,10 @@ class TestGMLGraph:
             {"name": "gml_path", "db_type": "gml", "conn_string": path},
         )
         try:
-            # GML uses integer IDs converted to strings
+            # GML nodes are referenced by label name
             result = call_tool(
                 "find_path",
-                {"name": "gml_path", "source": "1", "target": "3"},
+                {"name": "gml_path", "source": "Alpha", "target": "Gamma"},
             )
             assert "path" in result
         finally:

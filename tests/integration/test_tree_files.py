@@ -28,23 +28,23 @@ class TestYAMLTree:
             {"name": "yaml_tree", "db_type": "yaml", "conn_string": path},
         )
         try:
-            # Get root children
-            result = call_tool("get_children", {"name": "yaml_tree", "path": "/"})
+            # Get root children (no path = root level)
+            result = call_tool("get_children", {"name": "yaml_tree"})
             assert "database" in str(result)
 
-            # Navigate to nested value
+            # Navigate to nested value (paths have no leading slash)
             result = call_tool(
                 "get_value",
-                {"name": "yaml_tree", "path": "/database", "key": "host"},
+                {"name": "yaml_tree", "path": "database", "key": "host"},
             )
             assert "localhost" in str(result)
 
-            # Deep nesting
+            # Deep nesting (dot-separated path for nested nodes)
             result = call_tool(
                 "get_value",
                 {
                     "name": "yaml_tree",
-                    "path": "/database/credentials",
+                    "path": "database.credentials",
                     "key": "user",
                 },
             )
@@ -61,7 +61,7 @@ class TestYAMLTree:
             {"name": "yaml_keys", "db_type": "yaml", "conn_string": path},
         )
         try:
-            result = call_tool("list_keys", {"name": "yaml_keys", "path": "/server"})
+            result = call_tool("list_keys", {"name": "yaml_keys", "path": "server"})
             keys = [k["key"] for k in result.get("keys", [])]
             assert "host" in keys
             assert "port" in keys
@@ -133,7 +133,7 @@ class TestTOMLTree:
             {"name": "toml_tree", "db_type": "toml", "conn_string": path},
         )
         try:
-            result = call_tool("get_children", {"name": "toml_tree", "path": "/"})
+            result = call_tool("get_children", {"name": "toml_tree"})
             children_names = [c["name"] for c in result.get("children", [])]
             assert "server" in children_names
             assert "database" in children_names
@@ -151,7 +151,7 @@ class TestTOMLTree:
         try:
             result = call_tool(
                 "get_value",
-                {"name": "toml_nested", "path": "/app", "key": "name"},
+                {"name": "toml_nested", "path": "app", "key": "name"},
             )
             assert "myapp" in str(result)
         finally:
@@ -190,12 +190,12 @@ class TestJSONTree:
             {"name": "json_tree", "db_type": "json", "conn_string": path},
         )
         try:
-            result = call_tool("get_children", {"name": "json_tree", "path": "/"})
+            result = call_tool("get_children", {"name": "json_tree"})
             assert "config" in str(result)
 
             result = call_tool(
                 "get_value",
-                {"name": "json_tree", "path": "/config/db", "key": "host"},
+                {"name": "json_tree", "path": "config.db", "key": "host"},
             )
             assert "localhost" in str(result)
         finally:
@@ -220,8 +220,8 @@ class TestJSONTree:
             result = call_tool("get_node", {"name": "json_deep"})
             assert result["max_depth"] >= 10
 
-            # Drill into the deepest child accessible
-            deep_path = "/child" * 5
+            # Drill into a nested child (dot-separated path, no leading slash)
+            deep_path = ".".join(["child"] * 5)
             result = call_tool("get_node", {"name": "json_deep", "path": deep_path})
             assert "error" not in result
         finally:
