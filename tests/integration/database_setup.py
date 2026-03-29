@@ -59,6 +59,43 @@ def create_csv_test_file(rows: int = 1000, path: str = None) -> str:
     return path
 
 
+def create_duckdb_test_db(rows: int = 1000, path: str = None) -> str:
+    """Create a DuckDB database with test data. Returns file path."""
+    import duckdb
+
+    if path is None:
+        fd, path = tempfile.mkstemp(suffix=".duckdb", prefix="localdata_test_")
+        os.close(fd)
+    conn = duckdb.connect(path)
+    gen = TestDataGenerator()
+    data = gen.generate_standard_rows(rows)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS test_data (
+            id INTEGER PRIMARY KEY, name VARCHAR, email VARCHAR,
+            amount DOUBLE, created_at VARCHAR, is_active BOOLEAN,
+            category VARCHAR, score DOUBLE, notes VARCHAR
+        )
+    """)
+    for row in data:
+        conn.execute(
+            "INSERT INTO test_data VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                row["id"],
+                row["name"],
+                row["email"],
+                row["amount"],
+                row["created_at"],
+                row["is_active"],
+                row["category"],
+                row["score"],
+                row["notes"],
+            ],
+        )
+    conn.close()
+    return path
+
+
 def create_json_test_file(rows: int = 100, path: str = None) -> str:
     """Create a JSON file with test data."""
     gen = TestDataGenerator()
