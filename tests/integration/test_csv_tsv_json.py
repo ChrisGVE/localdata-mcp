@@ -292,6 +292,7 @@ class TestJSON:
             call_tool("disconnect_database", {"name": "json_ch"})
 
     def test_json_list_keys(self, tmp_path):
+        """Test listing children at root — flat JSON keys become child nodes."""
         path = str(tmp_path / "keys.json")
         data = {"alpha": 1, "beta": 2, "gamma": 3}
         with open(path, "w") as f:
@@ -301,7 +302,7 @@ class TestJSON:
             {"name": "json_keys", "db_type": "json", "conn_string": path},
         )
         try:
-            result = call_tool("list_keys", {"name": "json_keys", "path": "/"})
+            result = call_tool("list_keys", {"name": "json_keys", "path": "root"})
             result_str = str(result)
             assert "alpha" in result_str
             assert "beta" in result_str
@@ -309,6 +310,7 @@ class TestJSON:
             call_tool("disconnect_database", {"name": "json_keys"})
 
     def test_json_get_value(self, tmp_path):
+        """Test navigating to a nested value via get_children + get_node."""
         path = str(tmp_path / "val.json")
         data = {"settings": {"theme": "dark", "version": 3}}
         with open(path, "w") as f:
@@ -320,7 +322,7 @@ class TestJSON:
         try:
             result = call_tool(
                 "get_value",
-                {"name": "json_val", "path": "/settings", "key": "theme"},
+                {"name": "json_val", "path": "settings", "key": "theme"},
             )
             assert "dark" in str(result)
         finally:
