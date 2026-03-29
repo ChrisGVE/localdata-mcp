@@ -7,6 +7,13 @@ import pytest
 from .data_generator import TestDataGenerator
 from .database_setup import create_csv_test_file, create_sqlite_test_db
 
+try:
+    import duckdb  # noqa: F401
+
+    _has_duckdb = True
+except ImportError:
+    _has_duckdb = False
+
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "integration: integration tests")
@@ -18,6 +25,12 @@ def pytest_configure(config):
 def mock_mcp_framework():
     """Override the root conftest autouse mock so integration tests use the real server."""
     yield None
+
+
+@pytest.fixture(autouse=True)
+def _disable_path_restriction(monkeypatch):
+    """Disable path restriction for integration tests (tmp_path is outside cwd)."""
+    monkeypatch.setenv("LOCALDATA_SECURITY_RESTRICT_PATHS", "false")
 
 
 @pytest.fixture(scope="session")
@@ -37,6 +50,30 @@ def small_sqlite_db():
 def large_sqlite_db():
     """SQLite with 500,000 rows for stress testing."""
     path = create_sqlite_test_db(rows=500_000)
+    yield path
+    os.unlink(path)
+
+
+@pytest.fixture(scope="session")
+def small_duckdb_db():
+    """DuckDB with 1,000 rows. Skipped if duckdb is not installed."""
+    if not _has_duckdb:
+        pytest.skip("duckdb not installed")
+    from .database_setup import create_duckdb_test_db
+
+    path = create_duckdb_test_db(rows=1000)
+    yield path
+    os.unlink(path)
+
+
+@pytest.fixture(scope="session")
+def large_duckdb_db():
+    """DuckDB with 500,000 rows. Skipped if duckdb is not installed."""
+    if not _has_duckdb:
+        pytest.skip("duckdb not installed")
+    from .database_setup import create_duckdb_test_db
+
+    path = create_duckdb_test_db(rows=500_000)
     yield path
     os.unlink(path)
 
