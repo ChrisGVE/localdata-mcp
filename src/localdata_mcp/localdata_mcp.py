@@ -1047,7 +1047,13 @@ class DatabaseManager:
 
                 engine = create_engine(f"sqlite:///{temp_path}")
             else:
-                engine = create_engine("sqlite:///:memory:")
+                from sqlalchemy.pool import StaticPool
+
+                engine = create_engine(
+                    "sqlite:///:memory:",
+                    poolclass=StaticPool,
+                    connect_args={"check_same_thread": False},
+                )
 
             # Load data into SQLite
             # Handle multi-sheet files (Excel/ODS) vs single DataFrame files
@@ -3343,10 +3349,16 @@ class DatabaseManager:
             engine = self._get_connection(name)
             inspector = inspect(engine)
 
+            # get_server_version_info() is not available on all dialects (e.g. SQLite)
+            try:
+                version = inspector.dialect.server_version_info
+            except (AttributeError, NotImplementedError):
+                version = None
+
             db_info = {
                 "name": name,
                 "dialect": engine.dialect.name,
-                "version": inspector.get_server_version_info(),
+                "version": version,
                 "default_schema_name": inspector.default_schema_name,
                 "schemas": inspector.get_schema_names(),
                 "tables": [],
