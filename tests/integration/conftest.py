@@ -19,6 +19,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "integration: integration tests")
     config.addinivalue_line("markers", "large_data: tests with large datasets")
     config.addinivalue_line("markers", "docker: tests requiring Docker containers")
+    config.addinivalue_line("markers", "postgres: PostgreSQL integration tests")
+    config.addinivalue_line("markers", "mysql: MySQL integration tests")
+    config.addinivalue_line("markers", "mssql: MS SQL Server integration tests")
 
 
 @pytest.fixture(autouse=True)
