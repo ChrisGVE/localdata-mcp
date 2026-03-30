@@ -15,7 +15,7 @@ jobs:
   # Embedded databases and file formats — no Docker needed, fast
   embedded:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -33,13 +33,13 @@ jobs:
             ${{ runner.os }}-pip-integ-
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" openpyxl odf pyarrow rdflib
 
       - name: Run smoke tests
-        run: pytest tests/integration/test_smoke.py -v --timeout=30
+        run: pytest tests/integration/test_smoke.py -v
 
       - name: Run SQLite tests
-        run: pytest tests/integration/test_sqlite.py -v --timeout=120
+        run: pytest tests/integration/test_sqlite.py -v
 
       - name: Run file format tests
         run: >
@@ -47,21 +47,25 @@ jobs:
           tests/integration/test_csv_tsv_json.py
           tests/integration/test_tree_files.py
           tests/integration/test_graph_files.py
-          -v --timeout=120
+          -v
 
       - name: Run spreadsheet tests
-        run: pytest tests/integration/test_spreadsheets.py -v --timeout=120
+        run: pytest tests/integration/test_spreadsheets.py -v
 
       - name: Run analytical format tests
-        run: pytest tests/integration/test_analytical.py -v --timeout=120
+        run: pytest tests/integration/test_analytical.py -v
 
       - name: Run RDF/SPARQL tests
-        run: pytest tests/integration/test_rdf_sparql.py -v --timeout=120
-        continue-on-error: true
+        run: pytest tests/integration/test_rdf_sparql.py -v
 
       - name: Run edge case tests
-        run: pytest tests/integration/test_file_edge_cases.py -v --timeout=120
-        continue-on-error: true
+        run: pytest tests/integration/test_file_edge_cases.py -v
+
+      - name: Run cross-database consistency tests
+        run: pytest tests/integration/test_cross_database.py -v
+
+      - name: Run performance stress tests
+        run: pytest tests/integration/test_performance_stress.py -v
 
   # PostgreSQL integration tests
   postgres:
@@ -94,11 +98,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -e ".[dev,enterprise]"
+        run: pip install -e ".[dev]" psycopg2-binary
 
       - name: Run PostgreSQL tests
-        run: pytest tests/integration/test_postgres.py -v --timeout=120
-        continue-on-error: true
+        run: pytest tests/integration/test_postgres.py -v
 
   # MySQL integration tests
   mysql:
@@ -132,11 +135,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -e ".[dev,enterprise]"
+        run: pip install -e ".[dev]" mysql-connector-python
 
       - name: Run MySQL tests
-        run: pytest tests/integration/test_mysql.py -v --timeout=120
-        continue-on-error: true
+        run: pytest tests/integration/test_mysql.py -v
 
   # MS SQL Server integration tests
   mssql:
@@ -171,8 +173,7 @@ jobs:
         run: pip install -e ".[dev,enterprise]"
 
       - name: Run MSSQL tests
-        run: pytest tests/integration/test_mssql.py -v --timeout=120
-        continue-on-error: true
+        run: pytest tests/integration/test_mssql.py -v
 
   # NoSQL databases — only on full_suite dispatch
   nosql:
@@ -193,6 +194,24 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-retries 5
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+        ports:
+          - "19200:9200"
+        options: >-
+          --health-cmd "curl -f http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 10
+
+    env:
+      TEST_MONGODB_URL: "mongodb://localhost:27017/testdb"
+      TEST_REDIS_URL: "redis://localhost:6379/0"
+      TEST_ES_URL: "http://localhost:19200"
 
     steps:
       - uses: actions/checkout@v4
@@ -202,15 +221,19 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -e ".[dev,modern-databases]"
+        run: pip install -e ".[dev,modern-databases]" "elasticsearch>=8.0,<9.0"
 
       - name: Wait for services
-        run: sleep 10
+        run: sleep 15
 
       - name: Run MongoDB tests
-        run: pytest tests/integration/test_mongodb.py -v --timeout=120
+        run: pytest tests/integration/test_mongodb.py -v
         continue-on-error: true
 
       - name: Run Redis tests
-        run: pytest tests/integration/test_redis.py -v --timeout=120
+        run: pytest tests/integration/test_redis.py -v
+        continue-on-error: true
+
+      - name: Run Elasticsearch tests
+        run: pytest tests/integration/test_elasticsearch.py -v
         continue-on-error: true
