@@ -2551,7 +2551,15 @@ class DatabaseManager:
         logger.info(f"Attempting to disconnect from database '{name}'")
         try:
             conn = self._get_connection(name)
-            conn.dispose()
+
+            # Close the connection — SQLAlchemy engines use dispose(),
+            # other connection types (Redis, MongoDB, Elasticsearch) use close()
+            from sqlalchemy.engine import Engine
+
+            if isinstance(conn, Engine):
+                conn.dispose()
+            elif hasattr(conn, "close"):
+                conn.close()
 
             # Cascade-clean staging databases for this connection
             staging_cleaned = get_staging_manager().cleanup_by_parent(name)
