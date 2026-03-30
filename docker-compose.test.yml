@@ -3,8 +3,6 @@
 # Ports are offset to avoid conflicts with local database instances.
 # Oracle Free is excluded (~2 GB image, 120 s startup); use @pytest.mark.skip.
 
-version: "3.9"
-
 services:
   localdata-test-postgres:
     image: postgres:16-alpine
@@ -43,22 +41,11 @@ services:
     ports:
       - "11433:1433"
     healthcheck:
-      test:
-        [
-          "/opt/mssql-tools18/bin/sqlcmd",
-          "-S",
-          "localhost",
-          "-U",
-          "sa",
-          "-P",
-          "TestPass123!",
-          "-Q",
-          "SELECT 1",
-          "-C",
-        ]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'TestPass123!' -Q 'SELECT 1' -C || exit 1"]
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 10
+      start_period: 30s
 
 networks:
   default:
