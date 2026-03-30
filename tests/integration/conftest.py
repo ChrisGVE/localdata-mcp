@@ -22,6 +22,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "postgres: PostgreSQL integration tests")
     config.addinivalue_line("markers", "mysql: MySQL integration tests")
     config.addinivalue_line("markers", "mssql: MS SQL Server integration tests")
+    config.addinivalue_line("markers", "mongodb: MongoDB integration tests")
+    config.addinivalue_line("markers", "redis: Redis integration tests")
+    config.addinivalue_line("markers", "elasticsearch: Elasticsearch integration tests")
 
 
 @pytest.fixture(autouse=True)
