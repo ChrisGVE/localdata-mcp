@@ -627,8 +627,10 @@ class ResponseMetadataGenerator:
         issues = []
 
         for col in df.columns:
-            if pd.api.types.is_numeric_dtype(df[col]):
-                # Check for extreme outliers
+            if pd.api.types.is_numeric_dtype(
+                df[col]
+            ) and not pd.api.types.is_bool_dtype(df[col]):
+                # Check for extreme outliers (skip boolean columns)
                 q1, q3 = df[col].quantile([0.25, 0.75])
                 iqr = q3 - q1
                 if iqr > 0:

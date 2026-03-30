@@ -8,6 +8,8 @@ import importlib.metadata
 import json
 import logging
 import os
+
+from .json_utils import safe_dumps
 import psutil
 import sys
 import tempfile
@@ -2531,7 +2533,7 @@ class DatabaseManager:
                     engine, name, db_type, sql_flavor
                 )
 
-            return json.dumps(summary, indent=2)
+            return safe_dumps(summary, indent=2)
 
         except Exception as e:
             # Release semaphore on failure
@@ -2908,7 +2910,7 @@ class DatabaseManager:
                         _query_start_time,
                         rows_returned=estimated_total,
                     )
-                    return json.dumps(response, indent=2)
+                    return safe_dumps(response, indent=2)
                 else:
                     # Small result set - return all results
                     # Create LLM communication protocol for small results too
@@ -2988,7 +2990,7 @@ class DatabaseManager:
                         _query_start_time,
                         rows_returned=len(first_chunk),
                     )
-                    return json.dumps(response, indent=2)
+                    return safe_dumps(response, indent=2)
 
             except QueryTimeoutError as timeout_error:
                 logger.error(f"Query timed out for database '{name}': {timeout_error}")
@@ -3168,7 +3170,7 @@ class DatabaseManager:
                     f"overall risk: {response['risk_assessment']['overall_risk']}"
                 )
 
-                return json.dumps(response, indent=2)
+                return safe_dumps(response, indent=2)
 
             except Exception as e:
                 logger.error(
@@ -3265,7 +3267,7 @@ class DatabaseManager:
                     "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={next_start}, chunk_size='all')",
                 }
 
-            return json.dumps(response, indent=2)
+            return safe_dumps(response, indent=2)
 
         except Exception as e:
             return f"An error occurred while retrieving query chunk: {e}"
@@ -3303,7 +3305,7 @@ class DatabaseManager:
             staging_entries = get_staging_manager().list_staging()
             response["staging_databases"] = staging_entries
 
-        return json.dumps(response, indent=2)
+        return safe_dumps(response, indent=2)
 
     def describe_database(self, name: str) -> str:
         """
