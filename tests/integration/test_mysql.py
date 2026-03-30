@@ -85,6 +85,15 @@ def setup_mysql_data():
     engine.dispose()
 
 
+def _connect(name):
+    """Connect to MySQL via MCP and assert success."""
+    result = call_tool(
+        "connect_database",
+        {"name": name, "db_type": "mysql", "conn_string": MYSQL_URL},
+    )
+    assert "error" not in str(result).lower(), f"Connection failed: {result}"
+
+
 # ---------------------------------------------------------------------------
 # Connection tests
 # ---------------------------------------------------------------------------
@@ -93,10 +102,7 @@ def setup_mysql_data():
 class TestMySQLConnection:
     def test_connect_and_describe(self):
         """Connect to MySQL, describe the database, then disconnect."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_conn", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_conn")
         try:
             result = call_tool("describe_database", {"name": "mysql_conn"})
             assert "test_data" in str(result)
@@ -105,10 +111,7 @@ class TestMySQLConnection:
 
     def test_connect_and_list(self):
         """Connected database appears in list_databases output."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_list", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_list")
         try:
             result = call_tool("list_databases", {})
             assert "mysql_list" in str(result)
@@ -117,10 +120,7 @@ class TestMySQLConnection:
 
     def test_disconnect_removes_from_list(self):
         """After disconnect the database no longer appears."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_disc", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_disc")
         call_tool("disconnect_database", {"name": "mysql_disc"})
         result = call_tool("list_databases", {})
         assert "mysql_disc" not in str(result)
@@ -134,10 +134,7 @@ class TestMySQLConnection:
 class TestMySQLQuery:
     def test_count(self):
         """SELECT COUNT(*) returns 1000."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_cnt", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_cnt")
         try:
             result = call_tool(
                 "execute_query",
@@ -149,10 +146,7 @@ class TestMySQLQuery:
 
     def test_where_filter(self):
         """WHERE filter returns only matching rows."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_whr", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_whr")
         try:
             result = call_tool(
                 "execute_query",
@@ -171,10 +165,7 @@ class TestMySQLQuery:
 
     def test_group_by_aggregation(self):
         """GROUP BY returns one row per category."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_grp", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_grp")
         try:
             result = call_tool(
                 "execute_query",
@@ -194,10 +185,7 @@ class TestMySQLQuery:
 
     def test_limit(self):
         """LIMIT constrains the number of returned rows."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_lim", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_lim")
         try:
             result = call_tool(
                 "execute_query",
@@ -220,10 +208,7 @@ class TestMySQLQuery:
 class TestMySQLSchema:
     def test_describe_table(self):
         """describe_table returns column metadata."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_dtbl", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_dtbl")
         try:
             result = call_tool(
                 "describe_table", {"name": "mysql_dtbl", "table_name": "test_data"}
@@ -236,10 +221,7 @@ class TestMySQLSchema:
 
     def test_export_schema_json_schema(self):
         """export_schema with json_schema format contains table info."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_ejs", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_ejs")
         try:
             result = call_tool(
                 "export_schema", {"name": "mysql_ejs", "format": "json_schema"}
@@ -250,10 +232,7 @@ class TestMySQLSchema:
 
     def test_export_schema_typescript(self):
         """export_schema with typescript format produces output."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_ets", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_ets")
         try:
             result = call_tool(
                 "export_schema", {"name": "mysql_ets", "format": "typescript"}
@@ -266,10 +245,7 @@ class TestMySQLSchema:
 
     def test_export_schema_python(self):
         """export_schema with python format produces output."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_epy", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_epy")
         try:
             result = call_tool(
                 "export_schema", {"name": "mysql_epy", "format": "python"}
@@ -289,10 +265,7 @@ class TestMySQLSchema:
 class TestMySQLErrors:
     def test_nonexistent_table(self):
         """Query against a missing table returns an error dict."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_enx", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_enx")
         try:
             result = call_tool(
                 "execute_query",
@@ -304,10 +277,7 @@ class TestMySQLErrors:
 
     def test_malformed_sql(self):
         """Malformed SQL returns an error dict."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_eml", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_eml")
         try:
             result = call_tool(
                 "execute_query",
@@ -325,36 +295,25 @@ class TestMySQLErrors:
 
 class TestMySQLDataFidelity:
     def test_decimal_precision(self):
-        """DECIMAL(10,2) values preserve their precision via CAST."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_dec", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        """DECIMAL(10,2) values preserve their precision."""
+        _connect("mysql_dec")
         try:
-            # Use CAST to convert DECIMAL to CHAR to avoid serialization issues
-            # and verify precision is preserved in the database itself
             result = call_tool(
                 "execute_query",
                 {
                     "name": "mysql_dec",
-                    "query": (
-                        "SELECT CAST(amount AS CHAR) AS amount_str "
-                        "FROM test_data WHERE id = 5"
-                    ),
+                    "query": "SELECT amount FROM test_data WHERE id = 5",
                 },
             )
             # id=5 → i=4 (0-based AUTO_INCREMENT starts at 1), amount = 4 * 1.5 = 6.00
             result_str = str(result)
-            assert "6.00" in result_str
+            assert "6.0" in result_str
         finally:
             call_tool("disconnect_database", {"name": "mysql_dec"})
 
     def test_tinyint_boolean(self):
         """TINYINT(1) boolean values are returned correctly."""
-        call_tool(
-            "connect_database",
-            {"name": "mysql_bool", "db_type": "mysql", "conn_string": MYSQL_URL},
-        )
+        _connect("mysql_bool")
         try:
             result = call_tool(
                 "execute_query",
@@ -372,3 +331,22 @@ class TestMySQLDataFidelity:
             assert "1" in result_str or "true" in result_str.lower()
         finally:
             call_tool("disconnect_database", {"name": "mysql_bool"})
+
+    def test_select_star(self):
+        """SELECT * with DECIMAL and TINYINT columns no longer crashes."""
+        _connect("mysql_star")
+        try:
+            result = call_tool(
+                "execute_query",
+                {
+                    "name": "mysql_star",
+                    "query": "SELECT * FROM test_data LIMIT 5",
+                },
+            )
+            result_str = str(result)
+            assert "error" not in result_str.lower(), f"SELECT * crashed: {result_str}"
+            assert "user_" in result_str, (
+                f"Expected user data in SELECT * results: {result_str}"
+            )
+        finally:
+            call_tool("disconnect_database", {"name": "mysql_star"})

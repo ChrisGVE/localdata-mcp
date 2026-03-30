@@ -77,21 +77,18 @@ def setup_postgres_data():
 
 
 def _connect(name):
-    """Connect to PostgreSQL via MCP. The connection succeeds even when the
-    return value reports an error (e.g. Decimal serialization during metadata
-    introspection).  Subsequent queries still work on the established connection.
-    """
-    call_tool(
+    """Connect to PostgreSQL via MCP and assert success."""
+    result = call_tool(
         "connect_database",
         {"name": name, "db_type": "postgresql", "conn_string": POSTGRES_URL},
     )
+    assert "error" not in str(result).lower(), f"Connection failed: {result}"
 
 
 class TestPostgresConnection:
     def test_connect_postgres(self):
         _connect("pg_conn")
         try:
-            # Verify the connection is usable despite any connect-time metadata error
             result = call_tool(
                 "execute_query",
                 {"name": "pg_conn", "query": "SELECT 1 AS ok"},
@@ -172,14 +169,13 @@ class TestPostgresQuery:
     def test_aggregation(self):
         _connect("pg_agg")
         try:
-            # Use CAST to avoid Decimal serialization issues with AVG
             result = call_tool(
                 "execute_query",
                 {
                     "name": "pg_agg",
                     "query": (
                         "SELECT category, COUNT(*) as cnt, "
-                        "CAST(AVG(score) AS FLOAT) as avg_score "
+                        "AVG(score) as avg_score "
                         "FROM test_data GROUP BY category"
                     ),
                 },
@@ -267,15 +263,11 @@ class TestPostgresDataFidelity:
     def test_numeric_precision(self):
         _connect("pg_num")
         try:
-            # CAST to FLOAT to avoid Decimal serialization bug in the server
             result = call_tool(
                 "execute_query",
                 {
                     "name": "pg_num",
-                    "query": (
-                        "SELECT CAST(amount AS FLOAT) as amount "
-                        "FROM test_data WHERE id = 2 LIMIT 1"
-                    ),
+                    "query": ("SELECT amount FROM test_data WHERE id = 2 LIMIT 1"),
                 },
             )
             result_str = str(result)
@@ -304,3 +296,22 @@ class TestPostgresDataFidelity:
             ), f"Boolean values not found in result: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": "pg_bool"})
+
+    def test_select_star(self):
+        """SELECT * with DECIMAL and BOOLEAN columns no longer crashes."""
+        _connect("pg_star")
+        try:
+            result = call_tool(
+                "execute_query",
+                {
+                    "name": "pg_star",
+                    "query": "SELECT * FROM test_data LIMIT 5",
+                },
+            )
+            result_str = str(result)
+            assert "error" not in result_str.lower(), f"SELECT * crashed: {result_str}"
+            assert "user_" in result_str, (
+                f"Expected user data in SELECT * results: {result_str}"
+            )
+        finally:
+            call_tool("disconnect_database", {"name": "pg_star"})

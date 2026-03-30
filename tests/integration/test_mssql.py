@@ -94,6 +94,21 @@ def setup_mssql_data():
     engine.dispose()
 
 
+def _connect(name):
+    """Connect to MSSQL via MCP and assert success."""
+    result = call_tool(
+        "connect_database",
+        {"name": name, "db_type": "mssql", "conn_string": MSSQL_URL},
+    )
+    # MSSQL system tables (spt_monitor) have columns like 'total_errors' so we
+    # cannot do a naive "error" substring check.  Instead verify the result
+    # dict reports success.
+    if isinstance(result, dict):
+        assert result.get("success") is True, f"Connection failed: {result}"
+    else:
+        assert "error" not in str(result).lower(), f"Connection failed: {result}"
+
+
 # ---------------------------------------------------------------------------
 # Connection tests
 # ---------------------------------------------------------------------------
@@ -101,10 +116,7 @@ def setup_mssql_data():
 
 class TestMSSQLConnection:
     def test_connect_and_list(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_conn", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_conn")
         try:
             result = call_tool("list_databases", {})
             assert "mssql_conn" in str(result)
@@ -112,10 +124,7 @@ class TestMSSQLConnection:
             call_tool("disconnect_database", {"name": "mssql_conn"})
 
     def test_describe_database(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_desc", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_desc")
         try:
             result = call_tool("describe_database", {"name": "mssql_desc"})
             assert "test_data" in str(result)
@@ -123,10 +132,7 @@ class TestMSSQLConnection:
             call_tool("disconnect_database", {"name": "mssql_desc"})
 
     def test_disconnect_cleanup(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_dc", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_dc")
         call_tool("disconnect_database", {"name": "mssql_dc"})
         result = call_tool("list_databases", {})
         assert "mssql_dc" not in str(result)
@@ -139,10 +145,7 @@ class TestMSSQLConnection:
 
 class TestMSSQLQueries:
     def test_count(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_cnt", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_cnt")
         try:
             result = call_tool(
                 "execute_query",
@@ -156,18 +159,14 @@ class TestMSSQLQueries:
             call_tool("disconnect_database", {"name": "mssql_cnt"})
 
     def test_where_filter(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_whr", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_whr")
         try:
             result = call_tool(
                 "execute_query",
                 {
                     "name": "mssql_whr",
                     "query": (
-                        "SELECT id, name, email, "
-                        "CAST(amount AS FLOAT) AS amount, category, score "
+                        "SELECT id, name, email, amount, category, score "
                         "FROM test_data WHERE category = 'P'"
                     ),
                 },
@@ -179,10 +178,7 @@ class TestMSSQLQueries:
             call_tool("disconnect_database", {"name": "mssql_whr"})
 
     def test_group_by_aggregation(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_grp", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_grp")
         try:
             result = call_tool(
                 "execute_query",
@@ -190,7 +186,7 @@ class TestMSSQLQueries:
                     "name": "mssql_grp",
                     "query": (
                         "SELECT category, COUNT(*) AS cnt, "
-                        "CAST(SUM(amount) AS FLOAT) AS total "
+                        "SUM(amount) AS total "
                         "FROM test_data GROUP BY category"
                     ),
                 },
@@ -201,10 +197,7 @@ class TestMSSQLQueries:
             call_tool("disconnect_database", {"name": "mssql_grp"})
 
     def test_top_limit(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_top", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_top")
         try:
             result = call_tool(
                 "execute_query",
@@ -212,7 +205,7 @@ class TestMSSQLQueries:
                     "name": "mssql_top",
                     "query": (
                         "SELECT TOP 5 id, name, email, "
-                        "CAST(amount AS FLOAT) AS amount, category, score "
+                        "amount, category, score "
                         "FROM test_data ORDER BY id"
                     ),
                 },
@@ -231,10 +224,7 @@ class TestMSSQLQueries:
 
 class TestMSSQLSchema:
     def test_describe_table(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_dtbl", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_dtbl")
         try:
             result = call_tool(
                 "describe_table",
@@ -247,10 +237,7 @@ class TestMSSQLSchema:
             call_tool("disconnect_database", {"name": "mssql_dtbl"})
 
     def test_export_schema_json(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_ejs", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_ejs")
         try:
             result = call_tool(
                 "export_schema",
@@ -261,10 +248,7 @@ class TestMSSQLSchema:
             call_tool("disconnect_database", {"name": "mssql_ejs"})
 
     def test_export_schema_typescript(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_ets", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_ets")
         try:
             result = call_tool(
                 "export_schema",
@@ -283,10 +267,7 @@ class TestMSSQLSchema:
 
 class TestMSSQLErrors:
     def test_nonexistent_table(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_enx", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_enx")
         try:
             result = call_tool(
                 "execute_query",
@@ -300,10 +281,7 @@ class TestMSSQLErrors:
             call_tool("disconnect_database", {"name": "mssql_enx"})
 
     def test_malformed_sql(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_eml", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_eml")
         try:
             result = call_tool(
                 "execute_query",
@@ -324,19 +302,13 @@ class TestMSSQLErrors:
 
 class TestMSSQLDataFidelity:
     def test_decimal_precision(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_dec", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_dec")
         try:
             result = call_tool(
                 "execute_query",
                 {
                     "name": "mssql_dec",
-                    "query": (
-                        "SELECT CAST(amount AS FLOAT) AS amount "
-                        "FROM test_data WHERE id = 2"
-                    ),
+                    "query": "SELECT amount FROM test_data WHERE id = 2",
                 },
             )
             # user_1 has amount = 1 * 1.5 = 1.50
@@ -346,18 +318,14 @@ class TestMSSQLDataFidelity:
             call_tool("disconnect_database", {"name": "mssql_dec"})
 
     def test_bit_boolean_handling(self):
-        call_tool(
-            "connect_database",
-            {"name": "mssql_bit", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_bit")
         try:
             result = call_tool(
                 "execute_query",
                 {
                     "name": "mssql_bit",
                     "query": (
-                        "SELECT CAST(is_active AS INT) AS is_active, "
-                        "COUNT(*) AS cnt "
+                        "SELECT is_active, COUNT(*) AS cnt "
                         "FROM test_data GROUP BY is_active"
                     ),
                 },
@@ -370,10 +338,7 @@ class TestMSSQLDataFidelity:
 
     def test_nvarchar_unicode(self):
         """Verify NVARCHAR data round-trips correctly."""
-        call_tool(
-            "connect_database",
-            {"name": "mssql_uni", "db_type": "mssql", "conn_string": MSSQL_URL},
-        )
+        _connect("mssql_uni")
         try:
             result = call_tool(
                 "execute_query",
@@ -389,3 +354,22 @@ class TestMSSQLDataFidelity:
             assert "user_42@test.com" in result_str
         finally:
             call_tool("disconnect_database", {"name": "mssql_uni"})
+
+    def test_select_star(self):
+        """SELECT * with DECIMAL and BIT columns no longer crashes."""
+        _connect("mssql_star")
+        try:
+            result = call_tool(
+                "execute_query",
+                {
+                    "name": "mssql_star",
+                    "query": "SELECT TOP 5 * FROM test_data",
+                },
+            )
+            result_str = str(result)
+            assert "error" not in result_str.lower(), f"SELECT * crashed: {result_str}"
+            assert "user_" in result_str, (
+                f"Expected user data in SELECT * results: {result_str}"
+            )
+        finally:
+            call_tool("disconnect_database", {"name": "mssql_star"})
