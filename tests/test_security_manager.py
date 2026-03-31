@@ -178,23 +178,30 @@ class TestSecurityManager:
                 f"Failed to detect {expected_pattern.value} in query: {query}"
             )
 
-    def test_rate_limiting_minute_limit(self, security_manager):
+    def test_rate_limiting_minute_limit(self):
         """Test rate limiting per minute."""
+        # Use a config with high burst_limit to isolate per-minute rate limiting
+        config = SecurityConfig(
+            queries_per_minute=5,
+            queries_per_hour=50,
+            burst_limit=20,
+            max_query_length=1000,
+            audit_enabled=True,
+            enable_pattern_detection=True,
+            block_suspicious_patterns=True,
+        )
+        mgr = SecurityManager(config)
         connection_id = "test_connection"
         database_name = "test_db"
 
         # Should allow queries up to the limit
-        for i in range(security_manager.config.queries_per_minute):
-            allowed, error = security_manager.check_rate_limits(
-                connection_id, database_name
-            )
+        for i in range(mgr.config.queries_per_minute):
+            allowed, error = mgr.check_rate_limits(connection_id, database_name)
             assert allowed, f"Query {i + 1} should be allowed"
             assert error is None
 
         # Next query should be blocked
-        allowed, error = security_manager.check_rate_limits(
-            connection_id, database_name
-        )
+        allowed, error = mgr.check_rate_limits(connection_id, database_name)
         assert not allowed
         assert "Rate limit exceeded" in error
         assert "queries per minute" in error
@@ -677,7 +684,7 @@ class TestOWASPSQLInjectionCases:
             # Classic SQL injection
             (
                 "1' OR '1'='1",
-                [AttackPattern.BOOLEAN_BLIND, AttackPattern.COMMENT_INJECTION],
+                [AttackPattern.BOOLEAN_BLIND],
             ),
             # Union-based information disclosure
             (
