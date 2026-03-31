@@ -570,53 +570,80 @@ class ConfigManager:
 
         # Modern granular environment variables (prefixed approach)
         # LOCALDATA_DB_<name>_<property>=value
-        db_pattern = re.compile(r"^LOCALDATA_DB_([A-Z0-9_]+)_(.+)$")
+        # Use known property suffixes so multi-word names (TEST_DB) work.
+        _KNOWN_SUFFIXES = [
+            "CONNECTION_STRING",
+            "SHEET_NAME",
+            "AUTO_CLEANUP_BUFFERS",
+            "CONSOLE_OUTPUT",
+            "MAX_CONNECTIONS",
+            "CONNECTION_TIMEOUT",
+            "QUERY_TIMEOUT",
+            "MAX_FILE_SIZE",
+            "BACKUP_COUNT",
+            "CHUNK_SIZE",
+            "MEMORY_LIMIT_MB",
+            "QUERY_BUFFER_TIMEOUT",
+            "MAX_CONCURRENT_CONNECTIONS",
+            "MEMORY_WARNING_THRESHOLD",
+            "ENABLED",
+            "TYPE",
+        ]
+        _DB_PREFIX = "LOCALDATA_DB_"
 
         for key, value in os.environ.items():
-            match = db_pattern.match(key)
-            if match:
-                db_name = match.group(1).lower()
-                property_name = match.group(2).lower()
+            if not key.startswith(_DB_PREFIX):
+                continue
+            remainder = key[len(_DB_PREFIX) :]
+            db_name = None
+            property_name = None
+            for suffix in _KNOWN_SUFFIXES:
+                if remainder.endswith("_" + suffix):
+                    db_name = remainder[: -(len(suffix) + 1)].lower()
+                    property_name = suffix.lower()
+                    break
+            if db_name is None or property_name is None:
+                continue
 
-                if db_name not in env_config["databases"]:
-                    env_config["databases"][db_name] = {}
+            if db_name not in env_config["databases"]:
+                env_config["databases"][db_name] = {}
 
-                # Convert property names
-                if property_name == "type":
-                    env_config["databases"][db_name]["type"] = value
-                elif property_name in ["connection_string", "sheet_name"]:
-                    env_config["databases"][db_name][property_name] = value
-                elif property_name in [
-                    "enabled",
-                    "auto_cleanup_buffers",
-                    "console_output",
-                ]:
-                    env_config["databases"][db_name][property_name] = value.lower() in (
-                        "true",
-                        "1",
-                        "yes",
-                        "on",
-                    )
-                elif property_name in [
-                    "max_connections",
-                    "connection_timeout",
-                    "query_timeout",
-                    "max_file_size",
-                    "backup_count",
-                    "chunk_size",
-                    "memory_limit_mb",
-                    "query_buffer_timeout",
-                    "max_concurrent_connections",
-                ]:
-                    try:
-                        env_config["databases"][db_name][property_name] = int(value)
-                    except ValueError:
-                        print(f"Warning: Invalid integer value for {key}: {value}")
-                elif property_name == "memory_warning_threshold":
-                    try:
-                        env_config["databases"][db_name][property_name] = float(value)
-                    except ValueError:
-                        print(f"Warning: Invalid float value for {key}: {value}")
+            # Convert property names
+            if property_name == "type":
+                env_config["databases"][db_name]["type"] = value
+            elif property_name in ["connection_string", "sheet_name"]:
+                env_config["databases"][db_name][property_name] = value
+            elif property_name in [
+                "enabled",
+                "auto_cleanup_buffers",
+                "console_output",
+            ]:
+                env_config["databases"][db_name][property_name] = value.lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                    "on",
+                )
+            elif property_name in [
+                "max_connections",
+                "connection_timeout",
+                "query_timeout",
+                "max_file_size",
+                "backup_count",
+                "chunk_size",
+                "memory_limit_mb",
+                "query_buffer_timeout",
+                "max_concurrent_connections",
+            ]:
+                try:
+                    env_config["databases"][db_name][property_name] = int(value)
+                except ValueError:
+                    print(f"Warning: Invalid integer value for {key}: {value}")
+            elif property_name == "memory_warning_threshold":
+                try:
+                    env_config["databases"][db_name][property_name] = float(value)
+                except ValueError:
+                    print(f"Warning: Invalid float value for {key}: {value}")
 
         # Logging configuration from environment
         log_level = os.getenv("LOCALDATA_LOG_LEVEL")
