@@ -169,16 +169,19 @@ class DatabaseConnectionError(LocalDataError):
     """Database connection related errors."""
 
     def __init__(self, message: str, database_name: Optional[str] = None, **kwargs):
-        super().__init__(
-            message=message,
-            category=ErrorCategory.CONNECTION,
-            database_name=database_name,
-            recovery_suggestions=[
+        kwargs.setdefault(
+            "recovery_suggestions",
+            [
                 "Check database connection parameters",
                 "Verify network connectivity",
                 "Ensure database server is running",
                 "Check firewall settings",
             ],
+        )
+        super().__init__(
+            message=message,
+            category=ErrorCategory.CONNECTION,
+            database_name=database_name,
             **kwargs,
         )
 
@@ -187,16 +190,19 @@ class QueryExecutionError(LocalDataError):
     """Query execution related errors."""
 
     def __init__(self, message: str, query: Optional[str] = None, **kwargs):
-        super().__init__(
-            message=message,
-            category=ErrorCategory.QUERY_EXECUTION,
-            query=query,
-            recovery_suggestions=[
+        kwargs.setdefault(
+            "recovery_suggestions",
+            [
                 "Check SQL syntax",
                 "Verify table and column names exist",
                 "Ensure sufficient permissions",
                 "Consider query optimization",
             ],
+        )
+        super().__init__(
+            message=message,
+            category=ErrorCategory.QUERY_EXECUTION,
+            query=query,
             **kwargs,
         )
 
@@ -205,17 +211,20 @@ class SecurityViolationError(LocalDataError):
     """Security violation errors."""
 
     def __init__(self, message: str, query: Optional[str] = None, **kwargs):
-        super().__init__(
-            message=message,
-            category=ErrorCategory.SECURITY_VIOLATION,
-            severity=ErrorSeverity.HIGH,
-            query=query,
-            recovery_suggestions=[
+        kwargs.setdefault(
+            "recovery_suggestions",
+            [
                 "Review query for security issues",
                 "Check SQL injection patterns",
                 "Verify query permissions",
                 "Contact administrator if needed",
             ],
+        )
+        super().__init__(
+            message=message,
+            category=ErrorCategory.SECURITY_VIOLATION,
+            severity=ErrorSeverity.HIGH,
+            query=query,
             **kwargs,
         )
 
@@ -230,21 +239,23 @@ class QueryTimeoutError(LocalDataError):
         timeout_limit: float = 0.0,
         **kwargs,
     ):
-        metadata = kwargs.get("metadata", {})
+        metadata = kwargs.pop("metadata", {})
         metadata.update(
             {"execution_time": execution_time, "timeout_limit": timeout_limit}
         )
-
-        super().__init__(
-            message=message,
-            category=ErrorCategory.TIMEOUT,
-            metadata=metadata,
-            recovery_suggestions=[
+        kwargs.setdefault(
+            "recovery_suggestions",
+            [
                 "Increase query timeout limit",
                 "Optimize query performance",
                 "Add appropriate indexes",
                 "Consider data partitioning",
             ],
+        )
+        super().__init__(
+            message=message,
+            category=ErrorCategory.TIMEOUT,
+            metadata=metadata,
             **kwargs,
         )
 
@@ -253,20 +264,22 @@ class ResourceExhaustionError(LocalDataError):
     """Resource exhaustion errors (memory, CPU, connections)."""
 
     def __init__(self, message: str, resource_type: str = "unknown", **kwargs):
-        metadata = kwargs.get("metadata", {})
+        metadata = kwargs.pop("metadata", {})
         metadata["resource_type"] = resource_type
-
-        super().__init__(
-            message=message,
-            category=ErrorCategory.RESOURCE_EXHAUSTION,
-            severity=ErrorSeverity.HIGH,
-            metadata=metadata,
-            recovery_suggestions=[
+        kwargs.setdefault(
+            "recovery_suggestions",
+            [
                 "Reduce query complexity",
                 "Implement data pagination",
                 "Close unused connections",
                 "Increase system resources",
             ],
+        )
+        super().__init__(
+            message=message,
+            category=ErrorCategory.RESOURCE_EXHAUSTION,
+            severity=ErrorSeverity.HIGH,
+            metadata=metadata,
             **kwargs,
         )
 
@@ -275,20 +288,22 @@ class ConfigurationError(LocalDataError):
     """Configuration related errors."""
 
     def __init__(self, message: str, config_key: Optional[str] = None, **kwargs):
-        metadata = kwargs.get("metadata", {})
+        metadata = kwargs.pop("metadata", {})
         if config_key:
             metadata["config_key"] = config_key
-
-        super().__init__(
-            message=message,
-            category=ErrorCategory.CONFIGURATION,
-            metadata=metadata,
-            recovery_suggestions=[
+        kwargs.setdefault(
+            "recovery_suggestions",
+            [
                 "Check configuration file syntax",
                 "Verify all required parameters",
                 "Review default values",
                 "Consult documentation",
             ],
+        )
+        super().__init__(
+            message=message,
+            category=ErrorCategory.CONFIGURATION,
+            metadata=metadata,
             **kwargs,
         )
 
