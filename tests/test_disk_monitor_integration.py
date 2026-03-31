@@ -66,13 +66,13 @@ _pm.Counter = _safe_counter
 _pm.Histogram = _safe_histogram
 _pm.Gauge = _safe_gauge
 
-from src.localdata_mcp.streaming_executor import (  # noqa: E402
+from localdata_mcp.streaming_executor import (  # noqa: E402
     StreamingQueryExecutor,
     StreamingDataSource,
     MemoryStatus,
 )
-from src.localdata_mcp.config_manager import PerformanceConfig  # noqa: E402
-from src.localdata_mcp.disk_monitor import DiskMonitor  # noqa: E402
+from localdata_mcp.config_manager import PerformanceConfig  # noqa: E402
+from localdata_mcp.disk_monitor import DiskMonitor  # noqa: E402
 
 
 def _make_memory_status(low=False):
