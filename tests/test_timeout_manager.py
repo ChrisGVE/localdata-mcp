@@ -34,8 +34,6 @@ class TestQueryTimeoutManager(unittest.TestCase):
 
     def setUp(self):
         """Set up test environment."""
-        self.timeout_manager = QueryTimeoutManager()
-
         # Create a mock config manager with test database configurations
         self.mock_config_manager = Mock(spec=ConfigManager)
 
@@ -62,11 +60,14 @@ class TestQueryTimeoutManager(unittest.TestCase):
             "slow_db": self.slow_db_config,
         }.get(name)
 
-        # Patch the get_config_manager function
-        patcher = patch("src.localdata_mcp.timeout_manager.get_config_manager")
+        # Patch the get_config_manager function before creating the timeout manager
+        patcher = patch("localdata_mcp.timeout_manager.get_config_manager")
         self.mock_get_config_manager = patcher.start()
         self.mock_get_config_manager.return_value = self.mock_config_manager
         self.addCleanup(patcher.stop)
+
+        # Create timeout manager after patch so it uses the mock config manager
+        self.timeout_manager = QueryTimeoutManager()
 
     def test_get_timeout_config_existing_database(self):
         """Test getting timeout config for existing database."""
@@ -258,7 +259,7 @@ class TestQueryTimeoutManager(unittest.TestCase):
             self.assertEqual(error.timeout_reason, TimeoutReason.USER_TIMEOUT)
             self.assertEqual(error.database_name, "test_db")
             self.assertGreater(error.execution_time, 0)
-            self.assertIn("Query timed out", error.message)
+            self.assertIn("Query timed out", str(error))
 
 
 class TestTimeoutIntegration(unittest.TestCase):
@@ -298,7 +299,8 @@ class TestTimeoutIntegration(unittest.TestCase):
         if os.path.exists(self.db_path):
             os.unlink(self.db_path)
 
-    @patch("src.localdata_mcp.config_manager.get_config_manager")
+    @patch("localdata_mcp.timeout_manager._timeout_manager", None)
+    @patch("localdata_mcp.timeout_manager.get_config_manager")
     def test_streaming_executor_with_timeout(self, mock_get_config):
         """Test streaming executor integration with timeout manager."""
         # Mock config manager
@@ -364,7 +366,7 @@ class TestTimeoutIntegration(unittest.TestCase):
 
         # Mock config manager to return short timeout
         with patch(
-            "src.localdata_mcp.timeout_manager.get_config_manager"
+            "localdata_mcp.timeout_manager.get_config_manager"
         ) as mock_get_config:
             mock_config_manager = Mock()
             test_db_config = DatabaseConfig(
@@ -388,7 +390,7 @@ class TestTimeoutConfiguration(unittest.TestCase):
     def test_per_database_timeout_configuration(self):
         """Test that different databases can have different timeout configurations."""
         with patch(
-            "src.localdata_mcp.timeout_manager.get_config_manager"
+            "localdata_mcp.timeout_manager.get_config_manager"
         ) as mock_get_config:
             mock_config_manager = Mock()
 
@@ -469,11 +471,9 @@ class TestTimeoutErrorScenarios(unittest.TestCase):
 
     def test_concurrent_operations(self):
         """Test timeout manager with multiple concurrent operations."""
-        timeout_manager = QueryTimeoutManager()
-
-        # Mock config
+        # Mock config - create timeout_manager inside patch so it uses mock
         with patch(
-            "src.localdata_mcp.timeout_manager.get_config_manager"
+            "localdata_mcp.timeout_manager.get_config_manager"
         ) as mock_get_config:
             mock_config_manager = Mock()
             test_db_config = DatabaseConfig(
@@ -486,16 +486,19 @@ class TestTimeoutErrorScenarios(unittest.TestCase):
             mock_config_manager.get_database_config.return_value = test_db_config
             mock_get_config.return_value = mock_config_manager
 
+            timeout_manager = QueryTimeoutManager()
+
             # Start multiple operations
             operation_ids = ["op1", "op2", "op3"]
-            contexts = []
+            context_managers = []
 
             timeout_config = timeout_manager.get_timeout_config("test_db")
 
             # Start all operations
             for op_id in operation_ids:
-                context = timeout_manager.timeout_context(op_id, timeout_config)
-                contexts.append((op_id, context.__enter__()))
+                cm = timeout_manager.timeout_context(op_id, timeout_config)
+                ctx = cm.__enter__()
+                context_managers.append((op_id, cm))
 
             # Check all operations are active
             active_ops = timeout_manager.get_active_operations()
@@ -510,15 +513,15 @@ class TestTimeoutErrorScenarios(unittest.TestCase):
             time.sleep(2.5)
 
             # Check states
-            self.assertFalse(timeout_manager.is_cancelled("op1"))  # Should be timed out
+            self.assertTrue(timeout_manager.is_cancelled("op1"))  # Timed out
             self.assertTrue(timeout_manager.is_cancelled("op2"))  # Manually cancelled
-            self.assertFalse(timeout_manager.is_cancelled("op3"))  # Should be timed out
+            self.assertTrue(timeout_manager.is_cancelled("op3"))  # Timed out
 
             # Clean up contexts
-            for op_id, context in contexts:
+            for op_id, cm in context_managers:
                 try:
-                    context.__exit__(None, None, None)
-                except:
+                    cm.__exit__(None, None, None)
+                except Exception:
                     pass
 
 
