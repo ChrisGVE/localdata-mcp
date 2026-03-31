@@ -26,19 +26,19 @@ class TestEnhancedDatabaseManager:
         """Create mock components for testing."""
         with (
             patch(
-                "src.localdata_mcp.enhanced_database_manager.get_error_handler"
+                "localdata_mcp.enhanced_database_manager.get_error_handler"
             ) as mock_error_handler,
             patch(
-                "src.localdata_mcp.enhanced_database_manager.get_security_manager"
+                "localdata_mcp.enhanced_database_manager.get_security_manager"
             ) as mock_security,
             patch(
-                "src.localdata_mcp.enhanced_database_manager.get_enhanced_connection_manager"
+                "localdata_mcp.enhanced_database_manager.get_enhanced_connection_manager"
             ) as mock_conn,
             patch(
-                "src.localdata_mcp.enhanced_database_manager.get_timeout_manager"
+                "localdata_mcp.enhanced_database_manager.get_timeout_manager"
             ) as mock_timeout,
             patch(
-                "src.localdata_mcp.enhanced_database_manager.StreamingQueryExecutor"
+                "localdata_mcp.enhanced_database_manager.StreamingQueryExecutor"
             ) as mock_streaming,
         ):
             # Setup mock returns
@@ -68,6 +68,8 @@ class TestEnhancedDatabaseManager:
             mock_error_handler_instance.get_circuit_breaker.return_value = (
                 mock_circuit_breaker
             )
+            # Default handle_error return: not recovered, no result, no processed error
+            mock_error_handler_instance.handle_error.return_value = (False, None, None)
 
             yield {
                 "error_handler": mock_error_handler_instance,
@@ -207,10 +209,9 @@ class TestEnhancedDatabaseManager:
             if "recovery_result" in context:
                 assert context["recovery_result"] == "recovered_result"
 
-    @patch("pandas.DataFrame")
-    @patch("src.localdata_mcp.enhanced_database_manager.create_streaming_source")
+    @patch("localdata_mcp.streaming_executor.create_streaming_source")
     def test_execute_query_with_error_handling_success(
-        self, mock_create_source, mock_dataframe, mock_components
+        self, mock_create_source, mock_components
     ):
         """Test successful query execution with comprehensive error handling."""
         manager = EnhancedDatabaseManager()
@@ -232,8 +233,9 @@ class TestEnhancedDatabaseManager:
 
         # Setup streaming executor
         streaming_executor = mock_components["streaming_executor"]
-        mock_dataframe_instance = Mock()
+        mock_dataframe_instance = MagicMock()
         mock_dataframe_instance.empty = False
+        mock_dataframe_instance.__len__ = Mock(return_value=1)
         mock_dataframe_instance.to_dict.return_value = [
             {"col1": "value1", "col2": "value2"}
         ]
@@ -440,6 +442,11 @@ class TestEnhancedDatabaseManager:
 
     def test_global_enhanced_database_manager_functions(self, mock_components):
         """Test global enhanced database manager accessor functions."""
+        import localdata_mcp.enhanced_database_manager as edm_module
+
+        # Reset global state for this test
+        edm_module._enhanced_database_manager = None
+
         # Get global manager
         manager1 = get_enhanced_database_manager()
         manager2 = get_enhanced_database_manager()
@@ -455,6 +462,9 @@ class TestEnhancedDatabaseManager:
         assert manager3 is manager4
         assert manager3 is not manager1
 
+        # Clean up global state
+        edm_module._enhanced_database_manager = None
+
 
 class TestEnhancedDatabaseManagerIntegration:
     """Integration tests with more realistic scenarios."""
@@ -462,14 +472,23 @@ class TestEnhancedDatabaseManagerIntegration:
     @pytest.fixture
     def realistic_mocks(self):
         """Create more realistic mocks for integration testing."""
-        with patch.multiple(
-            "src.localdata_mcp.enhanced_database_manager",
-            get_error_handler=Mock(),
-            get_security_manager=Mock(),
-            get_enhanced_connection_manager=Mock(),
-            get_timeout_manager=Mock(),
-            StreamingQueryExecutor=Mock(),
-        ) as mocks:
+        with (
+            patch(
+                "localdata_mcp.enhanced_database_manager.get_error_handler"
+            ) as mock_get_error_handler,
+            patch(
+                "localdata_mcp.enhanced_database_manager.get_security_manager"
+            ) as mock_get_security_manager,
+            patch(
+                "localdata_mcp.enhanced_database_manager.get_enhanced_connection_manager"
+            ) as mock_get_conn_manager,
+            patch(
+                "localdata_mcp.enhanced_database_manager.get_timeout_manager"
+            ) as mock_get_timeout_manager,
+            patch(
+                "localdata_mcp.enhanced_database_manager.StreamingQueryExecutor"
+            ) as mock_streaming_cls,
+        ):
             # Setup realistic error handler
             error_handler = Mock()
             error_handler.get_system_health.return_value = {
@@ -478,6 +497,7 @@ class TestEnhancedDatabaseManagerIntegration:
                 "error_statistics": {"total_errors": 2},
                 "recovery_statistics": {"success_rate": 80.0},
             }
+            error_handler.handle_error.return_value = (False, None, None)
 
             # Setup circuit breakers
             circuit_breaker = Mock()
@@ -493,11 +513,22 @@ class TestEnhancedDatabaseManagerIntegration:
             }
             error_handler.get_circuit_breaker.return_value = circuit_breaker
 
-            mocks["get_error_handler"].return_value = error_handler
+            mock_get_error_handler.return_value = error_handler
+
+            mocks = {
+                "get_error_handler": mock_get_error_handler,
+                "get_security_manager": mock_get_security_manager,
+                "get_enhanced_connection_manager": mock_get_conn_manager,
+                "get_timeout_manager": mock_get_timeout_manager,
+                "StreamingQueryExecutor": mock_streaming_cls,
+                "error_handler": error_handler,
+                "circuit_breaker": circuit_breaker,
+            }
 
             yield mocks
 
-    def test_complete_query_execution_flow(self, realistic_mocks):
+    @patch("localdata_mcp.streaming_executor.create_streaming_source")
+    def test_complete_query_execution_flow(self, mock_create_source, realistic_mocks):
         """Test complete query execution flow with realistic components."""
         manager = EnhancedDatabaseManager()
 
@@ -521,8 +552,9 @@ class TestEnhancedDatabaseManagerIntegration:
         timeout_manager.managed_timeout.return_value.__exit__ = Mock(return_value=False)
 
         streaming_executor = realistic_mocks["StreamingQueryExecutor"].return_value
-        mock_df = Mock()
+        mock_df = MagicMock()
         mock_df.empty = False
+        mock_df.__len__ = Mock(return_value=2)
         mock_df.to_dict.return_value = [
             {"id": 1, "name": "Alice"},
             {"id": 2, "name": "Bob"},
@@ -558,27 +590,24 @@ class TestEnhancedDatabaseManagerIntegration:
         """Test error cascading through components and recovery attempts."""
         manager = EnhancedDatabaseManager()
 
-        # Setup initial failure in connection
+        # Setup connection to always fail
         connection_manager = realistic_mocks[
             "get_enhanced_connection_manager"
         ].return_value
-        connection_manager.get_engine.side_effect = [
-            None,  # First attempt fails
-            Mock(),  # Second attempt (after recovery) succeeds
-        ]
+        connection_manager.get_engine.return_value = None
 
-        # Setup error handler for recovery
-        error_handler = realistic_mocks["get_error_handler"].return_value
+        # Setup error handler - consistently report connection failure (not recovered)
+        error_handler = realistic_mocks["error_handler"]
+        mock_conn_error = DatabaseConnectionError("Connection failed")
+        error_handler.handle_error.return_value = (
+            False,
+            None,
+            mock_conn_error,
+        )
 
-        # First call handles the connection error
-        error_handler.handle_error.side_effect = [
-            (
-                False,
-                None,
-                DatabaseConnectionError("Connection failed"),
-            ),  # Recovery fails
-            (True, "connection_recovered", None),  # Second recovery succeeds
-        ]
+        # Setup security to pass so we reach the connection step
+        security_manager = realistic_mocks["get_security_manager"].return_value
+        security_manager.validate_query_security.return_value = (True, None, {})
 
         # Execute query - should handle the connection failure
         result = manager.execute_query_with_error_handling(
