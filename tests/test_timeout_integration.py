@@ -125,7 +125,9 @@ class TestTimeoutSystemIntegration(unittest.TestCase):
     def test_successful_query_with_timeout_configured(self):
         """Test successful query execution with timeout configured but not triggered."""
         # Connect to database
-        connect_result = self.mcp_server.connect_database("test_fast_db")
+        connect_result = self.mcp_server.connect_database(
+            "test_fast_db", "sqlite", self.db_path
+        )
         self.assertIn("Successfully connected", connect_result)
 
         # Execute query that should complete within timeout
@@ -150,7 +152,9 @@ class TestTimeoutSystemIntegration(unittest.TestCase):
     def test_query_timeout_with_short_timeout(self):
         """Test query that should timeout with very short timeout configuration."""
         # Connect to database with short timeout
-        connect_result = self.mcp_server.connect_database("test_slow_db")
+        connect_result = self.mcp_server.connect_database(
+            "test_slow_db", "sqlite", self.db_path
+        )
         self.assertIn("Successfully connected", connect_result)
 
         # This query should be slow enough to trigger the 2-second timeout
@@ -182,7 +186,9 @@ class TestTimeoutSystemIntegration(unittest.TestCase):
     def test_timeout_error_message_format(self):
         """Test that timeout error messages contain required information."""
         # Connect to database with short timeout
-        connect_result = self.mcp_server.connect_database("test_slow_db")
+        connect_result = self.mcp_server.connect_database(
+            "test_slow_db", "sqlite", self.db_path
+        )
         self.assertIn("Successfully connected", connect_result)
 
         # Execute a query designed to be slow
@@ -206,8 +212,12 @@ class TestTimeoutSystemIntegration(unittest.TestCase):
     def test_database_specific_timeout_configuration(self):
         """Test that different databases use their specific timeout configurations."""
         # Connect to both databases
-        fast_connect = self.mcp_server.connect_database("test_fast_db")
-        slow_connect = self.mcp_server.connect_database("test_slow_db")
+        fast_connect = self.mcp_server.connect_database(
+            "test_fast_db", "sqlite", self.db_path
+        )
+        slow_connect = self.mcp_server.connect_database(
+            "test_slow_db", "sqlite", self.db_path
+        )
 
         self.assertIn("Successfully connected", fast_connect)
         self.assertIn("Successfully connected", slow_connect)
@@ -228,7 +238,9 @@ class TestTimeoutSystemIntegration(unittest.TestCase):
     def test_timeout_with_streaming_execution(self):
         """Test timeout system works properly with streaming execution."""
         # Connect to database
-        connect_result = self.mcp_server.connect_database("test_fast_db")
+        connect_result = self.mcp_server.connect_database(
+            "test_fast_db", "sqlite", self.db_path
+        )
         self.assertIn("Successfully connected", connect_result)
 
         # Execute query that returns substantial data (triggers streaming)
@@ -267,7 +279,9 @@ class TestTimeoutSystemIntegration(unittest.TestCase):
         initial_count = len(active_ops)
 
         # Connect and start a query
-        connect_result = self.mcp_server.connect_database("test_fast_db")
+        connect_result = self.mcp_server.connect_database(
+            "test_fast_db", "sqlite", self.db_path
+        )
         self.assertIn("Successfully connected", connect_result)
 
         # Execute a quick query
