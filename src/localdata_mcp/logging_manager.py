@@ -48,8 +48,29 @@ class LogContext:
         return {k: v for k, v in self.__dict__.items() if v is not None}
 
 
+def _get_or_create_metric(metric_cls, name, description, labels, registry, **kwargs):
+    """Create a Prometheus metric, reusing an existing one if already registered."""
+    try:
+        return metric_cls(name, description, labels, registry=registry, **kwargs)
+    except ValueError:
+        # Already registered — look it up in the registry's internal mapping.
+        # The collector is stored under each of its sample-name keys.
+        with registry._lock:
+            for collector in registry._names_to_collectors.values():
+                if hasattr(collector, "_name") and collector._name == name:
+                    return collector
+        # Fallback: create without registry so the object is usable but not
+        # double-registered.  This path should not normally be reached.
+        return metric_cls(name, description, labels, registry=None, **kwargs)
+
+
 class MetricsCollector:
-    """Prometheus metrics collector for LocalData MCP."""
+    """Prometheus metrics collector for LocalData MCP.
+
+    Handles duplicate registration gracefully so that multiple import paths
+    (e.g. ``localdata_mcp`` vs ``src.localdata_mcp``) sharing the same
+    global Prometheus REGISTRY do not crash.
+    """
 
     def __init__(self, registry: Optional[CollectorRegistry] = None):
         """Initialize metrics collector.
@@ -60,30 +81,34 @@ class MetricsCollector:
         self.registry = registry or REGISTRY
 
         # Query metrics
-        self.query_counter = Counter(
+        self.query_counter = _get_or_create_metric(
+            Counter,
             "localdata_queries_total",
             "Total number of queries executed",
             ["database_type", "database_name", "status"],
             registry=self.registry,
         )
 
-        self.query_duration = Histogram(
+        self.query_duration = _get_or_create_metric(
+            Histogram,
             "localdata_query_duration_seconds",
             "Query execution time in seconds",
             ["database_type", "database_name"],
-            buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
             registry=self.registry,
+            buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
         )
 
         # Connection metrics
-        self.active_connections = Gauge(
+        self.active_connections = _get_or_create_metric(
+            Gauge,
             "localdata_active_connections",
             "Number of active database connections",
             ["database_name"],
             registry=self.registry,
         )
 
-        self.connection_pool_size = Gauge(
+        self.connection_pool_size = _get_or_create_metric(
+            Gauge,
             "localdata_connection_pool_size",
             "Size of connection pool",
             ["database_name"],
@@ -91,14 +116,16 @@ class MetricsCollector:
         )
 
         # Memory metrics
-        self.memory_usage = Gauge(
+        self.memory_usage = _get_or_create_metric(
+            Gauge,
             "localdata_memory_usage_bytes",
             "Current memory usage in bytes",
             ["component"],
             registry=self.registry,
         )
 
-        self.buffer_utilization = Gauge(
+        self.buffer_utilization = _get_or_create_metric(
+            Gauge,
             "localdata_buffer_utilization_ratio",
             "Query buffer utilization ratio (0-1)",
             ["buffer_type"],
@@ -106,7 +133,8 @@ class MetricsCollector:
         )
 
         # Error metrics
-        self.error_counter = Counter(
+        self.error_counter = _get_or_create_metric(
+            Counter,
             "localdata_errors_total",
             "Total number of errors",
             ["error_type", "component", "database_name"],
@@ -114,7 +142,8 @@ class MetricsCollector:
         )
 
         # Security metrics
-        self.security_events = Counter(
+        self.security_events = _get_or_create_metric(
+            Counter,
             "localdata_security_events_total",
             "Total security events",
             ["event_type", "severity"],
@@ -122,7 +151,8 @@ class MetricsCollector:
         )
 
         # Timeout metrics
-        self.timeout_counter = Counter(
+        self.timeout_counter = _get_or_create_metric(
+            Counter,
             "localdata_timeouts_total",
             "Total number of timeouts",
             ["timeout_type", "database_name"],
