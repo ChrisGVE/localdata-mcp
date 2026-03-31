@@ -543,11 +543,10 @@ class EnhancedConnectionManager:
             )
         elif config.type in {DatabaseType.SQLITE, DatabaseType.DUCKDB}:
             # Use static pool for file-based databases
+            # StaticPool does not accept pool_size or max_overflow
             engine_args.update(
                 {
                     "poolclass": StaticPool,
-                    "pool_size": 1,
-                    "max_overflow": 0,
                     "connect_args": {"check_same_thread": False},
                 }
             )
@@ -680,11 +679,13 @@ class EnhancedConnectionManager:
             limits = self._resource_limits.get(database_name, {})
             metrics = self._metrics[database_name]
 
-            # Update current values
-            limits[ResourceType.CONNECTIONS].current_value = len(
-                self._active_queries[database_name]
-            )
-            limits[ResourceType.ERROR_RATE].current_value = metrics.error_rate
+            # Update current values (skip if resource limits not yet initialized)
+            if ResourceType.CONNECTIONS in limits:
+                limits[ResourceType.CONNECTIONS].current_value = len(
+                    self._active_queries[database_name]
+                )
+            if ResourceType.ERROR_RATE in limits:
+                limits[ResourceType.ERROR_RATE].current_value = metrics.error_rate
 
             # Check for violations
             current_time = time.time()
