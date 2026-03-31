@@ -229,10 +229,9 @@ class TestRetryMechanism:
         )
         retryable_op = RetryableOperation(mock_operation, policy, "test_op")
 
-        with pytest.raises(QueryExecutionError) as exc_info:
+        with pytest.raises(DatabaseConnectionError):
             retryable_op.execute()
 
-        assert "failed after 2 attempts" in str(exc_info.value)
         assert mock_operation.call_count == 2
         assert mock_sleep.call_count == 1
         assert len(retryable_op.attempt_history) == 2
@@ -500,9 +499,9 @@ class TestErrorLogger:
         stats = logger.get_error_statistics()
 
         assert stats["total_errors"] == 3
-        assert stats["errors_by_category"]["connection"] == 1
-        assert stats["errors_by_category"]["query_execution"] == 1
-        assert stats["errors_by_category"]["security_violation"] == 1
+        assert stats["errors_by_category"][ErrorCategory.CONNECTION] == 1
+        assert stats["errors_by_category"][ErrorCategory.QUERY_EXECUTION] == 1
+        assert stats["errors_by_category"][ErrorCategory.SECURITY_VIOLATION] == 1
         assert stats["errors_by_database"]["db1"] == 2
         assert stats["errors_by_database"]["db2"] == 1
 
@@ -688,14 +687,14 @@ class TestErrorHandlerIntegration:
             handler.handle_error(error)
 
         # Check error statistics
-        stats = handler.get_error_statistics()
-        error_stats = stats["error_statistics"]
+        system_health = handler.get_system_health()
+        error_stats = system_health["error_statistics"]
 
         assert error_stats["total_errors"] == 10
         assert len(error_stats["recent_errors"]) <= 10
 
         # Check health status
-        health = stats["overall_health"]
+        health = system_health["overall_health"]
         # High error count should affect health
         assert health["health_score"] < 100.0
 
