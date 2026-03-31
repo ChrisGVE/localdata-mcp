@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 
 import yaml
-from localdata_mcp.localdata_mcp import LocalDataMCP
+from localdata_mcp.localdata_mcp import DatabaseManager
 
 
 class TestTimeoutSystemIntegration(unittest.TestCase):
@@ -103,11 +103,11 @@ class TestTimeoutSystemIntegration(unittest.TestCase):
         self.config_file.close()
 
         # Initialize LocalData MCP with config
-        self.mcp_server = LocalDataMCP()
+        self.mcp_server = DatabaseManager()
 
         # Patch config manager to use our test config
         with patch(
-            "src.localdata_mcp.config_manager.get_config_manager"
+            "localdata_mcp.config_manager.get_config_manager"
         ) as mock_get_config:
             from localdata_mcp.config_manager import ConfigManager
 
