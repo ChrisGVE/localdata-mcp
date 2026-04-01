@@ -29,6 +29,10 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "neo4j: Neo4j integration tests")
     config.addinivalue_line("markers", "couchdb: CouchDB integration tests")
     config.addinivalue_line("markers", "oracle: Oracle integration tests")
+    config.addinivalue_line(
+        "markers",
+        "enterprise_scale: enterprise-scale stress tests across all database types",
+    )
 
 
 @pytest.fixture(autouse=True)
