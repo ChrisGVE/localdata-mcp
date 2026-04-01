@@ -17,15 +17,15 @@ MONTHS = ["2024-01", "2024-02", "2024-03"]
 CACHE_PATH = Path("tests/datasets/nyc_taxi_enterprise.parquet")
 
 _COLUMNS = [
-    ("VendorID", "INT"),
+    ("vendorid", "INT"),
     ("tpep_pickup_datetime", "TIMESTAMP"),
     ("tpep_dropoff_datetime", "TIMESTAMP"),
     ("passenger_count", "FLOAT"),
     ("trip_distance", "FLOAT"),
-    ("RatecodeID", "FLOAT"),
+    ("ratecodeid", "FLOAT"),
     ("store_and_fwd_flag", "VARCHAR(1)"),
-    ("PULocationID", "INT"),
-    ("DOLocationID", "INT"),
+    ("pulocationid", "INT"),
+    ("dolocationid", "INT"),
     ("payment_type", "INT"),
     ("fare_amount", "FLOAT"),
     ("extra", "FLOAT"),
@@ -35,7 +35,7 @@ _COLUMNS = [
     ("improvement_surcharge", "FLOAT"),
     ("total_amount", "FLOAT"),
     ("congestion_surcharge", "FLOAT"),
-    ("Airport_fee", "FLOAT"),
+    ("airport_fee", "FLOAT"),
 ]
 
 _DIALECT_TYPE_MAP: dict[str, dict[str, str]] = {
@@ -73,10 +73,10 @@ _DIALECT_TYPE_MAP: dict[str, dict[str, str]] = {
 
 _NULLABLE_COLUMNS = {
     "passenger_count",
-    "RatecodeID",
+    "ratecodeid",
     "store_and_fwd_flag",
     "congestion_surcharge",
-    "Airport_fee",
+    "airport_fee",
 }
 
 
@@ -142,6 +142,7 @@ def get_dataset(max_rows: int | None = None) -> pd.DataFrame:
     """
     ensure_dataset()
     df = pd.read_parquet(CACHE_PATH)
+    df.columns = [c.lower() for c in df.columns]
     if max_rows is not None:
         df = df.head(max_rows)
     return df
@@ -179,19 +180,18 @@ def get_dataset_info() -> dict:
         }
 
     size_bytes = CACHE_PATH.stat().st_size
-    # Read just the metadata without loading all data
-    pf = pd.read_parquet(CACHE_PATH, columns=["VendorID"])
-    row_count = len(pf)
-    # Get column names from a zero-row read
-    schema_df = pd.read_parquet(CACHE_PATH).head(0)
+    import pyarrow.parquet as pq
+
+    meta = pq.read_metadata(CACHE_PATH)
+    schema = pq.read_schema(CACHE_PATH)
 
     return {
         "cached": True,
         "cache_path": str(CACHE_PATH),
-        "row_count": row_count,
-        "column_count": len(schema_df.columns),
-        "columns": list(schema_df.columns),
-        "dtypes": {col: str(dtype) for col, dtype in schema_df.dtypes.items()},
+        "row_count": meta.num_rows,
+        "column_count": meta.num_columns,
+        "columns": schema.names,
+        "dtypes": {f.name: str(f.type) for f in schema},
         "size_mb": round(size_bytes / 1e6, 1),
         "months": MONTHS,
         "source": "NYC TLC Yellow Taxi Trip Data",
