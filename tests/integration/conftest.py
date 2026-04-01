@@ -28,6 +28,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "influxdb: InfluxDB integration tests")
     config.addinivalue_line("markers", "neo4j: Neo4j integration tests")
     config.addinivalue_line("markers", "couchdb: CouchDB integration tests")
+    config.addinivalue_line("markers", "oracle: Oracle integration tests")
 
 
 @pytest.fixture(autouse=True)
