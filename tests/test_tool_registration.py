@@ -55,6 +55,9 @@ class TestGetQueryLog:
     """Tests for get_query_log tool."""
 
     def test_returns_empty_entries(self, manager):
+        from localdata_mcp.query_audit import get_query_audit_buffer
+
+        get_query_audit_buffer().clear()
         result = json.loads(manager.get_query_log())
         assert "entries" in result
         assert "total_entries" in result
