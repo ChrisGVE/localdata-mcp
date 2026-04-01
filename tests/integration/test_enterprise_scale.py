@@ -44,7 +44,7 @@ def _conn_string(db_type: str) -> str:
     return info.get("uri", "")
 
 
-_ENTERPRISE_MAX_ROWS = 10_000
+_ENTERPRISE_MAX_ROWS = 100_000
 
 
 @pytest.fixture(scope="session")

@@ -195,11 +195,12 @@ def _load_sql(db_type: str, df: pd.DataFrame, table_name: str) -> int:
     if db_type == "postgresql":
         return _load_pg_copy(engine, df, table_name)
 
-    # SQLite has a 999 bind-variable limit — method='multi' with 19 columns
-    # can't exceed ~52 rows per INSERT.  Use default row-by-row instead.
-    if db_type == "sqlite":
+    # SQLite has a 999 bind-variable limit, MSSQL has ~2100.
+    # With 19 columns, max rows per multi-INSERT: SQLite ~52, MSSQL ~110.
+    # Use executemany (method=None) for these; multi for MySQL/Oracle.
+    if db_type in ("sqlite", "mssql"):
         chunk = 50_000
-        method = None  # default executemany
+        method = None  # default executemany — no bind-variable limit
     else:
         chunk = 50_000
         method = "multi"
