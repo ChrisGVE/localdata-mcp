@@ -30,17 +30,35 @@ ALL_DBS = SQL_DBS + NOSQL_DBS
 pytestmark = [pytest.mark.integration, pytest.mark.enterprise_scale]
 
 
+def _conn_name(db_type: str) -> str:
+    return f"enterprise_{db_type}"
+
+
+def _conn_string(db_type: str) -> str:
+    """Return the MCP-compatible connection string for a database type."""
+    info = get_connection_info(db_type)
+    if db_type == "oracle":
+        dsn = info.get("dsn", "localhost:11521/FREEPDB1")
+        return f"oracle+oracledb://{info['user']}:{info['password']}@{dsn}"
+    if db_type == "sqlite":
+        return info.get("path", "")
+    return info.get("uri", "")
+
+
 @pytest.fixture(scope="session")
 def enterprise_databases():
     """Load NYC Taxi dataset into all available databases. Cleanup after."""
     if load_dataset is None:
         pytest.skip("database_loader module not available")
 
-    loaded: dict[str, str] = {}
+    loaded: dict[str, dict] = {}
     for db_type in ALL_DBS:
         try:
-            conn_name = load_dataset(db_type)
-            loaded[db_type] = conn_name
+            stats = load_dataset(db_type)
+            loaded[db_type] = stats
+            print(
+                f"  Loaded {db_type}: {stats['rows_loaded']:,} rows in {stats['elapsed_seconds']:.0f}s"
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"Skipping {db_type}: {exc}")
 
@@ -49,7 +67,12 @@ def enterprise_databases():
 
     yield loaded
 
+    # Disconnect all MCP connections, then cleanup database data
     for db_type in list(loaded):
+        try:
+            call_tool("disconnect_database", {"name": _conn_name(db_type)})
+        except Exception:  # noqa: BLE001
+            pass
         try:
             cleanup_dataset(db_type)
         except Exception:  # noqa: BLE001
@@ -57,10 +80,19 @@ def enterprise_databases():
 
 
 def _require_db(enterprise_databases: dict, db_type: str) -> str:
-    """Return the MCP connection name or skip the test."""
+    """Ensure db_type was loaded, connect via MCP if needed, return conn name."""
     if db_type not in enterprise_databases:
         pytest.skip(f"{db_type} not available")
-    return enterprise_databases[db_type]
+    name = _conn_name(db_type)
+    # Try connecting (idempotent — if already connected, MCP returns "already")
+    try:
+        call_tool(
+            "connect_database",
+            {"name": name, "db_type": db_type, "conn_string": _conn_string(db_type)},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return name
 
 
 def _expected_row_count() -> int:
@@ -75,18 +107,11 @@ class TestEnterpriseConnection:
 
     def test_connect_enterprise_db(self, enterprise_databases, db_type):
         conn_name = _require_db(enterprise_databases, db_type)
-        info = get_connection_info(db_type)
-        result = call_tool(
-            "connect_database",
-            {
-                "name": conn_name,
-                "db_type": info["db_type"],
-                "conn_string": info["conn_string"],
-            },
-        )
+        # _require_db already connects via MCP — verify listing shows it
+        result = call_tool("list_databases", {})
         assert result is not None
         result_str = str(result).lower()
-        assert "error" not in result_str or "already" in result_str
+        assert conn_name in result_str
 
     def test_describe_enterprise_db(self, enterprise_databases, db_type):
         conn_name = _require_db(enterprise_databases, db_type)
