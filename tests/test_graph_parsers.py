@@ -296,5 +296,7 @@ class TestRoundTripStats:
         assert stats["edge_count"] == 7
         assert stats["is_directed"] is True
         assert stats["density"] > 0
-        # Re-query must match
-        assert mgr.get_graph_stats() == stats
+        # Re-query must match (excluding validation warnings which are
+        # added by _store_and_validate but not returned by get_graph_stats)
+        base_stats = {k: v for k, v in stats.items() if k != "warnings"}
+        assert mgr.get_graph_stats() == base_stats
