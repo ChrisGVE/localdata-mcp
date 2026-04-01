@@ -114,15 +114,21 @@ def wait_for_healthy(services: list[str], timeout: int) -> None:
             time.sleep(2)
             continue
 
-        healthy_services: set[str] = set()
+        healthy_containers: list[str] = []
         for line in result.stdout.strip().splitlines():
             parts = line.split(maxsplit=1)
             if len(parts) == 2:
                 name, status = parts
                 if "(healthy)" in status.lower():
-                    healthy_services.add(name)
+                    healthy_containers.append(name)
 
-        pending = compose_services - healthy_services
+        # Match service names against container names (container names
+        # include a project prefix and instance suffix).
+        pending = {
+            svc
+            for svc in compose_services
+            if not any(svc in cname for cname in healthy_containers)
+        }
         if not pending:
             print("  All services healthy.")
             return
