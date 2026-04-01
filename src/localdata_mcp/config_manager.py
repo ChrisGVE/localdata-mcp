@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 
@@ -232,17 +232,18 @@ class LocalDataConfig(BaseModel):
     logging: Dict[str, Any] = Field(default_factory=dict)
     performance: Dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        extra = "allow"  # Allow additional fields for extensibility
+    model_config = ConfigDict(extra="allow")
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def validate_structure(cls, values):
         """Validate overall configuration structure."""
         if not isinstance(values, dict):
             raise ValueError("Configuration must be a dictionary")
         return values
 
-    @validator("databases")
+    @field_validator("databases")
+    @classmethod
     def validate_databases(cls, v):
         """Validate database configurations."""
         if not isinstance(v, dict):
