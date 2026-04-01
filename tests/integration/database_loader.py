@@ -146,7 +146,11 @@ def _load_sql(db_type: str, df: pd.DataFrame, table_name: str) -> int:
     info = get_connection_info(db_type)
 
     if db_type == "sqlite":
-        path = info.get("path") or tempfile.mktemp(suffix=".db")
+        if info.get("path"):
+            path = info["path"]
+        else:
+            fd, path = tempfile.mkstemp(suffix=".db")
+            os.close(fd)
         info["path"] = path
         uri = f"sqlite:///{path}"
     elif db_type == "oracle":
@@ -164,12 +168,33 @@ def _load_sql(db_type: str, df: pd.DataFrame, table_name: str) -> int:
     ddl = get_create_table_sql(dialect, table_name)
 
     with engine.connect() as conn:
-        conn.execute(sqlalchemy.text(f"DROP TABLE IF EXISTS {table_name}"))
+        if db_type == "oracle":
+            try:
+                conn.execute(sqlalchemy.text(f"DROP TABLE {table_name}"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+        else:
+            conn.execute(sqlalchemy.text(f"DROP TABLE IF EXISTS {table_name}"))
+            conn.commit()
         conn.execute(sqlalchemy.text(ddl))
         conn.commit()
 
     total = len(df)
-    chunk = 50_000
+
+    # PostgreSQL: use COPY via psycopg2 for 10-50x speedup over INSERT
+    if db_type == "postgresql":
+        return _load_pg_copy(engine, df, table_name)
+
+    # SQLite has a 999 bind-variable limit — method='multi' with 19 columns
+    # can't exceed ~52 rows per INSERT.  Use default row-by-row instead.
+    if db_type == "sqlite":
+        chunk = 50_000
+        method = None  # default executemany
+    else:
+        chunk = 50_000
+        method = "multi"
+
     loaded = 0
     for start in range(0, total, chunk):
         end = min(start + chunk, total)
@@ -178,12 +203,36 @@ def _load_sql(db_type: str, df: pd.DataFrame, table_name: str) -> int:
             engine,
             if_exists="append",
             index=False,
-            method="multi",
+            method=method,
         )
         loaded = end
         if loaded % 100_000 == 0 or loaded == total:
             print(f"  [{db_type}] {loaded:,}/{total:,} rows loaded")
     return loaded
+
+
+def _load_pg_copy(engine, df: pd.DataFrame, table_name: str) -> int:
+    """Fast PostgreSQL bulk load via COPY FROM STDIN (CSV)."""
+    import io
+
+    total = len(df)
+    raw = engine.raw_connection()
+    try:
+        cur = raw.cursor()
+        cols = ",".join(df.columns)
+        chunk = 500_000
+        loaded = 0
+        for start in range(0, total, chunk):
+            buf = io.StringIO()
+            df.iloc[start : start + chunk].to_csv(buf, index=False, header=False)
+            buf.seek(0)
+            cur.copy_expert(f"COPY {table_name} ({cols}) FROM STDIN WITH CSV", buf)
+            raw.commit()
+            loaded = min(start + chunk, total)
+            print(f"  [postgresql/COPY] {loaded:,}/{total:,} rows loaded")
+        return loaded
+    finally:
+        raw.close()
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +563,9 @@ def load_dataset(
 
     print(f"Loading dataset for {db_type} (max_rows={max_rows})...")
     df = get_dataset(max_rows=max_rows)
+    # Normalize column names to lowercase — avoids case-sensitivity issues
+    # across databases (PostgreSQL lowercases unquoted identifiers, etc.)
+    df.columns = [c.lower() for c in df.columns]
     print(f"  Dataset: {len(df):,} rows, {len(df.columns)} columns")
 
     t0 = time.monotonic()
