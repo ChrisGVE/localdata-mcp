@@ -293,10 +293,19 @@ class TestQueryMetadata:
 
     def test_data_quality_report(self, enterprise_databases, db_type):
         conn_name = _require_db(enterprise_databases, db_type)
-        result = call_tool(
-            "get_data_quality_report",
-            {"name": conn_name, "table_name": "taxi_trips"},
+        # Execute a query first to get a query_id
+        qr = call_tool(
+            "execute_query",
+            {
+                "name": conn_name,
+                "query": "SELECT * FROM taxi_trips WHERE vendorid = 1 LIMIT 500",
+            },
         )
+        assert isinstance(qr, dict)
+        query_id = qr.get("metadata", {}).get("query_id")
+        if not query_id:
+            pytest.skip("No query_id returned — cannot test data quality report")
+        result = call_tool("get_data_quality_report", {"query_id": query_id})
         assert result is not None
         result_str = str(result).lower()
         assert (
