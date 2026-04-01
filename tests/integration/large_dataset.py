@@ -140,11 +140,26 @@ def get_dataset(max_rows: int | None = None) -> pd.DataFrame:
     Args:
         max_rows: Optional cap on rows (for faster dev cycles). None = all ~10M rows.
     """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
     ensure_dataset()
-    df = pd.read_parquet(CACHE_PATH)
-    df.columns = [c.lower() for c in df.columns]
     if max_rows is not None:
-        df = df.head(max_rows)
+        # Stream only the needed rows — avoids loading the full 9.5M-row file
+        pf = pq.ParquetFile(CACHE_PATH)
+        batches: list[pa.RecordBatch] = []
+        remaining = max_rows
+        for batch in pf.iter_batches(batch_size=min(remaining, 100_000)):
+            batches.append(batch)
+            remaining -= len(batch)
+            if remaining <= 0:
+                break
+        table = pa.Table.from_batches(batches)
+        df = table.to_pandas()
+        del table, batches
+    else:
+        df = pd.read_parquet(CACHE_PATH)
+    df.columns = [c.lower() for c in df.columns]
     return df
 
 

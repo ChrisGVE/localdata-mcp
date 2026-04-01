@@ -72,6 +72,9 @@ _CONNECTION_DEFAULTS: dict[str, dict[str, str]] = {
 
 _ENV_PREFIX = "LOCALDATA_TEST_"
 
+# Track the temp SQLite path so get_connection_info can return it
+_sqlite_temp_path: str | None = None
+
 
 def _env(db_type: str, key: str, default: str) -> str:
     """Read connection param from env with fallback to default."""
@@ -89,6 +92,10 @@ def get_connection_info(db_type: str) -> dict:
         )
     defaults = _CONNECTION_DEFAULTS[db_type]
     info = {k: _env(db_type, k, v) for k, v in defaults.items()}
+
+    # Use the temp path created by the loader if available
+    if db_type == "sqlite" and _sqlite_temp_path and not info.get("path"):
+        info["path"] = _sqlite_temp_path
 
     # Build convenience URIs
     if db_type == "postgresql":
@@ -146,11 +153,13 @@ def _load_sql(db_type: str, df: pd.DataFrame, table_name: str) -> int:
     info = get_connection_info(db_type)
 
     if db_type == "sqlite":
+        global _sqlite_temp_path
         if info.get("path"):
             path = info["path"]
         else:
             fd, path = tempfile.mkstemp(suffix=".db")
             os.close(fd)
+        _sqlite_temp_path = path
         info["path"] = path
         uri = f"sqlite:///{path}"
     elif db_type == "oracle":
@@ -549,8 +558,13 @@ def load_dataset(
     db_type: str,
     max_rows: int | None = None,
     table_name: str = "taxi_trips",
+    df: pd.DataFrame | None = None,
 ) -> dict:
-    """Load NYC Taxi data into a database. Returns stats."""
+    """Load NYC Taxi data into a database. Returns stats.
+
+    Args:
+        df: Pre-loaded DataFrame to reuse. If None, reads from cache.
+    """
     db_type = db_type.lower()
     if db_type not in _LOADERS:
         raise ValueError(
@@ -561,12 +575,14 @@ def load_dataset(
     if cap is not None:
         max_rows = min(max_rows, cap) if max_rows is not None else cap
 
-    print(f"Loading dataset for {db_type} (max_rows={max_rows})...")
-    df = get_dataset(max_rows=max_rows)
-    # Normalize column names to lowercase — avoids case-sensitivity issues
-    # across databases (PostgreSQL lowercases unquoted identifiers, etc.)
-    df.columns = [c.lower() for c in df.columns]
-    print(f"  Dataset: {len(df):,} rows, {len(df.columns)} columns")
+    if df is None:
+        print(f"Loading dataset for {db_type} (max_rows={max_rows})...")
+        df = get_dataset(max_rows=max_rows)
+        df.columns = [c.lower() for c in df.columns]
+    elif max_rows is not None and len(df) > max_rows:
+        df = df.head(max_rows)
+
+    print(f"  [{db_type}] Dataset: {len(df):,} rows, {len(df.columns)} columns")
 
     t0 = time.monotonic()
     loader_type = _LOADERS[db_type]
