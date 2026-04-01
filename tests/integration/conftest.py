@@ -25,6 +25,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "mongodb: MongoDB integration tests")
     config.addinivalue_line("markers", "redis: Redis integration tests")
     config.addinivalue_line("markers", "elasticsearch: Elasticsearch integration tests")
+    config.addinivalue_line("markers", "influxdb: InfluxDB integration tests")
+    config.addinivalue_line("markers", "neo4j: Neo4j integration tests")
+    config.addinivalue_line("markers", "couchdb: CouchDB integration tests")
 
 
 @pytest.fixture(autouse=True)

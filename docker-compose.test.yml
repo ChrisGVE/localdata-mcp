@@ -84,6 +84,53 @@ services:
       retries: 10
       start_period: 30s
 
+  localdata-test-influxdb:
+    image: influxdb:2.7
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: testuser
+      DOCKER_INFLUXDB_INIT_PASSWORD: testpass123
+      DOCKER_INFLUXDB_INIT_ORG: testorg
+      DOCKER_INFLUXDB_INIT_BUCKET: testbucket
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: testtokenforlocaldata
+    ports:
+      - "18086:8086"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8086/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  localdata-test-neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: none
+      NEO4J_server_memory_pagecache_size: 128M
+      NEO4J_server_memory_heap_initial__size: 128M
+      NEO4J_server_memory_heap_max__size: 256M
+    ports:
+      - "17687:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  localdata-test-couchdb:
+    image: couchdb:3
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: admin
+    ports:
+      - "15984:5984"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5984/_up || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 networks:
   default:
     name: localdata-test-net
