@@ -149,6 +149,9 @@ validate_test_fixes.py
 # Downloaded test datasets
 tests/datasets/
 
+# Generated test fixtures
+tests/fixtures/
+
 # Task files
 # tasks.json
 # tasks/
