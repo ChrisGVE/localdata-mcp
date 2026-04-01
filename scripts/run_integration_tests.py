@@ -25,6 +25,7 @@ SERVICE_MAP: dict[str, str] = {
     "postgres": "localdata-test-postgres",
     "mysql": "localdata-test-mysql",
     "mssql": "localdata-test-mssql",
+    "oracle": "localdata-test-oracle",
     "mongodb": "localdata-test-mongodb",
     "redis": "localdata-test-redis",
     "elasticsearch": "localdata-test-elasticsearch",
