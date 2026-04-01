@@ -1,7 +1,7 @@
 # LocalData MCP - Integration Test Database Services
 # Usage: docker compose -f docker-compose.test.yml up -d
 # Ports are offset to avoid conflicts with local database instances.
-# Oracle Free is excluded (~2 GB image, 120 s startup); use @pytest.mark.skip.
+# Oracle Free requires ~2 GB image and 120 s startup.
 
 services:
   localdata-test-postgres:
@@ -46,6 +46,21 @@ services:
       timeout: 10s
       retries: 10
       start_period: 30s
+
+  localdata-test-oracle:
+    image: gvenzl/oracle-free:slim
+    environment:
+      ORACLE_PASSWORD: testpass
+      APP_USER: testuser
+      APP_USER_PASSWORD: testpass
+    ports:
+      - "11521:1521"
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh"]
+      interval: 15s
+      timeout: 15s
+      retries: 15
+      start_period: 90s
 
   # -- NoSQL databases --
 
