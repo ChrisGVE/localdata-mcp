@@ -11,6 +11,9 @@ Available domains:
 - pattern_recognition: Advanced clustering, dimensionality reduction, and anomaly detection
 - time_series: Time series analysis, forecasting, and temporal pattern detection
 - optimization: Optimization and operations research capabilities
+- business_intelligence: RFM, cohort analysis, A/B testing, CLV
+- sampling_estimation: Bootstrap, Bayesian estimation, Monte Carlo simulation
+- geospatial_analysis: Spatial analysis, routing, clustering (optional deps)
 """
 
 from .statistical_analysis import (
@@ -32,19 +35,16 @@ from .regression_modeling import (
     PolynomialRegressionTransformer,
     ResidualAnalysisTransformer,
     FeatureSelectionTransformer,
-    
     # Pipeline
     RegressionModelingPipeline,
-    
     # High-level functions
     fit_regression_model,
     evaluate_model_performance,
     analyze_residuals,
     select_features,
-    
     # Result classes
     RegressionModelResult,
-    ResidualAnalysisResult
+    ResidualAnalysisResult,
 )
 
 from .pattern_recognition import (
@@ -53,18 +53,16 @@ from .pattern_recognition import (
     DimensionalityReductionTransformer,
     AnomalyDetectionTransformer,
     PatternEvaluationTransformer,
-    
     # High-level functions
     perform_clustering,
     reduce_dimensions,
     detect_anomalies,
     evaluate_patterns,
-    
     # Result classes
     ClusteringResult,
     DimensionalityReductionResult,
     AnomalyDetectionResult,
-    PatternEvaluationResult
+    PatternEvaluationResult,
 )
 
 from .time_series import (
@@ -76,7 +74,6 @@ from .time_series import (
     AnomalyDetector,
     ChangePointDetector,
     MultivariateAnalyzer,
-    
     # High-level functions
     analyze_time_series_basic,
     forecast_arima,
@@ -84,13 +81,12 @@ from .time_series import (
     detect_time_series_anomalies,
     detect_change_points,
     analyze_multivariate_time_series,
-    
     # Result classes
     TimeSeriesResult,
     BasicAnalysisResult,
     ForecastResult,
-    AnomalyDetectionResult,
-    ChangePointResult
+    AnomalyDetectionResult as TimeSeriesAnomalyDetectionResult,
+    ChangePointResult,
 )
 
 from .optimization import (
@@ -99,19 +95,17 @@ from .optimization import (
     ConstrainedOptimizer,
     NetworkAnalyzer,
     AssignmentSolver,
-    
     # High-level functions
     solve_linear_program,
     optimize_constrained,
     analyze_network,
     solve_assignment_problem,
-    
     # Result classes
     OptimizationResult,
     LinearProgramResult,
     ConstrainedOptResult,
     NetworkAnalysisResult,
-    AssignmentResult
+    AssignmentResult,
 )
 
 from .business_intelligence import (
@@ -123,10 +117,8 @@ from .business_intelligence import (
     PowerAnalysisTransformer,
     AttributionAnalyzer,
     FunnelAnalyzer,
-    
     # Pipeline
     BusinessIntelligencePipeline,
-    
     # High-level functions
     analyze_rfm,
     perform_cohort_analysis,
@@ -135,7 +127,6 @@ from .business_intelligence import (
     analyze_attribution,
     analyze_funnel,
     enhanced_ab_test,
-    
     # Result classes
     RFMResult,
     CohortAnalysisResult,
@@ -143,10 +134,27 @@ from .business_intelligence import (
     ABTestResult,
     AttributionResult,
     FunnelAnalysisResult,
-    
     # Enums
     AttributionModel,
-    ExperimentStatus
+    ExperimentStatus,
+)
+
+from .sampling_estimation import (
+    # Core transformers
+    BootstrapTransformer,
+    BayesianEstimationTransformer,
+    MonteCarloTransformer,
+    SamplingTransformer,
+    # High-level functions
+    bootstrap_statistic,
+    bayesian_estimate,
+    monte_carlo_simulate,
+    generate_sample,
+    # Result classes
+    BootstrapResult,
+    BayesianResult,
+    MonteCarloResult,
+    SamplingResult,
 )
 
 from .geospatial_analysis import (
@@ -160,11 +168,9 @@ from .geospatial_analysis import (
     SpatialJoinTransformer,
     SpatialOverlayTransformer,
     SpatialNetworkTransformer,
-    
     # Spatial data structures
     SpatialPoint,
     SpatialDataFrame,
-    
     # Analysis engines
     SpatialJoinEngine,
     SpatialOverlayEngine,
@@ -173,7 +179,6 @@ from .geospatial_analysis import (
     NetworkRouter,
     AccessibilityAnalyzer,
     IsochroneGenerator,
-    
     # High-level functions
     analyze_spatial_autocorrelation,
     perform_spatial_clustering,
@@ -185,35 +190,31 @@ from .geospatial_analysis import (
     perform_spatial_join,
     perform_spatial_overlay,
     aggregate_points_in_polygons,
-    
     # Result classes
     SpatialJoinResult,
     OverlayResult,
     RouteResult,
     AccessibilityResult,
     IsochroneResult,
-    
     # Pipeline
     GeospatialAnalysisPipeline,
-    
     # Enums
     GeospatialLibrary,
     SpatialJoinType,
     OverlayOperation,
-    NetworkAnalysisType
+    NetworkAnalysisType,
 )
 
 __all__ = [
     # Statistical Analysis Domain
     "HypothesisTestingTransformer",
-    "ANOVAAnalysisTransformer", 
+    "ANOVAAnalysisTransformer",
     "NonParametricTestTransformer",
     "ExperimentalDesignTransformer",
     "run_hypothesis_test",
     "perform_anova",
     "analyze_experiment_design",
     "calculate_effect_sizes",
-    
     # Regression Modeling Domain
     "LinearRegressionTransformer",
     "RegularizedRegressionTransformer",
@@ -228,10 +229,9 @@ __all__ = [
     "select_features",
     "RegressionModelResult",
     "ResidualAnalysisResult",
-    
     # Pattern Recognition Domain
     "ClusteringTransformer",
-    "DimensionalityReductionTransformer", 
+    "DimensionalityReductionTransformer",
     "AnomalyDetectionTransformer",
     "PatternEvaluationTransformer",
     "perform_clustering",
@@ -242,7 +242,6 @@ __all__ = [
     "DimensionalityReductionResult",
     "AnomalyDetectionResult",
     "PatternEvaluationResult",
-    
     # Time Series Domain
     "TimeSeriesAnalyzer",
     "BasicTimeSeriesAnalyzer",
@@ -260,9 +259,8 @@ __all__ = [
     "TimeSeriesResult",
     "BasicAnalysisResult",
     "ForecastResult",
-    "AnomalyDetectionResult",
+    "TimeSeriesAnomalyDetectionResult",
     "ChangePointResult",
-    
     # Optimization Domain
     "LinearProgrammingSolver",
     "ConstrainedOptimizer",
@@ -277,7 +275,6 @@ __all__ = [
     "ConstrainedOptResult",
     "NetworkAnalysisResult",
     "AssignmentResult",
-    
     # Business Intelligence Domain
     "RFMAnalysisTransformer",
     "CohortAnalysisTransformer",
@@ -302,7 +299,19 @@ __all__ = [
     "FunnelAnalysisResult",
     "AttributionModel",
     "ExperimentStatus",
-    
+    # Sampling & Estimation Domain
+    "BootstrapTransformer",
+    "BayesianEstimationTransformer",
+    "MonteCarloTransformer",
+    "SamplingTransformer",
+    "bootstrap_statistic",
+    "bayesian_estimate",
+    "monte_carlo_simulate",
+    "generate_sample",
+    "BootstrapResult",
+    "BayesianResult",
+    "MonteCarloResult",
+    "SamplingResult",
     # Geospatial Analysis Domain
     "GeospatialDependencyChecker",
     "SpatialCoordinateTransformer",
@@ -341,5 +350,5 @@ __all__ = [
     "GeospatialLibrary",
     "SpatialJoinType",
     "OverlayOperation",
-    "NetworkAnalysisType"
+    "NetworkAnalysisType",
 ]
