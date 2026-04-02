@@ -99,6 +99,22 @@ from .graph_tools import (
     tool_export_graph,
 )
 
+# Import data science tool functions
+from .datascience_tools import (
+    tool_hypothesis_test,
+    tool_anova_analysis,
+    tool_effect_sizes,
+    tool_fit_regression,
+    tool_evaluate_model,
+    tool_clustering,
+    tool_anomaly_detection,
+    tool_dimensionality_reduction,
+    tool_time_series_analysis,
+    tool_time_series_forecast,
+    tool_rfm_analysis,
+    tool_ab_test,
+)
+
 # TOML support
 try:
     import toml
@@ -427,6 +443,20 @@ class DatabaseManager:
         # Query audit tools
         mcp_server.add_tool(self.get_query_log)
         mcp_server.add_tool(self.get_error_log)
+
+        # Data science tools
+        mcp_server.add_tool(self.analyze_hypothesis_test)
+        mcp_server.add_tool(self.analyze_anova)
+        mcp_server.add_tool(self.analyze_effect_sizes)
+        mcp_server.add_tool(self.analyze_regression)
+        mcp_server.add_tool(self.evaluate_model_performance)
+        mcp_server.add_tool(self.analyze_clusters)
+        mcp_server.add_tool(self.detect_anomalies)
+        mcp_server.add_tool(self.reduce_dimensions)
+        mcp_server.add_tool(self.analyze_time_series)
+        mcp_server.add_tool(self.forecast_time_series)
+        mcp_server.add_tool(self.analyze_rfm)
+        mcp_server.add_tool(self.analyze_ab_test)
 
     def _get_connection(self, name: str):
         if name not in self.connections:
@@ -2426,6 +2456,306 @@ class DatabaseManager:
         return json.dumps(
             {"entries": [e.to_dict() for e in combined], "total_entries": len(combined)}
         )
+
+    # =========================================================
+    # Data Science Tools
+    # =========================================================
+
+    def analyze_hypothesis_test(
+        self,
+        connection_name: str,
+        query: str,
+        test_type: str = "auto",
+        column: str = "",
+        group_column: str = "",
+        alpha: float = 0.05,
+        alternative: str = "two-sided",
+    ) -> str:
+        """Run statistical hypothesis test on query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning data to analyze.
+            test_type: Test type — 'ttest_1samp', 'ttest_ind', 'chi2', 'mannwhitney', 'ks', or 'auto'.
+            column: Column to test.
+            group_column: Grouping column for two-sample tests.
+            alpha: Significance level (default 0.05).
+            alternative: 'two-sided', 'less', or 'greater'.
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_hypothesis_test(
+            engine,
+            query,
+            test_type,
+            column=column or None,
+            group_column=group_column or None,
+            alpha=alpha,
+            alternative=alternative,
+        )
+        return safe_dumps(result)
+
+    def analyze_anova(
+        self,
+        connection_name: str,
+        query: str,
+        dependent_var: str,
+        group_var: str,
+        alpha: float = 0.05,
+    ) -> str:
+        """Perform ANOVA analysis on query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning data to analyze.
+            dependent_var: Column with the dependent variable.
+            group_var: Column defining groups.
+            alpha: Significance level (default 0.05).
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_anova_analysis(engine, query, dependent_var, group_var, alpha)
+        return safe_dumps(result)
+
+    def analyze_effect_sizes(
+        self,
+        connection_name: str,
+        query: str,
+        column: str,
+        group_column: str,
+    ) -> str:
+        """Calculate effect sizes for group comparisons.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning data to analyze.
+            column: Numeric column to compare.
+            group_column: Column defining groups.
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_effect_sizes(engine, query, column, group_column)
+        return safe_dumps(result)
+
+    def analyze_regression(
+        self,
+        connection_name: str,
+        query: str,
+        target_column: str,
+        feature_columns: Optional[List[str]] = None,
+        model_type: str = "linear",
+        regularization: str = "",
+    ) -> str:
+        """Fit a regression model on query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning data to analyze.
+            target_column: Column to predict.
+            feature_columns: Columns to use as features (all numeric if omitted).
+            model_type: 'linear', 'ridge', 'lasso', 'elastic_net', 'polynomial'.
+            regularization: Regularization type ('l1', 'l2', 'elastic_net') or empty.
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_fit_regression(
+            engine,
+            query,
+            target_column,
+            feature_columns=feature_columns,
+            model_type=model_type,
+            regularization=regularization or None,
+        )
+        return safe_dumps(result)
+
+    def evaluate_model_performance(
+        self,
+        connection_name: str,
+        query: str,
+        target_column: str,
+        prediction_column: str,
+        model_type: str = "regression",
+    ) -> str:
+        """Evaluate model performance on query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query with actual and predicted values.
+            target_column: Column with actual values.
+            prediction_column: Column with predicted values.
+            model_type: 'regression' or 'classification'.
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_evaluate_model(
+            engine, query, target_column, prediction_column, model_type
+        )
+        return safe_dumps(result)
+
+    def analyze_clusters(
+        self,
+        connection_name: str,
+        query: str,
+        columns: Optional[List[str]] = None,
+        method: str = "kmeans",
+        n_clusters: Optional[int] = None,
+    ) -> str:
+        """Perform clustering analysis on query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning data to cluster.
+            columns: Columns to use for clustering (all numeric if omitted).
+            method: 'kmeans', 'dbscan', 'hierarchical', 'gaussian_mixture'.
+            n_clusters: Number of clusters (auto-detected if omitted).
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_clustering(
+            engine, query, columns=columns, method=method, n_clusters=n_clusters
+        )
+        return safe_dumps(result)
+
+    def detect_anomalies(
+        self,
+        connection_name: str,
+        query: str,
+        columns: Optional[List[str]] = None,
+        method: str = "isolation_forest",
+        contamination: float = 0.1,
+    ) -> str:
+        """Detect anomalies in query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning data to analyze.
+            columns: Columns to analyze (all numeric if omitted).
+            method: 'isolation_forest', 'local_outlier_factor', 'one_class_svm'.
+            contamination: Expected proportion of anomalies (0.0-0.5).
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_anomaly_detection(
+            engine, query, columns=columns, method=method, contamination=contamination
+        )
+        return safe_dumps(result)
+
+    def reduce_dimensions(
+        self,
+        connection_name: str,
+        query: str,
+        columns: Optional[List[str]] = None,
+        method: str = "pca",
+        n_components: int = 2,
+    ) -> str:
+        """Reduce dimensionality of query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning data to reduce.
+            columns: Columns to include (all numeric if omitted).
+            method: 'pca', 'tsne', 'umap'.
+            n_components: Target number of dimensions.
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_dimensionality_reduction(
+            engine, query, columns=columns, method=method, n_components=n_components
+        )
+        return safe_dumps(result)
+
+    def analyze_time_series(
+        self,
+        connection_name: str,
+        query: str,
+        date_column: str,
+        value_column: str,
+        frequency: str = "",
+    ) -> str:
+        """Analyze time series data from query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning time series data.
+            date_column: Column with datetime values.
+            value_column: Column with numeric values.
+            frequency: Time frequency — 'D', 'W', 'M', 'Q', 'Y' or empty for auto.
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_time_series_analysis(
+            engine,
+            query,
+            date_column,
+            value_column,
+            frequency=frequency or None,
+        )
+        return safe_dumps(result)
+
+    def forecast_time_series(
+        self,
+        connection_name: str,
+        query: str,
+        date_column: str,
+        value_column: str,
+        horizon: int = 10,
+        method: str = "arima",
+    ) -> str:
+        """Generate time series forecasts from query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning time series data.
+            date_column: Column with datetime values.
+            value_column: Column with numeric values.
+            horizon: Number of periods to forecast.
+            method: 'arima' or 'ets' (exponential smoothing).
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_time_series_forecast(
+            engine,
+            query,
+            date_column,
+            value_column,
+            horizon=horizon,
+            method=method,
+        )
+        return safe_dumps(result)
+
+    def analyze_rfm(
+        self,
+        connection_name: str,
+        query: str,
+        customer_column: str,
+        date_column: str,
+        value_column: str,
+    ) -> str:
+        """Perform RFM customer segmentation on query results.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning transaction data.
+            customer_column: Column identifying customers.
+            date_column: Column with transaction dates.
+            value_column: Column with transaction values.
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_rfm_analysis(
+            engine, query, customer_column, date_column, value_column
+        )
+        return safe_dumps(result)
+
+    def analyze_ab_test(
+        self,
+        connection_name: str,
+        query: str,
+        variant_column: str,
+        metric_column: str,
+        alpha: float = 0.05,
+    ) -> str:
+        """Analyze A/B test results from query data.
+
+        Args:
+            connection_name: Name of the connected database.
+            query: SQL query returning experiment data.
+            variant_column: Column identifying control/treatment groups.
+            metric_column: Column with the metric to compare.
+            alpha: Significance level (default 0.05).
+        """
+        engine = self._get_connection(connection_name)
+        result = tool_ab_test(engine, query, variant_column, metric_column, alpha=alpha)
+        return safe_dumps(result)
 
     # =========================================================
     # Requested Tools
