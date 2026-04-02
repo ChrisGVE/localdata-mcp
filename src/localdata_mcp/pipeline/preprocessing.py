@@ -1,0 +1,1967 @@
+"""
+Preprocessing Stage Pipeline - Data Cleaning and Feature Engineering
+
+This module implements the preprocessing stage of the Core Pipeline Framework,
+providing data cleaning, normalization, and feature engineering with progressive
+disclosure architecture and streaming compatibility.
+
+Key Features:
+- Progressive complexity levels (minimal, auto, comprehensive, custom)
+- Streaming-compatible chunk-by-chunk processing
+- Intelligent transformation selection based on data characteristics
+- Detailed transformation logging and metadata generation
+"""
+
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+import warnings
+
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import (
+    StandardScaler, LabelEncoder, OneHotEncoder, RobustScaler, MinMaxScaler,
+    QuantileTransformer, PowerTransformer, OrdinalEncoder
+)
+# Enable experimental IterativeImputer
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
+from sklearn.ensemble import IsolationForest, RandomForestRegressor, ExtraTreesRegressor
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.model_selection import cross_val_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.cluster import DBSCAN
+from difflib import SequenceMatcher
+from fuzzywuzzy import fuzz
+import re
+from scipy import stats
+
+from .base import (
+    AnalysisPipelineBase,
+    PreprocessingIntent,
+    StreamingConfig,
+    PipelineError,
+    ErrorClassification
+)
+from ..logging_manager import get_logger
+from .missing_value_handler import MissingValueHandler, MissingValuePattern, ImputationQuality, ImputationMetadata
+
+logger = get_logger(__name__)
+
+# Suppress sklearn warnings for cleaner output
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+
+
+@dataclass
+class DataQualityMetrics:
+    """Comprehensive data quality assessment metrics."""
+    
+    # Completeness metrics
+    completeness_score: float = 0.0
+    missing_value_percentage: float = 0.0
+    
+    # Consistency metrics
+    consistency_score: float = 0.0
+    duplicate_percentage: float = 0.0
+    
+    # Validity metrics
+    validity_score: float = 0.0
+    type_conformity_percentage: float = 0.0
+    
+    # Accuracy metrics (outlier detection)
+    accuracy_score: float = 0.0
+    outlier_percentage: float = 0.0
+    
+    # Overall quality score
+    overall_quality_score: float = 0.0
+    
+    # Business rules compliance
+    business_rules_compliance: float = 0.0
+    
+    # Data profile summary
+    data_profile: Dict[str, Any] = field(default_factory=dict)
+    
+    def calculate_overall_score(self) -> float:
+        """Calculate overall data quality score from component metrics."""
+        scores = [self.completeness_score, self.consistency_score, 
+                 self.validity_score, self.accuracy_score, self.business_rules_compliance]
+        self.overall_quality_score = np.mean([s for s in scores if s > 0])
+        return self.overall_quality_score
+
+
+@dataclass
+class CleaningOperation:
+    """Record of a data cleaning operation for transparency and reversibility."""
+    
+    operation_type: str
+    column: Optional[str] = None
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    records_affected: int = 0
+    execution_time: float = 0.0
+    success: bool = True
+    error_message: Optional[str] = None
+    before_stats: Dict[str, Any] = field(default_factory=dict)
+    after_stats: Dict[str, Any] = field(default_factory=dict)
+    reversibility_data: Dict[str, Any] = field(default_factory=dict)
+    
+
+class TransformationStrategy:
+    """Strategies for different preprocessing transformations."""
+    
+    @staticmethod
+    def missing_values_auto(data: pd.DataFrame) -> str:
+        """Automatically determine missing value strategy."""
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+        
+        strategies = []
+        if len(numeric_cols) > 0:
+            strategies.append("numeric_median")
+        if len(categorical_cols) > 0:
+            strategies.append("categorical_mode")
+        
+        return "mixed" if len(strategies) > 1 else strategies[0] if strategies else "none"
+    
+    @staticmethod
+    def outlier_detection_auto(data: pd.DataFrame) -> str:
+        """Automatically determine outlier detection strategy."""
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        
+        if len(numeric_cols) == 0:
+            return "none"
+        
+        # Use IQR method for most cases, Z-score for large datasets
+        if len(data) > 10000:
+            return "zscore"
+        else:
+            return "iqr"
+    
+    @staticmethod
+    def encoding_strategy_auto(data: pd.DataFrame) -> str:
+        """Automatically determine categorical encoding strategy."""
+        categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+        
+        if len(categorical_cols) == 0:
+            return "none"
+        
+        # Check cardinality to decide between label encoding and one-hot encoding
+        high_cardinality_threshold = 10
+        strategies = []
+        
+        for col in categorical_cols:
+            cardinality = data[col].nunique()
+            if cardinality <= high_cardinality_threshold:
+                strategies.append("onehot")
+            else:
+                strategies.append("label")
+        
+        # Return most common strategy
+        return max(set(strategies), key=strategies.count) if strategies else "none"
+    
+    @staticmethod
+    def duplicate_detection_strategy(data: pd.DataFrame) -> str:
+        """Automatically determine duplicate detection strategy."""
+        # For small datasets, use exact matching
+        if len(data) < 1000:
+            return "exact"
+        # For larger datasets, use hash-based detection for efficiency
+        elif len(data) < 50000:
+            return "hash_based"
+        else:
+            return "sampling_based"
+    
+    @staticmethod
+    def data_type_inference_strategy(data: pd.DataFrame) -> Dict[str, str]:
+        """Automatically determine data type inference strategies per column."""
+        strategies = {}
+        
+        for col in data.columns:
+            if data[col].dtype == 'object':
+                # Check if it might be datetime
+                sample_values = data[col].dropna().astype(str).head(100)
+                if len(sample_values) > 0:
+                    datetime_patterns = [
+                        r'\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
+                        r'\d{2}/\d{2}/\d{4}',  # MM/DD/YYYY
+                        r'\d{2}-\d{2}-\d{4}',  # MM-DD-YYYY
+                    ]
+                    is_datetime = any(re.search(pattern, str(val)) for val in sample_values[:10] for pattern in datetime_patterns)
+                    
+                    if is_datetime:
+                        strategies[col] = "datetime"
+                    else:
+                        # Try numeric conversion
+                        try:
+                            pd.to_numeric(sample_values, errors='raise')
+                            strategies[col] = "numeric"
+                        except:
+                            strategies[col] = "categorical"
+                else:
+                    strategies[col] = "categorical"
+            else:
+                strategies[col] = "preserve"
+                
+        return strategies
+
+
+class DataPreprocessingPipeline(AnalysisPipelineBase):
+    """
+    Preprocessing pipeline with progressive disclosure and streaming support.
+    
+    First Principle: Progressive Disclosure Architecture
+    - Simple by default: automatic data cleaning and type inference
+    - Powerful when needed: custom transformations and advanced preprocessing
+    """
+    
+    def __init__(self,
+                 analytical_intention: str,
+                 preprocessing_intent: PreprocessingIntent = PreprocessingIntent.AUTO,
+                 custom_transformations: Optional[List[Callable]] = None,
+                 streaming_config: Optional[StreamingConfig] = None,
+                 custom_parameters: Optional[Dict[str, Any]] = None):
+        """
+        Initialize preprocessing with progressive complexity.
+        
+        Args:
+            analytical_intention: Natural language description of analytical intent
+            preprocessing_intent: Level of preprocessing complexity
+            custom_transformations: Optional custom transformation functions
+            streaming_config: Configuration for streaming execution
+            custom_parameters: Custom preprocessing parameters
+        """
+        super().__init__(
+            analytical_intention=analytical_intention,
+            streaming_config=streaming_config or StreamingConfig(),
+            progressive_complexity=preprocessing_intent.value,
+            composition_aware=True,
+            custom_parameters=custom_parameters or {}
+        )
+        
+        self.preprocessing_intent = preprocessing_intent
+        self.custom_transformations = custom_transformations or []
+        
+        # Transformation state storage for streaming compatibility
+        self._transformation_states: Dict[str, Dict[str, Any]] = {}
+        self._preprocessing_log: List[Dict[str, Any]] = []
+        
+        logger.info("DataPreprocessingPipeline initialized",
+                   intention=analytical_intention,
+                   complexity=preprocessing_intent.value)
+    
+    def get_analysis_type(self) -> str:
+        """Get the analysis type - preprocessing."""
+        return "data_preprocessing"
+    
+    def _configure_analysis_pipeline(self) -> List[Callable]:
+        """Configure preprocessing steps based on complexity level."""
+        pipeline_steps = []
+        
+        if self.preprocessing_intent == PreprocessingIntent.MINIMAL:
+            pipeline_steps.extend([
+                self._handle_missing_values,
+                self._infer_and_convert_types
+            ])
+            
+        elif self.preprocessing_intent == PreprocessingIntent.AUTO:
+            pipeline_steps.extend([
+                self._handle_missing_values,
+                self._infer_and_convert_types,
+                self._detect_and_handle_outliers,
+                self._normalize_text_columns,
+                self._encode_categorical_variables
+            ])
+            
+        elif self.preprocessing_intent == PreprocessingIntent.COMPREHENSIVE:
+            pipeline_steps.extend([
+                self._handle_missing_values,
+                self._infer_and_convert_types,
+                self._detect_and_handle_outliers,
+                self._normalize_text_columns,
+                self._encode_categorical_variables,
+                self._feature_scaling,
+                self._dimensionality_assessment,
+                self._correlation_analysis,
+                self._data_quality_enhancement
+            ])
+            
+        elif self.preprocessing_intent == PreprocessingIntent.CUSTOM:
+            # Start with minimal base, then add custom transformations
+            pipeline_steps.extend([
+                self._handle_missing_values,
+                self._infer_and_convert_types
+            ])
+        
+        # Add custom transformations
+        pipeline_steps.extend(self.custom_transformations)
+        
+        logger.info(f"Configured preprocessing pipeline with {len(pipeline_steps)} steps")
+        return pipeline_steps
+    
+    def _execute_analysis_step(self, step: Callable, data: pd.DataFrame, 
+                              context: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute individual preprocessing step with error handling."""
+        step_name = step.__name__
+        start_time = time.time()
+        
+        try:
+            # Get transformation state for this step
+            transform_state = self._transformation_states.get(step_name, {})
+            
+            # Execute the transformation
+            processed_data, step_metadata = step(data, **transform_state)
+            
+            execution_time = time.time() - start_time
+            
+            # Log successful transformation
+            log_entry = {
+                "transformation": step_name,
+                "status": "success",
+                "execution_time": execution_time,
+                "rows_processed": len(processed_data),
+                "metadata": step_metadata
+            }
+            self._preprocessing_log.append(log_entry)
+            
+            metadata = {
+                "step": step_name,
+                "execution_time": execution_time,
+                "success": True,
+                "step_metadata": step_metadata
+            }
+            
+            return processed_data, metadata
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            
+            # Log failed transformation
+            log_entry = {
+                "transformation": step_name,
+                "status": "error",
+                "execution_time": execution_time,
+                "error": str(e)
+            }
+            self._preprocessing_log.append(log_entry)
+            
+            logger.error(f"Preprocessing step {step_name} failed: {e}")
+            
+            # Return original data for graceful degradation
+            metadata = {
+                "step": step_name,
+                "execution_time": execution_time,
+                "success": False,
+                "error": str(e)
+            }
+            
+            return data, metadata  # Return original data, don't fail the entire pipeline
+    
+    def _execute_streaming_analysis(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute preprocessing with streaming support for large datasets."""
+        # For streaming preprocessing, we apply transformations chunk by chunk
+        # using the learned transformation states
+        
+        processed_data = data.copy()
+        
+        # Apply each transformation in the pipeline
+        for transform_func in self._analysis_pipeline:
+            processed_data, step_metadata = self._execute_analysis_step(
+                transform_func, processed_data, self.get_execution_context()
+            )
+        
+        # Build metadata
+        metadata = self._build_preprocessing_metadata(processed_data, streaming_enabled=True)
+        return processed_data, metadata
+    
+    def _execute_standard_analysis(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute preprocessing on full dataset in memory."""
+        processed_data = data.copy()
+        
+        # Apply each transformation in the pipeline
+        for transform_func in self._analysis_pipeline:
+            processed_data, step_metadata = self._execute_analysis_step(
+                transform_func, processed_data, self.get_execution_context()
+            )
+        
+        # Build metadata
+        metadata = self._build_preprocessing_metadata(processed_data, streaming_enabled=False)
+        return processed_data, metadata
+    
+    # Transformation methods
+    def _handle_missing_values(self, data: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Handle missing values in the dataset."""
+        strategy = kwargs.get('strategy', TransformationStrategy.missing_values_auto(data))
+        
+        result_data = data.copy()
+        imputation_log = {}
+        
+        if strategy in ['numeric_median', 'mixed']:
+            numeric_cols = data.select_dtypes(include=['number']).columns
+            for col in numeric_cols:
+                if data[col].isnull().sum() > 0:
+                    median_value = data[col].median()
+                    result_data[col].fillna(median_value, inplace=True)
+                    imputation_log[col] = {'method': 'median', 'value': median_value}
+        
+        if strategy in ['categorical_mode', 'mixed']:
+            categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+            for col in categorical_cols:
+                if data[col].isnull().sum() > 0:
+                    mode_value = data[col].mode().iloc[0] if not data[col].mode().empty else 'unknown'
+                    result_data[col].fillna(mode_value, inplace=True)
+                    imputation_log[col] = {'method': 'mode', 'value': mode_value}
+        
+        metadata = {
+            'strategy': strategy,
+            'imputation_log': imputation_log,
+            'missing_values_before': data.isnull().sum().sum(),
+            'missing_values_after': result_data.isnull().sum().sum()
+        }
+        
+        return result_data, metadata
+    
+    def _infer_and_convert_types(self, data: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Infer and convert data types for optimal analysis."""
+        result_data = data.copy()
+        type_conversions = {}
+        
+        for col in data.columns:
+            original_dtype = str(data[col].dtype)
+            
+            # Try to convert to datetime if it looks like a date
+            if data[col].dtype == 'object':
+                try:
+                    # Sample a few values to check if they look like dates
+                    sample_values = data[col].dropna().head(100)
+                    if len(sample_values) > 0:
+                        pd.to_datetime(sample_values, errors='raise')
+                        result_data[col] = pd.to_datetime(data[col], errors='coerce')
+                        type_conversions[col] = {'from': original_dtype, 'to': 'datetime64[ns]'}
+                        continue
+                except:
+                    pass
+                
+                # Try to convert to numeric
+                try:
+                    numeric_series = pd.to_numeric(data[col], errors='coerce')
+                    # If most values convert successfully, use numeric type
+                    if (numeric_series.notna().sum() / len(numeric_series)) > 0.8:
+                        result_data[col] = numeric_series
+                        type_conversions[col] = {'from': original_dtype, 'to': str(numeric_series.dtype)}
+                        continue
+                except:
+                    pass
+        
+        metadata = {
+            'type_conversions': type_conversions,
+            'total_conversions': len(type_conversions)
+        }
+        
+        return result_data, metadata
+    
+    def _detect_and_handle_outliers(self, data: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Detect and handle outliers in numeric columns."""
+        strategy = kwargs.get('strategy', TransformationStrategy.outlier_detection_auto(data))
+        action = kwargs.get('action', 'cap')  # 'cap', 'remove', 'flag'
+        
+        result_data = data.copy()
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        outlier_log = {}
+        
+        for col in numeric_cols:
+            outliers_detected = 0
+            
+            if strategy == 'iqr':
+                Q1 = data[col].quantile(0.25)
+                Q3 = data[col].quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                
+                outlier_mask = (data[col] < lower_bound) | (data[col] > upper_bound)
+                outliers_detected = outlier_mask.sum()
+                
+                if action == 'cap':
+                    result_data[col] = np.clip(data[col], lower_bound, upper_bound)
+                elif action == 'remove':
+                    result_data = result_data[~outlier_mask]
+                elif action == 'flag':
+                    result_data[f'{col}_outlier_flag'] = outlier_mask
+            
+            elif strategy == 'zscore':
+                z_scores = np.abs((data[col] - data[col].mean()) / data[col].std())
+                outlier_mask = z_scores > 3
+                outliers_detected = outlier_mask.sum()
+                
+                if action == 'cap':
+                    mean_val = data[col].mean()
+                    std_val = data[col].std()
+                    result_data[col] = np.clip(data[col], mean_val - 3*std_val, mean_val + 3*std_val)
+                elif action == 'remove':
+                    result_data = result_data[~outlier_mask]
+                elif action == 'flag':
+                    result_data[f'{col}_outlier_flag'] = outlier_mask
+            
+            outlier_log[col] = {
+                'strategy': strategy,
+                'action': action,
+                'outliers_detected': outliers_detected
+            }
+        
+        metadata = {
+            'strategy': strategy,
+            'action': action,
+            'outlier_log': outlier_log,
+            'total_outliers_processed': sum(log['outliers_detected'] for log in outlier_log.values())
+        }
+        
+        return result_data, metadata
+    
+    def _normalize_text_columns(self, data: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Normalize text columns (trim, case normalization, etc.)."""
+        result_data = data.copy()
+        text_cols = data.select_dtypes(include=['object']).columns
+        normalization_log = {}
+        
+        for col in text_cols:
+            if data[col].dtype == 'object':  # Only process string columns
+                # Remove leading/trailing whitespace
+                result_data[col] = data[col].astype(str).str.strip()
+                
+                # Convert to lowercase if specified
+                if kwargs.get('lowercase', False):
+                    result_data[col] = result_data[col].str.lower()
+                
+                # Remove extra whitespace between words
+                result_data[col] = result_data[col].str.replace(r'\s+', ' ', regex=True)
+                
+                normalization_log[col] = {
+                    'operations': ['trim', 'whitespace_normalize'] + 
+                                (['lowercase'] if kwargs.get('lowercase', False) else [])
+                }
+        
+        metadata = {
+            'normalized_columns': list(normalization_log.keys()),
+            'normalization_log': normalization_log
+        }
+        
+        return result_data, metadata
+    
+    def _encode_categorical_variables(self, data: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Encode categorical variables for analysis."""
+        strategy = kwargs.get('strategy', TransformationStrategy.encoding_strategy_auto(data))
+        
+        result_data = data.copy()
+        categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+        encoding_log = {}
+        
+        for col in categorical_cols:
+            cardinality = data[col].nunique()
+            
+            if strategy == 'onehot' or (strategy == 'auto' and cardinality <= 10):
+                # One-hot encoding for low cardinality
+                dummies = pd.get_dummies(data[col], prefix=col, dummy_na=True)
+                result_data = pd.concat([result_data.drop(col, axis=1), dummies], axis=1)
+                encoding_log[col] = {'method': 'onehot', 'new_columns': list(dummies.columns)}
+                
+            elif strategy == 'label' or (strategy == 'auto' and cardinality > 10):
+                # Label encoding for high cardinality
+                le = LabelEncoder()
+                result_data[f'{col}_encoded'] = le.fit_transform(data[col].astype(str))
+                encoding_log[col] = {'method': 'label', 'new_column': f'{col}_encoded'}
+        
+        metadata = {
+            'strategy': strategy,
+            'encoding_log': encoding_log,
+            'encoded_columns': len(encoding_log)
+        }
+        
+        return result_data, metadata
+    
+    def _feature_scaling(self, data: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Scale numerical features."""
+        method = kwargs.get('method', 'standard')  # 'standard', 'minmax', 'robust'
+        
+        result_data = data.copy()
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        scaling_log = {}
+        
+        if method == 'standard':
+            scaler = StandardScaler()
+            result_data[numeric_cols] = scaler.fit_transform(data[numeric_cols])
+            scaling_log = {'method': 'standard', 'columns': list(numeric_cols)}
+        
+        metadata = {
+            'scaling_method': method,
+            'scaled_columns': len(numeric_cols),
+            'scaling_log': scaling_log
+        }
+        
+        return result_data, metadata
+    
+    def _dimensionality_assessment(self, data: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Assess dimensionality and suggest dimension reduction if needed."""
+        result_data = data.copy()  # No transformation, just assessment
+        
+        shape = data.shape
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        
+        # Simple assessment
+        high_dimensionality = len(numeric_cols) > 20
+        samples_to_features_ratio = shape[0] / len(numeric_cols) if len(numeric_cols) > 0 else float('inf')
+        
+        recommendations = []
+        if high_dimensionality:
+            recommendations.append("Consider PCA for dimension reduction")
+        if samples_to_features_ratio < 10:
+            recommendations.append("Low samples-to-features ratio - consider feature selection")
+        
+        metadata = {
+            'total_features': shape[1],
+            'numeric_features': len(numeric_cols),
+            'samples_to_features_ratio': samples_to_features_ratio,
+            'high_dimensionality': high_dimensionality,
+            'recommendations': recommendations
+        }
+        
+        return result_data, metadata
+    
+    def _correlation_analysis(self, data: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Analyze correlations and identify highly correlated features."""
+        result_data = data.copy()
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        
+        if len(numeric_cols) < 2:
+            metadata = {'correlation_analysis': 'insufficient_numeric_columns'}
+            return result_data, metadata
+        
+        # Calculate correlation matrix
+        corr_matrix = data[numeric_cols].corr()
+        
+        # Find highly correlated pairs
+        threshold = kwargs.get('correlation_threshold', 0.8)
+        highly_correlated_pairs = []
+        
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                correlation = corr_matrix.iloc[i, j]
+                if abs(correlation) > threshold:
+                    highly_correlated_pairs.append({
+                        'feature1': corr_matrix.columns[i],
+                        'feature2': corr_matrix.columns[j],
+                        'correlation': correlation
+                    })
+        
+        metadata = {
+            'correlation_threshold': threshold,
+            'highly_correlated_pairs': len(highly_correlated_pairs),
+            'correlation_details': highly_correlated_pairs[:10],  # Limit to first 10
+            'recommendations': ['Consider removing highly correlated features'] if highly_correlated_pairs else []
+        }
+        
+        return result_data, metadata
+    
+    def _data_quality_enhancement(self, data: pd.DataFrame, **kwargs) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Enhance overall data quality through various checks and improvements."""
+        result_data = data.copy()
+        
+        # Remove duplicate rows
+        initial_rows = len(result_data)
+        result_data = result_data.drop_duplicates()
+        duplicates_removed = initial_rows - len(result_data)
+        
+        # Check for constant columns
+        constant_columns = []
+        for col in result_data.columns:
+            if result_data[col].nunique() <= 1:
+                constant_columns.append(col)
+        
+        # Remove constant columns if requested
+        if kwargs.get('remove_constant_columns', True):
+            result_data = result_data.drop(columns=constant_columns)
+        
+        metadata = {
+            'duplicates_removed': duplicates_removed,
+            'constant_columns': constant_columns,
+            'constant_columns_removed': len(constant_columns) if kwargs.get('remove_constant_columns', True) else 0,
+            'final_shape': result_data.shape
+        }
+        
+        return result_data, metadata
+    
+    def _build_preprocessing_metadata(self, processed_data: pd.DataFrame, streaming_enabled: bool) -> Dict[str, Any]:
+        """Build comprehensive metadata for preprocessing results."""
+        original_shape = self._execution_context.get('data_profile', {}).get('shape', (0, 0))
+        
+        metadata = {
+            "preprocessing_pipeline": {
+                "analytical_intention": self.analytical_intention,
+                "preprocessing_intent": self.preprocessing_intent.value,
+                "streaming_enabled": streaming_enabled,
+                "steps_executed": len(self._preprocessing_log)
+            },
+            "transformation_summary": {
+                "original_shape": original_shape,
+                "processed_shape": processed_data.shape,
+                "rows_changed": processed_data.shape[0] - original_shape[0],
+                "columns_changed": processed_data.shape[1] - original_shape[1]
+            },
+            "preprocessing_log": self._preprocessing_log,
+            "data_quality_score": self._calculate_data_quality_score(processed_data),
+            "composition_context": {
+                "ready_for_analysis": True,
+                "data_characteristics": self._analyze_processed_data(processed_data),
+                "suggested_next_steps": self._suggest_analysis_steps(processed_data),
+                "preprocessing_artifacts": self._extract_preprocessing_artifacts()
+            }
+        }
+        
+        return metadata
+    
+    def _calculate_data_quality_score(self, data: pd.DataFrame) -> float:
+        """Calculate overall data quality score."""
+        scores = []
+        
+        # Completeness (no missing values)
+        completeness = (1 - data.isnull().sum().sum() / (len(data) * len(data.columns))) * 100
+        scores.append(completeness)
+        
+        # Consistency (no duplicates)
+        consistency = (1 - data.duplicated().sum() / len(data)) * 100
+        scores.append(consistency)
+        
+        # Validity (appropriate data types)
+        type_validity = 85  # Base score, could be enhanced with more sophisticated checks
+        scores.append(type_validity)
+        
+        return np.mean(scores)
+    
+    def _analyze_processed_data(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Analyze characteristics of processed data."""
+        return {
+            "shape": data.shape,
+            "dtypes": dict(data.dtypes),
+            "numeric_columns": data.select_dtypes(include=['number']).columns.tolist(),
+            "categorical_columns": data.select_dtypes(include=['object', 'category']).columns.tolist(),
+            "datetime_columns": data.select_dtypes(include=['datetime64']).columns.tolist(),
+            "missing_values": data.isnull().sum().sum(),
+            "memory_usage_mb": data.memory_usage(deep=True).sum() / (1024 * 1024)
+        }
+    
+    def _suggest_analysis_steps(self, data: pd.DataFrame) -> List[Dict[str, Any]]:
+        """Suggest next analysis steps based on processed data characteristics."""
+        suggestions = []
+        
+        numeric_cols = data.select_dtypes(include=['number']).columns.tolist()
+        categorical_cols = data.select_dtypes(include=['object', 'category']).columns.tolist()
+        datetime_cols = data.select_dtypes(include=['datetime64']).columns.tolist()
+        
+        # Time series analysis
+        if datetime_cols:
+            suggestions.append({
+                "analysis_type": "time_series_analysis",
+                "reason": "Datetime columns detected",
+                "confidence": 0.8
+            })
+        
+        # Statistical analysis
+        if len(numeric_cols) >= 2:
+            suggestions.append({
+                "analysis_type": "statistical_analysis", 
+                "reason": "Multiple numeric columns for correlation/regression analysis",
+                "confidence": 0.7
+            })
+        
+        # Classification/clustering
+        if categorical_cols and numeric_cols:
+            suggestions.append({
+                "analysis_type": "machine_learning",
+                "reason": "Mixed data types suitable for supervised/unsupervised learning",
+                "confidence": 0.6
+            })
+        
+        return suggestions
+    
+    def _extract_preprocessing_artifacts(self) -> Dict[str, Any]:
+        """Extract preprocessing artifacts that might be useful for downstream analysis."""
+        artifacts = {}
+        
+        # Extract transformation states that could be reused
+        for step_name, state in self._transformation_states.items():
+            if state:  # Only include non-empty states
+                artifacts[f"{step_name}_state"] = state
+        
+        # Extract preprocessing statistics
+        artifacts["transformation_statistics"] = {
+            "total_steps": len(self._preprocessing_log),
+            "successful_steps": sum(1 for log in self._preprocessing_log if log["status"] == "success"),
+            "failed_steps": sum(1 for log in self._preprocessing_log if log["status"] == "error")
+        }
+        
+        return artifacts
+
+
+class DataCleaningPipeline(AnalysisPipelineBase):
+    """
+    Advanced data cleaning pipeline using sklearn preprocessing with intention-driven configuration.
+    
+    This pipeline provides comprehensive data cleaning capabilities including:
+    - Advanced outlier detection using IsolationForest and LocalOutlierFactor
+    - Sophisticated duplicate detection with fuzzy matching
+    - Comprehensive data validation with configurable business rules
+    - Progressive complexity levels from minimal to expert
+    - Full transparency and reversibility of operations
+    """
+    
+    def __init__(self,
+                 analytical_intention: str = "clean data for analysis",
+                 cleaning_intensity: str = "auto",  # "minimal", "auto", "comprehensive", "custom"
+                 quality_thresholds: Optional[Dict[str, float]] = None,
+                 business_rules: Optional[List[Dict[str, Any]]] = None,
+                 streaming_config: Optional[StreamingConfig] = None,
+                 custom_parameters: Optional[Dict[str, Any]] = None):
+        """
+        Initialize data cleaning pipeline with intention-driven configuration.
+        
+        Args:
+            analytical_intention: Natural language description of cleaning goal
+            cleaning_intensity: Level of cleaning complexity
+            quality_thresholds: Custom quality score thresholds
+            business_rules: Custom business validation rules
+            streaming_config: Configuration for streaming execution
+            custom_parameters: Additional custom parameters
+        """
+        super().__init__(
+            analytical_intention=analytical_intention,
+            streaming_config=streaming_config or StreamingConfig(),
+            progressive_complexity=cleaning_intensity,
+            composition_aware=True,
+            custom_parameters=custom_parameters or {}
+        )
+        
+        self.cleaning_intensity = cleaning_intensity
+        self.quality_thresholds = quality_thresholds or {
+            'completeness_threshold': 0.95,
+            'consistency_threshold': 0.98,
+            'validity_threshold': 0.90,
+            'accuracy_threshold': 0.85,
+            'overall_threshold': 0.90
+        }
+        self.business_rules = business_rules or []
+        
+        # Cleaning operation tracking
+        self._cleaning_operations: List[CleaningOperation] = []
+        self._quality_metrics_before: Optional[DataQualityMetrics] = None
+        self._quality_metrics_after: Optional[DataQualityMetrics] = None
+        
+        # Advanced cleaning components
+        self._outlier_detectors = {
+            'isolation_forest': None,
+            'local_outlier_factor': None
+        }
+        
+        logger.info("DataCleaningPipeline initialized",
+                   intention=analytical_intention,
+                   intensity=cleaning_intensity)
+    
+    def get_analysis_type(self) -> str:
+        """Get the analysis type - data cleaning."""
+        return "data_cleaning"
+    
+    def _configure_analysis_pipeline(self) -> List[Callable]:
+        """Configure cleaning pipeline based on intensity level and intention."""
+        pipeline_steps = []
+        
+        # Always start with data profiling
+        pipeline_steps.append(self._assess_initial_quality)
+        
+        if self.cleaning_intensity == "minimal":
+            pipeline_steps.extend([
+                self._basic_type_inference,
+                self._handle_basic_missing_values,
+                self._remove_exact_duplicates
+            ])
+            
+        elif self.cleaning_intensity == "auto":
+            pipeline_steps.extend([
+                self._comprehensive_type_inference,
+                self._intelligent_missing_value_handling,
+                self._advanced_outlier_detection,
+                self._sophisticated_duplicate_detection,
+                self._basic_data_validation
+            ])
+            
+        elif self.cleaning_intensity == "comprehensive":
+            pipeline_steps.extend([
+                self._comprehensive_type_inference,
+                self._intelligent_missing_value_handling,
+                self._advanced_outlier_detection,
+                self._sophisticated_duplicate_detection,
+                self._comprehensive_data_validation,
+                self._data_consistency_enhancement,
+                self._feature_engineering_cleanup,
+                self._final_quality_optimization
+            ])
+            
+        elif self.cleaning_intensity == "custom":
+            # Load custom cleaning steps from parameters
+            custom_steps = self.custom_parameters.get('cleaning_steps', [])
+            pipeline_steps.extend(custom_steps)
+        
+        # Always end with quality assessment
+        pipeline_steps.append(self._assess_final_quality)
+        
+        logger.info(f"Configured cleaning pipeline with {len(pipeline_steps)} steps")
+        return pipeline_steps
+    
+    def _execute_analysis_step(self, step: Callable, data: pd.DataFrame, 
+                              context: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute individual cleaning step with comprehensive logging."""
+        step_name = step.__name__
+        start_time = time.time()
+        
+        try:
+            # Capture before statistics
+            before_stats = self._capture_data_statistics(data)
+            
+            # Execute the cleaning step
+            cleaned_data, step_metadata = step(data)
+            
+            # Capture after statistics
+            after_stats = self._capture_data_statistics(cleaned_data)
+            
+            execution_time = time.time() - start_time
+            
+            # Record the cleaning operation
+            operation = CleaningOperation(
+                operation_type=step_name,
+                parameters=step_metadata.get('parameters', {}),
+                records_affected=step_metadata.get('records_affected', 0),
+                execution_time=execution_time,
+                success=True,
+                before_stats=before_stats,
+                after_stats=after_stats,
+                reversibility_data=step_metadata.get('reversibility_data', {})
+            )
+            
+            self._cleaning_operations.append(operation)
+            
+            metadata = {
+                "step": step_name,
+                "execution_time": execution_time,
+                "success": True,
+                "step_metadata": step_metadata,
+                "data_impact": {
+                    "rows_before": len(data),
+                    "rows_after": len(cleaned_data),
+                    "columns_before": len(data.columns),
+                    "columns_after": len(cleaned_data.columns)
+                }
+            }
+            
+            logger.info(f"Cleaning step {step_name} completed successfully", 
+                       execution_time=execution_time,
+                       records_affected=operation.records_affected)
+            
+            return cleaned_data, metadata
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            
+            # Record failed operation
+            operation = CleaningOperation(
+                operation_type=step_name,
+                execution_time=execution_time,
+                success=False,
+                error_message=str(e)
+            )
+            
+            self._cleaning_operations.append(operation)
+            
+            logger.error(f"Cleaning step {step_name} failed: {e}")
+            
+            # Return original data for graceful degradation
+            metadata = {
+                "step": step_name,
+                "execution_time": execution_time,
+                "success": False,
+                "error": str(e)
+            }
+            
+            return data, metadata  # Return original data
+    
+    def _execute_streaming_analysis(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute cleaning with streaming support for large datasets."""
+        processed_data = data.copy()
+        
+        # Apply each cleaning step in the pipeline
+        for clean_func in self._analysis_pipeline:
+            processed_data, step_metadata = self._execute_analysis_step(
+                clean_func, processed_data, self.get_execution_context()
+            )
+        
+        # Build comprehensive metadata
+        metadata = self._build_cleaning_metadata(processed_data, streaming_enabled=True)
+        return processed_data, metadata
+    
+    def _execute_standard_analysis(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute cleaning on full dataset in memory."""
+        processed_data = data.copy()
+        
+        # Apply each cleaning step in the pipeline
+        for clean_func in self._analysis_pipeline:
+            processed_data, step_metadata = self._execute_analysis_step(
+                clean_func, processed_data, self.get_execution_context()
+            )
+        
+        # Build comprehensive metadata
+        metadata = self._build_cleaning_metadata(processed_data, streaming_enabled=False)
+        return processed_data, metadata
+    
+    # ===========================================
+    # IMPORT CLEANING METHOD IMPLEMENTATIONS
+    # ===========================================
+    
+    # Import method implementations from separate files
+    from .data_cleaning_methods import (
+        _assess_initial_quality, _basic_type_inference, _comprehensive_type_inference,
+        _handle_basic_missing_values, _intelligent_missing_value_handling,
+        _advanced_outlier_detection
+    )
+    
+    from .data_cleaning_methods_part2 import (
+        _remove_exact_duplicates, _sophisticated_duplicate_detection,
+        _basic_data_validation, _comprehensive_data_validation,
+        _data_consistency_enhancement, _feature_engineering_cleanup,
+        _final_quality_optimization, _assess_final_quality
+    )
+    
+    # ===========================================
+    # UTILITY METHODS
+    # ===========================================
+    
+    def _calculate_comprehensive_quality_metrics(self, data: pd.DataFrame) -> DataQualityMetrics:
+        """Calculate comprehensive data quality metrics."""
+        metrics = DataQualityMetrics()
+        
+        # Completeness - percentage of non-null values
+        total_cells = len(data) * len(data.columns)
+        non_null_cells = total_cells - data.isnull().sum().sum()
+        metrics.completeness_score = (non_null_cells / total_cells) * 100
+        metrics.missing_value_percentage = ((total_cells - non_null_cells) / total_cells) * 100
+        
+        # Consistency - no duplicates
+        total_rows = len(data)
+        unique_rows = len(data.drop_duplicates())
+        metrics.consistency_score = (unique_rows / total_rows) * 100
+        metrics.duplicate_percentage = ((total_rows - unique_rows) / total_rows) * 100
+        
+        # Validity - appropriate data types and ranges
+        validity_scores = []
+        
+        # Check numeric columns for reasonable ranges
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        for col in numeric_cols:
+            # Simple validity check - no infinite values
+            infinite_count = np.isinf(data[col]).sum()
+            validity_scores.append((len(data) - infinite_count) / len(data) * 100)
+        
+        # Check datetime columns
+        datetime_cols = data.select_dtypes(include=['datetime64']).columns
+        for col in datetime_cols:
+            # Simple validity check - reasonable date range
+            invalid_dates = data[col].isna().sum()
+            validity_scores.append((len(data) - invalid_dates) / len(data) * 100)
+        
+        metrics.validity_score = np.mean(validity_scores) if validity_scores else 100
+        metrics.type_conformity_percentage = metrics.validity_score
+        
+        # Accuracy - outlier assessment (inverse of outlier percentage)
+        try:
+            if len(numeric_cols) > 0:
+                numeric_data = data[numeric_cols].fillna(data[numeric_cols].median())
+                if len(numeric_data) > 10:  # Need minimum data for outlier detection
+                    iso_forest = IsolationForest(contamination=0.1, random_state=42)
+                    outliers = iso_forest.fit_predict(numeric_data)
+                    outlier_percentage = (outliers == -1).sum() / len(outliers) * 100
+                    metrics.outlier_percentage = outlier_percentage
+                    metrics.accuracy_score = max(0, 100 - outlier_percentage)
+                else:
+                    metrics.accuracy_score = 95  # Default for small datasets
+            else:
+                metrics.accuracy_score = 100  # No numeric columns
+        except:
+            metrics.accuracy_score = 90  # Default fallback
+        
+        # Business rules compliance (default 100 if no rules specified)
+        metrics.business_rules_compliance = 100
+        
+        # Calculate overall score
+        metrics.calculate_overall_score()
+        
+        # Data profile
+        metrics.data_profile = {
+            "shape": data.shape,
+            "dtypes": dict(data.dtypes),
+            "memory_usage_mb": data.memory_usage(deep=True).sum() / (1024 * 1024),
+            "numeric_columns": len(numeric_cols),
+            "categorical_columns": len(data.select_dtypes(include=['object', 'category']).columns),
+            "datetime_columns": len(datetime_cols)
+        }
+        
+        return metrics
+    
+    def _capture_data_statistics(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Capture comprehensive data statistics for before/after comparison."""
+        stats = {
+            "shape": data.shape,
+            "dtypes": dict(data.dtypes),
+            "missing_values": data.isnull().sum().sum(),
+            "duplicates": data.duplicated().sum(),
+            "memory_usage_mb": data.memory_usage(deep=True).sum() / (1024 * 1024)
+        }
+        
+        # Numeric statistics
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        if len(numeric_cols) > 0:
+            stats["numeric_summary"] = data[numeric_cols].describe().to_dict()
+        
+        return stats
+    
+    def _build_cleaning_metadata(self, cleaned_data: pd.DataFrame, streaming_enabled: bool) -> Dict[str, Any]:
+        """Build comprehensive metadata for cleaning results."""
+        metadata = {
+            "cleaning_pipeline": {
+                "analytical_intention": self.analytical_intention,
+                "cleaning_intensity": self.cleaning_intensity,
+                "streaming_enabled": streaming_enabled,
+                "total_operations": len(self._cleaning_operations),
+                "successful_operations": sum(1 for op in self._cleaning_operations if op.success),
+                "failed_operations": sum(1 for op in self._cleaning_operations if not op.success)
+            },
+            "quality_assessment": {
+                "before": self._quality_metrics_before.__dict__ if self._quality_metrics_before else {},
+                "after": self._quality_metrics_after.__dict__ if self._quality_metrics_after else {},
+                "improvement": {
+                    "overall_score": (
+                        self._quality_metrics_after.overall_quality_score - self._quality_metrics_before.overall_quality_score
+                        if self._quality_metrics_before and self._quality_metrics_after else 0
+                    )
+                }
+            },
+            "operations_log": [op.__dict__ for op in self._cleaning_operations],
+            "data_transformation": {
+                "original_shape": self._quality_metrics_before.data_profile.get('shape', (0, 0)) if self._quality_metrics_before else (0, 0),
+                "cleaned_shape": cleaned_data.shape,
+                "total_records_affected": sum(op.records_affected for op in self._cleaning_operations if op.success)
+            },
+            "composition_context": {
+                "ready_for_analysis": self._quality_metrics_after.overall_quality_score >= self.quality_thresholds['overall_threshold'] if self._quality_metrics_after else False,
+                "data_characteristics": self._analyze_cleaned_data(cleaned_data),
+                "suggested_next_steps": self._suggest_post_cleaning_steps(cleaned_data),
+                "cleaning_artifacts": self._extract_cleaning_artifacts()
+            }
+        }
+        
+        return metadata
+    
+    def _analyze_cleaned_data(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Analyze characteristics of cleaned data."""
+        return {
+            "shape": data.shape,
+            "dtypes": dict(data.dtypes),
+            "quality_score": self._quality_metrics_after.overall_quality_score if self._quality_metrics_after else 0,
+            "numeric_columns": data.select_dtypes(include=['number']).columns.tolist(),
+            "categorical_columns": data.select_dtypes(include=['object', 'category']).columns.tolist(),
+            "datetime_columns": data.select_dtypes(include=['datetime64']).columns.tolist(),
+            "missing_values": data.isnull().sum().sum(),
+            "memory_usage_mb": data.memory_usage(deep=True).sum() / (1024 * 1024),
+            "ready_for_analysis": self._quality_metrics_after.overall_quality_score >= self.quality_thresholds['overall_threshold'] if self._quality_metrics_after else False
+        }
+    
+    def _suggest_post_cleaning_steps(self, data: pd.DataFrame) -> List[Dict[str, Any]]:
+        """Suggest next steps after data cleaning."""
+        suggestions = []
+        
+        numeric_cols = data.select_dtypes(include=['number']).columns.tolist()
+        categorical_cols = data.select_dtypes(include=['object', 'category']).columns.tolist()
+        datetime_cols = data.select_dtypes(include=['datetime64']).columns.tolist()
+        
+        # Statistical analysis suggestion
+        if len(numeric_cols) >= 2:
+            suggestions.append({
+                "analysis_type": "statistical_analysis",
+                "reason": "Multiple numeric columns available for correlation and statistical tests",
+                "confidence": 0.9,
+                "next_tool": "statistical_analyzer"
+            })
+        
+        # Time series analysis
+        if datetime_cols and numeric_cols:
+            suggestions.append({
+                "analysis_type": "time_series_analysis",
+                "reason": "Datetime and numeric columns available for temporal analysis",
+                "confidence": 0.8,
+                "next_tool": "time_series_analyzer"
+            })
+        
+        # Machine learning readiness
+        if categorical_cols and numeric_cols:
+            suggestions.append({
+                "analysis_type": "machine_learning",
+                "reason": "Mixed data types suitable for supervised/unsupervised learning",
+                "confidence": 0.7,
+                "next_tool": "ml_preprocessor"
+            })
+        
+        # Data visualization
+        suggestions.append({
+            "analysis_type": "data_visualization",
+            "reason": "Clean data ready for exploratory visualization",
+            "confidence": 0.9,
+            "next_tool": "visualization_generator"
+        })
+        
+        return suggestions
+    
+    def _extract_cleaning_artifacts(self) -> Dict[str, Any]:
+        """Extract cleaning artifacts for potential reuse or analysis."""
+        artifacts = {
+            "transformation_history": [op.__dict__ for op in self._cleaning_operations if op.success],
+            "quality_thresholds": self.quality_thresholds,
+            "business_rules_applied": self.business_rules,
+            "outlier_detection_parameters": {
+                "methods_used": ["isolation_forest", "local_outlier_factor"],
+                "contamination_rate": 0.1
+            },
+            "type_inference_results": {
+                # Extract from operation logs
+                op.operation_type: op.after_stats for op in self._cleaning_operations 
+                if "type_inference" in op.operation_type and op.success
+            }
+        }
+        
+        return artifacts
+    
+    # Public utility methods
+    def get_quality_report(self) -> Dict[str, Any]:
+        """Get comprehensive quality report before and after cleaning."""
+        return {
+            "before_cleaning": self._quality_metrics_before.__dict__ if self._quality_metrics_before else {},
+            "after_cleaning": self._quality_metrics_after.__dict__ if self._quality_metrics_after else {},
+            "operations_performed": len(self._cleaning_operations),
+            "successful_operations": sum(1 for op in self._cleaning_operations if op.success),
+            "failed_operations": sum(1 for op in self._cleaning_operations if not op.success),
+            "total_records_affected": sum(op.records_affected for op in self._cleaning_operations if op.success)
+        }
+    
+    def get_cleaning_summary(self) -> str:
+        """Get human-readable summary of cleaning operations."""
+        if not self._cleaning_operations:
+            return "No cleaning operations performed yet."
+        
+        successful_ops = [op for op in self._cleaning_operations if op.success]
+        total_affected = sum(op.records_affected for op in successful_ops)
+        
+        summary_parts = [
+            f"Data cleaning completed with {len(successful_ops)} successful operations.",
+            f"Total records affected: {total_affected:,}",
+        ]
+        
+        if self._quality_metrics_before and self._quality_metrics_after:
+            improvement = self._quality_metrics_after.overall_quality_score - self._quality_metrics_before.overall_quality_score
+            summary_parts.append(f"Overall quality improvement: {improvement:.1f} points")
+            summary_parts.append(f"Final quality score: {self._quality_metrics_after.overall_quality_score:.1f}/100")
+        
+        return "\n".join(summary_parts)
+    
+    def is_ready_for_analysis(self) -> bool:
+        """Check if data meets quality thresholds for analysis."""
+        if not self._quality_metrics_after:
+            return False
+        
+        return self._quality_metrics_after.overall_quality_score >= self.quality_thresholds['overall_threshold']
+
+
+class FeatureScalingPipeline(AnalysisPipelineBase):
+    """
+    Feature scaling and normalization pipeline using sklearn preprocessing transformers.
+    
+    Provides comprehensive feature scaling capabilities with automatic strategy selection
+    based on data distribution analysis, streaming compatibility, and metadata preservation.
+    """
+    
+    def __init__(self,
+                 analytical_intention: str = "scale features for analysis",
+                 scaling_strategy: str = "auto",  # "auto", "standard", "minmax", "robust", "quantile", "power"
+                 column_specific_scaling: Optional[Dict[str, str]] = None,
+                 streaming_config: Optional[StreamingConfig] = None,
+                 custom_parameters: Optional[Dict[str, Any]] = None):
+        """
+        Initialize feature scaling pipeline.
+        
+        Args:
+            analytical_intention: Natural language description of scaling goal
+            scaling_strategy: Scaling method to use or "auto" for automatic selection
+            column_specific_scaling: Per-column scaling strategies
+            streaming_config: Configuration for streaming execution
+            custom_parameters: Additional custom parameters
+        """
+        super().__init__(
+            analytical_intention=analytical_intention,
+            streaming_config=streaming_config or StreamingConfig(),
+            progressive_complexity="auto",
+            composition_aware=True,
+            custom_parameters=custom_parameters or {}
+        )
+        
+        self.scaling_strategy = scaling_strategy
+        self.column_specific_scaling = column_specific_scaling or {}
+        
+        # Scaling state for streaming compatibility
+        self._scalers: Dict[str, Any] = {}
+        self._scaling_metadata: Dict[str, Any] = {}
+        
+        logger.info("FeatureScalingPipeline initialized",
+                   intention=analytical_intention,
+                   strategy=scaling_strategy)
+    
+    def get_analysis_type(self) -> str:
+        """Get the analysis type - feature scaling."""
+        return "feature_scaling"
+    
+    def _configure_analysis_pipeline(self) -> List[Callable]:
+        """Configure scaling pipeline steps."""
+        return [
+            self._analyze_data_distributions,
+            self._select_scaling_strategies,
+            self._apply_feature_scaling,
+            self._validate_scaling_results
+        ]
+    
+    def _execute_analysis_step(self, step: Callable, data: pd.DataFrame, 
+                              context: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute individual scaling step with error handling."""
+        step_name = step.__name__
+        start_time = time.time()
+        
+        try:
+            # Execute the scaling step
+            scaled_data, step_metadata = step(data)
+            
+            execution_time = time.time() - start_time
+            
+            metadata = {
+                "step": step_name,
+                "execution_time": execution_time,
+                "success": True,
+                "step_metadata": step_metadata
+            }
+            
+            logger.info(f"Scaling step {step_name} completed successfully", 
+                       execution_time=execution_time)
+            
+            return scaled_data, metadata
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            
+            logger.error(f"Scaling step {step_name} failed: {e}")
+            
+            metadata = {
+                "step": step_name,
+                "execution_time": execution_time,
+                "success": False,
+                "error": str(e)
+            }
+            
+            return data, metadata  # Return original data on failure
+    
+    def _execute_streaming_analysis(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute scaling with streaming support."""
+        processed_data = data.copy()
+        
+        # Apply each scaling step in the pipeline
+        for scale_func in self._analysis_pipeline:
+            processed_data, step_metadata = self._execute_analysis_step(
+                scale_func, processed_data, self.get_execution_context()
+            )
+        
+        metadata = self._build_scaling_metadata(processed_data, streaming_enabled=True)
+        return processed_data, metadata
+    
+    def _execute_standard_analysis(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute scaling on full dataset in memory."""
+        processed_data = data.copy()
+        
+        # Apply each scaling step in the pipeline
+        for scale_func in self._analysis_pipeline:
+            processed_data, step_metadata = self._execute_analysis_step(
+                scale_func, processed_data, self.get_execution_context()
+            )
+        
+        metadata = self._build_scaling_metadata(processed_data, streaming_enabled=False)
+        return processed_data, metadata
+    
+    # Scaling method implementations
+    def _analyze_data_distributions(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Analyze data distributions to inform scaling strategy selection."""
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        distribution_analysis = {}
+        
+        for col in numeric_cols:
+            col_data = data[col].dropna()
+            if len(col_data) == 0:
+                continue
+            
+            # Basic statistics
+            stats = {
+                'mean': col_data.mean(),
+                'median': col_data.median(),
+                'std': col_data.std(),
+                'min': col_data.min(),
+                'max': col_data.max(),
+                'skewness': col_data.skew(),
+                'kurtosis': col_data.kurtosis()
+            }
+            
+            # Distribution characteristics
+            stats['has_outliers'] = self._detect_outliers_iqr(col_data)
+            stats['is_normal'] = abs(stats['skewness']) < 0.5 and abs(stats['kurtosis']) < 3
+            stats['has_negative'] = stats['min'] < 0
+            stats['wide_range'] = (stats['max'] - stats['min']) > 1000
+            
+            distribution_analysis[col] = stats
+        
+        metadata = {
+            'distribution_analysis': distribution_analysis,
+            'numeric_columns_analyzed': len(numeric_cols)
+        }
+        
+        return data, metadata
+    
+    def _select_scaling_strategies(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Select optimal scaling strategies for each column."""
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        selected_strategies = {}
+        
+        for col in numeric_cols:
+            if col in self.column_specific_scaling:
+                # Use user-specified strategy
+                selected_strategies[col] = self.column_specific_scaling[col]
+            elif self.scaling_strategy != "auto":
+                # Use global strategy
+                selected_strategies[col] = self.scaling_strategy
+            else:
+                # Auto-select based on data characteristics
+                col_data = data[col].dropna()
+                if len(col_data) == 0:
+                    continue
+                
+                # Decision logic based on data characteristics
+                skewness = abs(col_data.skew())
+                has_outliers = self._detect_outliers_iqr(col_data)
+                wide_range = (col_data.max() - col_data.min()) > 1000
+                
+                if skewness > 2:
+                    selected_strategies[col] = "power"  # Handle highly skewed data
+                elif has_outliers:
+                    selected_strategies[col] = "robust"  # Robust to outliers
+                elif wide_range:
+                    selected_strategies[col] = "minmax"  # Scale to fixed range
+                else:
+                    selected_strategies[col] = "standard"  # Standard normalization
+        
+        self._scaling_metadata['selected_strategies'] = selected_strategies
+        
+        metadata = {
+            'selected_strategies': selected_strategies,
+            'total_columns': len(selected_strategies)
+        }
+        
+        return data, metadata
+    
+    def _apply_feature_scaling(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Apply the selected scaling transformations."""
+        result_data = data.copy()
+        scaling_log = {}
+        
+        strategies = self._scaling_metadata.get('selected_strategies', {})
+        
+        for col, strategy in strategies.items():
+            try:
+                # Create and fit scaler
+                scaler = self._create_scaler(strategy)
+                
+                # Fit and transform the column
+                original_data = data[[col]]
+                scaled_data = scaler.fit_transform(original_data)
+                result_data[col] = scaled_data.flatten()
+                
+                # Store scaler for potential inverse transformation or streaming
+                self._scalers[col] = scaler
+                
+                # Log scaling operation
+                scaling_log[col] = {
+                    'strategy': strategy,
+                    'scaler_type': type(scaler).__name__,
+                    'original_range': [data[col].min(), data[col].max()],
+                    'scaled_range': [result_data[col].min(), result_data[col].max()]
+                }
+                
+            except Exception as e:
+                logger.warning(f"Failed to scale column {col} with {strategy}: {e}")
+                scaling_log[col] = {
+                    'strategy': strategy,
+                    'error': str(e),
+                    'fallback': 'no_scaling'
+                }
+        
+        metadata = {
+            'scaling_log': scaling_log,
+            'successful_scalings': sum(1 for log in scaling_log.values() if 'error' not in log),
+            'failed_scalings': sum(1 for log in scaling_log.values() if 'error' in log)
+        }
+        
+        return result_data, metadata
+    
+    def _validate_scaling_results(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Validate scaling results and generate quality metrics."""
+        numeric_cols = data.select_dtypes(include=['number']).columns
+        validation_results = {}
+        
+        for col in numeric_cols:
+            if col in self._scalers:
+                col_data = data[col].dropna()
+                
+                validation_results[col] = {
+                    'mean': col_data.mean(),
+                    'std': col_data.std(),
+                    'min': col_data.min(),
+                    'max': col_data.max(),
+                    'has_invalid_values': (np.isinf(col_data) | np.isnan(col_data)).any(),
+                    'scaling_quality': 'good' if abs(col_data.mean()) < 2 and col_data.std() > 0 else 'check_needed'
+                }
+        
+        metadata = {
+            'validation_results': validation_results,
+            'overall_quality': 'good' if all(v['scaling_quality'] == 'good' for v in validation_results.values()) else 'needs_review'
+        }
+        
+        return data, metadata
+    
+    def _create_scaler(self, strategy: str) -> Any:
+        """Create scaler instance based on strategy."""
+        if strategy == "standard":
+            return StandardScaler()
+        elif strategy == "minmax":
+            return MinMaxScaler()
+        elif strategy == "robust":
+            return RobustScaler()
+        elif strategy == "quantile":
+            return QuantileTransformer(n_quantiles=100, random_state=42)
+        elif strategy == "power":
+            return PowerTransformer(method='yeo-johnson', standardize=True)
+        else:
+            return StandardScaler()  # Default fallback
+    
+    def _detect_outliers_iqr(self, data: pd.Series) -> bool:
+        """Detect outliers using IQR method."""
+        Q1 = data.quantile(0.25)
+        Q3 = data.quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        
+        outliers = (data < lower_bound) | (data > upper_bound)
+        return outliers.sum() > 0.05 * len(data)  # More than 5% outliers
+    
+    def _build_scaling_metadata(self, scaled_data: pd.DataFrame, streaming_enabled: bool) -> Dict[str, Any]:
+        """Build comprehensive metadata for scaling results."""
+        return {
+            "scaling_pipeline": {
+                "analytical_intention": self.analytical_intention,
+                "scaling_strategy": self.scaling_strategy,
+                "streaming_enabled": streaming_enabled,
+                "scalers_fitted": len(self._scalers)
+            },
+            "scaling_results": self._scaling_metadata,
+            "data_characteristics": {
+                "shape": scaled_data.shape,
+                "numeric_columns": scaled_data.select_dtypes(include=['number']).columns.tolist(),
+                "memory_usage_mb": scaled_data.memory_usage(deep=True).sum() / (1024 * 1024)
+            },
+            "composition_context": {
+                "ready_for_ml": True,
+                "scaling_artifacts": {
+                    "fitted_scalers": list(self._scalers.keys()),
+                    "inverse_transform_available": True
+                },
+                "suggested_next_steps": [
+                    {"analysis_type": "machine_learning", "reason": "Features scaled for ML algorithms", "confidence": 0.9},
+                    {"analysis_type": "statistical_analysis", "reason": "Normalized features for statistical comparison", "confidence": 0.8}
+                ]
+            }
+        }
+    
+    # Public utility methods
+    def inverse_transform(self, scaled_data: pd.DataFrame) -> pd.DataFrame:
+        """Inverse transform scaled data back to original scale."""
+        result_data = scaled_data.copy()
+        
+        for col, scaler in self._scalers.items():
+            if col in result_data.columns:
+                try:
+                    original_data = scaler.inverse_transform(result_data[[col]])
+                    result_data[col] = original_data.flatten()
+                except Exception as e:
+                    logger.warning(f"Failed to inverse transform {col}: {e}")
+        
+        return result_data
+    
+    def get_scaler(self, column: str) -> Optional[Any]:
+        """Get fitted scaler for specific column."""
+        return self._scalers.get(column)
+
+
+class CategoricalEncodingPipeline(AnalysisPipelineBase):
+    """
+    Categorical encoding pipeline using sklearn preprocessing encoders.
+    
+    Provides comprehensive categorical encoding with automatic strategy selection
+    based on cardinality analysis, unknown category handling, and streaming compatibility.
+    """
+    
+    def __init__(self,
+                 analytical_intention: str = "encode categorical features for analysis",
+                 encoding_strategy: str = "auto",  # "auto", "onehot", "label", "ordinal", "target"
+                 cardinality_threshold: int = 10,
+                 handle_unknown: str = "ignore",  # "error", "ignore", "infrequent_if_exist"
+                 streaming_config: Optional[StreamingConfig] = None,
+                 custom_parameters: Optional[Dict[str, Any]] = None):
+        """
+        Initialize categorical encoding pipeline.
+        
+        Args:
+            analytical_intention: Natural language description of encoding goal
+            encoding_strategy: Encoding method or "auto" for automatic selection
+            cardinality_threshold: Threshold for high/low cardinality encoding decisions
+            handle_unknown: How to handle unknown categories in production
+            streaming_config: Configuration for streaming execution
+            custom_parameters: Additional custom parameters
+        """
+        super().__init__(
+            analytical_intention=analytical_intention,
+            streaming_config=streaming_config or StreamingConfig(),
+            progressive_complexity="auto",
+            composition_aware=True,
+            custom_parameters=custom_parameters or {}
+        )
+        
+        self.encoding_strategy = encoding_strategy
+        self.cardinality_threshold = cardinality_threshold
+        self.handle_unknown = handle_unknown
+        
+        # Encoding state for streaming compatibility
+        self._encoders: Dict[str, Any] = {}
+        self._encoding_metadata: Dict[str, Any] = {}
+        self._category_mappings: Dict[str, Dict[str, Any]] = {}
+        
+        logger.info("CategoricalEncodingPipeline initialized",
+                   intention=analytical_intention,
+                   strategy=encoding_strategy)
+    
+    def get_analysis_type(self) -> str:
+        """Get the analysis type - categorical encoding."""
+        return "categorical_encoding"
+    
+    def _configure_analysis_pipeline(self) -> List[Callable]:
+        """Configure encoding pipeline steps."""
+        return [
+            self._analyze_categorical_data,
+            self._select_encoding_strategies,
+            self._apply_categorical_encoding,
+            self._validate_encoding_results
+        ]
+    
+    def _execute_analysis_step(self, step: Callable, data: pd.DataFrame, 
+                              context: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute individual encoding step with error handling."""
+        step_name = step.__name__
+        start_time = time.time()
+        
+        try:
+            # Execute the encoding step
+            encoded_data, step_metadata = step(data)
+            
+            execution_time = time.time() - start_time
+            
+            metadata = {
+                "step": step_name,
+                "execution_time": execution_time,
+                "success": True,
+                "step_metadata": step_metadata
+            }
+            
+            logger.info(f"Encoding step {step_name} completed successfully", 
+                       execution_time=execution_time)
+            
+            return encoded_data, metadata
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            
+            logger.error(f"Encoding step {step_name} failed: {e}")
+            
+            metadata = {
+                "step": step_name,
+                "execution_time": execution_time,
+                "success": False,
+                "error": str(e)
+            }
+            
+            return data, metadata  # Return original data on failure
+    
+    def _execute_streaming_analysis(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute encoding with streaming support."""
+        processed_data = data.copy()
+        
+        # Apply each encoding step in the pipeline
+        for encode_func in self._analysis_pipeline:
+            processed_data, step_metadata = self._execute_analysis_step(
+                encode_func, processed_data, self.get_execution_context()
+            )
+        
+        metadata = self._build_encoding_metadata(processed_data, streaming_enabled=True)
+        return processed_data, metadata
+    
+    def _execute_standard_analysis(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Execute encoding on full dataset in memory."""
+        processed_data = data.copy()
+        
+        # Apply each encoding step in the pipeline
+        for encode_func in self._analysis_pipeline:
+            processed_data, step_metadata = self._execute_analysis_step(
+                encode_func, processed_data, self.get_execution_context()
+            )
+        
+        metadata = self._build_encoding_metadata(processed_data, streaming_enabled=False)
+        return processed_data, metadata
+    
+    # Encoding method implementations
+    def _analyze_categorical_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Analyze categorical data characteristics."""
+        categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+        cardinality_analysis = {}
+        
+        for col in categorical_cols:
+            col_data = data[col].dropna()
+            unique_values = col_data.unique()
+            
+            cardinality_analysis[col] = {
+                'cardinality': len(unique_values),
+                'unique_values': unique_values.tolist()[:20],  # Limit to first 20 for metadata
+                'missing_percentage': (data[col].isnull().sum() / len(data)) * 100,
+                'is_high_cardinality': len(unique_values) > self.cardinality_threshold,
+                'is_binary': len(unique_values) == 2,
+                'is_ordinal': self._detect_ordinal_nature(unique_values)
+            }
+        
+        metadata = {
+            'cardinality_analysis': cardinality_analysis,
+            'categorical_columns_analyzed': len(categorical_cols)
+        }
+        
+        return data, metadata
+    
+    def _select_encoding_strategies(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Select optimal encoding strategies for each categorical column."""
+        categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+        selected_strategies = {}
+        
+        for col in categorical_cols:
+            if self.encoding_strategy != "auto":
+                # Use global strategy
+                selected_strategies[col] = self.encoding_strategy
+            else:
+                # Auto-select based on data characteristics
+                col_data = data[col].dropna()
+                cardinality = col_data.nunique()
+                
+                if cardinality == 2:
+                    selected_strategies[col] = "label"  # Binary encoding
+                elif cardinality <= self.cardinality_threshold:
+                    selected_strategies[col] = "onehot"  # One-hot for low cardinality
+                elif self._detect_ordinal_nature(col_data.unique()):
+                    selected_strategies[col] = "ordinal"  # Preserve order
+                else:
+                    selected_strategies[col] = "label"  # Label encoding for high cardinality
+        
+        self._encoding_metadata['selected_strategies'] = selected_strategies
+        
+        metadata = {
+            'selected_strategies': selected_strategies,
+            'total_columns': len(selected_strategies)
+        }
+        
+        return data, metadata
+    
+    def _apply_categorical_encoding(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Apply the selected encoding transformations."""
+        result_data = data.copy()
+        encoding_log = {}
+        
+        strategies = self._encoding_metadata.get('selected_strategies', {})
+        
+        for col, strategy in strategies.items():
+            try:
+                if strategy == "onehot":
+                    # One-hot encoding
+                    encoder = OneHotEncoder(handle_unknown=self.handle_unknown, sparse_output=False)
+                    encoded_data = encoder.fit_transform(data[[col]])
+                    
+                    # Create column names
+                    feature_names = [f"{col}_{category}" for category in encoder.categories_[0]]
+                    encoded_df = pd.DataFrame(encoded_data, columns=feature_names, index=data.index)
+                    
+                    # Replace original column with encoded columns
+                    result_data = result_data.drop(col, axis=1)
+                    result_data = pd.concat([result_data, encoded_df], axis=1)
+                    
+                    self._encoders[col] = encoder
+                    encoding_log[col] = {
+                        'strategy': strategy,
+                        'new_columns': feature_names,
+                        'original_cardinality': len(encoder.categories_[0])
+                    }
+                
+                elif strategy == "label":
+                    # Label encoding
+                    encoder = LabelEncoder()
+                    encoded_data = encoder.fit_transform(data[col].fillna('__missing__'))
+                    result_data[f"{col}_encoded"] = encoded_data
+                    
+                    self._encoders[col] = encoder
+                    self._category_mappings[col] = dict(zip(encoder.classes_, encoder.transform(encoder.classes_)))
+                    
+                    encoding_log[col] = {
+                        'strategy': strategy,
+                        'new_column': f"{col}_encoded",
+                        'category_mapping': self._category_mappings[col]
+                    }
+                
+                elif strategy == "ordinal":
+                    # Ordinal encoding
+                    categories = self._get_ordinal_categories(data[col].dropna().unique())
+                    encoder = OrdinalEncoder(categories=[categories], handle_unknown=self.handle_unknown)
+                    encoded_data = encoder.fit_transform(data[[col]])
+                    result_data[f"{col}_ordinal"] = encoded_data.flatten()
+                    
+                    self._encoders[col] = encoder
+                    encoding_log[col] = {
+                        'strategy': strategy,
+                        'new_column': f"{col}_ordinal",
+                        'ordinal_mapping': dict(zip(categories, range(len(categories))))
+                    }
+                
+            except Exception as e:
+                logger.warning(f"Failed to encode column {col} with {strategy}: {e}")
+                encoding_log[col] = {
+                    'strategy': strategy,
+                    'error': str(e),
+                    'fallback': 'no_encoding'
+                }
+        
+        metadata = {
+            'encoding_log': encoding_log,
+            'successful_encodings': sum(1 for log in encoding_log.values() if 'error' not in log),
+            'failed_encodings': sum(1 for log in encoding_log.values() if 'error' in log)
+        }
+        
+        return result_data, metadata
+    
+    def _validate_encoding_results(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Validate encoding results and generate quality metrics."""
+        validation_results = {}
+        
+        # Check for encoded columns
+        encoded_columns = []
+        for col_name in data.columns:
+            if any(col_name.startswith(f"{original_col}_") for original_col in self._encoders.keys()):
+                encoded_columns.append(col_name)
+        
+        validation_results = {
+            'encoded_columns_created': len(encoded_columns),
+            'encoders_fitted': len(self._encoders),
+            'memory_increase_mb': data.memory_usage(deep=True).sum() / (1024 * 1024),
+            'encoding_quality': 'good' if len(encoded_columns) > 0 else 'no_encoding_applied'
+        }
+        
+        metadata = {
+            'validation_results': validation_results,
+            'overall_quality': validation_results['encoding_quality']
+        }
+        
+        return data, metadata
+    
+    def _detect_ordinal_nature(self, unique_values) -> bool:
+        """Detect if categorical values have ordinal nature."""
+        # Simple heuristic - look for size/rating patterns
+        size_patterns = ['xs', 's', 'm', 'l', 'xl', 'xxl']
+        rating_patterns = ['poor', 'fair', 'good', 'excellent']
+        numeric_patterns = [str(i) for i in range(1, 11)]
+        
+        values_str = [str(v).lower() for v in unique_values if pd.notna(v)]
+        
+        # Check if values follow known ordinal patterns
+        for pattern in [size_patterns, rating_patterns, numeric_patterns]:
+            if all(val in pattern for val in values_str):
+                return True
+        
+        return False
+    
+    def _get_ordinal_categories(self, unique_values):
+        """Get ordered categories for ordinal encoding."""
+        # Simple ordering - could be enhanced with more sophisticated logic
+        values_str = [str(v) for v in unique_values if pd.notna(v)]
+        return sorted(values_str)
+    
+    def _build_encoding_metadata(self, encoded_data: pd.DataFrame, streaming_enabled: bool) -> Dict[str, Any]:
+        """Build comprehensive metadata for encoding results."""
+        return {
+            "encoding_pipeline": {
+                "analytical_intention": self.analytical_intention,
+                "encoding_strategy": self.encoding_strategy,
+                "cardinality_threshold": self.cardinality_threshold,
+                "streaming_enabled": streaming_enabled,
+                "encoders_fitted": len(self._encoders)
+            },
+            "encoding_results": self._encoding_metadata,
+            "category_mappings": self._category_mappings,
+            "data_characteristics": {
+                "shape": encoded_data.shape,
+                "categorical_columns_remaining": encoded_data.select_dtypes(include=['object', 'category']).columns.tolist(),
+                "numeric_columns": encoded_data.select_dtypes(include=['number']).columns.tolist(),
+                "memory_usage_mb": encoded_data.memory_usage(deep=True).sum() / (1024 * 1024)
+            },
+            "composition_context": {
+                "ready_for_ml": len(encoded_data.select_dtypes(include=['object', 'category']).columns) == 0,
+                "encoding_artifacts": {
+                    "fitted_encoders": list(self._encoders.keys()),
+                    "category_mappings": self._category_mappings
+                },
+                "suggested_next_steps": [
+                    {"analysis_type": "feature_scaling", "reason": "Categorical features encoded, ready for scaling", "confidence": 0.9},
+                    {"analysis_type": "machine_learning", "reason": "All features properly encoded for ML", "confidence": 0.8}
+                ]
+            }
+        }
+    
+    # Public utility methods
+    def get_encoder(self, column: str) -> Optional[Any]:
+        """Get fitted encoder for specific column."""
+        return self._encoders.get(column)
+    
+    def get_category_mapping(self, column: str) -> Optional[Dict[str, Any]]:
+        """Get category mapping for specific column."""
+        return self._category_mappings.get(column)
+
