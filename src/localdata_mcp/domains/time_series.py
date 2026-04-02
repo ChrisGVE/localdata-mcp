@@ -134,7 +134,7 @@ class ChangePointResult(TimeSeriesResult):
     segments_analysis: List[Dict[str, Any]]
 
 
-class TimeSeriesAnalyzer(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
+class TimeSeriesAnalyzer(AnalysisPipelineBase):
     """Comprehensive time series analysis transformer with multiple analysis types."""
     
     def __init__(self, 
