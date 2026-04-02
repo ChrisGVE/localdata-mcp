@@ -2,7 +2,7 @@
 
 ## Overview
 
-LocalData MCP v1.3.1 provides 14 comprehensive MCP tools for database operations, file processing, and data management. This reference documents all tools, their parameters, response formats, and usage examples.
+LocalData MCP v1.7.0 provides 14 comprehensive MCP tools for database operations, file processing, and data management. This reference documents all tools, their parameters, response formats, and usage examples.
 
 ## Table of Contents
 
@@ -87,7 +87,7 @@ connect_database("cache", "redis", "redis://localhost:6379/0")
 }
 ```
 
-**v1.3.1 Enhancements:**
+**v1.7.0 Enhancements:**
 - Automatic large file detection and SQLite conversion (>100MB files)
 - Connection pooling with configurable pool sizes
 - Enhanced metadata including server version and schema information
@@ -1169,7 +1169,7 @@ def integrate_multi_format_data():
     }
 ```
 
-This comprehensive API reference covers all LocalData MCP v1.3.1 tools and their enhanced capabilities. The new streaming architecture, intelligent buffering, and rich metadata provide powerful capabilities for handling datasets of any size while maintaining optimal performance and user experience.
+This comprehensive API reference covers all LocalData MCP v1.7.0 tools and their enhanced capabilities. The new streaming architecture, intelligent buffering, and rich metadata provide powerful capabilities for handling datasets of any size while maintaining optimal performance and user experience.
 
 For additional information:
 - [Architecture Guide](ARCHITECTURE.md) - System design and components
