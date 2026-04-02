@@ -242,7 +242,7 @@ class PatternEvaluationResult:
         }
 
 
-class ClusteringTransformer(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
+class ClusteringTransformer(AnalysisPipelineBase):
     """Advanced clustering transformer with multiple algorithms and automatic parameter selection."""
     
     def __init__(self, 
@@ -533,7 +533,7 @@ class ClusteringTransformer(BaseEstimator, TransformerMixin, AnalysisPipelineBas
         )
 
 
-class DimensionalityReductionTransformer(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
+class DimensionalityReductionTransformer(AnalysisPipelineBase):
     """Advanced dimensionality reduction transformer with multiple algorithms."""
     
     def __init__(self, 
@@ -756,7 +756,7 @@ class DimensionalityReductionTransformer(BaseEstimator, TransformerMixin, Analys
         )
 
 
-class AnomalyDetectionTransformer(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
+class AnomalyDetectionTransformer(AnalysisPipelineBase):
     """Advanced anomaly detection transformer with multiple algorithms."""
     
     def __init__(self, 
@@ -1043,7 +1043,7 @@ class AnomalyDetectionTransformer(BaseEstimator, TransformerMixin, AnalysisPipel
         )
 
 
-class PatternEvaluationTransformer(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
+class PatternEvaluationTransformer(AnalysisPipelineBase):
     """Pattern evaluation and quality assessment transformer."""
     
     def __init__(self, evaluation_type: str = 'clustering'):

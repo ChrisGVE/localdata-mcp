@@ -112,7 +112,7 @@ class AssignmentResult(OptimizationResult):
     is_perfect_matching: bool = True
 
 
-class LinearProgrammingSolver(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
+class LinearProgrammingSolver(AnalysisPipelineBase):
     """
     Linear Programming Solver with simplex method, dual analysis, and integer programming.
     
@@ -373,7 +373,7 @@ class LinearProgrammingSolver(BaseEstimator, TransformerMixin, AnalysisPipelineB
         return sensitivity
 
 
-class ConstrainedOptimizer(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
+class ConstrainedOptimizer(AnalysisPipelineBase):
     """
     General constrained optimization solver with support for various constraint types
     and multi-objective optimization.
@@ -592,7 +592,7 @@ class ConstrainedOptimizer(BaseEstimator, TransformerMixin, AnalysisPipelineBase
         return np.array(violations)
 
 
-class NetworkAnalyzer(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
+class NetworkAnalyzer(AnalysisPipelineBase):
     """
     Network optimization and analysis using NetworkX for graph algorithms.
     
@@ -888,7 +888,7 @@ class NetworkAnalyzer(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
         return centrality
 
 
-class AssignmentSolver(BaseEstimator, TransformerMixin, AnalysisPipelineBase):
+class AssignmentSolver(AnalysisPipelineBase):
     """
     Assignment and scheduling problem solver using various optimization techniques.
     
