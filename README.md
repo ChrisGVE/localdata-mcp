@@ -15,49 +15,9 @@
 ![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
 ![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
 
-**A comprehensive MCP server for databases, spreadsheets, structured data files, and directed graphs with security features, performance optimization, and extensive format support.**
+**A comprehensive MCP server for databases, spreadsheets, structured data files, and directed graphs. Connects LLM agents to 13 database types, 20+ file formats, and RDF/SPARQL endpoints with streaming query execution, memory-bounded operations, and enterprise-scale support.**
 
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
-
-## What's New in v1.5.x
-
-### Graph Storage for Directed Graphs
-
-DOT, GML, GraphML, and Mermaid files are stored as directed multigraphs backed by SQLite. Nodes and edges carry typed metadata properties, and the full graph is available for algorithmic analysis via NetworkX.
-
-### 14 Graph Tools
-
-| Tool | Purpose |
-|------|---------|
-| `set_node` | Create or update a graph node |
-| `delete_node` | Remove a node and cascade edges/properties |
-| `get_node` | Inspect a node and its properties |
-| `add_edge` | Create an edge (auto-creates endpoints) |
-| `remove_edge` | Remove an edge by source/target/label |
-| `get_edges` | List edges for a node |
-| `get_neighbors` | List adjacent nodes by direction |
-| `get_value` | Read a property from a node |
-| `set_value` | Set a typed property on a node |
-| `delete_key` | Remove a property |
-| `list_keys` | List properties on a node |
-| `find_path` | Shortest or all-paths between two nodes |
-| `get_graph_stats` | Node/edge counts, density, DAG check, degree stats |
-| `export_graph` | Export as DOT, GML, GraphML, or Mermaid |
-
-### Graph Validation Warnings
-
-Import and edit operations automatically check for 13 categories of issues:
-
-- **Structural**: self-loops, duplicate edges, orphan nodes, missing edge labels, cycles, disconnected components
-- **Semantic**: contradictory edges (A→B and B→A with same label), conflicting parallel labels on the same pair
-- **Property**: duplicate node ID casing, missing common properties, near-duplicate labels (fuzzy matching)
-- **DAG-specific**: redundant transitive edges, diamond ambiguity (unintended polyhierarchy)
-
-Warnings are returned in the `"warnings"` key of tool responses. Expensive checks (cycle detection, transitive reduction) are skipped automatically for graphs exceeding 10,000 nodes.
-
-### Metadata-Preserving Export
-
-Graph exports (GraphML, GML, DOT) now include all node and edge metadata properties, not just labels and weights.
 
 ## Table of Contents
 
@@ -78,33 +38,33 @@ Graph exports (GraphML, GML, DOT) now include all node and edge metadata propert
 
 ### **Multi-Database Support**
 
-- **SQL Databases**: PostgreSQL, MySQL, SQLite, DuckDB
-- **Modern Databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j, CouchDB
+- **SQL Databases**: PostgreSQL, MySQL, SQLite, DuckDB, Oracle, MS SQL Server
+- **NoSQL Databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j, CouchDB
+- **RDF/SPARQL**: Turtle, N-Triples files and remote SPARQL endpoints
 - **Spreadsheets**: Excel (.xlsx/.xls), LibreOffice Calc (.ods), Apple Numbers (.numbers)
 - **Structured Files**: CSV, TSV, JSON, YAML, TOML, XML, INI
 - **Graph Files**: DOT (Graphviz), GML, GraphML, Mermaid flowcharts
 - **Analytical Formats**: Parquet, Feather, Arrow, HDF5
 
-### **Advanced Security**
+### **Streaming Query Execution**
 
-- **Path Security**: Restricts file access to current working directory only
-- **SQL Injection Prevention**: Parameterized queries and safe table identifiers
+- **Memory-Bounded**: All queries execute within configurable memory limits (default 2GB)
+- **Automatic Streaming**: Large result sets stream in chunks with pagination
+- **Pre-Query Analysis**: Resource estimation before execution to prevent crashes
+- **Preflight Mode**: EXPLAIN-based cost analysis without executing the query
+
+### **Security**
+
+- **Path Restriction**: File access confined to the current working directory
+- **SQL Validation**: Only SELECT and CTE queries allowed; injection prevention
 - **Connection Limits**: Maximum 10 concurrent database connections
-- **Input Validation**: Comprehensive validation and sanitization
+- **Query Audit**: Full query and error logging for compliance
 
-### **Large Dataset Handling**
+### **40 MCP Tools**
 
-- **Query Buffering**: Automatic buffering for results with 100+ rows
-- **Large File Support**: 100MB+ files automatically use temporary SQLite storage
-- **Chunk Retrieval**: Paginated access to large result sets
-- **Auto-Cleanup**: 10-minute expiry with file modification detection
-
-### **Developer Experience**
-
-- **Clean Tool Surface**: Core database tools, 9 tree tools, and 14 graph tools
-- **Error Handling**: Detailed, actionable error messages
-- **Thread Safety**: Concurrent operation support
-- **Backward Compatible**: All existing APIs preserved
+- 8 core database tools, 9 tree tools, 14 graph tools
+- 9 streaming and memory management tools
+- Schema export, data quality reports, regex search, and data transformation
 
 ## Quick Start
 
@@ -145,40 +105,22 @@ Add to your MCP client configuration:
 #### Connect to Databases
 
 ```python
-# PostgreSQL
+# SQL databases
 connect_database("analytics", "postgresql", "postgresql://user:pass@localhost/db")
-
-# SQLite
 connect_database("local", "sqlite", "./data.sqlite")
+connect_database("erp", "oracle", "oracle+oracledb://user:pass@host:1521/?service_name=ORCL")
+connect_database("warehouse", "mssql", "mssql+pymssql://sa:pass@host:1433/master")
 
-# CSV Files
+# NoSQL databases
+connect_database("docs", "mongodb", "mongodb://localhost:27017/mydb")
+connect_database("cache", "redis", "redis://localhost:6379/0")
+connect_database("search", "elasticsearch", "http://localhost:9200")
+
+# Files — CSV, Excel, Parquet, JSON, YAML, TOML, XML, INI, and more
 connect_database("csvdata", "csv", "./data.csv")
-
-# JSON Files
-connect_database("config", "json", "./config.json")
-
-# Excel Spreadsheets (all sheets)
 connect_database("sales", "xlsx", "./sales_data.xlsx")
-
-# Excel with specific sheet
-connect_database("q1data", "xlsx", "./quarterly.xlsx?sheet=Q1_Sales")
-
-# LibreOffice Calc
-connect_database("budget", "ods", "./budget_2024.ods")
-
-# Tab-separated values
-connect_database("exports", "tsv", "./export_data.tsv")
-
-# XML structured data
-connect_database("config_xml", "xml", "./config.xml")
-
-# INI configuration files
-connect_database("settings", "ini", "./app.ini")
-
-# Analytical formats
 connect_database("analytics", "parquet", "./data.parquet")
-connect_database("features", "feather", "./features.feather")
-connect_database("vectors", "arrow", "./vectors.arrow")
+connect_database("config", "toml", "./config.toml")
 ```
 
 #### Work with Structured Files (TOML, JSON, YAML)
@@ -205,40 +147,59 @@ export_structured("cfg", "json")         # Convert to JSON
 #### Query Data
 
 ```python
-# Execute queries with automatic result formatting
+# Execute queries — large results automatically stream in chunks
 execute_query("analytics", "SELECT * FROM users LIMIT 50")
 
-# Large result sets use buffering automatically
-execute_query_json("analytics", "SELECT * FROM large_table")
-```
+# Pre-flight analysis without executing
+execute_query("analytics", "SELECT * FROM large_table", preflight=True)
 
-#### Handle Large Results
+# Retrieve subsequent chunks using query_id from the response metadata
+next_chunk(query_id="analytics_1712345678_a1b2", start_row=101, chunk_size="500")
 
-```python
-# Get chunked results for large datasets
-get_query_chunk("analytics_1640995200_a1b2", 101, "100")
-
-# Check buffer status
-get_buffered_query_info("analytics_1640995200_a1b2")
-
-# Manual cleanup
-clear_query_buffer("analytics_1640995200_a1b2")
+# Check streaming status and memory usage
+get_streaming_status()
+manage_memory_bounds()
 ```
 
 ## Available Tools
 
 ### Core Database Tools
 
-| Tool                 | Description                              | Use Case         |
-| -------------------- | ---------------------------------------- | ---------------- |
-| `connect_database`   | Connect to databases/files               | Initial setup    |
-| `disconnect_database`| Close connections                        | Cleanup          |
-| `list_databases`     | Show active connections                  | Status check     |
-| `execute_query`      | Run SQL with automatic chunking          | All query needs  |
-| `next_chunk`         | Get next chunk of large result sets     | Large data       |
-| `describe_database`  | Show database schema                     | Exploration      |
-| `describe_table`     | Show table structure                     | Analysis         |
-| `find_table`         | Locate tables by name                    | Navigation       |
+| Tool                 | Description                                    |
+| -------------------- | ---------------------------------------------- |
+| `connect_database`   | Connect to a database, file, or SPARQL endpoint |
+| `disconnect_database`| Close a connection                             |
+| `list_databases`     | List active connections                        |
+| `execute_query`      | Run SQL with streaming, chunking, and preflight |
+| `next_chunk`         | Retrieve the next chunk of a streamed result   |
+| `describe_database`  | Show database schema and table list            |
+| `describe_table`     | Show column types, indexes, row count          |
+| `find_table`         | Locate a table across all connections          |
+| `export_schema`      | Export full schema as JSON                     |
+
+### Streaming and Memory Tools
+
+| Tool                       | Description                                     |
+| -------------------------- | ----------------------------------------------- |
+| `analyze_query_preview`    | Pre-query cost and resource estimation          |
+| `manage_memory_bounds`     | View and configure memory limits                |
+| `get_streaming_status`     | Check active streams and buffer usage           |
+| `clear_streaming_buffer`   | Free memory by clearing a specific buffer       |
+| `get_query_metadata`       | Rich metadata for a completed query             |
+| `request_data_chunk`       | Request a specific chunk by row range           |
+| `request_multiple_chunks`  | Batch-request multiple chunks at once           |
+| `cancel_query_operation`   | Cancel a running or buffered query              |
+| `get_data_quality_report`  | Column stats, nulls, and data quality metrics   |
+| `check_compatibility`      | Check API backward compatibility                |
+
+### Query Audit Tools
+
+| Tool                 | Description                                    |
+| -------------------- | ---------------------------------------------- |
+| `get_query_log`      | View recent query execution history            |
+| `get_error_log`      | View recent error log                          |
+| `search_data`        | Regex search across query results              |
+| `transform_data`     | Apply transformations to query results         |
 
 ### Tree Tools (TOML, JSON, YAML)
 
@@ -326,8 +287,10 @@ connect_database("g", "dot", "./messy_graph.dot")
 - **MySQL**: Complete MySQL/MariaDB compatibility
 - **SQLite**: Local file and in-memory databases
 - **DuckDB**: High-performance analytical SQL database
+- **Oracle**: Enterprise support via oracledb thin mode (`pip install localdata-mcp[enterprise]`)
+- **MS SQL Server**: Enterprise support via pymssql (`pip install localdata-mcp[enterprise]`)
 
-### Modern Databases
+### NoSQL Databases
 
 - **MongoDB**: Document store with collection queries and aggregation
 - **Redis**: High-performance key-value store
@@ -335,6 +298,12 @@ connect_database("g", "dot", "./messy_graph.dot")
 - **InfluxDB**: Time-series database for metrics and IoT data
 - **Neo4j**: Graph database for relationship queries
 - **CouchDB**: Document-oriented database with HTTP API
+
+### RDF and SPARQL
+
+- **Turtle (.ttl)**: RDF file format with SPARQL query support
+- **N-Triples (.nt)**: Line-based RDF format
+- **SPARQL Endpoints**: Connect to remote RDF stores (Wikidata, DBpedia, etc.)
 
 ### Structured Files
 
@@ -424,36 +393,11 @@ describe_table("mydb", "users; DROP TABLE users; --")
 
 ## Testing & Quality
 
-**Comprehensive Test Coverage**
-
-- 68% test coverage with 500+ test cases
-- Import error handling and graceful degradation
-- Security vulnerability testing
-- Performance benchmarking with large datasets
-- Modern database connection testing
-
-**Security Validated**
-
-- Path traversal prevention
-- SQL injection protection
-- Resource exhaustion testing
-- Malicious input handling
-
-**Performance Tested**
-
-- Large file processing
-- Concurrent connection handling
-- Memory usage optimization
-- Query response times
-
-## API Compatibility
-
-All existing MCP tool signatures remain **100% backward compatible**. New functionality is additive only:
-
-- All original tools work unchanged
-- Enhanced responses with additional metadata
-- New buffering tools for large datasets
-- Improved error messages and validation
+- **1,600+ unit tests** covering all tools, security, and edge cases
+- **234+ integration tests** for SQL, NoSQL, file format, and graph connections
+- **62 enterprise-scale tests** across 7 database types with 100K rows each (PostgreSQL, MySQL, MSSQL, Oracle, SQLite, MongoDB, Elasticsearch)
+- Security testing: path traversal, SQL injection, resource exhaustion
+- Streaming and memory-bounds validation under load
 
 ## Examples
 
@@ -476,14 +420,18 @@ execute_query("sales", "SELECT product, SUM(amount) FROM orders GROUP BY product
 ### Large Dataset Processing
 
 ```python
-# Connect to large CSV
+# Connect to large CSV (100MB+ files use temporary SQLite storage)
 connect_database("bigdata", "csv", "./million_records.csv")
 
-# Query returns buffer info for large results
-result = execute_query_json("bigdata", "SELECT * FROM data WHERE category = 'A'")
+# Check estimated cost before running
+execute_query("bigdata", "SELECT * FROM data WHERE category = 'A'", preflight=True)
 
-# Access results in chunks
-chunk = get_query_chunk("bigdata_1640995200_a1b2", 1, "1000")
+# Execute — large results stream automatically
+result = execute_query("bigdata", "SELECT * FROM data WHERE category = 'A'")
+# result.metadata contains query_id, total_rows, streaming status
+
+# Retrieve additional chunks
+next_chunk(query_id="bigdata_1712345678_a1b2", start_row=201, chunk_size="500")
 ```
 
 ### Multi-Database Analysis
@@ -494,9 +442,12 @@ connect_database("postgres", "postgresql", "postgresql://localhost/prod")
 connect_database("config", "yaml", "./config.yaml")
 connect_database("logs", "json", "./logs.json")
 
-# Query across sources (in application logic)
-user_data = execute_query("postgres", "SELECT * FROM users")
-config = read_text_file("./config.yaml", "yaml")
+# Query SQL databases
+execute_query("postgres", "SELECT * FROM users")
+
+# Navigate structured files as trees
+get_node("config", "database.settings")
+get_value("config", "database.settings", "host")
 ```
 
 ### Multi-Sheet Spreadsheet Handling
@@ -544,8 +495,8 @@ connect_database("workbook", "xlsx", "./data.xlsx")
 # List all available tables (sheets)
 describe_database("workbook")
 
-# Get sample data from specific sheet
-get_table_sample("workbook", "Sheet1")
+# Query a specific sheet
+execute_query("workbook", "SELECT * FROM Sheet1 LIMIT 10")
 ```
 
 
@@ -553,35 +504,46 @@ get_table_sample("workbook", "Sheet1")
 
 For comprehensive troubleshooting guidance, see [Troubleshooting Guide](TROUBLESHOOTING.md). For common questions, check the [FAQ](FAQ.md).
 
-## Roadmap
+## Release History
 
-### Completed (v1.5.x)
+### v1.7.0 (Current)
 
-- **Graph Storage**: DOT, GML, GraphML, and Mermaid files stored as directed multigraphs
-- **14 Graph Tools**: Node/edge CRUD, path finding, graph statistics, multi-format export
-- **Graph Validation**: 13 automated checks for structural, semantic, property, and DAG issues
-- **Metadata-Preserving Export**: Graph exports include all node/edge properties
-- **Mermaid Round-Trip**: Parse and export Mermaid flowcharts with subgraphs
+- **Enterprise Database Support**: Oracle (oracledb thin mode) and MS SQL Server (pymssql)
+- **Enterprise-Scale Testing**: 62 tests across 7 databases with 100K rows each
+- **RDF/SPARQL Support**: Turtle, N-Triples files and remote SPARQL endpoints
+- **Pydantic v2 Migration**: Configuration system updated to Pydantic v2
 
-### Completed (v1.4.0)
+### v1.6.0
 
-- **Tree Storage**: TOML, JSON, YAML stored as navigable trees with full CRUD
-- **9 Tree Tools**: get_node, get_children, set_node, delete_node, list_keys, get_value, set_value, delete_key, export_structured
-- **Format Conversion**: Export between TOML, JSON, and YAML
-- **Connection Summaries**: Schema/tree overview returned on connect
-- **FastMCP v3**: Updated tool registration for latest fastmcp
+- **Streaming Query Executor**: Memory-bounded query execution with automatic chunking
+- **Pre-Query Analysis**: Cost estimation via `analyze_query_preview` and `preflight` mode
+- **Query Audit Logging**: Full query and error logs with `get_query_log` / `get_error_log`
+- **Data Quality Reports**: Column statistics and null analysis via `get_data_quality_report`
+- **Schema Export**: Full schema export as JSON via `export_schema`
+- **Regex Search and Transform**: `search_data` and `transform_data` tools
+- **Backward Compatibility Manager**: API version checking via `check_compatibility`
 
-### Completed (v1.3.x)
+### v1.5.0
 
-- **Memory-Safe Streaming**: Chunked query execution with configurable limits
-- **Pre-Query Analysis**: Resource estimation before execution
+- **Graph Storage**: DOT, GML, GraphML, and Mermaid files as directed multigraphs
+- **14 Graph Tools**: Node/edge CRUD, path finding, statistics, multi-format export
+- **Graph Validation**: 13 automated checks for structural, semantic, and DAG issues
+
+### v1.4.0
+
+- **Tree Storage**: TOML, JSON, YAML as navigable trees with full CRUD
+- **9 Tree Tools**: Navigation, property management, format conversion
+- **FastMCP v3**: Updated tool registration
+
+### v1.3.0
+
 - **Structured Logging**: JSON logging with Prometheus metrics
+- **Timeout System**: Configurable query timeouts with monitoring
 
-### Completed (v1.1.0)
+### v1.1.0
 
-- **Spreadsheet Formats**: Excel (.xlsx/.xls), LibreOffice Calc (.ods) with full multi-sheet support
-- **Enhanced File Formats**: XML, INI, TSV support
-- **Analytical Formats**: Parquet, Feather, Arrow support
+- **Spreadsheet Formats**: Excel, LibreOffice Calc, Apple Numbers
+- **Analytical Formats**: Parquet, Feather, Arrow, HDF5
 
 ## Contributing
 
@@ -592,10 +554,8 @@ Contributions welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md
 ```bash
 git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -e ".[dev]"
-pytest
+uv sync --all-extras
+uv run pytest
 ```
 
 ## License
@@ -613,8 +573,4 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Tags
 
-`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `mongodb` `spreadsheet` `excel` `xlsx` `ods` `csv` `tsv` `json` `yaml` `toml` `xml` `ini` `parquet` `feather` `arrow` `graph` `graphml` `dot` `gml` `mermaid` `ai` `machine-learning` `data-integration` `python` `security` `performance`
-
----
-
-**Made with care for the MCP Community**
+`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `oracle` `mssql` `mongodb` `redis` `elasticsearch` `sparql` `rdf` `spreadsheet` `excel` `csv` `json` `yaml` `toml` `parquet` `graph` `graphml` `dot` `mermaid` `streaming` `data-science` `python`
