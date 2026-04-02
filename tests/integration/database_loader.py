@@ -167,8 +167,9 @@ def _load_sql(db_type: str, df: pd.DataFrame, table_name: str) -> int:
             import oracledb  # noqa: F401
         except ImportError as exc:
             raise ImportError("oracledb is required for Oracle loading") from exc
-        dsn = _env("oracle", "dsn", "localhost:11521/FREEPDB1")
-        uri = f"oracle+oracledb://{info['user']}:{info['password']}@{dsn}"
+        host = _env("oracle", "host", "localhost")
+        port = _env("oracle", "port", "11521")
+        uri = f"oracle+oracledb://{info['user']}:{info['password']}@{host}:{port}/?service_name=FREEPDB1"
     else:
         uri = info["uri"]
 
@@ -198,7 +199,7 @@ def _load_sql(db_type: str, df: pd.DataFrame, table_name: str) -> int:
     # SQLite has a 999 bind-variable limit, MSSQL has ~2100.
     # With 19 columns, max rows per multi-INSERT: SQLite ~52, MSSQL ~110.
     # Use executemany (method=None) for these; multi for MySQL/Oracle.
-    if db_type in ("sqlite", "mssql"):
+    if db_type in ("sqlite", "mssql", "oracle"):
         chunk = 50_000
         method = None  # default executemany — no bind-variable limit
     else:
@@ -631,8 +632,9 @@ def cleanup_dataset(db_type: str, table_name: str = "taxi_trips") -> None:
             if uri is None:
                 return
         elif db_type == "oracle":
-            dsn = _env("oracle", "dsn", "localhost:11521/FREEPDB1")
-            uri = f"oracle+oracledb://{info['user']}:{info['password']}@{dsn}"
+            host = _env("oracle", "host", "localhost")
+            port = _env("oracle", "port", "11521")
+            uri = f"oracle+oracledb://{info['user']}:{info['password']}@{host}:{port}/?service_name=FREEPDB1"
         else:
             uri = info["uri"]
         engine = sqlalchemy.create_engine(uri)

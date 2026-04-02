@@ -37,8 +37,9 @@ def _conn_string(db_type: str) -> str:
     """Return the MCP-compatible connection string for a database type."""
     info = get_connection_info(db_type)
     if db_type == "oracle":
-        dsn = info.get("dsn", "localhost:11521/FREEPDB1")
-        return f"oracle+oracledb://{info['user']}:{info['password']}@{dsn}"
+        host = info.get("host", "localhost")
+        port = info.get("port", "11521")
+        return f"oracle+oracledb://{info['user']}:{info['password']}@{host}:{port}/?service_name=FREEPDB1"
     if db_type == "sqlite":
         return info.get("path", "")
     return info.get("uri", "")
@@ -310,7 +311,11 @@ class TestQueryMetadata:
             "execute_query",
             {
                 "name": conn_name,
-                "query": "SELECT * FROM taxi_trips WHERE vendorid = 1 LIMIT 500",
+                "query": (
+                    "SELECT * FROM taxi_trips WHERE vendorid = 1 FETCH FIRST 500 ROWS ONLY"
+                    if db_type == "oracle"
+                    else "SELECT * FROM taxi_trips WHERE vendorid = 1 LIMIT 500"
+                ),
             },
         )
         assert isinstance(qr, dict)
