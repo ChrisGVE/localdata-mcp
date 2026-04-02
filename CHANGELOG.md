@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- sphinx-start -->
 
+## [1.7.1] - 2026-04-02
+
+### Added
+- Enterprise-scale integration testing with NYC Taxi dataset (100K rows per database)
+- 62 enterprise tests across 7 databases: PostgreSQL, MySQL, MSSQL, Oracle, SQLite, MongoDB, Elasticsearch
+- Oracle integration tests via oracledb thin mode (no Oracle Client required)
+- Automated integration test runner (`scripts/run_integration_tests.py`) with Docker lifecycle management
+- Public dataset download script (`scripts/download_test_datasets.py`) for NYC Taxi, Ames Housing, World Bank
+- Test fixture file generator (`scripts/generate_test_files.py`) for all supported formats
+- InfluxDB, Neo4j, CouchDB integration test suites and Docker services
+
+### Fixed
+- Pydantic v1 to v2 migration for configuration validators
+- Oracle SQLAlchemy connection string: use `?service_name=` format for thin mode
+- MSSQL bulk loader: switch to executemany (2100 parameter limit prevents multi-row INSERT)
+- Oracle bulk loader: switch to executemany (multi-row INSERT VALUES not supported)
+- Enterprise parquet reader: stream via `iter_batches` to avoid loading 9.5M rows into memory
+- Enterprise fixture: read dataset once and pass to all database loaders
+- Various test assertion fixes for MCP response shapes, timeout manager mocks, security event fields
+
+### Changed
+- README updated: added Oracle, MSSQL, RDF/SPARQL to supported databases; documented 18 missing tools; removed 6 dead tool references; updated test stats and examples
+- Version references updated from v1.3.1 to v1.7.0 across API_REFERENCE.md, ARCHITECTURE.md, CONFIGURATION.md, ADVANCED_EXAMPLES.md
+- Test count: 1,621 unit tests + 234 integration tests + 62 enterprise tests
+
 ## [1.7.0] - 2026-03-28
 
 ### Added
