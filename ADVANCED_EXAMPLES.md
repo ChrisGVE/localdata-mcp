@@ -1229,18 +1229,18 @@ if __name__ == "__main__":
 
 This advanced examples document showcases the sophisticated capabilities of LocalData MCP and provides practical patterns for real-world usage. Each example demonstrates production-ready approaches to common data integration challenges.
 
-## v1.3.1 Memory-Safe Architecture Examples
+## v1.7.0 Memory-Safe Architecture Examples
 
 ### Intelligent Query Analysis and Buffering
 
-LocalData MCP v1.3.1 introduces intelligent pre-query analysis that automatically determines the optimal execution strategy based on query complexity and expected data size.
+LocalData MCP v1.7.0 introduces intelligent pre-query analysis that automatically determines the optimal execution strategy based on query complexity and expected data size.
 
 ```python
-# Example: Leveraging v1.3.1 Intelligent Query Analysis
+# Example: Leveraging v1.7.0 Intelligent Query Analysis
 # The system automatically analyzes queries before execution
 
 def demonstrate_intelligent_analysis():
-    """Show v1.3.1's intelligent query analysis in action"""
+    """Show v1.7.0's intelligent query analysis in action"""
     
     connect_database("analytics", "postgresql", "postgresql://analytics-db/warehouse")
     
@@ -1298,7 +1298,7 @@ def demonstrate_intelligent_analysis():
 
 # Advanced buffering patterns for large datasets
 def advanced_buffering_patterns():
-    """Demonstrate advanced patterns with v1.3.1 buffering system"""
+    """Demonstrate advanced patterns with v1.7.0 buffering system"""
     
     connect_database("warehouse", "postgresql", "postgresql://warehouse-db/data")
     
@@ -1397,14 +1397,14 @@ def analyze_customer_segment(customers):
 
 ### YAML Configuration Management Examples
 
-LocalData MCP v1.3.1 introduces powerful YAML configuration capabilities for complex multi-database environments.
+LocalData MCP v1.7.0 introduces powerful YAML configuration capabilities for complex multi-database environments.
 
 ```python
 # Example: Advanced YAML Configuration Patterns
 # Create sophisticated configuration files for different environments
 
 def setup_multi_environment_config():
-    """Demonstrate v1.3.1 YAML configuration capabilities"""
+    """Demonstrate v1.7.0 YAML configuration capabilities"""
     
     # Example production configuration
     production_config = """
@@ -1560,7 +1560,7 @@ environments:
     print("✅ Ready for production deployment with advanced configuration")
 
 def demonstrate_hot_configuration_reload():
-    """Show v1.3.1 hot configuration reload capabilities"""
+    """Show v1.7.0 hot configuration reload capabilities"""
     
     # Initial configuration
     initial_config = """
@@ -1605,11 +1605,11 @@ performance:
 ### Enhanced Error Handling and Recovery
 
 ```python
-# Example: v1.3.1 Enhanced Error Handling Patterns
+# Example: v1.7.0 Enhanced Error Handling Patterns
 # Leverage improved error messages and recovery mechanisms
 
 def demonstrate_enhanced_error_handling():
-    """Show v1.3.1's enhanced error handling and recovery"""
+    """Show v1.7.0's enhanced error handling and recovery"""
     
     def robust_connection_with_fallback():
         """Demonstrate connection with fallback strategy"""
@@ -1647,7 +1647,7 @@ def demonstrate_enhanced_error_handling():
             except Exception as e:
                 print(f"❌ Failed to connect to {config['name']}: {e}")
                 
-                # v1.3.1 provides detailed error information
+                # v1.7.0 provides detailed error information
                 if hasattr(e, 'error_details'):
                     print(f"   Error details: {e.error_details}")
                     print(f"   Suggestions: {e.suggestions}")
@@ -1661,7 +1661,7 @@ def demonstrate_enhanced_error_handling():
         return connected_db
     
     def intelligent_query_retry():
-        """Demonstrate intelligent query retry with v1.3.1 metadata"""
+        """Demonstrate intelligent query retry with v1.7.0 metadata"""
         
         db_name = robust_connection_with_fallback()
         
@@ -1735,7 +1735,7 @@ def demonstrate_enhanced_error_handling():
             except Exception as e:
                 print(f"❌ Failed {strategy['description']}: {e}")
                 
-                # v1.3.1 enhanced error analysis
+                # v1.7.0 enhanced error analysis
                 if hasattr(e, 'error_code'):
                     if e.error_code == 'memory_limit_exceeded':
                         print("   → Memory limit hit, trying simpler query")
@@ -1761,7 +1761,7 @@ def demonstrate_enhanced_error_handling():
         print(f"❌ All strategies failed: {e}")
 ```
 
-This enhanced examples document demonstrates the powerful new capabilities in LocalData MCP v1.3.1, including intelligent query analysis, sophisticated YAML configuration management, and enhanced error handling with detailed diagnostic information. These patterns enable robust, production-ready data processing workflows that can handle any scale of data while maintaining optimal performance and reliability.
+This enhanced examples document demonstrates the powerful new capabilities in LocalData MCP v1.7.0, including intelligent query analysis, sophisticated YAML configuration management, and enhanced error handling with detailed diagnostic information. These patterns enable robust, production-ready data processing workflows that can handle any scale of data while maintaining optimal performance and reliability.
 
 <function_calls>
 <invoke name="TodoWrite">

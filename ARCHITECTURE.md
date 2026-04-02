@@ -1,8 +1,8 @@
-# LocalData MCP Architecture v1.3.1
+# LocalData MCP Architecture v1.7.0
 
 ## Overview
 
-LocalData MCP v1.3.1 introduces a fundamentally new architecture designed around **memory-safe, streaming-first principles**. This document explains the core architectural decisions, component interactions, and design patterns that enable predictable performance with datasets of any size.
+LocalData MCP v1.7.0 introduces a fundamentally new architecture designed around **memory-safe, streaming-first principles**. This document explains the core architectural decisions, component interactions, and design patterns that enable predictable performance with datasets of any size.
 
 ## Table of Contents
 
@@ -1005,7 +1005,7 @@ localdata_query_duration_seconds_bucket{{le="+Inf"}} {len(self.metrics['query_du
 """
 ```
 
-This architecture documentation provides a comprehensive overview of LocalData MCP v1.3.1's design principles and implementation details. The streaming-first, memory-bounded approach ensures predictable performance regardless of dataset size while maintaining security and providing rich development experiences.
+This architecture documentation provides a comprehensive overview of LocalData MCP v1.7.0's design principles and implementation details. The streaming-first, memory-bounded approach ensures predictable performance regardless of dataset size while maintaining security and providing rich development experiences.
 
 For specific implementation examples and usage patterns, see:
 - [Configuration Guide](CONFIGURATION.md) - Detailed configuration options

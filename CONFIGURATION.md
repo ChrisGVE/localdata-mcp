@@ -2,7 +2,7 @@
 
 ## Overview
 
-LocalData MCP v1.3.1 introduces a powerful dual configuration system that supports both simple environment variables for basic setups and comprehensive YAML configuration files for complex multi-database environments. This guide covers all configuration options, best practices, and advanced scenarios.
+LocalData MCP v1.7.0 introduces a powerful dual configuration system that supports both simple environment variables for basic setups and comprehensive YAML configuration files for complex multi-database environments. This guide covers all configuration options, best practices, and advanced scenarios.
 
 ## Table of Contents
 
@@ -55,7 +55,7 @@ This allows for flexible configuration management across different environments 
 # Simple connection string (legacy)
 POSTGRES_URL=postgresql://user:password@host:port/database
 
-# Granular configuration (v1.3.1+)
+# Granular configuration (v1.7.0+)
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_USER=username
@@ -71,7 +71,7 @@ POSTGRES_POOL_SIZE=5
 # Simple connection string (legacy)
 MYSQL_URL=mysql://user:password@host:port/database
 
-# Granular configuration (v1.3.1+)
+# Granular configuration (v1.7.0+)
 MYSQL_HOST=localhost
 MYSQL_PORT=3306
 MYSQL_USER=username
@@ -87,7 +87,7 @@ MYSQL_CHARSET=utf8mb4
 # Simple connection string (legacy)
 MONGODB_URL=mongodb://user:password@host:port/database
 
-# Granular configuration (v1.3.1+)
+# Granular configuration (v1.7.0+)
 MONGODB_HOST=localhost
 MONGODB_PORT=27017
 MONGODB_USER=username
@@ -102,7 +102,7 @@ MONGODB_TIMEOUT=30
 # Simple connection string (legacy)
 REDIS_URL=redis://password@host:port/database
 
-# Granular configuration (v1.3.1+)
+# Granular configuration (v1.7.0+)
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PASSWORD=password
@@ -755,7 +755,7 @@ security:
 
 ## Hot Configuration Reload
 
-LocalData MCP v1.3.1 supports hot configuration reload for most settings (database connections require restart).
+LocalData MCP v1.7.0 supports hot configuration reload for most settings (database connections require restart).
 
 ### Enabling Hot Reload
 
@@ -1163,7 +1163,7 @@ monitoring:
   alert_webhook_url: ${ALERT_WEBHOOK}
 ```
 
-This comprehensive configuration guide covers all aspects of LocalData MCP v1.3.1 configuration. Use it as a reference for setting up environments from simple development setups to complex multi-tenant production deployments.
+This comprehensive configuration guide covers all aspects of LocalData MCP v1.7.0 configuration. Use it as a reference for setting up environments from simple development setups to complex multi-tenant production deployments.
 
 For additional help:
 - [Migration Guide](MIGRATION_GUIDE.md) - Upgrading from v1.3.0
