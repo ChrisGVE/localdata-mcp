@@ -464,7 +464,7 @@ class TestEnhancedABTest:
     def test_enhanced_ab_test_basic(self, sample_ab_test_data):
         """Test enhanced A/B test analysis."""
         with patch(
-            "localdata_mcp.domains.business_intelligence.run_hypothesis_test"
+            "localdata_mcp.domains.statistical_analysis.run_hypothesis_test"
         ) as mock_stat:
             mock_stat.return_value = {"p_value": 0.045, "statistic": 2.1}
 
