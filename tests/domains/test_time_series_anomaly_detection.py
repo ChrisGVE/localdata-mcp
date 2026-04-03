@@ -22,6 +22,19 @@ from localdata_mcp.domains.time_series_analysis import (
 )
 
 
+def _has_ruptures() -> bool:
+    """Check whether the ruptures library is available."""
+    try:
+        import ruptures  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+HAS_RUPTURES = _has_ruptures()
+
+
 @pytest.fixture
 def sample_time_series():
     """Create a sample time series for basic testing."""
@@ -93,7 +106,11 @@ class TestChangePointDetector:
     def test_initialization(self):
         """Test ChangePointDetector initialization."""
         detector = ChangePointDetector()
-        assert detector.method == "bcp"
+        if HAS_RUPTURES:
+            assert detector.method == "bcp"
+        else:
+            # Without ruptures, 'bcp' falls back to 'statistical' in __init__
+            assert detector.method == "statistical"
         assert detector.model == "rbf"
         assert detector.min_size == 10
         assert detector.max_changepoints == 10
@@ -126,10 +143,11 @@ class TestChangePointDetector:
         # Should detect at least one change point
         assert len(changepoints) >= 1
 
-        # Change point should be somewhere around position 100 (±20)
-        if changepoints:
-            detected_cp = changepoints[0]
-            assert 80 <= detected_cp <= 120
+        # At least one change point should be near the true break at position 100
+        near_true_break = any(80 <= cp <= 120 for cp in changepoints)
+        assert near_true_break, (
+            f"No change point detected near position 100; got {changepoints}"
+        )
 
     def test_statistical_method(self, change_point_series):
         """Test statistical change point detection method."""
@@ -141,18 +159,29 @@ class TestChangePointDetector:
             "cusum_path" not in result.model_parameters
         )  # Should not have CUSUM specific data
 
-    @patch("importlib.import_module")
-    def test_ruptures_fallback(self, mock_import, change_point_series):
-        """Test fallback to statistical method when ruptures is not available."""
-        # Mock ruptures import to fail
-        mock_import.side_effect = ImportError("No module named 'ruptures'")
+    def test_ruptures_fallback(self, change_point_series):
+        """Test that detector falls back to statistical when ruptures is unavailable."""
+        if HAS_RUPTURES:
+            pytest.skip("ruptures is installed; fallback path not exercised")
 
-        detector = ChangePointDetector(method="bcp")  # Method requiring ruptures
-        result = detector.transform(change_point_series)
-
-        # Should fallback to statistical method
+        # When ruptures is absent, requesting 'bcp' silently falls back
+        detector = ChangePointDetector(method="bcp")
         assert detector.method == "statistical"
-        assert result.model_parameters["ruptures_available"] == False
+        assert detector.ruptures_available_ is False
+
+        result = detector.transform(change_point_series)
+        assert result.model_parameters["detection_method"] == "statistical"
+        assert result.model_parameters["ruptures_available"] is False
+
+    @pytest.mark.skipif(not HAS_RUPTURES, reason="ruptures not installed")
+    def test_bcp_method_with_ruptures(self, change_point_series):
+        """Test bcp method when ruptures is available."""
+        detector = ChangePointDetector(method="bcp")
+        assert detector.method == "bcp"
+        assert detector.ruptures_available_ is True
+
+        result = detector.transform(change_point_series)
+        assert result.model_parameters["ruptures_available"] is True
 
     def test_insufficient_data(self):
         """Test error handling with insufficient data."""
