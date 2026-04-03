@@ -83,6 +83,7 @@ class BaseShimAdapter(ShimAdapter, BaseEstimator, TransformerMixin):
         
         # Internal state
         self._fitted = False
+        self._lifecycle_state = 'uninitialized'
         self._fit_metadata: Dict[str, Any] = {}
         self._conversion_cache: Dict[str, ConversionResult] = {}
         self._performance_stats: Dict[str, List[float]] = {}
@@ -94,6 +95,49 @@ class BaseShimAdapter(ShimAdapter, BaseEstimator, TransformerMixin):
                    adapter_id=adapter_id,
                    enable_caching=enable_caching,
                    enable_validation=enable_validation)
+    
+    def initialize(self) -> bool:
+        """
+        Initialize the adapter for use within lifecycle-managed components.
+        
+        Provides compatibility with the EnhancedShimAdapter lifecycle protocol
+        so that BaseShimAdapter subclasses (e.g., PandasConverter, NumpyConverter)
+        can be used as components within domain shims.
+        
+        Returns:
+            True (always succeeds for base adapters)
+        """
+        self._lifecycle_state = 'initialized'
+        logger.debug(f"BaseShimAdapter '{self.adapter_id}' initialized (lifecycle compat)")
+        return True
+    
+    def activate(self) -> bool:
+        """
+        Activate the adapter for processing within lifecycle-managed components.
+        
+        Provides compatibility with the EnhancedShimAdapter lifecycle protocol.
+        
+        Returns:
+            True (always succeeds for base adapters)
+        """
+        self._lifecycle_state = 'active'
+        logger.debug(f"BaseShimAdapter '{self.adapter_id}' activated (lifecycle compat)")
+        return True
+    
+    @property
+    def state(self):
+        """
+        Return current lifecycle state as an object with a value attribute.
+        
+        Provides compatibility with AdapterLifecycleState enum used in
+        EnhancedShimAdapter and domain shims.
+        """
+        class _State:
+            def __init__(self, value: str):
+                self.value = value
+            def __repr__(self):
+                return f'LifecycleState({self.value})'
+        return _State(self._lifecycle_state)
     
     def fit(self, X: Any, y: Optional[Any] = None) -> 'BaseShimAdapter':
         """
@@ -370,9 +414,11 @@ class BaseShimAdapter(ShimAdapter, BaseEstimator, TransformerMixin):
         }
         
         if isinstance(data, pd.DataFrame):
+            dtypes_dict = data.dtypes.to_dict()
             characteristics.update({
                 'shape': data.shape,
-                'dtypes': data.dtypes.to_dict(),
+                'dtypes': dtypes_dict,
+                'current_dtype': dtypes_dict,
                 'memory_usage': data.memory_usage(deep=True).sum(),
                 'null_counts': data.isnull().sum().to_dict()
             })
@@ -380,6 +426,7 @@ class BaseShimAdapter(ShimAdapter, BaseEstimator, TransformerMixin):
             characteristics.update({
                 'length': len(data),
                 'dtype': str(data.dtype),
+                'current_dtype': str(data.dtype),
                 'memory_usage': data.memory_usage(deep=True),
                 'null_count': data.isnull().sum()
             })
@@ -387,6 +434,7 @@ class BaseShimAdapter(ShimAdapter, BaseEstimator, TransformerMixin):
             characteristics.update({
                 'shape': data.shape,
                 'dtype': str(data.dtype),
+                'current_dtype': str(data.dtype),
                 'memory_usage': data.nbytes
             })
         
