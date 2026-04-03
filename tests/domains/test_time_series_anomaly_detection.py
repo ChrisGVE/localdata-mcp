@@ -9,6 +9,7 @@ SeasonalAnomalyDetector classes.
 import pytest
 import numpy as np
 import pandas as pd
+from unittest.mock import patch, MagicMock
 from localdata_mcp.domains.time_series_analysis import (
     ChangePointDetector,
     AnomalyDetector,
