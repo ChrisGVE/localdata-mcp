@@ -273,7 +273,8 @@ class LinearRegressionTransformer(BaseEstimator, TransformerMixin, RegressorMixi
             
             # Adjusted R²
             n_samples, n_features = X.shape
-            adjusted_r2 = 1 - (1 - r2) * (n_samples - 1) / (n_samples - n_features - 1)
+            denominator = n_samples - n_features - 1
+            adjusted_r2 = 1 - (1 - r2) * (n_samples - 1) / denominator if denominator > 0 else None
             
             # Statistical analysis using statsmodels for comprehensive metrics
             aic, bic, log_likelihood = None, None, None
@@ -1344,13 +1345,19 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
                 # Univariate selection
                 feature_scores = self.selector_.scores_
                 feature_importance = feature_scores[selected_mask]
-            elif hasattr(self.selector_, 'estimator_') and hasattr(self.selector_.estimator_, 'coef_'):
-                # Model-based selection - only include importance for selected features
-                feature_importance = np.abs(self.selector_.estimator_.coef_)[selected_mask]
             elif hasattr(self.selector_, 'ranking_'):
                 # RFE/RFECV - convert ranking to importance (inverse ranking)
                 max_rank = np.max(self.selector_.ranking_)
                 feature_importance = (max_rank - self.selector_.ranking_ + 1)[selected_mask]
+            elif hasattr(self.selector_, 'estimator_') and hasattr(self.selector_.estimator_, 'coef_'):
+                # Model-based selection (SelectFromModel)
+                # estimator_.coef_ has all features for SelectFromModel
+                coef = np.abs(self.selector_.estimator_.coef_)
+                if len(coef) == len(selected_mask):
+                    feature_importance = coef[selected_mask]
+                else:
+                    # Estimator was fitted on selected features only
+                    feature_importance = coef
             
             # Performance comparison
             comparison_results = {}
@@ -1443,7 +1450,7 @@ class RegressionModelingPipeline(AnalysisPipelineBase):
     
     def __init__(self, model_type='linear', preprocessing='auto', cross_validation=True,
                  residual_analysis=True, feature_selection=False, **kwargs):
-        super().__init__()
+        super().__init__(analytical_intention=f"{model_type} regression analysis")
         self.model_type = model_type
         self.preprocessing_level = preprocessing
         self.cross_validation = cross_validation
@@ -1538,14 +1545,14 @@ class RegressionModelingPipeline(AnalysisPipelineBase):
                 logger.info("Residual analysis completed")
             
             # Update pipeline state
-            self.state = PipelineState.FITTED
+            self._state = PipelineState.FITTED
             
             fit_time = time.time() - start_time
             logger.info(f"Regression modeling pipeline completed in {fit_time:.3f}s")
             
         except Exception as e:
             logger.error(f"Error in regression modeling pipeline: {e}")
-            self.state = PipelineState.ERROR
+            self._state = PipelineState.ERROR
             raise
             
         return self
