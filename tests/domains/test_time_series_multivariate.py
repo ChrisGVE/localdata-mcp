@@ -422,7 +422,7 @@ class TestImpulseResponseAnalyzer:
         # Check impulse response structure
         irf_df = result.model_parameters["impulse_response_df"]
         assert isinstance(irf_df, pd.DataFrame)
-        assert irf_df.shape[0] == 5  # periods
+        assert irf_df.shape[0] == 6  # periods + 1 (period 0 through periods)
 
         # Should have responses for all variable pairs
         expected_responses = []
