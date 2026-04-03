@@ -272,7 +272,7 @@ class TestNetworkAnalyzer:
 
     def test_fit_from_edge_list(self):
         """Test building network from edge list."""
-        analyzer = NetworkAnalyzer(directed=True)
+        analyzer = NetworkAnalyzer(directed=True, input_format="edge_list")
 
         # Edge list: [source, target, weight]
         edge_list = np.array([[0, 1, 2.0], [1, 2, 1.5], [0, 2, 3.0]])
@@ -593,7 +593,7 @@ class TestOptimizationResults:
 class TestOptimizationTools:
     """Test optimization tool functions."""
 
-    @patch("localdata_mcp.domains.optimization.DatabaseManager")
+    @patch("localdata_mcp.DatabaseManager")
     def test_solve_linear_program_tool(self, mock_db_manager):
         """Test solve_linear_program tool function."""
         # Mock database setup
@@ -619,7 +619,7 @@ class TestOptimizationTools:
             # Verify database calls
             mock_db_instance._get_connection.assert_called_once_with("test_db")
 
-    @patch("localdata_mcp.domains.optimization.DatabaseManager")
+    @patch("localdata_mcp.DatabaseManager")
     def test_solve_linear_program_with_constraints(self, mock_db_manager):
         """Test solve_linear_program with constraints."""
         mock_engine = Mock()
@@ -649,7 +649,7 @@ class TestOptimizationTools:
             assert isinstance(result, dict)
             assert "success" in result
 
-    @patch("localdata_mcp.domains.optimization.DatabaseManager")
+    @patch("localdata_mcp.DatabaseManager")
     def test_optimize_constrained_tool(self, mock_db_manager):
         """Test optimize_constrained tool function."""
         mock_engine = Mock()
@@ -672,7 +672,7 @@ class TestOptimizationTools:
             assert isinstance(result, dict)
             assert "success" in result
 
-    @patch("localdata_mcp.domains.optimization.DatabaseManager")
+    @patch("localdata_mcp.DatabaseManager")
     @pytest.mark.skipif(not NETWORKX_AVAILABLE, reason="NetworkX not available")
     def test_analyze_network_tool(self, mock_db_manager):
         """Test analyze_network tool function."""
@@ -699,7 +699,7 @@ class TestOptimizationTools:
             if result["success"]:
                 assert "graph_properties" in result
 
-    @patch("localdata_mcp.domains.optimization.DatabaseManager")
+    @patch("localdata_mcp.DatabaseManager")
     def test_solve_assignment_problem_tool(self, mock_db_manager):
         """Test solve_assignment_problem tool function."""
         mock_engine = Mock()
