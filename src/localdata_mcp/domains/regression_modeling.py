@@ -222,7 +222,7 @@ class LinearRegressionTransformer(BaseEstimator, TransformerMixin, RegressorMixi
         self.alpha = alpha
         
         # Initialize model
-        self.model = LinearRegression(fit_intercept=fit_intercept, normalize=normalize)
+        self.model = LinearRegression(fit_intercept=fit_intercept)
         self.result_ = None
         
     def fit(self, X, y, sample_weight=None, feature_names=None):
