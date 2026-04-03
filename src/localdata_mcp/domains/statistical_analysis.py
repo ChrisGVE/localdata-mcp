@@ -133,6 +133,7 @@ class HypothesisTestingTransformer(BaseEstimator, TransformerMixin):
         self.correction = correction
         self.calculate_effect_size = calculate_effect_size
         self.check_assumptions = check_assumptions
+        self._validate_parameters()
 
     def fit(self, X, y=None):
         """Fit the transformer (no-op for statistical tests)."""
@@ -321,6 +322,7 @@ class HypothesisTestingTransformer(BaseEstimator, TransformerMixin):
                         test_name=f"Spearman Correlation ({col1} vs {col2})",
                         statistic=spearman_r,
                         p_value=spearman_p,
+                        effect_size=abs(spearman_r),
                         interpretation=interpretation,
                         additional_info={
                             'column1': col1,
@@ -613,6 +615,7 @@ class ANOVAAnalysisTransformer(BaseEstimator, TransformerMixin):
         self.effect_size = effect_size
         self.check_assumptions = check_assumptions
         self.alpha_adjustment = alpha_adjustment
+        self._validate_parameters()
 
     def fit(self, X, y=None):
         """Fit the transformer (no-op for ANOVA)."""
@@ -751,7 +754,7 @@ class ANOVAAnalysisTransformer(BaseEstimator, TransformerMixin):
             'df_between': df_between,
             'df_within': df_within,
             'df_total': df_total,
-            'significant': p_value <= self.alpha,
+            'significant': bool(p_value <= self.alpha),
             'group_names': group_names,
             'group_means': [np.mean(g) for g in groups],
             'group_sizes': [len(g) for g in groups],
@@ -855,7 +858,7 @@ class ANOVAAnalysisTransformer(BaseEstimator, TransformerMixin):
         if len(groups) >= 2 and all(len(g) >= 2 for g in groups):
             try:
                 _, levene_p = stats.levene(*groups)
-                assumptions['homoscedasticity'] = levene_p > 0.05
+                assumptions['homoscedasticity'] = bool(levene_p > 0.05)
             except:
                 assumptions['homoscedasticity'] = None
         else:
@@ -946,6 +949,7 @@ class NonParametricTestTransformer(BaseEstimator, TransformerMixin):
         self.alternative = alternative
         self.correction = correction
         self.calculate_effect_size = calculate_effect_size
+        self._validate_parameters()
 
     def fit(self, X, y=None):
         """Fit the transformer (no-op for non-parametric tests)."""
@@ -1307,6 +1311,7 @@ class ExperimentalDesignTransformer(BaseEstimator, TransformerMixin):
         self.test_type = test_type
         self.alternative = alternative
         self.confidence_level = confidence_level
+        self._validate_parameters()
 
     def fit(self, X, y=None):
         """Fit the transformer (no-op for experimental design)."""
