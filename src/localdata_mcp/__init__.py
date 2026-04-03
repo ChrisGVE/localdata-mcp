@@ -1,6 +1,6 @@
 """LocalData MCP - A dynamic MCP server for local databases and text files."""
 
-__version__ = "1.5.0"
+__version__ = "2.0.0a1"
 __author__ = "Christian C. Berclaz"
 __email__ = "christian@berclaz.org"
 
