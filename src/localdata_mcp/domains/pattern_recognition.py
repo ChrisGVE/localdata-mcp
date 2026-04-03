@@ -700,7 +700,11 @@ class DimensionalityReductionTransformer(AnalysisPipelineBase):
         try:
             if self.algorithm == "lda" and y is None:
                 raise ValueError("LDA requires target labels (y)")
-            self.reducer_.fit(X_scaled, y)
+            # t-SNE lacks a separate transform(); use fit_transform and cache
+            if self.algorithm == "tsne":
+                self.embedding_ = self.reducer_.fit_transform(X_scaled)
+            else:
+                self.reducer_.fit(X_scaled, y)
         except Exception as e:
             logger.error(f"Dimensionality reduction fitting failed: {e}")
             raise
@@ -723,6 +727,21 @@ class DimensionalityReductionTransformer(AnalysisPipelineBase):
             X_scaled = self.scaler_.transform(X)
         else:
             X_scaled = X
+
+        # t-SNE lacks a separate transform(); return cached embedding or re-fit
+        if self.algorithm == "tsne":
+            if (hasattr(self, "embedding_")
+                    and X_scaled.shape[0] == self.embedding_.shape[0]):
+                self.transform_time_ = time.time() - start_time
+                return self.embedding_
+            # New data: re-fit (t-SNE is transductive)
+            try:
+                X_transformed = self.reducer_.fit_transform(X_scaled)
+            except Exception as e:
+                logger.error(f"Dimensionality reduction transform failed: {e}")
+                raise
+            self.transform_time_ = time.time() - start_time
+            return X_transformed
 
         # Transform
         try:
