@@ -366,7 +366,45 @@ class TimeSeriesTransformer(BaseEstimator, TransformerMixin, ABC):
             logger.warning(f"Error in seasonality detection: {e}")
             
         return seasonality_info
-    
+
+    def _calculate_data_quality_score(self, X: pd.DataFrame) -> float:
+        """
+        Calculate a data quality score for the time series.
+
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input time series data
+
+        Returns:
+        --------
+        score : float
+            Quality score between 0.0 and 1.0
+        """
+        if X.empty:
+            return 0.0
+
+        score = 1.0
+
+        # Penalise for missing values
+        total_cells = X.shape[0] * max(X.shape[1], 1)
+        missing_ratio = X.isnull().sum().sum() / total_cells
+        score -= missing_ratio * 0.4
+
+        # Penalise for very short series
+        if len(X) < 50:
+            score -= 0.2
+        elif len(X) < 100:
+            score -= 0.1
+
+        # Penalise for constant columns
+        if X.shape[1] > 0:
+            constant_cols = (X.std() == 0).sum()
+            if constant_cols > 0:
+                score -= 0.1 * (constant_cols / X.shape[1])
+
+        return max(0.0, min(1.0, score))
+
     @abstractmethod
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """Fit the time series transformer."""
@@ -3131,11 +3169,12 @@ class ARIMAForecastTransformer(TimeSeriesTransformer):
                 data=result_data,
                 execution_time=time.time() - start_time,
                 metadata=CompositionMetadata(
-                    timestamp=datetime.now(),
-                    data_shape=(len(self.training_data_), 1) if hasattr(self.training_data_, '__len__') else (0, 1),
-                    parameters={
-                        'order': self.order,
-                        'seasonal_order': self.seasonal_order,
+                    domain='time_series',
+                    analysis_type='forecast',
+                    result_type='predictions',
+                    data_artifacts={
+                        'order': list(self.order),
+                        'seasonal_order': list(self.seasonal_order),
                         'forecast_steps': self.forecast_steps
                     }
                 )
@@ -3320,11 +3359,12 @@ class SARIMAForecastTransformer(TimeSeriesTransformer):
                 data=result_data,
                 execution_time=time.time() - start_time,
                 metadata=CompositionMetadata(
-                    timestamp=datetime.now(),
-                    data_shape=(len(self.training_data_), 1) if hasattr(self.training_data_, '__len__') else (0, 1),
-                    parameters={
-                        'order': self.order,
-                        'seasonal_order': self.seasonal_order,
+                    domain='time_series',
+                    analysis_type='forecast',
+                    result_type='predictions',
+                    data_artifacts={
+                        'order': list(self.order),
+                        'seasonal_order': list(self.seasonal_order),
                         'forecast_steps': self.forecast_steps
                     }
                 )
@@ -3638,9 +3678,10 @@ class AutoARIMATransformer(TimeSeriesTransformer):
                 data=result_data,
                 execution_time=time.time() - start_time,
                 metadata=CompositionMetadata(
-                    timestamp=datetime.now(),
-                    data_shape=(len(self.training_data_), 1) if hasattr(self.training_data_, '__len__') else (0, 1),
-                    parameters={
+                    domain='time_series',
+                    analysis_type='forecast',
+                    result_type='predictions',
+                    data_artifacts={
                         'max_p': self.max_p,
                         'max_d': self.max_d,
                         'max_q': self.max_q,
@@ -3761,7 +3802,7 @@ class AdvancedForecastingTransformer(TimeSeriesTransformer):
             decomposition = seasonal_decompose(data, model='additive', period=min_periods)
             seasonal_strength = np.var(decomposition.seasonal) / np.var(data)
             
-            return seasonal_strength > 0.1  # Threshold for significant seasonality
+            return bool(seasonal_strength > 0.1)  # Threshold for significant seasonality
         except Exception:
             return False
             
@@ -4095,9 +4136,10 @@ class ProphetForecaster(TimeSeriesTransformer):
                 data=result_data,
                 execution_time=time.time() - start_time,
                 metadata=CompositionMetadata(
-                    timestamp=datetime.now(),
-                    data_shape=(len(self.training_data_), 1),
-                    parameters={
+                    domain='time_series',
+                    analysis_type='forecast',
+                    result_type='predictions',
+                    data_artifacts={
                         'forecast_steps': self.forecast_steps,
                         'growth': self.growth,
                         'seasonality_mode': self.seasonality_mode
@@ -4492,9 +4534,10 @@ class ExponentialSmoothingForecaster(TimeSeriesTransformer):
                 data=result_data,
                 execution_time=time.time() - start_time,
                 metadata=CompositionMetadata(
-                    timestamp=datetime.now(),
-                    data_shape=(len(self.training_data_), 1),
-                    parameters={
+                    domain='time_series',
+                    analysis_type='forecast',
+                    result_type='predictions',
+                    data_artifacts={
                         'forecast_steps': self.forecast_steps,
                         'trend': self.selected_trend_,
                         'seasonal': self.selected_seasonal_,
@@ -4669,7 +4712,7 @@ class EnsembleForecaster(TimeSeriesTransformer):
             elif method == 'arima':
                 models[method] = ARIMAForecastTransformer(
                     forecast_steps=len(self.validation_data_) if hasattr(self, 'validation_data_') else self.forecast_steps,
-                    confidence_level=self.confidence_level
+                    alpha=1.0 - self.confidence_level
                 )
                 
             elif method == 'auto_arima':
@@ -4957,9 +5000,10 @@ class EnsembleForecaster(TimeSeriesTransformer):
                 data=result_data,
                 execution_time=time.time() - start_time,
                 metadata=CompositionMetadata(
-                    timestamp=datetime.now(),
-                    data_shape=(len(self.training_data_), 1),
-                    parameters={
+                    domain='time_series',
+                    analysis_type='forecast',
+                    result_type='predictions',
+                    data_artifacts={
                         'forecast_steps': self.forecast_steps,
                         'methods': self.methods,
                         'combination_method': self.combination_method
@@ -5644,7 +5688,67 @@ class MultivariateTimeSeriesTransformer(TimeSeriesTransformer):
         self.min_series = min_series
         self.max_series = max_series
         self.require_stationarity = require_stationarity
-        
+        self._fitted = False
+
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        """
+        Fit the multivariate time series transformer.
+
+        Validates the input data and marks the transformer as fitted.
+        Subclasses perform their actual fitting inside ``_analysis_logic``.
+
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input multivariate time series data
+        y : pd.Series, optional
+            Ignored, present for API compatibility
+
+        Returns:
+        --------
+        self
+        """
+        self._validate_multivariate_data(X)
+        self._fitted = True
+        return self
+
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Transform multivariate time series data.
+
+        Delegates to ``_analysis_logic`` which each subclass implements with
+        its specific analysis (VAR, cointegration, Granger causality, etc.).
+
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input multivariate time series data
+
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Analysis results
+        """
+        return self._analysis_logic(X)
+
+    def _analysis_logic(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """
+        Core analysis logic to be implemented by subclasses.
+
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input multivariate time series data
+
+        Returns:
+        --------
+        result : TimeSeriesAnalysisResult
+            Analysis results
+        """
+        raise NotImplementedError(
+            "Subclasses must implement _analysis_logic"
+        )
+
     def _validate_multivariate_data(self, X: pd.DataFrame) -> pd.DataFrame:
         """
         Validate multivariate time series data.
@@ -5665,7 +5769,7 @@ class MultivariateTimeSeriesTransformer(TimeSeriesTransformer):
             If data doesn't meet multivariate requirements
         """
         # First apply standard time series validation
-        X = self._validate_time_series_data(X)
+        X, _ = self._validate_time_series(X)
         
         # Check number of series
         n_series = X.shape[1] if X.ndim > 1 else 1
@@ -5787,6 +5891,39 @@ class MultivariateTimeSeriesTransformer(TimeSeriesTransformer):
         
         return result
 
+    def _calculate_data_quality_score(self, X: pd.DataFrame) -> float:
+        """
+        Calculate a data quality score for the multivariate time series.
+
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input multivariate time series data
+
+        Returns:
+        --------
+        score : float
+            Quality score between 0.0 and 1.0
+        """
+        score = 1.0
+
+        # Penalise for missing values
+        missing_ratio = X.isnull().sum().sum() / (X.shape[0] * X.shape[1])
+        score -= missing_ratio * 0.4
+
+        # Penalise for very short series
+        if len(X) < 50:
+            score -= 0.2
+        elif len(X) < 100:
+            score -= 0.1
+
+        # Penalise for constant columns
+        constant_cols = (X.std() == 0).sum()
+        if constant_cols > 0:
+            score -= 0.1 * (constant_cols / X.shape[1])
+
+        return max(0.0, min(1.0, score))
+
 
 class VARModelForecaster(MultivariateTimeSeriesTransformer):
     """
@@ -5885,7 +6022,7 @@ class VARModelForecaster(MultivariateTimeSeriesTransformer):
             
             # Select optimal lag order
             lag_order_results = var_model.select_order(maxlags=self.max_lags)
-            optimal_lags = lag_order_results[self.ic]
+            optimal_lags = getattr(lag_order_results, self.ic)
             
             logger.info(f"Selected optimal lags: {optimal_lags} using {self.ic.upper()} criterion")
             
@@ -5914,7 +6051,7 @@ class VARModelForecaster(MultivariateTimeSeriesTransformer):
             )
             
             # Calculate forecast confidence intervals
-            forecast_stderr = var_fitted.forecast_cov(forecast_input, steps=self.forecast_horizon)
+            forecast_stderr = var_fitted.forecast_cov(steps=self.forecast_horizon)
             alpha = 1 - self.confidence_level
             z_score = stats.norm.ppf(1 - alpha / 2)
             
@@ -5942,10 +6079,24 @@ class VARModelForecaster(MultivariateTimeSeriesTransformer):
                 'n_coefficients': var_fitted.df_model
             }
             
-            # Fit statistics
+            # Fit statistics - compute R-squared from residuals
+            try:
+                resid = var_fitted.resid
+                # Align fitted values with the portion of X used after lag trimming
+                y_actual = X.values[var_fitted.k_ar:]
+                ss_res = np.sum(resid ** 2, axis=0)
+                ss_tot = np.sum((y_actual - y_actual.mean(axis=0)) ** 2, axis=0)
+                rsquared = 1 - ss_res / np.where(ss_tot == 0, 1, ss_tot)
+                n = var_fitted.nobs
+                p = var_fitted.df_model
+                rsquared_adj = 1 - (1 - rsquared) * (n - 1) / max(n - p - 1, 1)
+            except Exception:
+                rsquared = np.zeros(var_fitted.neqs)
+                rsquared_adj = np.zeros(var_fitted.neqs)
+
             fit_statistics = {
-                'rsquared_avg': np.mean([var_fitted.rsquared[eq] for eq in X.columns]),
-                'rsquared_adj_avg': np.mean([var_fitted.rsquared_adj[eq] for eq in X.columns]),
+                'rsquared_avg': float(np.mean(rsquared)),
+                'rsquared_adj_avg': float(np.mean(rsquared_adj)),
             }
             
             # Model parameters
@@ -6222,7 +6373,18 @@ class CointegrationAnalyzer(MultivariateTimeSeriesTransformer):
             
             # Extract cointegrating vectors and adjustment coefficients
             coint_vectors = coint_result.evec[:, :n_coint] if n_coint > 0 else None
-            adjustment_coeffs = coint_result.evecr[:n_coint, :] if n_coint > 0 else None
+            # Compute adjustment coefficients (loading matrix alpha)
+            # alpha = r0t' * rkt * (rkt' * rkt)^{-1} * evec[:, :n_coint]
+            try:
+                if n_coint > 0:
+                    beta = coint_result.evec[:, :n_coint]
+                    rkt_beta = coint_result.rkt @ beta
+                    adjustment_coeffs = (coint_result.r0t.T @ rkt_beta) / coint_result.r0t.shape[0]
+                    adjustment_coeffs = adjustment_coeffs.T  # shape (n_coint, n_series)
+                else:
+                    adjustment_coeffs = None
+            except Exception:
+                adjustment_coeffs = None
             
             # Create cointegrating relationships DataFrame
             coint_relationships = None
@@ -6930,7 +7092,7 @@ class ImpulseResponseAnalyzer(MultivariateTimeSeriesTransformer):
             # Fit VAR model first
             var_model = VAR(X)
             lag_order_results = var_model.select_order(maxlags=min(10, len(X)//10))
-            optimal_lags = lag_order_results['aic']
+            optimal_lags = getattr(lag_order_results, 'aic')
             var_fitted = var_model.fit(maxlags=optimal_lags)
             
             logger.info(f"Fitted VAR({optimal_lags}) model for impulse response analysis")
