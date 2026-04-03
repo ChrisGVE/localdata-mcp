@@ -2,7 +2,7 @@
 
 __version__ = "2.0.0a1"
 __author__ = "Christian C. Berclaz"
-__email__ = "christian@berclaz.org"
+__email__ = "christian.berclaz@mac.com"
 
 from .localdata_mcp import DatabaseManager, main
 

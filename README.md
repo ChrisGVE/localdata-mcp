@@ -60,10 +60,20 @@
 - **Connection Limits**: Maximum 10 concurrent database connections
 - **Query Audit**: Full query and error logging for compliance
 
-### **40 MCP Tools**
+### **Data Science Analysis** *(v2.0)*
+
+- **Statistical Analysis**: Hypothesis testing, ANOVA, effect sizes
+- **Regression Modeling**: Linear, ridge, lasso, polynomial with diagnostics
+- **Pattern Recognition**: Clustering, anomaly detection, dimensionality reduction
+- **Time Series**: Decomposition, ARIMA/ETS forecasting, change detection
+- **Business Intelligence**: RFM segmentation, A/B testing
+- **Optimization**: Linear programming, constrained optimization (optional)
+
+### **52 MCP Tools**
 
 - 8 core database tools, 9 tree tools, 14 graph tools
 - 9 streaming and memory management tools
+- 12 data science analysis tools
 - Schema export, data quality reports, regex search, and data transformation
 
 ## Quick Start
@@ -237,6 +247,46 @@ These tools are available when connected to a graph file.
 | `find_path`          | Find shortest or all paths between nodes | Analysis         |
 | `get_graph_stats`    | Node/edge counts, density, DAG test      | Analysis         |
 | `export_graph`       | Export as DOT, GML, GraphML, or Mermaid  | Export           |
+
+### Data Science Tools *(v2.0)*
+
+These tools run analysis on query results from any connected database.
+
+| Tool                         | Description                                      | Domain         |
+| ---------------------------- | ------------------------------------------------ | -------------- |
+| `analyze_hypothesis_test`    | Run t-tests, chi-squared, Mann-Whitney, etc.     | Statistics     |
+| `analyze_anova`              | One-way ANOVA with post-hoc tests                | Statistics     |
+| `analyze_effect_sizes`       | Cohen's d, eta-squared for group comparisons     | Statistics     |
+| `analyze_regression`         | Fit linear, ridge, lasso, or polynomial models   | Regression     |
+| `evaluate_model_performance` | R², RMSE, MAE, or classification metrics         | Regression     |
+| `analyze_clusters`           | K-means, DBSCAN, hierarchical clustering         | Patterns       |
+| `detect_anomalies`           | Isolation forest, LOF, one-class SVM             | Patterns       |
+| `reduce_dimensions`          | PCA, t-SNE, UMAP                                 | Patterns       |
+| `analyze_time_series`        | Decomposition, stationarity, autocorrelation     | Time Series    |
+| `forecast_time_series`       | ARIMA or exponential smoothing forecasts         | Time Series    |
+| `analyze_rfm`                | RFM customer segmentation                        | BI             |
+| `analyze_ab_test`            | A/B test statistical analysis                    | BI             |
+
+```python
+# Connect to a database, then analyze
+connect_database("sales", "sqlite", "/path/to/sales.db")
+
+# Hypothesis test: are sales different between regions?
+analyze_hypothesis_test("sales",
+    "SELECT amount, region FROM transactions",
+    column="amount", group_column="region")
+
+# Cluster customers by purchase behavior
+analyze_clusters("sales",
+    "SELECT total_spent, frequency, recency FROM customer_metrics",
+    method="kmeans", n_clusters=4)
+
+# Forecast monthly revenue
+forecast_time_series("sales",
+    "SELECT month, revenue FROM monthly_summary",
+    date_column="month", value_column="revenue",
+    horizon=12, method="arima")
+```
 
 ## Working with Graphs
 
@@ -506,7 +556,14 @@ For comprehensive troubleshooting guidance, see [Troubleshooting Guide](TROUBLES
 
 ## Release History
 
-### v1.7.0 (Current)
+### v2.0.0a1 (Current — Alpha)
+
+- **Data Science Domains**: 8 analysis modules with sklearn-compatible transformers
+- **12 New MCP Tools**: Statistical, regression, pattern, time series, and BI analysis
+- **Pipeline Framework**: Streaming-first data science pipeline with composition metadata
+- **52 Total Tools**: Up from 40 in v1.7.1
+
+### v1.7.0
 
 - **Enterprise Database Support**: Oracle (oracledb thin mode) and MS SQL Server (pymssql)
 - **Enterprise-Scale Testing**: 62 tests across 7 databases with 100K rows each
