@@ -153,7 +153,8 @@ class LinearProgrammingSolver(AnalysisPipelineBase):
         streaming_config : StreamingConfig, optional
             Configuration for streaming processing
         """
-        super().__init__(streaming_config)
+        super().__init__(analytical_intention="linear programming optimization",
+                         streaming_config=streaming_config)
         self.method = method
         self.integer_variables = integer_variables or []
         self.bounds = bounds
@@ -472,7 +473,8 @@ class ConstrainedOptimizer(AnalysisPipelineBase):
         streaming_config : StreamingConfig, optional
             Streaming configuration
         """
-        super().__init__(streaming_config)
+        super().__init__(analytical_intention="constrained optimization",
+                         streaming_config=streaming_config)
         self.method = method
         self.constraints = constraints or []
         self.bounds = bounds
@@ -716,6 +718,7 @@ class NetworkAnalyzer(AnalysisPipelineBase):
         algorithm: str = "auto",
         directed: bool = False,
         weighted: bool = True,
+        input_format: str = "auto",
         streaming_config: Optional[StreamingConfig] = None,
     ):
         """
@@ -729,13 +732,18 @@ class NetworkAnalyzer(AnalysisPipelineBase):
             Whether graph is directed
         weighted : bool, default=True
             Whether graph edges have weights
+        input_format : str, default='auto'
+            Input data format: 'adjacency_matrix', 'edge_list', or 'auto'
+            (auto uses square-matrix heuristic)
         streaming_config : StreamingConfig, optional
             Streaming configuration
         """
-        super().__init__(streaming_config)
+        super().__init__(analytical_intention="network analysis",
+                         streaming_config=streaming_config)
         self.algorithm = algorithm
         self.directed = directed
         self.weighted = weighted
+        self.input_format = input_format
 
         if not NETWORKX_AVAILABLE:
             raise ImportError(
@@ -751,8 +759,14 @@ class NetworkAnalyzer(AnalysisPipelineBase):
         """Build network from adjacency matrix or edge list."""
         X = check_array(X, accept_sparse=True)
 
+        # Determine input format
+        is_adjacency = (
+            self.input_format == "adjacency_matrix"
+            or (self.input_format == "auto" and X.shape[0] == X.shape[1])
+        )
+
         # Create graph from adjacency matrix
-        if X.shape[0] == X.shape[1]:
+        if is_adjacency:
             # Square matrix - treat as adjacency matrix
             if self.directed:
                 self.graph_ = nx.from_numpy_array(X, create_using=nx.DiGraph())
@@ -1082,7 +1096,8 @@ class AssignmentSolver(AnalysisPipelineBase):
         streaming_config : StreamingConfig, optional
             Streaming configuration
         """
-        super().__init__(streaming_config)
+        super().__init__(analytical_intention="assignment problem solving",
+                         streaming_config=streaming_config)
         self.method = method
         self.maximize = maximize
         self.allow_partial = allow_partial
@@ -1221,37 +1236,37 @@ class AssignmentSolver(AnalysisPipelineBase):
         if self.maximize:
             c = -c
 
-        # Constraints: each agent assigned to at most one task
-        A_ub_agents = []
-        b_ub_agents = []
+        # Equality constraints: each agent assigned to exactly one task
+        A_eq_agents = []
+        b_eq_agents = []
 
         for i in range(n_agents):
             constraint = np.zeros(n_agents * n_tasks)
             for j in range(n_tasks):
                 constraint[i * n_tasks + j] = 1
-            A_ub_agents.append(constraint)
-            b_ub_agents.append(1)
+            A_eq_agents.append(constraint)
+            b_eq_agents.append(1)
 
-        # Constraints: each task assigned to at most one agent
-        A_ub_tasks = []
-        b_ub_tasks = []
+        # Equality constraints: each task assigned to exactly one agent
+        A_eq_tasks = []
+        b_eq_tasks = []
 
         for j in range(n_tasks):
             constraint = np.zeros(n_agents * n_tasks)
             for i in range(n_agents):
                 constraint[i * n_tasks + j] = 1
-            A_ub_tasks.append(constraint)
-            b_ub_tasks.append(1)
+            A_eq_tasks.append(constraint)
+            b_eq_tasks.append(1)
 
         # Combine constraints
-        A_ub = np.vstack([A_ub_agents, A_ub_tasks])
-        b_ub = np.array(b_ub_agents + b_ub_tasks)
+        A_eq = np.vstack([A_eq_agents, A_eq_tasks])
+        b_eq = np.array(b_eq_agents + b_eq_tasks)
 
         # Variable bounds (binary variables relaxed to [0, 1])
         bounds = [(0, 1) for _ in range(n_agents * n_tasks)]
 
         # Solve LP
-        result = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs")
+        result = linprog(c, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
 
         if not result.success:
             raise RuntimeError(f"LP solver failed: {result.message}")
@@ -1431,7 +1446,7 @@ def solve_linear_program(
         Linear programming results with solution and analysis
     """
     try:
-        from ..database_manager import DatabaseManager
+        from .. import DatabaseManager
 
         # Get database manager and connection
         db_manager = DatabaseManager()
@@ -1542,7 +1557,7 @@ def optimize_constrained(
         Constrained optimization results
     """
     try:
-        from ..database_manager import DatabaseManager
+        from .. import DatabaseManager
 
         # Get database manager and connection
         db_manager = DatabaseManager()
@@ -1658,7 +1673,7 @@ def analyze_network(
         Network analysis results
     """
     try:
-        from ..database_manager import DatabaseManager
+        from .. import DatabaseManager
 
         if not NETWORKX_AVAILABLE:
             return {
@@ -1769,7 +1784,7 @@ def solve_assignment_problem(
         Assignment problem results
     """
     try:
-        from ..database_manager import DatabaseManager
+        from .. import DatabaseManager
 
         # Get database manager and connection
         db_manager = DatabaseManager()
