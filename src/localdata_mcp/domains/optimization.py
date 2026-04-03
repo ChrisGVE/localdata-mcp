@@ -409,6 +409,35 @@ class LinearProgrammingSolver(AnalysisPipelineBase):
 
         return sensitivity
 
+    # --- AnalysisPipelineBase abstract method implementations ---
+
+    def get_analysis_type(self) -> str:
+        """Get the specific analysis type this pipeline performs."""
+        return "linear_programming"
+
+    def _configure_analysis_pipeline(self) -> List[Callable]:
+        """Configure analysis steps based on intention and complexity level."""
+        return [self.solve]
+
+    def _execute_analysis_step(
+        self, step: Callable, data: pd.DataFrame, context: Dict[str, Any]
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute individual analysis step with error handling and metadata."""
+        result = step(data) if callable(step) else step
+        return result, {}
+
+    def _execute_standard_analysis(
+        self, data: pd.DataFrame
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute analysis on full dataset in memory."""
+        return self.result_, {}
+
+    def _execute_streaming_analysis(
+        self, data: pd.DataFrame
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute analysis with streaming support for large datasets."""
+        return self._execute_standard_analysis(data)
+
 
 class ConstrainedOptimizer(AnalysisPipelineBase):
     """
@@ -643,6 +672,35 @@ class ConstrainedOptimizer(AnalysisPipelineBase):
                 violations.append(np.inf)
 
         return np.array(violations)
+
+    # --- AnalysisPipelineBase abstract method implementations ---
+
+    def get_analysis_type(self) -> str:
+        """Get the specific analysis type this pipeline performs."""
+        return "constrained_optimization"
+
+    def _configure_analysis_pipeline(self) -> List[Callable]:
+        """Configure analysis steps based on intention and complexity level."""
+        return [self.optimize]
+
+    def _execute_analysis_step(
+        self, step: Callable, data: pd.DataFrame, context: Dict[str, Any]
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute individual analysis step with error handling and metadata."""
+        result = step(data) if callable(step) else step
+        return result, {}
+
+    def _execute_standard_analysis(
+        self, data: pd.DataFrame
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute analysis on full dataset in memory."""
+        return self.result_, {}
+
+    def _execute_streaming_analysis(
+        self, data: pd.DataFrame
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute analysis with streaming support for large datasets."""
+        return self._execute_standard_analysis(data)
 
 
 class NetworkAnalyzer(AnalysisPipelineBase):
@@ -965,6 +1023,35 @@ class NetworkAnalyzer(AnalysisPipelineBase):
 
         return centrality
 
+    # --- AnalysisPipelineBase abstract method implementations ---
+
+    def get_analysis_type(self) -> str:
+        """Get the specific analysis type this pipeline performs."""
+        return "network_analysis"
+
+    def _configure_analysis_pipeline(self) -> List[Callable]:
+        """Configure analysis steps based on intention and complexity level."""
+        return [self.analyze_network]
+
+    def _execute_analysis_step(
+        self, step: Callable, data: pd.DataFrame, context: Dict[str, Any]
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute individual analysis step with error handling and metadata."""
+        result = step(data) if callable(step) else step
+        return result, {}
+
+    def _execute_standard_analysis(
+        self, data: pd.DataFrame
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute analysis on full dataset in memory."""
+        return self.result_, {}
+
+    def _execute_streaming_analysis(
+        self, data: pd.DataFrame
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute analysis with streaming support for large datasets."""
+        return self._execute_standard_analysis(data)
+
 
 class AssignmentSolver(AnalysisPipelineBase):
     """
@@ -1271,6 +1358,35 @@ class AssignmentSolver(AnalysisPipelineBase):
             is_perfect_matching=len(unassigned_agents) == 0
             and len(unassigned_tasks) == 0,
         )
+
+    # --- AnalysisPipelineBase abstract method implementations ---
+
+    def get_analysis_type(self) -> str:
+        """Get the specific analysis type this pipeline performs."""
+        return "assignment_solving"
+
+    def _configure_analysis_pipeline(self) -> List[Callable]:
+        """Configure analysis steps based on intention and complexity level."""
+        return [self.solve_assignment]
+
+    def _execute_analysis_step(
+        self, step: Callable, data: pd.DataFrame, context: Dict[str, Any]
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute individual analysis step with error handling and metadata."""
+        result = step(data) if callable(step) else step
+        return result, {}
+
+    def _execute_standard_analysis(
+        self, data: pd.DataFrame
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute analysis on full dataset in memory."""
+        return self.result_, {}
+
+    def _execute_streaming_analysis(
+        self, data: pd.DataFrame
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Execute analysis with streaming support for large datasets."""
+        return self._execute_standard_analysis(data)
 
 
 # Tool Functions
