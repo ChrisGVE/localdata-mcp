@@ -22,19 +22,6 @@ from localdata_mcp.domains.time_series_analysis import (
 )
 
 
-def _has_ruptures() -> bool:
-    """Check whether the ruptures library is available."""
-    try:
-        import ruptures  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-HAS_RUPTURES = _has_ruptures()
-
-
 @pytest.fixture
 def sample_time_series():
     """Create a sample time series for basic testing."""
@@ -106,11 +93,7 @@ class TestChangePointDetector:
     def test_initialization(self):
         """Test ChangePointDetector initialization."""
         detector = ChangePointDetector()
-        if HAS_RUPTURES:
-            assert detector.method == "bcp"
-        else:
-            # Without ruptures, 'bcp' falls back to 'statistical' in __init__
-            assert detector.method == "statistical"
+        assert detector.method == "bcp"
         assert detector.model == "rbf"
         assert detector.min_size == 10
         assert detector.max_changepoints == 10
@@ -159,21 +142,6 @@ class TestChangePointDetector:
             "cusum_path" not in result.model_parameters
         )  # Should not have CUSUM specific data
 
-    def test_ruptures_fallback(self, change_point_series):
-        """Test that detector falls back to statistical when ruptures is unavailable."""
-        if HAS_RUPTURES:
-            pytest.skip("ruptures is installed; fallback path not exercised")
-
-        # When ruptures is absent, requesting 'bcp' silently falls back
-        detector = ChangePointDetector(method="bcp")
-        assert detector.method == "statistical"
-        assert detector.ruptures_available_ is False
-
-        result = detector.transform(change_point_series)
-        assert result.model_parameters["detection_method"] == "statistical"
-        assert result.model_parameters["ruptures_available"] is False
-
-    @pytest.mark.skipif(not HAS_RUPTURES, reason="ruptures not installed")
     def test_bcp_method_with_ruptures(self, change_point_series):
         """Test bcp method when ruptures is available."""
         detector = ChangePointDetector(method="bcp")
@@ -239,7 +207,7 @@ class TestAnomalyDetector:
         # Should detect at least some anomalies
         assert len(anomalies) >= 1
 
-        # Check if known anomaly positions are detected (±5 tolerance)
+        # Check if known anomaly positions are detected (+-5 tolerance)
         known_anomalies = [50, 75, 150]
         detected_near_known = any(
             any(abs(detected - known) <= 5 for known in known_anomalies)

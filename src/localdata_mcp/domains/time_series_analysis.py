@@ -40,11 +40,7 @@ from statsmodels.tsa.vector_ar.irf import IRAnalysis
 from scipy import stats
 import itertools
 
-try:
-    import ruptures as rpt
-    RUPTURES_AVAILABLE = True
-except ImportError:
-    RUPTURES_AVAILABLE = False
+import ruptures as rpt
 
 from ..logging_manager import get_logger
 from ..pipeline.base import (

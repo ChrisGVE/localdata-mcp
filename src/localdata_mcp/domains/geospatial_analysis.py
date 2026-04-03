@@ -12,7 +12,7 @@ Key Features:
 - Network analysis with spatial constraints
 - Spatial interpolation using kriging
 - Full sklearn pipeline compatibility
-- Optional dependency management with graceful degradation
+- Core geospatial dependencies (geopandas, shapely, pyproj, fiona) always available
 - Comprehensive spatial validation and error handling
 """
 
@@ -30,6 +30,10 @@ from scipy import stats
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_array, check_is_fitted
 from sklearn.neighbors import NearestNeighbors
+import geopandas as gpd
+import shapely
+import pyproj
+import fiona
 
 from ..logging_manager import get_logger
 from ..pipeline.base import (
@@ -6062,6 +6066,5 @@ logger.info(f"Available geospatial libraries: "
            f"{[lib.value for lib, available in _dependency_status.available_libraries.items() if available]}")
 
 if not _dependency_status.has_core_geospatial():
-    logger.warning("Core geospatial libraries (geopandas, shapely) not available. "
-                  "Some functionality will be limited to basic operations.")
-    logger.info("Install with: pip install geopandas shapely")
+    logger.warning("Core geospatial libraries (geopandas, shapely) reported unavailable, "
+                  "but they should be installed as required dependencies.")
