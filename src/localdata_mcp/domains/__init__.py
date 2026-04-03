@@ -13,7 +13,7 @@ Available domains:
 - optimization: Optimization and operations research capabilities
 - business_intelligence: RFM, cohort analysis, A/B testing, CLV
 - sampling_estimation: Bootstrap, Bayesian estimation, Monte Carlo simulation
-- geospatial_analysis: Spatial analysis, routing, clustering (optional deps)
+- geospatial_analysis: Spatial analysis, routing, clustering
 """
 
 from .statistical_analysis import (
@@ -157,64 +157,53 @@ from .sampling_estimation import (
     SamplingResult,
 )
 
-try:
-    from .geospatial_analysis import (
-        # Core transformers
-        GeospatialDependencyChecker,
-        SpatialCoordinateTransformer,
-        SpatialDistanceTransformer,
-        SpatialGeometryTransformer,
-        SpatialAutocorrelationTransformer,
-        SpatialInterpolationTransformer,
-        SpatialJoinTransformer,
-        SpatialOverlayTransformer,
-        SpatialNetworkTransformer,
-        # Spatial data structures
-        SpatialPoint,
-        SpatialDataFrame,
-        # Analysis engines
-        SpatialJoinEngine,
-        SpatialOverlayEngine,
-        SpatialAggregator,
-        SpatialNetwork,
-        NetworkRouter,
-        AccessibilityAnalyzer,
-        IsochroneGenerator,
-        # High-level functions
-        analyze_spatial_autocorrelation,
-        perform_spatial_clustering,
-        calculate_spatial_distance,
-        optimize_route,
-        optimize_routes,
-        analyze_accessibility,
-        generate_service_isochrones,
-        perform_spatial_join,
-        perform_spatial_overlay,
-        aggregate_points_in_polygons,
-        # Result classes
-        SpatialJoinResult,
-        OverlayResult,
-        RouteResult,
-        AccessibilityResult,
-        IsochroneResult,
-        # Pipeline
-        GeospatialAnalysisPipeline,
-        # Enums
-        GeospatialLibrary,
-        SpatialJoinType,
-        OverlayOperation,
-        NetworkAnalysisType,
-    )
-
-    _GEOSPATIAL_AVAILABLE = True
-except ImportError as e:
-    _GEOSPATIAL_AVAILABLE = False
-    import warnings
-
-    warnings.warn(
-        f"Geospatial analysis unavailable: {e}. "
-        "Install geopandas and shapely for full functionality."
-    )
+from .geospatial_analysis import (
+    # Core transformers
+    GeospatialDependencyChecker,
+    SpatialCoordinateTransformer,
+    SpatialDistanceTransformer,
+    SpatialGeometryTransformer,
+    SpatialAutocorrelationTransformer,
+    SpatialInterpolationTransformer,
+    SpatialJoinTransformer,
+    SpatialOverlayTransformer,
+    SpatialNetworkTransformer,
+    # Spatial data structures
+    SpatialPoint,
+    SpatialDataFrame,
+    # Analysis engines
+    SpatialJoinEngine,
+    SpatialOverlayEngine,
+    SpatialAggregator,
+    SpatialNetwork,
+    NetworkRouter,
+    AccessibilityAnalyzer,
+    IsochroneGenerator,
+    # High-level functions
+    analyze_spatial_autocorrelation,
+    perform_spatial_clustering,
+    calculate_spatial_distance,
+    optimize_route,
+    optimize_routes,
+    analyze_accessibility,
+    generate_service_isochrones,
+    perform_spatial_join,
+    perform_spatial_overlay,
+    aggregate_points_in_polygons,
+    # Result classes
+    SpatialJoinResult,
+    OverlayResult,
+    RouteResult,
+    AccessibilityResult,
+    IsochroneResult,
+    # Pipeline
+    GeospatialAnalysisPipeline,
+    # Enums
+    GeospatialLibrary,
+    SpatialJoinType,
+    OverlayOperation,
+    NetworkAnalysisType,
+)
 
 __all__ = [
     # Statistical Analysis Domain
@@ -323,9 +312,7 @@ __all__ = [
     "BayesianResult",
     "MonteCarloResult",
     "SamplingResult",
-]
-
-_GEOSPATIAL_EXPORTS = [
+    # Geospatial Analysis Domain
     "GeospatialDependencyChecker",
     "SpatialCoordinateTransformer",
     "SpatialDistanceTransformer",
@@ -365,6 +352,3 @@ _GEOSPATIAL_EXPORTS = [
     "OverlayOperation",
     "NetworkAnalysisType",
 ]
-
-if _GEOSPATIAL_AVAILABLE:
-    __all__.extend(_GEOSPATIAL_EXPORTS)

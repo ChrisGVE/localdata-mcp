@@ -48,12 +48,7 @@ from statsmodels.tsa.vector_ar.var_model import VAR
 from statsmodels.tsa.vector_ar.vecm import VECM
 from statsmodels.tsa.stattools import grangercausalitytests
 
-# Optional dependencies with graceful fallbacks
-try:
-    import ruptures as rpt
-    RUPTURES_AVAILABLE = True
-except ImportError:
-    RUPTURES_AVAILABLE = False
+import ruptures as rpt
 
 from ..logging_manager import get_logger
 from ..pipeline.base import (
