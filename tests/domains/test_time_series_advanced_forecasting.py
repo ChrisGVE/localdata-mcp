@@ -1,7 +1,7 @@
 """
 Tests for Time Series Advanced Forecasting Methods.
 
-This module tests the advanced forecasting capabilities including Prophet,
+This module tests the advanced forecasting capabilities including
 Exponential Smoothing, Ensemble methods, and forecast evaluation metrics.
 """
 
@@ -9,12 +9,10 @@ import pytest
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
 import warnings
 
 from localdata_mcp.domains.time_series_analysis import (
     AdvancedForecastingTransformer,
-    ProphetForecaster,
     ExponentialSmoothingForecaster,
     EnsembleForecaster,
     ForecastEvaluator,
@@ -96,7 +94,7 @@ class TestAdvancedForecastingTransformer:
 
         # Test with larger dataset - may select ensemble or other methods
         selected = transformer._select_method(sample_time_series.iloc[:, 0])
-        assert selected in ["exponential_smoothing", "prophet", "ensemble"]
+        assert selected in ["exponential_smoothing", "ensemble"]
 
     def test_seasonality_detection(self, sample_time_series):
         """Test seasonality detection in data."""
@@ -179,89 +177,6 @@ class TestAdvancedForecastingTransformer:
         with pytest.raises(ValueError):
             transformer.fit(multi_data)
 
-
-class TestProphetForecaster:
-    """Test the ProphetForecaster class."""
-
-    def test_initialization(self):
-        """Test Prophet forecaster initialization."""
-        forecaster = ProphetForecaster()
-        assert forecaster.forecast_steps == 10
-        assert forecaster.confidence_level == 0.95
-        assert forecaster.growth == "linear"
-        assert forecaster.seasonality_mode == "additive"
-
-    def test_prophet_availability_check(self):
-        """Test Prophet availability checking."""
-        forecaster = ProphetForecaster()
-
-        # The availability check should return a boolean
-        availability = forecaster._check_prophet_availability()
-        assert isinstance(availability, bool)
-
-    def test_data_preparation(self, sample_time_series):
-        """Test Prophet data format preparation."""
-        forecaster = ProphetForecaster()
-        data = sample_time_series.iloc[:, 0]
-
-        prophet_data = forecaster._prepare_prophet_data(data)
-
-        # Check required columns
-        assert "ds" in prophet_data.columns
-        assert "y" in prophet_data.columns
-        assert len(prophet_data) == len(data)
-
-    @patch("localdata_mcp.domains.time_series_analysis.Prophet")
-    def test_fit_with_mock_prophet(self, mock_prophet, sample_forecasting_data):
-        """Test fitting with mocked Prophet to avoid dependency issues."""
-        train_data, _ = sample_forecasting_data
-
-        # Mock Prophet class and instance
-        mock_prophet_instance = MagicMock()
-        mock_prophet.return_value = mock_prophet_instance
-
-        forecaster = ProphetForecaster(forecast_steps=10)
-        forecaster._prophet_available = True  # Force availability
-
-        # Should fit without errors
-        with patch("localdata_mcp.domains.time_series_analysis.logger"):
-            fitted_forecaster = forecaster.fit(train_data)
-
-        assert fitted_forecaster is forecaster
-        assert forecaster.model_ is not None
-        mock_prophet_instance.fit.assert_called_once()
-
-    def test_prophet_not_available_error(self, sample_forecasting_data):
-        """Test error when Prophet is not available."""
-        train_data, _ = sample_forecasting_data
-
-        forecaster = ProphetForecaster()
-        forecaster._prophet_available = False  # Force unavailability
-
-        with pytest.raises(ImportError, match="Prophet package is required"):
-            forecaster.fit(train_data)
-
-    def test_default_holidays_creation(self, sample_time_series):
-        """Test default holidays creation."""
-        forecaster = ProphetForecaster()
-        data = sample_time_series.iloc[:, 0]
-
-        holidays = forecaster._create_default_holidays(data)
-        # Currently returns None, but test the method exists
-        assert holidays is None
-
-    def test_invalid_data_handling(self):
-        """Test handling of invalid data formats."""
-        forecaster = ProphetForecaster()
-
-        # Test with multivariate data
-        multi_data = pd.DataFrame(
-            {"col1": np.random.random(50), "col2": np.random.random(50)},
-            index=pd.date_range("2020-01-01", periods=50),
-        )
-
-        with pytest.raises(ValueError, match="Prophet forecasting requires univariate"):
-            forecaster.fit(multi_data)
 
 
 class TestExponentialSmoothingForecaster:

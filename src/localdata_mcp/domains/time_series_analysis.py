@@ -12,7 +12,6 @@ Key Features:
 - Autocorrelation analysis (ACF/PACF) for model identification
 - Multivariate time series analysis (VAR, cointegration, Granger causality)
 - Change point detection and anomaly identification
-- Prophet integration for robust forecasting with holiday effects
 - Full sklearn pipeline compatibility with temporal data validation
 - Streaming-compatible processing for high-frequency time series
 - Comprehensive result formatting with forecasting confidence intervals
@@ -40,6 +39,12 @@ from statsmodels.tsa.vector_ar.vecm import coint_johansen
 from statsmodels.tsa.vector_ar.irf import IRAnalysis
 from scipy import stats
 import itertools
+
+try:
+    import ruptures as rpt
+    RUPTURES_AVAILABLE = True
+except ImportError:
+    RUPTURES_AVAILABLE = False
 
 from ..logging_manager import get_logger
 from ..pipeline.base import (
@@ -3712,37 +3717,33 @@ class AdvancedForecastingTransformer(TimeSeriesTransformer):
     """
     sklearn-compatible transformer for advanced forecasting methods.
     
-    Provides access to Prophet, Exponential Smoothing, and Ensemble forecasting
+    Provides access to Exponential Smoothing and Ensemble forecasting
     with automatic method selection based on data characteristics and user preferences.
     
     Parameters:
     -----------
     method : str, default='auto'
-        Forecasting method: 'prophet', 'exponential_smoothing', 'ensemble', 'auto'
+        Forecasting method: 'exponential_smoothing', 'ensemble', 'auto'
     forecast_steps : int, default=10
         Number of steps to forecast ahead
     confidence_level : float, default=0.95
         Confidence level for prediction intervals
     ensemble_weights : dict, optional
         Weights for ensemble methods (auto-computed if None)
-    prophet_params : dict, optional
-        Additional parameters for Prophet model
     holt_winters_params : dict, optional
         Additional parameters for Holt-Winters model
     """
     
     def __init__(self, method='auto', forecast_steps=10, confidence_level=0.95,
-                 ensemble_weights=None, prophet_params=None, holt_winters_params=None, **kwargs):
+                 ensemble_weights=None, holt_winters_params=None, **kwargs):
         super().__init__(**kwargs)
         self.method = method
         self.forecast_steps = forecast_steps
         self.confidence_level = confidence_level
         self.ensemble_weights = ensemble_weights or {}
-        self.prophet_params = prophet_params or {}
         self.holt_winters_params = holt_winters_params or {}
         
         # Model instances
-        self.prophet_forecaster_ = None
         self.exponential_smoothing_forecaster_ = None
         self.ensemble_forecaster_ = None
         self.evaluator_ = None
@@ -3777,13 +3778,7 @@ class AdvancedForecastingTransformer(TimeSeriesTransformer):
         if n_observations < 50:
             return 'exponential_smoothing'  # Better for small datasets
         elif has_seasonality and n_observations >= 100:
-            # Prophet is good for seasonal data with sufficient observations
-            try:
-                import prophet
-                return 'prophet'
-            except ImportError:
-                logger.warning("Prophet not available, falling back to exponential smoothing")
-                return 'exponential_smoothing'
+            return 'exponential_smoothing'  # Good for seasonal data
         elif n_observations >= 200:
             return 'ensemble'  # Use ensemble for large datasets
         else:
@@ -3844,15 +3839,7 @@ class AdvancedForecastingTransformer(TimeSeriesTransformer):
             logger.info(f"Selected forecasting method: {self.selected_method_}")
             
             # Initialize selected method(s)
-            if self.selected_method_ == 'prophet':
-                self.prophet_forecaster_ = ProphetForecaster(
-                    forecast_steps=self.forecast_steps,
-                    confidence_level=self.confidence_level,
-                    **self.prophet_params
-                )
-                self.prophet_forecaster_.fit(X, y)
-                
-            elif self.selected_method_ == 'exponential_smoothing':
+            if self.selected_method_ == 'exponential_smoothing':
                 self.exponential_smoothing_forecaster_ = ExponentialSmoothingForecaster(
                     forecast_steps=self.forecast_steps,
                     confidence_level=self.confidence_level,
@@ -3886,9 +3873,7 @@ class AdvancedForecastingTransformer(TimeSeriesTransformer):
         
         try:
             # Generate forecasts based on selected method
-            if self.selected_method_ == 'prophet' and self.prophet_forecaster_:
-                result = self.prophet_forecaster_.transform(X)
-            elif self.selected_method_ == 'exponential_smoothing' and self.exponential_smoothing_forecaster_:
+            if self.selected_method_ == 'exponential_smoothing' and self.exponential_smoothing_forecaster_:
                 result = self.exponential_smoothing_forecaster_.transform(X)
             elif self.selected_method_ == 'ensemble' and self.ensemble_forecaster_:
                 result = self.ensemble_forecaster_.transform(X)
@@ -3897,329 +3882,13 @@ class AdvancedForecastingTransformer(TimeSeriesTransformer):
                 
             # Add method information to result
             result.data['selected_method'] = self.selected_method_
-            result.data['available_methods'] = ['prophet', 'exponential_smoothing', 'ensemble']
+            result.data['available_methods'] = ['exponential_smoothing', 'ensemble']
             
             return result
             
         except Exception as e:
             logger.error(f"Error in advanced forecasting transform: {e}")
             raise TimeSeriesValidationError(f"Advanced forecasting transform failed: {str(e)}")
-
-
-class ProphetForecaster(TimeSeriesTransformer):
-    """
-    sklearn-compatible transformer for Facebook Prophet forecasting.
-    
-    Provides robust forecasting with automatic handling of trends, seasonality,
-    holidays, and special events. Prophet is particularly effective for time series
-    with strong seasonal effects and several seasons of historical data.
-    
-    Parameters:
-    -----------
-    forecast_steps : int, default=10
-        Number of steps to forecast ahead
-    confidence_level : float, default=0.95
-        Confidence level for prediction intervals
-    growth : str, default='linear'
-        Type of trend: 'linear' or 'logistic'
-    seasonality_mode : str, default='additive'
-        Seasonality mode: 'additive' or 'multiplicative'
-    daily_seasonality : bool or str, default='auto'
-        Whether to include daily seasonality
-    weekly_seasonality : bool or str, default='auto'
-        Whether to include weekly seasonality
-    yearly_seasonality : bool or str, default='auto'
-        Whether to include yearly seasonality
-    holidays : pd.DataFrame, optional
-        Holiday dataframe with columns 'holiday' and 'ds'
-    changepoint_prior_scale : float, default=0.05
-        Flexibility of automatic changepoint selection
-    seasonality_prior_scale : float, default=10.0
-        Strength of seasonality model
-    """
-    
-    def __init__(self, forecast_steps=10, confidence_level=0.95, growth='linear',
-                 seasonality_mode='additive', daily_seasonality='auto',
-                 weekly_seasonality='auto', yearly_seasonality='auto',
-                 holidays=None, changepoint_prior_scale=0.05,
-                 seasonality_prior_scale=10.0, **kwargs):
-        super().__init__(**kwargs)
-        self.forecast_steps = forecast_steps
-        self.confidence_level = confidence_level
-        self.growth = growth
-        self.seasonality_mode = seasonality_mode
-        self.daily_seasonality = daily_seasonality
-        self.weekly_seasonality = weekly_seasonality
-        self.yearly_seasonality = yearly_seasonality
-        self.holidays = holidays
-        self.changepoint_prior_scale = changepoint_prior_scale
-        self.seasonality_prior_scale = seasonality_prior_scale
-        
-        self.model_ = None
-        self.forecast_ = None
-        self.training_data_ = None
-        self._prophet_available = self._check_prophet_availability()
-        
-    def _check_prophet_availability(self) -> bool:
-        """
-        Check if Prophet is available and can be imported.
-        
-        Returns:
-        --------
-        available : bool
-            True if Prophet can be imported
-        """
-        try:
-            import prophet
-            return True
-        except ImportError:
-            logger.warning("Prophet package not available. Install with: pip install prophet")
-            return False
-            
-    def _prepare_prophet_data(self, data: pd.Series) -> pd.DataFrame:
-        """
-        Prepare data in Prophet's required format.
-        
-        Parameters:
-        -----------
-        data : pd.Series
-            Time series data with datetime index
-            
-        Returns:
-        --------
-        df : pd.DataFrame
-            DataFrame with columns 'ds' (dates) and 'y' (values)
-        """
-        df = pd.DataFrame({
-            'ds': data.index,
-            'y': data.values
-        })
-        return df
-        
-    def _create_default_holidays(self, data: pd.Series) -> Optional[pd.DataFrame]:
-        """
-        Create a basic holidays dataframe if none provided.
-        
-        Parameters:
-        -----------
-        data : pd.Series
-            Time series data to analyze date range
-            
-        Returns:
-        --------
-        holidays : pd.DataFrame or None
-            Basic holidays dataframe or None if not applicable
-        """
-        # For now, return None - users can provide custom holidays
-        # Future enhancement: could include common holidays for different countries
-        return None
-        
-    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
-        """Fit the Prophet forecasting model."""
-        if not self._prophet_available:
-            raise ImportError("Prophet package is required but not available. Install with: pip install prophet")
-            
-        if self.validate_input:
-            X, y = self._validate_time_series(X, y)
-            
-        logger = get_logger(__name__)
-        
-        try:
-            # Extract univariate time series
-            if isinstance(X, pd.DataFrame):
-                if X.shape[1] == 1:
-                    data = X.iloc[:, 0]
-                else:
-                    raise ValueError("Prophet forecasting requires univariate time series data")
-            elif y is not None:
-                data = y
-            else:
-                raise ValueError("No target variable provided for Prophet forecasting")
-                
-            self.training_data_ = data
-            
-            # Prepare data for Prophet
-            prophet_data = self._prepare_prophet_data(data)
-            
-            # Import Prophet (after checking availability)
-            from prophet import Prophet
-            
-            # Initialize Prophet model with parameters
-            model_params = {
-                'growth': self.growth,
-                'seasonality_mode': self.seasonality_mode,
-                'daily_seasonality': self.daily_seasonality,
-                'weekly_seasonality': self.weekly_seasonality,
-                'yearly_seasonality': self.yearly_seasonality,
-                'changepoint_prior_scale': self.changepoint_prior_scale,
-                'seasonality_prior_scale': self.seasonality_prior_scale
-            }
-            
-            if self.holidays is not None:
-                model_params['holidays'] = self.holidays
-            elif len(data) > 365:  # Only add holidays for data spanning more than a year
-                default_holidays = self._create_default_holidays(data)
-                if default_holidays is not None:
-                    model_params['holidays'] = default_holidays
-                    
-            # Suppress Prophet's verbose output
-            import logging
-            logging.getLogger('prophet').setLevel(logging.WARNING)
-            
-            self.model_ = Prophet(**model_params)
-            self.model_.fit(prophet_data)
-            
-            logger.info("Prophet model fitted successfully")
-            
-        except Exception as e:
-            logger.error(f"Error in Prophet fitting: {e}")
-            raise TimeSeriesValidationError(f"Prophet fitting failed: {str(e)}")
-            
-        return self
-        
-    def transform(self, X: pd.DataFrame) -> PipelineResult:
-        """Generate forecasts using the fitted Prophet model."""
-        check_is_fitted(self, ['model_', 'training_data_'])
-        
-        start_time = time.time()
-        logger = get_logger(__name__)
-        
-        try:
-            # Create future dataframe for forecasting
-            future = self.model_.make_future_dataframe(
-                periods=self.forecast_steps,
-                freq=self._infer_frequency(pd.DataFrame({'value': self.training_data_}))
-            )
-            
-            # Generate forecast
-            forecast = self.model_.predict(future)
-            self.forecast_ = forecast
-            
-            # Extract forecast values (only future periods)
-            forecast_values = forecast[['ds', 'yhat']].tail(self.forecast_steps)
-            forecast_values = forecast_values.set_index('ds')['yhat']
-            
-            # Extract confidence intervals
-            confidence_intervals = forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(self.forecast_steps)
-            confidence_intervals = confidence_intervals.set_index('ds')[['yhat_lower', 'yhat_upper']]
-            
-            # Calculate prediction intervals width
-            interval_width = (confidence_intervals['yhat_upper'] - confidence_intervals['yhat_lower']).mean()
-            
-            # Prepare result data
-            result_data = {
-                'forecast_method': 'Prophet',
-                'forecast_values': forecast_values.to_dict(),
-                'confidence_intervals': confidence_intervals.to_dict(),
-                'forecast_horizon': self.forecast_steps,
-                'confidence_level': self.confidence_level,
-                'model_components': {
-                    'trend': forecast[['ds', 'trend']].set_index('ds')['trend'].to_dict(),
-                    'seasonal': {},  # Will be populated with seasonal components
-                },
-                'model_parameters': {
-                    'growth': self.growth,
-                    'seasonality_mode': self.seasonality_mode,
-                    'changepoint_prior_scale': self.changepoint_prior_scale,
-                    'seasonality_prior_scale': self.seasonality_prior_scale
-                },
-                'diagnostics': {
-                    'mean_interval_width': float(interval_width),
-                    'number_of_changepoints': len(self.model_.changepoints),
-                    'training_data_points': len(self.training_data_)
-                }
-            }
-            
-            # Add seasonal components if available
-            for component in ['weekly', 'yearly', 'daily']:
-                if component in forecast.columns:
-                    result_data['model_components']['seasonal'][component] = \
-                        forecast[['ds', component]].set_index('ds')[component].to_dict()
-                        
-            # Add interpretation
-            interpretation = self._generate_interpretation(forecast_values, confidence_intervals)
-            result_data['interpretation'] = interpretation
-            
-            # Add recommendations
-            recommendations = self._generate_recommendations()
-            result_data['recommendations'] = recommendations
-            
-            return PipelineResult(
-                success=True,
-                data=result_data,
-                metadata={},
-                execution_time_seconds=time.time() - start_time,
-                memory_used_mb=0.0,
-                pipeline_stage='forecast',
-                composition_metadata=CompositionMetadata(
-                    domain='time_series',
-                    analysis_type='forecast',
-                    result_type='predictions',
-                    data_artifacts={
-                        'forecast_steps': self.forecast_steps,
-                        'growth': self.growth,
-                        'seasonality_mode': self.seasonality_mode
-                    }
-                )
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in Prophet forecasting: {e}")
-            raise TimeSeriesValidationError(f"Prophet forecasting failed: {str(e)}")
-            
-    def _generate_interpretation(self, forecast_values: pd.Series, 
-                               confidence_intervals: pd.DataFrame) -> str:
-        """
-        Generate human-readable interpretation of Prophet forecast results.
-        
-        Parameters:
-        -----------
-        forecast_values : pd.Series
-            Forecasted values
-        confidence_intervals : pd.DataFrame
-            Confidence intervals for forecasts
-            
-        Returns:
-        --------
-        interpretation : str
-            Human-readable interpretation
-        """
-        avg_forecast = forecast_values.mean()
-        forecast_trend = 'increasing' if forecast_values.iloc[-1] > forecast_values.iloc[0] else 'decreasing'
-        avg_interval_width = (confidence_intervals['yhat_upper'] - confidence_intervals['yhat_lower']).mean()
-        
-        interpretation = (
-            f"Prophet forecast shows {forecast_trend} trend over {self.forecast_steps} periods. "
-            f"Average predicted value: {avg_forecast:.2f}. "
-            f"Average prediction interval width: {avg_interval_width:.2f}, "
-            f"indicating {'high' if avg_interval_width > abs(avg_forecast) * 0.2 else 'moderate'} uncertainty."
-        )
-        
-        return interpretation
-        
-    def _generate_recommendations(self) -> List[str]:
-        """
-        Generate recommendations based on the Prophet model.
-        
-        Returns:
-        --------
-        recommendations : List[str]
-            List of recommendations for the user
-        """
-        recommendations = []
-        
-        if len(self.training_data_) < 100:
-            recommendations.append("Consider collecting more historical data for improved forecast accuracy")
-            
-        if self.model_ and len(self.model_.changepoints) > len(self.training_data_) * 0.1:
-            recommendations.append("High number of changepoints detected - consider adjusting changepoint_prior_scale")
-            
-        if self.seasonality_mode == 'additive' and self.training_data_.std() > self.training_data_.mean() * 0.5:
-            recommendations.append("High variability detected - consider using multiplicative seasonality")
-            
-        recommendations.append("Prophet works best with at least one year of data and clear seasonal patterns")
-        
-        return recommendations
 
 
 class ExponentialSmoothingForecaster(TimeSeriesTransformer):
@@ -4641,7 +4310,7 @@ class EnsembleForecaster(TimeSeriesTransformer):
     """
     sklearn-compatible transformer for ensemble forecasting methods.
     
-    Combines multiple forecasting models (Prophet, Exponential Smoothing, ARIMA)
+    Combines multiple forecasting models (Exponential Smoothing, ARIMA)
     to create robust ensemble predictions. Uses weighted averaging or more
     sophisticated combination methods.
     
@@ -4713,17 +4382,7 @@ class EnsembleForecaster(TimeSeriesTransformer):
         models = {}
         
         for method in self.methods:
-            if method == 'prophet':
-                try:
-                    models[method] = ProphetForecaster(
-                        forecast_steps=len(self.validation_data_) if self.validation_data_ is not None else self.forecast_steps,
-                        confidence_level=self.confidence_level
-                    )
-                except Exception as e:
-                    logger.warning(f"Could not initialize Prophet: {e}")
-                    continue
-                    
-            elif method == 'exponential_smoothing':
+            if method == 'exponential_smoothing':
                 models[method] = ExponentialSmoothingForecaster(
                     forecast_steps=len(self.validation_data_) if self.validation_data_ is not None else self.forecast_steps,
                     confidence_level=self.confidence_level
@@ -7481,18 +7140,7 @@ class ChangePointDetector(TimeSeriesTransformer):
         self.max_changepoints = max_changepoints
         self.changepoints_ = []
         self.segments_ = []
-        self.ruptures_available_ = False
-        
-        # Check if ruptures is available
-        try:
-            import ruptures as rpt
-            self.ruptures_available_ = True
-            logger.info("Ruptures library available for advanced change point detection")
-        except ImportError:
-            logger.info("Ruptures library not available - using statistical methods only")
-            if self.method in ['bcp', 'pelt', 'window', 'dynp']:
-                logger.warning(f"Method '{self.method}' requires ruptures library, falling back to 'statistical'")
-                self.method = 'statistical'
+        self.ruptures_available_ = True
         
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """Fit the change point detector."""
@@ -7525,7 +7173,7 @@ class ChangePointDetector(TimeSeriesTransformer):
                 raise ValueError(f"Insufficient data points for change point detection (need at least {2 * self.min_size})")
             
             # Detect change points
-            if self.ruptures_available_ and self.method != 'statistical':
+            if self.method != 'statistical':
                 changepoints = self._detect_changepoints_ruptures(series)
             else:
                 changepoints = self._detect_changepoints_statistical(series)
@@ -7560,10 +7208,10 @@ class ChangePointDetector(TimeSeriesTransformer):
                 'segments': segments,
                 'segment_analysis': segment_analysis,
                 'detection_method': self.method,
-                'model_used': self.model if self.ruptures_available_ else 'statistical',
+                'model_used': self.model,
                 'min_segment_size': self.min_size,
                 'penalty_used': self.penalty,
-                'ruptures_available': self.ruptures_available_
+                'ruptures_available': True
             }
             
             model_diagnostics = detection_metrics
@@ -7593,8 +7241,6 @@ class ChangePointDetector(TimeSeriesTransformer):
         Detect change points using ruptures library methods.
         """
         try:
-            import ruptures as rpt
-            
             # Convert series to numpy array
             signal = series.values
             
@@ -7849,7 +7495,7 @@ class ChangePointDetector(TimeSeriesTransformer):
                 interpretation += "Subtle but statistically significant changes detected. "
         
         # Method information
-        method_info = f"ruptures-{self.method}" if self.ruptures_available_ else "statistical"
+        method_info = f"ruptures-{self.method}" if self.method != 'statistical' else "statistical"
         interpretation += f"Detection performed using {method_info} method."
         
         return interpretation
@@ -7896,10 +7542,6 @@ class ChangePointDetector(TimeSeriesTransformer):
                 recommendations.append("Strong differences between segments - consider separate models per segment")
             elif variance_ratio > 1:
                 recommendations.append("Moderate differences between segments - investigate common patterns")
-        
-        # Method-specific recommendations
-        if not self.ruptures_available_:
-            recommendations.append("Install 'ruptures' library for advanced change point detection methods")
         
         return recommendations
 
