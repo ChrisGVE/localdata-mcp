@@ -257,7 +257,12 @@ class RFMAnalysisTransformer(BaseEstimator, TransformerMixin):
         rfm_data = self._calculate_rfm_metrics(X_work)
         
         # Calculate scoring thresholds
-        if self.quartiles:
+        if rfm_data.empty:
+            # Use reasonable business-based thresholds for empty data
+            self.recency_thresholds_ = np.array([30, 90, 180])
+            self.frequency_thresholds_ = np.array([2, 5, 10])
+            self.monetary_thresholds_ = np.array([100, 500, 1000])
+        elif self.quartiles:
             self.recency_thresholds_ = rfm_data['recency'].quantile([0.25, 0.5, 0.75]).values
             self.frequency_thresholds_ = rfm_data['frequency'].quantile([0.25, 0.5, 0.75]).values
             self.monetary_thresholds_ = rfm_data['monetary'].quantile([0.25, 0.5, 0.75]).values
@@ -290,6 +295,22 @@ class RFMAnalysisTransformer(BaseEstimator, TransformerMixin):
         X_work = X.copy()
         X_work[self.date_column] = pd.to_datetime(X_work[self.date_column])
         rfm_data = self._calculate_rfm_metrics(X_work)
+        
+        # Handle empty data
+        if rfm_data.empty:
+            empty_scores = rfm_data.copy()
+            empty_segments = rfm_data.copy()
+            empty_summary = pd.DataFrame()
+            return RFMResult(
+                rfm_scores=empty_scores,
+                segments=empty_segments,
+                segment_summary=empty_summary,
+                quartile_boundaries={
+                    'recency': self.recency_thresholds_.tolist(),
+                    'frequency': self.frequency_thresholds_.tolist(),
+                    'monetary': self.monetary_thresholds_.tolist(),
+                }
+            )
         
         # Calculate RFM scores
         rfm_scores = self._calculate_rfm_scores(rfm_data)
@@ -325,6 +346,13 @@ class RFMAnalysisTransformer(BaseEstimator, TransformerMixin):
             frequency=(self.amount_column, 'count'),
             monetary=(self.amount_column, 'sum'),
         ).reset_index()
+        
+        # Handle empty data: pandas infers datetime64 dtype for recency from
+        # NaT propagation on empty groups, which makes numeric clip fail.
+        if rfm_data.empty:
+            rfm_data['recency'] = rfm_data['recency'].astype('int64')
+            rfm_data['monetary'] = rfm_data['monetary'].astype('float64')
+            return rfm_data
         
         # Handle edge cases
         rfm_data['recency'] = rfm_data['recency'].clip(lower=0)
@@ -1413,7 +1441,8 @@ class BusinessIntelligencePipeline(AnalysisPipelineBase):
     def __init__(self, customer_analytics=True, ab_testing=True, 
                  attribution_modeling=True, funnel_analysis=True, 
                  streaming_config=None, **kwargs):
-        super().__init__(streaming_config=streaming_config, **kwargs)
+        super().__init__(analytical_intention="business intelligence analysis",
+                         streaming_config=streaming_config, **kwargs)
         
         self.customer_analytics = customer_analytics
         self.ab_testing = ab_testing
@@ -1461,7 +1490,11 @@ class BusinessIntelligencePipeline(AnalysisPipelineBase):
         logger.info("Executing Business Intelligence pipeline analysis")
         
         results = {}
-        metadata = CompositionMetadata()
+        metadata = CompositionMetadata(
+            domain='business_intelligence',
+            analysis_type='business_intelligence',
+            result_type='multi_component_analysis',
+        )
         
         for name, transformer in self.transformers.items():
             try:
@@ -1477,9 +1510,13 @@ class BusinessIntelligencePipeline(AnalysisPipelineBase):
                 
         # Create pipeline result
         pipeline_result = PipelineResult(
+            success=True,
             data=results,
-            metadata=metadata,
-            streaming_config=self.streaming_config
+            metadata={},
+            execution_time_seconds=0.0,
+            memory_used_mb=0.0,
+            pipeline_stage='transform',
+            composition_metadata=metadata,
         )
         
         return pipeline_result
