@@ -57,6 +57,13 @@ dependencies = [
   "scikit-learn>=1.1.0",
   "statsmodels>=0.13.0",
   "numpy>=1.21.0",
+  # Change point detection
+  "ruptures>=1.1.0",
+  # Geospatial analysis
+  "geopandas>=0.12.0",
+  "shapely>=2.0.0",
+  "fiona>=1.9.0",
+  "pyproj>=3.4.0",
 ]
 
 [project.optional-dependencies]
