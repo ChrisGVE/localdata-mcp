@@ -304,8 +304,8 @@ class TestCategoricalDetector:
 
         assert schema.data_format == DataFormat.CATEGORICAL
         assert (
-            schema.structure_type == "array"
-        )  # For DataFrame it's treated as array structure
+            schema.structure_type == "tabular"
+        )  # DataFrame is tabular structure
 
 
 class TestTypeDetectionEngine:

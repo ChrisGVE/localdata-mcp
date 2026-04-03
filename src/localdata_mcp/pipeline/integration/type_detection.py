@@ -358,9 +358,9 @@ class CategoricalDetector(FormatSpecificDetector):
                 if data[col].dtype.name == 'category':
                     categorical_columns.append(col)
                 else:
-                    # Check if should be categorical
+                    # Check if should be categorical (low cardinality heuristic)
                     unique_ratio = data[col].nunique() / len(data) if len(data) > 0 else 0
-                    if unique_ratio < 0.1 and data[col].nunique() < 50:  # Low cardinality
+                    if unique_ratio <= 0.2 and data[col].nunique() < 50:
                         categorical_columns.append(col)
             
             if categorical_columns:
@@ -372,17 +372,27 @@ class CategoricalDetector(FormatSpecificDetector):
                 'total_categorical_ratio': confidence
             }
         
+        elif isinstance(data, pd.Categorical):
+            confidence = 1.0
+            details = {
+                'unique_values': len(data.categories),
+                'unique_ratio': len(data.categories) / len(data) if len(data) > 0 else 0,
+                'sample_values': list(data.categories[:10])
+            }
+        
         elif isinstance(data, pd.Series):
             if data.dtype.name == 'category':
                 confidence = 1.0
             else:
                 unique_ratio = data.nunique() / len(data) if len(data) > 0 else 0
-                if unique_ratio < 0.1 and data.nunique() < 50:
+                if unique_ratio <= 0.2 and data.nunique() < 50:
                     confidence = 0.8
             
             details = {
                 'unique_values': data.nunique(),
-                'unique_ratio': unique_ratio,
+                'unique_ratio': unique_ratio if data.dtype.name != 'category' else (
+                    data.nunique() / len(data) if len(data) > 0 else 0
+                ),
                 'sample_values': data.unique()[:10].tolist()
             }
         
