@@ -297,6 +297,7 @@ class SamplingTransformer(BaseEstimator, TransformerMixin):
         self.cluster_column = cluster_column
         self.weights_column = weights_column
         self.replacement = replacement
+        self._validate_parameters()
 
     def fit(self, X, y=None):
         """Fit the transformer (no-op for sampling)."""
