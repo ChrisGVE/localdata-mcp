@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- sphinx-start -->
 
+## [2.0.0a1] - 2026-04-03
+
+### Added
+- Data science domain modules with sklearn-compatible transformers:
+  - Statistical analysis: hypothesis testing, ANOVA, effect sizes
+  - Regression modeling: linear, regularized, polynomial with diagnostics
+  - Pattern recognition: clustering, anomaly detection, dimensionality reduction
+  - Time series: decomposition, ARIMA/ETS forecasting, change detection
+  - Business intelligence: RFM segmentation, cohort analysis, A/B testing
+  - Optimization: linear programming, constrained optimization, network analysis
+  - Sampling & estimation: bootstrap, Bayesian estimation, Monte Carlo simulation
+  - Geospatial analysis: spatial joins, routing, clustering (optional geopandas)
+- Pipeline framework: sklearn-compatible data science pipeline with streaming support
+- 12 new MCP tools for data science operations
+- Integration shim layer for domain interoperability
+
+### Changed
+- Added scipy, scikit-learn, statsmodels, numpy as core dependencies
+- Geospatial imports guarded with try/except for optional geopandas dependency
+
+### Notes
+- Alpha release; API may change before 2.0.0 stable
+- All 1621 v1 unit tests continue to pass with zero regressions
+
 ## [1.7.1] - 2026-04-02
 
 ### Added
