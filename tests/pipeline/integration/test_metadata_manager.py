@@ -168,7 +168,7 @@ class TestPandasMetadataTransformer:
         )
 
         # Unsupported
-        assert self.transformer.can_transform(DataFormat.JSON, DataFormat.XML) is False
+        assert self.transformer.can_transform(DataFormat.JSON, DataFormat.HDF5) is False
 
     def test_transform_dataframe_to_array(self):
         """Test transforming DataFrame metadata to array metadata."""
