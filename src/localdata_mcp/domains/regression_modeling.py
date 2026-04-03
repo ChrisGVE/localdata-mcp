@@ -96,6 +96,7 @@ class RegressionModelResult:
     n_samples: int = 0
     convergence_info: Dict[str, Any] = field(default_factory=dict)
     assumptions_met: Dict[str, bool] = field(default_factory=dict)
+    additional_info: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to dictionary format."""
@@ -1344,8 +1345,8 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
                 feature_scores = self.selector_.scores_
                 feature_importance = feature_scores[selected_mask]
             elif hasattr(self.selector_, 'estimator_') and hasattr(self.selector_.estimator_, 'coef_'):
-                # Model-based selection
-                feature_importance = np.abs(self.selector_.estimator_.coef_)
+                # Model-based selection - only include importance for selected features
+                feature_importance = np.abs(self.selector_.estimator_.coef_)[selected_mask]
             elif hasattr(self.selector_, 'ranking_'):
                 # RFE/RFECV - convert ranking to importance (inverse ranking)
                 max_rank = np.max(self.selector_.ranking_)
@@ -1571,6 +1572,32 @@ class RegressionModelingPipeline(AnalysisPipelineBase):
             
         return self.regressor_.score(X_processed, y)
     
+    def get_analysis_type(self) -> str:
+        """Get the specific analysis type this pipeline performs."""
+        return f"{self.model_type}_regression"
+
+    def _configure_analysis_pipeline(self):
+        """Configure analysis steps based on intention and complexity level."""
+        steps = [self.fit]
+        if self.residual_analysis:
+            steps.append(lambda X, y: self.residual_analyzer_)
+        return steps
+
+    def _execute_analysis_step(self, step, data, context):
+        """Execute individual analysis step with error handling and metadata."""
+        result = step(data, context) if callable(step) else step
+        return result, {}
+
+    def _execute_streaming_analysis(self, data):
+        """Execute analysis with streaming support for large datasets."""
+        # Regression modeling currently processes in-memory
+        return self._execute_standard_analysis(data)
+
+    def _execute_standard_analysis(self, data):
+        """Execute analysis on full dataset in memory."""
+        # Primary analysis is handled by the fit method
+        return self.regression_result_, {}
+
     def get_results(self):
         """
         Get comprehensive results from the regression modeling pipeline.
