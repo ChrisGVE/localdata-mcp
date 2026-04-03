@@ -137,6 +137,7 @@ class HypothesisTestingTransformer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """Fit the transformer (no-op for statistical tests)."""
         self._validate_parameters()
+        self.is_fitted_ = True
         return self
 
     def transform(self, X):
@@ -616,6 +617,7 @@ class ANOVAAnalysisTransformer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """Fit the transformer (no-op for ANOVA)."""
         self._validate_parameters()
+        self.is_fitted_ = True
         return self
 
     def transform(self, X):
@@ -948,6 +950,7 @@ class NonParametricTestTransformer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """Fit the transformer (no-op for non-parametric tests)."""
         self._validate_parameters()
+        self.is_fitted_ = True
         return self
 
     def transform(self, X):
@@ -1308,6 +1311,7 @@ class ExperimentalDesignTransformer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """Fit the transformer (no-op for experimental design)."""
         self._validate_parameters()
+        self.is_fitted_ = True
         return self
 
     def transform(self, X):

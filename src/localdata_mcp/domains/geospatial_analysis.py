@@ -3270,6 +3270,7 @@ class VariogramModel:
         if self.scikit_gstat_available:
             return self._fit_scikit_gstat(points, values, max_distance, n_lags)
         else:
+            self.is_fitted_ = True
             return self._fit_fallback(points, values, max_distance, n_lags)
     
     def _fit_scikit_gstat(self, points, values, max_distance, n_lags):

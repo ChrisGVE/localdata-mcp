@@ -1449,6 +1449,7 @@ class BusinessIntelligencePipeline(AnalysisPipelineBase):
             except Exception as e:
                 logger.warning(f"Failed to fit {name} transformer: {str(e)}")
                 
+        self.is_fitted_ = True
         return self
         
     def transform(self, X):

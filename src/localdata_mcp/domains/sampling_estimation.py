@@ -301,6 +301,7 @@ class SamplingTransformer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """Fit the transformer (no-op for sampling)."""
         self._validate_parameters()
+        self.is_fitted_ = True
         return self
 
     def transform(self, X):
@@ -666,6 +667,7 @@ class BootstrapTransformer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """Fit the transformer (no-op for bootstrap)."""
         self._validate_parameters()
+        self.is_fitted_ = True
         return self
 
     def transform(self, X):
@@ -865,6 +867,7 @@ class MonteCarloTransformer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """Fit the transformer (no-op for Monte Carlo)."""
         self._validate_parameters()
+        self.is_fitted_ = True
         return self
 
     def transform(self, X):
@@ -1263,6 +1266,7 @@ class BayesianEstimationTransformer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """Fit the transformer (no-op for Bayesian estimation)."""
         self._validate_parameters()
+        self.is_fitted_ = True
         return self
 
     def transform(self, X):

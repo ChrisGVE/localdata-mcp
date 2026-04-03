@@ -452,6 +452,7 @@ class TimeSeriesPipeline(AnalysisPipelineBase):
             self._fit_time = time.time() - start_time
             
             logger.info(f"Time series pipeline fitted in {self._fit_time:.2f}s")
+            self.is_fitted_ = True
             return self
             
         except Exception as e:
@@ -962,6 +963,7 @@ class TimeSeriesImputationTransformer(TimeSeriesTransformer):
                         'seasonal_means': seasonal_means
                     }
                     
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -1049,6 +1051,7 @@ class TimeSeriesQualityValidator(TimeSeriesTransformer):
         """Fit the quality validator."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -1183,6 +1186,7 @@ class StationarityTestTransformer(TimeSeriesTransformer):
         """Fit the stationarity test transformer."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -1383,6 +1387,7 @@ class UnitRootTestTransformer(TimeSeriesTransformer):
         """Fit the unit root test transformer."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -1554,6 +1559,7 @@ class AutocorrelationAnalysisTransformer(TimeSeriesTransformer):
         """Fit the ACF analysis transformer."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -1821,6 +1827,7 @@ class PartialAutocorrelationAnalysisTransformer(TimeSeriesTransformer):
         """Fit the PACF analysis transformer."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -2049,6 +2056,7 @@ class LagSelectionTransformer(TimeSeriesTransformer):
         """Fit the lag selection transformer."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -2251,6 +2259,7 @@ class TimeSeriesDecompositionTransformer(TimeSeriesTransformer):
         """Fit the decomposition transformer."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -2583,6 +2592,7 @@ class TrendAnalysisTransformer(TimeSeriesTransformer):
         """Fit the trend analysis transformer."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -5172,6 +5182,7 @@ class ForecastEvaluator(BaseEstimator, TransformerMixin):
         
     def fit(self, X, y=None):
         """ForecastEvaluator doesn't require fitting."""
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> PipelineResult:
@@ -7298,6 +7309,7 @@ class ChangePointDetector(TimeSeriesTransformer):
         """Fit the change point detector."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -7740,6 +7752,7 @@ class AnomalyDetector(TimeSeriesTransformer):
         """Fit the anomaly detector."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -8186,6 +8199,7 @@ class StructuralBreakTester(TimeSeriesTransformer):
         """Fit the structural break tester."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
@@ -8555,6 +8569,7 @@ class SeasonalAnomalyDetector(TimeSeriesTransformer):
         """Fit the seasonal anomaly detector."""
         if self.validate_input:
             X, y = self._validate_time_series(X, y)
+        self.is_fitted_ = True
         return self
         
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:

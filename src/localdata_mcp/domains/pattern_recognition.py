@@ -1060,6 +1060,7 @@ class PatternEvaluationTransformer(AnalysisPipelineBase):
         
     def fit(self, X, y=None):
         """Fit is not needed for evaluation."""
+        self.is_fitted_ = True
         return self
         
     def transform(self, X):
