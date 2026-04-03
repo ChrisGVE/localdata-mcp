@@ -65,9 +65,10 @@
 - **Statistical Analysis**: Hypothesis testing, ANOVA, effect sizes
 - **Regression Modeling**: Linear, ridge, lasso, polynomial with diagnostics
 - **Pattern Recognition**: Clustering, anomaly detection, dimensionality reduction
-- **Time Series**: Decomposition, ARIMA/ETS forecasting, change detection
-- **Business Intelligence**: RFM segmentation, A/B testing
-- **Optimization**: Linear programming, constrained optimization (optional)
+- **Time Series**: Decomposition, ARIMA/ETS forecasting, change point detection
+- **Geospatial Analysis**: Spatial joins, distance calculation, coordinate transforms
+- **Business Intelligence**: RFM segmentation, A/B testing, cohort analysis
+- **Optimization**: Linear programming, constrained optimization, network analysis
 
 ### **52 MCP Tools**
 
@@ -81,16 +82,31 @@
 ### Installation
 
 ```bash
-# Using pip
-pip install localdata-mcp
-
-# Using uv (recommended)
+# Install permanently (recommended)
 uv tool install localdata-mcp
 
+# Update to latest version
+uv tool upgrade localdata-mcp
+
+# Or run directly without installing
+uvx localdata-mcp
+```
+
+> **First install note:** LocalData MCP includes data science libraries (scipy,
+> scikit-learn, statsmodels, geopandas, ruptures) that total around 200 MB.
+> The first install or first `uvx` run may take a minute or two while these are
+> downloaded and cached. Subsequent runs reuse the cache and start immediately.
+>
+> If your LLM client times out waiting for the MCP server to start on the first
+> run, reconnect the MCP server from your client's interface or restart the LLM
+> application. The dependencies will already be cached and the next start will
+> be fast.
+
+```bash
 # Development installation
 git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
-pip install -e .
+uv sync --dev
 ```
 
 ### Configuration
@@ -102,6 +118,20 @@ Add to your MCP client configuration:
   "mcpServers": {
     "localdata": {
       "command": "localdata-mcp",
+      "env": {}
+    }
+  }
+}
+```
+
+For `uvx` usage (no permanent install):
+
+```json
+{
+  "mcpServers": {
+    "localdata": {
+      "command": "uvx",
+      "args": ["localdata-mcp"],
       "env": {}
     }
   }
