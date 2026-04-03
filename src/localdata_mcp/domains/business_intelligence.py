@@ -318,13 +318,13 @@ class RFMAnalysisTransformer(BaseEstimator, TransformerMixin):
         """Calculate base RFM metrics from transaction data."""
         logger.info("Calculating RFM metrics for customer segmentation")
         
-        rfm_data = X.groupby(self.customer_column).agg({
-            self.date_column: lambda x: (self.analysis_date_ - x.max()).days,  # Recency
-            self.customer_column: 'count',  # Frequency 
-            self.amount_column: 'sum'  # Monetary
-        }).reset_index()
-        
-        rfm_data.columns = [self.customer_column, 'recency', 'frequency', 'monetary']
+        # Use named aggregation to avoid column duplication when the groupby
+        # key would otherwise collide with an aggregation column on reset_index.
+        rfm_data = X.groupby(self.customer_column).agg(
+            recency=(self.date_column, lambda x: (self.analysis_date_ - x.max()).days),
+            frequency=(self.amount_column, 'count'),
+            monetary=(self.amount_column, 'sum'),
+        ).reset_index()
         
         # Handle edge cases
         rfm_data['recency'] = rfm_data['recency'].clip(lower=0)
@@ -404,20 +404,20 @@ class RFMAnalysisTransformer(BaseEstimator, TransformerMixin):
         
     def _generate_segment_summary(self, segments):
         """Generate summary statistics for each segment."""
-        summary = segments.groupby('Segment').agg({
-            self.customer_column: 'count',
-            'recency': ['mean', 'median'],
-            'frequency': ['mean', 'median'], 
-            'monetary': ['mean', 'median', 'sum']
-        }).round(2)
-        
-        # Flatten column names
-        summary.columns = [f"{col[1]}_{col[0]}" if col[1] != '' else col[0] 
-                          for col in summary.columns]
+        summary = segments.groupby('Segment').agg(
+            customer_count=(self.customer_column, 'count'),
+            recency_mean=('recency', 'mean'),
+            recency_median=('recency', 'median'),
+            frequency_mean=('frequency', 'mean'),
+            frequency_median=('frequency', 'median'),
+            monetary_mean=('monetary', 'mean'),
+            monetary_median=('monetary', 'median'),
+            monetary_sum=('monetary', 'sum'),
+        ).round(2)
         
         # Add percentage of total customers
         total_customers = len(segments)
-        summary['percentage'] = (summary[f'{self.customer_column}'] / total_customers * 100).round(1)
+        summary['percentage'] = (summary['customer_count'] / total_customers * 100).round(1)
         
         return summary.reset_index()
 
@@ -630,12 +630,16 @@ class CLVCalculator(BaseEstimator, TransformerMixin):
         logger.info("Calculating historical CLV")
         
         # Simple CLV = Average Order Value * Purchase Frequency * Gross Margin * Lifespan
-        customer_metrics = X.groupby('customer_id').agg({
-            'amount': ['sum', 'mean', 'count'],
-            'date': ['min', 'max']
-        }).round(2)
-        
-        customer_metrics.columns = ['total_spent', 'avg_order_value', 'order_count', 'first_purchase', 'last_purchase']
+        customer_metrics = X.groupby('customer_id').agg(
+            total_spent=('amount', 'sum'),
+            avg_order_value=('amount', 'mean'),
+            order_count=('amount', 'count'),
+            first_purchase=('date', 'min'),
+            last_purchase=('date', 'max'),
+        )
+        # Round only numeric columns to avoid warnings on datetime columns
+        numeric_cols = customer_metrics.select_dtypes(include='number').columns
+        customer_metrics[numeric_cols] = customer_metrics[numeric_cols].round(2)
         
         # Calculate customer lifespan in days
         customer_metrics['lifespan_days'] = (customer_metrics['last_purchase'] - customer_metrics['first_purchase']).dt.days
@@ -1480,6 +1484,76 @@ class BusinessIntelligencePipeline(AnalysisPipelineBase):
         
         return pipeline_result
         
+    def get_analysis_type(self) -> str:
+        """Get the specific analysis type this pipeline performs."""
+        return 'business_intelligence'
+
+    def _configure_analysis_pipeline(self):
+        """Configure analysis steps based on intention and complexity level."""
+        steps = []
+        if self.customer_analytics:
+            steps.append(self._run_customer_analytics)
+        if self.ab_testing:
+            steps.append(self._run_ab_testing)
+        if self.attribution_modeling:
+            steps.append(self._run_attribution)
+        if self.funnel_analysis:
+            steps.append(self._run_funnel_analysis)
+        return steps
+
+    def _execute_analysis_step(self, step, data, context):
+        """Execute individual analysis step with error handling and metadata."""
+        result = step(data) if callable(step) else step
+        return result, {}
+
+    def _execute_streaming_analysis(self, data):
+        """Execute analysis with streaming support for large datasets."""
+        return self._execute_standard_analysis(data)
+
+    def _execute_standard_analysis(self, data):
+        """Execute analysis on full dataset in memory."""
+        results = {}
+        for name, transformer in self.transformers.items():
+            try:
+                if hasattr(transformer, 'is_fitted_') and transformer.is_fitted_:
+                    results[name] = transformer.transform(data)
+            except Exception as e:
+                logger.error(f'Error in {name}: {str(e)}')
+                results[name] = f'Error: {str(e)}'
+        return results, {}
+
+    def _run_customer_analytics(self, data):
+        """Run customer analytics transformers."""
+        results = {}
+        for name in ('rfm', 'cohort', 'clv'):
+            t = self.transformers.get(name)
+            if t and hasattr(t, 'is_fitted_') and t.is_fitted_:
+                results[name] = t.transform(data)
+        return results
+
+    def _run_ab_testing(self, data):
+        """Run A/B testing transformers."""
+        results = {}
+        for name in ('ab_test', 'power_analysis'):
+            t = self.transformers.get(name)
+            if t and hasattr(t, 'is_fitted_') and t.is_fitted_:
+                results[name] = t.transform(data)
+        return results
+
+    def _run_attribution(self, data):
+        """Run attribution analysis transformer."""
+        t = self.transformers.get('attribution')
+        if t and hasattr(t, 'is_fitted_') and t.is_fitted_:
+            return t.transform(data)
+        return {}
+
+    def _run_funnel_analysis(self, data):
+        """Run funnel analysis transformer."""
+        t = self.transformers.get('funnel')
+        if t and hasattr(t, 'is_fitted_') and t.is_fitted_:
+            return t.transform(data)
+        return {}
+
     def analyze_customer_journey(self, transaction_data: pd.DataFrame,
                                 touchpoint_data: pd.DataFrame = None,
                                 funnel_data: pd.DataFrame = None) -> Dict[str, Any]:
