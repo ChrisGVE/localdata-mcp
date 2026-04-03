@@ -199,9 +199,10 @@ class TestSpatialNetwork:
 
         points = [(0, 0), (1, 0), (1, 1), (0, 1)]
 
-        # This will fail without NetworkX, but we can test the structure
-        with pytest.raises(ValueError, match="NetworkX is required"):
-            network.create_network_from_points(points, connection_method="knn")
+        # NetworkX is available, so creation should succeed
+        network.create_network_from_points(points, connection_method="knn")
+        assert network.network is not None
+        assert len(network.network.nodes()) == len(points)
 
     def test_network_creation_from_edges(self):
         """Test network creation from explicit edges."""
@@ -218,9 +219,11 @@ class TestSpatialNetwork:
             {"source": "B", "target": "C", "weight": 1.0},
         ]
 
-        # This will fail without NetworkX, but we can test the structure
-        with pytest.raises(ValueError, match="NetworkX is required"):
-            network.create_network_from_edges(nodes, edges)
+        # NetworkX is available, so creation should succeed
+        network.create_network_from_edges(nodes, edges)
+        assert network.network is not None
+        assert len(network.network.nodes()) == 3
+        assert len(network.network.edges()) == 2
 
 
 class TestHighLevelFunctions:
