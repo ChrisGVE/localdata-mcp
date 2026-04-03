@@ -3165,10 +3165,14 @@ class ARIMAForecastTransformer(TimeSeriesTransformer):
                 
             result_data['recommendations'] = recommendations
             
-            return TimeSeriesAnalysisResult(
+            return PipelineResult(
+                success=True,
                 data=result_data,
-                execution_time=time.time() - start_time,
-                metadata=CompositionMetadata(
+                metadata={},
+                execution_time_seconds=time.time() - start_time,
+                memory_used_mb=0.0,
+                pipeline_stage='forecast',
+                composition_metadata=CompositionMetadata(
                     domain='time_series',
                     analysis_type='forecast',
                     result_type='predictions',
@@ -3355,10 +3359,14 @@ class SARIMAForecastTransformer(TimeSeriesTransformer):
                 
             result_data['recommendations'] = recommendations
             
-            return TimeSeriesAnalysisResult(
+            return PipelineResult(
+                success=True,
                 data=result_data,
-                execution_time=time.time() - start_time,
-                metadata=CompositionMetadata(
+                metadata={},
+                execution_time_seconds=time.time() - start_time,
+                memory_used_mb=0.0,
+                pipeline_stage='forecast',
+                composition_metadata=CompositionMetadata(
                     domain='time_series',
                     analysis_type='forecast',
                     result_type='predictions',
@@ -3674,10 +3682,14 @@ class AutoARIMATransformer(TimeSeriesTransformer):
                 
             result_data['recommendations'] = recommendations
             
-            return TimeSeriesAnalysisResult(
+            return PipelineResult(
+                success=True,
                 data=result_data,
-                execution_time=time.time() - start_time,
-                metadata=CompositionMetadata(
+                metadata={},
+                execution_time_seconds=time.time() - start_time,
+                memory_used_mb=0.0,
+                pipeline_stage='forecast',
+                composition_metadata=CompositionMetadata(
                     domain='time_series',
                     analysis_type='forecast',
                     result_type='predictions',
@@ -4132,10 +4144,14 @@ class ProphetForecaster(TimeSeriesTransformer):
             recommendations = self._generate_recommendations()
             result_data['recommendations'] = recommendations
             
-            return TimeSeriesAnalysisResult(
+            return PipelineResult(
+                success=True,
                 data=result_data,
-                execution_time=time.time() - start_time,
-                metadata=CompositionMetadata(
+                metadata={},
+                execution_time_seconds=time.time() - start_time,
+                memory_used_mb=0.0,
+                pipeline_stage='forecast',
+                composition_metadata=CompositionMetadata(
                     domain='time_series',
                     analysis_type='forecast',
                     result_type='predictions',
@@ -4530,10 +4546,14 @@ class ExponentialSmoothingForecaster(TimeSeriesTransformer):
             recommendations = self._generate_recommendations()
             result_data['recommendations'] = recommendations
             
-            return TimeSeriesAnalysisResult(
+            return PipelineResult(
+                success=True,
                 data=result_data,
-                execution_time=time.time() - start_time,
-                metadata=CompositionMetadata(
+                metadata={},
+                execution_time_seconds=time.time() - start_time,
+                memory_used_mb=0.0,
+                pipeline_stage='forecast',
+                composition_metadata=CompositionMetadata(
                     domain='time_series',
                     analysis_type='forecast',
                     result_type='predictions',
@@ -4696,7 +4716,7 @@ class EnsembleForecaster(TimeSeriesTransformer):
             if method == 'prophet':
                 try:
                     models[method] = ProphetForecaster(
-                        forecast_steps=len(self.validation_data_) if hasattr(self, 'validation_data_') else self.forecast_steps,
+                        forecast_steps=len(self.validation_data_) if self.validation_data_ is not None else self.forecast_steps,
                         confidence_level=self.confidence_level
                     )
                 except Exception as e:
@@ -4705,19 +4725,19 @@ class EnsembleForecaster(TimeSeriesTransformer):
                     
             elif method == 'exponential_smoothing':
                 models[method] = ExponentialSmoothingForecaster(
-                    forecast_steps=len(self.validation_data_) if hasattr(self, 'validation_data_') else self.forecast_steps,
+                    forecast_steps=len(self.validation_data_) if self.validation_data_ is not None else self.forecast_steps,
                     confidence_level=self.confidence_level
                 )
                 
             elif method == 'arima':
                 models[method] = ARIMAForecastTransformer(
-                    forecast_steps=len(self.validation_data_) if hasattr(self, 'validation_data_') else self.forecast_steps,
+                    forecast_steps=len(self.validation_data_) if self.validation_data_ is not None else self.forecast_steps,
                     alpha=1.0 - self.confidence_level
                 )
                 
             elif method == 'auto_arima':
                 models[method] = AutoARIMATransformer(
-                    forecast_steps=len(self.validation_data_) if hasattr(self, 'validation_data_') else self.forecast_steps,
+                    forecast_steps=len(self.validation_data_) if self.validation_data_ is not None else self.forecast_steps,
                     stepwise=True  # Faster for ensemble
                 )
                 
@@ -4996,10 +5016,14 @@ class EnsembleForecaster(TimeSeriesTransformer):
             recommendations = self._generate_recommendations()
             result_data['recommendations'] = recommendations
             
-            return TimeSeriesAnalysisResult(
+            return PipelineResult(
+                success=True,
                 data=result_data,
-                execution_time=time.time() - start_time,
-                metadata=CompositionMetadata(
+                metadata={},
+                execution_time_seconds=time.time() - start_time,
+                memory_used_mb=0.0,
+                pipeline_stage='forecast',
+                composition_metadata=CompositionMetadata(
                     domain='time_series',
                     analysis_type='forecast',
                     result_type='predictions',
@@ -7152,7 +7176,8 @@ class ImpulseResponseAnalyzer(MultivariateTimeSeriesTransformer):
                     irf_dict[key] = impulse_responses[:, response_idx, shock_idx]
             
             # Create DataFrames for easy interpretation
-            periods_index = list(range(self.periods))
+            # irf() returns periods + 1 values (period 0 through periods)
+            periods_index = list(range(self.periods + 1))
             
             irf_df = pd.DataFrame(
                 {key: values for key, values in irf_dict.items()},
@@ -7176,18 +7201,20 @@ class ImpulseResponseAnalyzer(MultivariateTimeSeriesTransformer):
             # FEVD DataFrame
             fevd_df = None
             if fevd_decomposition is not None:
+                # fevd decomp shape is (n_vars, periods, n_vars) = (response, period, shock)
+                n_fevd_periods = fevd_decomposition.shape[1]
                 fevd_dict = {}
-                for period in range(self.periods):
+                for period in range(n_fevd_periods):
                     for shock_idx, shock_var in enumerate(series_names):
                         for response_idx, response_var in enumerate(series_names):
                             key = f"{response_var} ← {shock_var}"
                             if key not in fevd_dict:
                                 fevd_dict[key] = []
-                            fevd_dict[key].append(fevd_decomposition[period, response_idx, shock_idx])
+                            fevd_dict[key].append(fevd_decomposition[response_idx, period, shock_idx])
                 
                 fevd_df = pd.DataFrame(
                     fevd_dict,
-                    index=periods_index
+                    index=list(range(n_fevd_periods))
                 )
             
             # Find most significant impulse responses
