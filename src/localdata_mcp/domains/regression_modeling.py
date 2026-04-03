@@ -494,6 +494,14 @@ class RegularizedRegressionTransformer(BaseEstimator, TransformerMixin, Regresso
         
         try:
             # Select model based on method and alpha tuning preference
+
+            # Convergence information
+            convergence_info = {}
+            n_iter = getattr(self.model, "n_iter_", None)
+            if n_iter is not None:
+                convergence_info["n_iterations"] = n_iter
+                convergence_info["converged"] = n_iter < self.max_iter
+
             if self.alpha == 'auto':
                 if self.method == 'ridge':
                     self.model = RidgeCV(cv=self.cv)
@@ -537,7 +545,7 @@ class RegularizedRegressionTransformer(BaseEstimator, TransformerMixin, Regresso
             cv_scores = None
             cv_mean = None
             cv_std = None
-            if hasattr(self.model, 'mse_path_'):
+            if self.alpha == 'auto':
                 # For CV models, get cross-validation R² scores
                 cv_scores = cross_val_score(self.model, X, y, cv=self.cv, scoring='r2')
                 cv_mean = np.mean(cv_scores)
@@ -557,9 +565,10 @@ class RegularizedRegressionTransformer(BaseEstimator, TransformerMixin, Regresso
             
             # Convergence information
             convergence_info = {}
-            if hasattr(self.model, 'n_iter_'):
-                convergence_info['n_iterations'] = getattr(self.model, 'n_iter_', None)
-                convergence_info['converged'] = getattr(self.model, 'n_iter_', 0) < self.max_iter
+            n_iter = getattr(self.model, "n_iter_", None)
+            if n_iter is not None:
+                convergence_info['n_iterations'] = n_iter
+                convergence_info['converged'] = n_iter < self.max_iter
             
             if self.alpha == 'auto':
                 convergence_info['optimal_alpha'] = optimal_alpha
@@ -657,8 +666,8 @@ class LogisticRegressionTransformer(BaseEstimator, TransformerMixin):
         
         # Initialize model
         self.model = LogisticRegression(
-            penalty=penalty, C=C, solver=solver, 
-            multi_class=multi_class, max_iter=max_iter
+            penalty=penalty, C=C, solver=solver,
+            max_iter=max_iter
         )
         self.result_ = None
         
