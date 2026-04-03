@@ -8,7 +8,7 @@ This module implements advanced time series analysis capabilities including:
 - Seasonal decomposition and trend analysis
 - Anomaly detection in time series (statistical, ML-based approaches)
 - Change point detection (CUSUM, Bayesian, PELT algorithms)
-- Advanced forecasting (Prophet, LSTM, Ensemble methods)
+- Advanced forecasting (LSTM, Ensemble methods)
 - Multivariate time series analysis (VAR, VECM, Granger causality)
 - High-frequency analysis and real-time processing
 - Cross-validation and performance evaluation
@@ -49,12 +49,6 @@ from statsmodels.tsa.vector_ar.vecm import VECM
 from statsmodels.tsa.stattools import grangercausalitytests
 
 # Optional dependencies with graceful fallbacks
-try:
-    import prophet
-    PROPHET_AVAILABLE = True
-except ImportError:
-    PROPHET_AVAILABLE = False
-
 try:
     import ruptures as rpt
     RUPTURES_AVAILABLE = True
@@ -802,7 +796,7 @@ class ChangePointDetector(TimeSeriesAnalyzer):
         
         if self.method == 'cusum':
             change_points = self._cusum_detection()
-        elif self.method == 'pelt' and RUPTURES_AVAILABLE:
+        elif self.method == 'pelt':
             change_points = self._pelt_detection()
         else:
             change_points = self._simple_change_detection()
