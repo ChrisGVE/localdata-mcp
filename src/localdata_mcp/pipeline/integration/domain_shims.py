@@ -112,6 +112,7 @@ class BaseDomainShim(EnhancedShimAdapter):
         
         # Initialize domain-specific configurations
         self._initialize_domain_knowledge()
+        self._load_domain_mappings()
         
         logger.info(f"BaseDomainShim initialized",
                    adapter_id=adapter_id,
@@ -127,9 +128,6 @@ class BaseDomainShim(EnhancedShimAdapter):
             # Activate converters
             self._pandas_converter.activate()
             self._numpy_converter.activate()
-            
-            # Initialize domain-specific knowledge
-            self._load_domain_mappings()
             
             logger.info(f"Domain shim '{self.adapter_id}' initialized successfully")
             return True
@@ -218,6 +216,12 @@ class BaseDomainShim(EnhancedShimAdapter):
         start_time = time.time()
         
         try:
+            # Reject None source data early
+            if request.source_data is None:
+                return self._create_error_result(
+                    request, "Source data is None", time.time() - start_time
+                )
+            
             # Extract semantic context
             semantic_context = self._extract_semantic_context(request)
             
@@ -1072,7 +1076,7 @@ class RegressionShim(BaseDomainShim):
                         'significance_level': 0.05,
                         'significant_features': [
                             i for i, p in enumerate(data['p_values']) 
-                            if p < 0.05
+                            if p <= 0.05
                         ] if isinstance(data['p_values'], (list, np.ndarray)) else []
                     }
                 }
@@ -1347,7 +1351,7 @@ class TimeSeriesShim(BaseDomainShim):
         """Convert time series data to statistical format."""
         if isinstance(data, pd.DataFrame) and hasattr(data.index, 'freq'):
             # Handle time series DataFrame
-            values = data.values if len(data.columns) == 1 else data.iloc[:, 0].values
+            values = data.iloc[:, 0].values
             
             # Calculate basic statistics
             result = {
@@ -1408,14 +1412,15 @@ class TimeSeriesShim(BaseDomainShim):
         """Convert time series data to regression format."""
         if isinstance(data, pd.DataFrame):
             # Create lagged features for regression
-            values = data.values if len(data.columns) == 1 else data.iloc[:, 0].values
+            values = data.iloc[:, 0].values
             
             # Generate lagged features
             n_lags = min(10, len(values) // 4)  # Use up to 10 lags or 1/4 of data length
             lagged_features = self._create_lagged_features(values, n_lags)
             
-            # Create trend features
-            trend_features = self._create_trend_features(len(values))
+            # Create trend features (same row count as lagged features)
+            n_effective = len(values) - n_lags
+            trend_features = self._create_trend_features(n_effective)
             
             # Combine features
             feature_matrix = np.column_stack([lagged_features, trend_features])
@@ -1470,7 +1475,7 @@ class TimeSeriesShim(BaseDomainShim):
                                                   semantic_context: SemanticContext) -> Dict[str, Any]:
         """Convert time series data to pattern recognition format."""
         if isinstance(data, pd.DataFrame):
-            values = data.values if len(data.columns) == 1 else data.iloc[:, 0].values
+            values = data.iloc[:, 0].values
             
             # Extract temporal features for pattern recognition
             temporal_features = self._extract_temporal_features(values)
@@ -1516,9 +1521,16 @@ class TimeSeriesShim(BaseDomainShim):
         if len(values) < 2:
             return 0.0
         
+        std_values = np.std(values)
+        if std_values == 0:
+            return 0.0
+        
         x = np.arange(len(values))
-        slope = np.corrcoef(x, values)[0, 1] * (np.std(values) / np.std(x))
-        return slope
+        corr = np.corrcoef(x, values)[0, 1]
+        if np.isnan(corr):
+            return 0.0
+        slope = corr * (std_values / np.std(x))
+        return float(slope)
     
     def _assess_stationarity(self, values: np.ndarray) -> float:
         """Assess stationarity of time series (0-1 score)."""
@@ -1527,14 +1539,19 @@ class TimeSeriesShim(BaseDomainShim):
         
         # Simple rolling statistics approach
         window_size = min(len(values) // 4, 20)
-        rolling_mean = pd.Series(values).rolling(window_size).mean()
-        rolling_std = pd.Series(values).rolling(window_size).std()
+        rolling_mean = pd.Series(values).rolling(window_size).mean().dropna()
+        rolling_std = pd.Series(values).rolling(window_size).std().dropna()
         
         # Check stability of rolling statistics
-        mean_stability = 1.0 - np.std(rolling_mean.dropna()) / np.mean(rolling_mean.dropna())
-        std_stability = 1.0 - np.std(rolling_std.dropna()) / np.mean(rolling_std.dropna())
+        mean_avg = np.mean(rolling_mean)
+        mean_stability = 1.0 - np.std(rolling_mean) / (abs(mean_avg) + 1e-8)
         
-        return np.mean([mean_stability, std_stability])
+        std_avg = np.mean(rolling_std)
+        std_stability = 1.0 - np.std(rolling_std) / (std_avg + 1e-8)
+        
+        # Clamp to [0, 1]
+        score = np.mean([mean_stability, std_stability])
+        return float(max(0.0, min(1.0, score)))
     
     def _calculate_autocorrelation(self, values: np.ndarray) -> Optional[np.ndarray]:
         """Calculate autocorrelation function."""
@@ -2130,17 +2147,36 @@ class PatternRecognitionShim(BaseDomainShim):
     
     def _calculate_pattern_frequency(self, patterns: Any) -> Dict[str, int]:
         """Calculate frequency of detected patterns."""
-        if isinstance(patterns, (list, np.ndarray)):
-            pattern_array = np.array(patterns)
-            unique, counts = np.unique(pattern_array, return_counts=True)
-            return {f'pattern_{i}': count for i, count in enumerate(counts)}
+        if isinstance(patterns, list):
+            # Handle list of pattern dicts (e.g. [{'pattern': ..., 'frequency': N}])
+            if patterns and isinstance(patterns[0], dict):
+                return {
+                    f'pattern_{i}': p.get('frequency', 1)
+                    for i, p in enumerate(patterns)
+                }
+            try:
+                pattern_array = np.array(patterns)
+                unique, counts = np.unique(pattern_array, return_counts=True)
+                return {f'pattern_{i}': int(count) for i, count in enumerate(counts)}
+            except (TypeError, ValueError):
+                return {f'pattern_{i}': 1 for i in range(len(patterns))}
         return {}
     
     def _calculate_pattern_strength(self, patterns: Any) -> float:
         """Calculate strength of detected patterns."""
-        if isinstance(patterns, (list, np.ndarray)):
-            pattern_array = np.array(patterns)
-            return np.std(pattern_array) / (np.mean(np.abs(pattern_array)) + 1e-8)
+        if isinstance(patterns, list):
+            # Handle list of pattern dicts
+            if patterns and isinstance(patterns[0], dict):
+                freqs = [p.get('frequency', 1) for p in patterns]
+                arr = np.array(freqs, dtype=float)
+                return float(np.std(arr) / (np.mean(np.abs(arr)) + 1e-8))
+            try:
+                pattern_array = np.array(patterns, dtype=float)
+                return float(np.std(pattern_array) / (np.mean(np.abs(pattern_array)) + 1e-8))
+            except (TypeError, ValueError):
+                return 0.5
+        if isinstance(patterns, np.ndarray):
+            return float(np.std(patterns) / (np.mean(np.abs(patterns)) + 1e-8))
         return 0.5
     
     def _calculate_trend_slope(self, values: np.ndarray) -> float:
@@ -2148,8 +2184,15 @@ class PatternRecognitionShim(BaseDomainShim):
         if len(values) < 2:
             return 0.0
         
+        std_values = np.std(values)
+        if std_values == 0:
+            return 0.0
+        
         x = np.arange(len(values))
-        return np.corrcoef(x, values)[0, 1] * (np.std(values) / np.std(x))
+        corr = np.corrcoef(x, values)[0, 1]
+        if np.isnan(corr):
+            return 0.0
+        return float(corr * (std_values / np.std(x)))
     
     def _calculate_volatility(self, values: np.ndarray) -> float:
         """Calculate volatility measure."""

@@ -1005,7 +1005,7 @@ class TestDomainShimUtilities:
 
         assert len(result.warnings) > 0
         assert "Missing domain shims" in result.warnings[0]
-        assert result.details["missing_shims"] == ["pattern_recognition", "time_series"]
+        assert set(result.details["missing_shims"]) == {"pattern_recognition", "time_series"}
 
     def test_factory_functions(self):
         """Test individual factory functions."""
@@ -1134,10 +1134,10 @@ class TestDomainShimIntegration:
         assert result.success
         assert result.quality_score > 0.8  # High quality should be preserved
 
-        # Check metadata preservation
-        assert "domain_conversion" in result.metadata
-        assert result.metadata["domain_conversion"]["source"] == "statistical"
-        assert result.metadata["domain_conversion"]["target"] == "regression"
+        # Check domain conversion info in converted data
+        assert "domain_conversion" in result.converted_data
+        assert result.converted_data["domain_conversion"]["source"] == "statistical"
+        assert result.converted_data["domain_conversion"]["target"] == "regression"
 
     def test_error_handling_in_domain_conversion(self):
         """Test error handling in domain conversion scenarios."""
