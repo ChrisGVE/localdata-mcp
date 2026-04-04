@@ -151,7 +151,9 @@ class TestMultivariateTimeSeriesTransformer:
 
         transformer = MultivariateTimeSeriesTransformer()
 
-        with patch("localdata_mcp.domains.time_series_analysis.logger") as mock_logger:
+        with patch(
+            "localdata_mcp.domains.time_series_analysis._multivariate_base.logger"
+        ) as mock_logger:
             transformer._check_multicollinearity(data)
             mock_logger.warning.assert_called_once()
 
