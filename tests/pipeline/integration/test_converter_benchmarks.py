@@ -67,9 +67,7 @@ class PerformanceProfiler:
 
         return BenchmarkResult(
             test_name=f"{converter.adapter_id}_{request.source_format.value}_to_{request.target_format.value}",
-            data_size=getattr(request.source_data, "shape", (len(request.source_data),))
-            if hasattr(request.source_data, "__len__")
-            else (1,),
+            data_size=getattr(request.source_data, "shape", None) or (1,),
             conversion_time=end_time - start_time,
             memory_before=memory_before,
             memory_after=memory_after,
