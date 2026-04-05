@@ -193,6 +193,10 @@ class TestBaseShimAdapter:
 
     def test_performance_stats_tracking(self):
         """Test performance statistics tracking."""
+        # Disable caching to ensure each call is a fresh execution
+        self.adapter.enable_caching = False
+        self.adapter._conversion_cache.clear()
+
         request = create_conversion_request(
             self.sample_df, DataFormat.PANDAS_DATAFRAME, DataFormat.NUMPY_ARRAY
         )

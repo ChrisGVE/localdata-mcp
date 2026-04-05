@@ -204,10 +204,10 @@ class TestPandasConverter:
 
         # Check that low cardinality columns were converted to categorical
         converted_df = result.converted_data
-        assert pd.api.types.is_categorical_dtype(converted_df["category1"])
-        assert pd.api.types.is_categorical_dtype(converted_df["category2"])
+        assert isinstance(converted_df["category1"].dtype, pd.CategoricalDtype)
+        assert isinstance(converted_df["category2"].dtype, pd.CategoricalDtype)
         # High cardinality column should remain unchanged
-        assert not pd.api.types.is_categorical_dtype(converted_df["high_card"])
+        assert not isinstance(converted_df["high_card"].dtype, pd.CategoricalDtype)
 
     def test_bidirectional_conversion_consistency(self):
         """Test bidirectional conversion consistency."""
