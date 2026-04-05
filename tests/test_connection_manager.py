@@ -69,8 +69,8 @@ class TestEnhancedConnectionManager:
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_initialization(self, mock_timeout_mgr, mock_config_mgr):
         """Test connection manager initialization."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -84,8 +84,8 @@ class TestEnhancedConnectionManager:
         assert isinstance(manager._metrics, dict)
         assert manager._monitoring_active is True
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_database_initialization(self, mock_timeout_mgr, mock_config_mgr):
         """Test database initialization with configuration."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -100,8 +100,8 @@ class TestEnhancedConnectionManager:
         assert "test_db" in manager._metrics
         assert "test_db" in manager._health_status
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_engine_retrieval(self, mock_timeout_mgr, mock_config_mgr):
         """Test engine retrieval and lazy initialization."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -122,8 +122,8 @@ class TestEnhancedConnectionManager:
         engine = manager.get_engine("test_db")
         assert engine is not None
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_connection_info(self, mock_timeout_mgr, mock_config_mgr):
         """Test connection information retrieval."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -144,8 +144,8 @@ class TestEnhancedConnectionManager:
         assert "health" in info
         assert "resource_limits" in info
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_tag_filtering(self, mock_timeout_mgr, mock_config_mgr):
         """Test database filtering by tags."""
         # Create multiple database configs
@@ -173,8 +173,8 @@ class TestEnhancedConnectionManager:
         assert "test_db2" in production_dbs
         assert "test_db" not in production_dbs
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_managed_query_execution(self, mock_timeout_mgr, mock_config_mgr):
         """Test managed query execution with resource tracking."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -199,8 +199,8 @@ class TestEnhancedConnectionManager:
         assert metrics.failed_queries == 0
         assert metrics.average_query_time > 0
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_query_failure_tracking(self, mock_timeout_mgr, mock_config_mgr):
         """Test query failure tracking and metrics."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -223,8 +223,8 @@ class TestEnhancedConnectionManager:
         assert metrics.failed_queries == 1
         assert metrics.last_error == "Simulated query failure"
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_health_check(self, mock_timeout_mgr, mock_config_mgr):
         """Test database health checking."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -241,8 +241,8 @@ class TestEnhancedConnectionManager:
         assert result.response_time_ms >= 0
         assert result.state in ConnectionState
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_resource_limits(self, mock_timeout_mgr, mock_config_mgr):
         """Test resource limit enforcement."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -267,8 +267,8 @@ class TestEnhancedConnectionManager:
         assert "is_warning" in memory_status
         assert "is_exceeded" in memory_status
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_database_closure(self, mock_timeout_mgr, mock_config_mgr):
         """Test database connection closure and cleanup."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -289,8 +289,8 @@ class TestEnhancedConnectionManager:
         assert "test_db" not in manager._db_configs
         assert "test_db" not in manager._metrics
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_concurrent_access(self, mock_timeout_mgr, mock_config_mgr):
         """Test concurrent access to connection manager."""
         mock_config_mgr.return_value = self.mock_config_manager
@@ -363,8 +363,8 @@ class TestEnhancedConnectionManager:
         assert limit.is_warning
         assert limit.is_exceeded
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_postgresql_engine_creation(self, mock_timeout_mgr, mock_config_mgr):
         """Test PostgreSQL engine creation with connection pooling."""
         pg_config = DatabaseConfig(
@@ -381,7 +381,9 @@ class TestEnhancedConnectionManager:
 
         # This will fail to connect but should create the engine
         with (
-            patch("localdata_mcp.connection_manager.create_engine") as mock_create,
+            patch(
+                "localdata_mcp.connection_manager.engine_factory.create_engine"
+            ) as mock_create,
             patch.object(manager, "_setup_engine_events"),
         ):
             mock_engine = Mock()
@@ -396,8 +398,8 @@ class TestEnhancedConnectionManager:
             assert "pool_size" in kwargs
             assert kwargs["pool_size"] == 10  # min(20, 10)
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_list_databases_with_tags(self, mock_timeout_mgr, mock_config_mgr):
         """Test listing databases with tag filtering."""
         # Create multiple database configs with different tags
@@ -457,8 +459,8 @@ class TestGlobalConnectionManager:
         # Should be the same instance
         assert manager1 is manager2
 
-    @patch("localdata_mcp.connection_manager.get_config_manager")
-    @patch("localdata_mcp.connection_manager.get_timeout_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_config_manager")
+    @patch("localdata_mcp.connection_manager.manager.get_timeout_manager")
     def test_manager_replacement(self, mock_timeout_mgr, mock_config_mgr):
         """Test replacing global connection manager."""
         from localdata_mcp.connection_manager import (
