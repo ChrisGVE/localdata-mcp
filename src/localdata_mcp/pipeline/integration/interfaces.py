@@ -180,8 +180,15 @@ class ConversionError(PipelineError):
     
     def __init__(self, error_type: Type, message: str, context: Optional[Dict[str, Any]] = None):
         self.error_type = error_type
-        self.context = context or {}
-        super().__init__(message)
+        self._conversion_context = context or {}
+        # PipelineError requires classification and pipeline_stage
+        from ..base import ErrorClassification
+        super().__init__(
+            message,
+            classification=ErrorClassification.DATA_QUALITY_FAILURE,
+            pipeline_stage="conversion",
+            context=self._conversion_context
+        )
 
 
 @dataclass
@@ -279,12 +286,15 @@ class ShimAdapter(ABC):
         errors = []
         warnings = []
         
-        # Check if conversion is supported
-        supported_conversions = self.get_supported_conversions()
-        conversion_supported = any(
-            source == request.source_format and target == request.target_format
-            for source, target in supported_conversions
-        )
+        # Check if conversion is supported (pass-through always allowed)
+        if request.source_format == request.target_format:
+            conversion_supported = True
+        else:
+            supported_conversions = self.get_supported_conversions()
+            conversion_supported = any(
+                source == request.source_format and target == request.target_format
+                for source, target in supported_conversions
+            )
         
         if not conversion_supported:
             errors.append(f"Conversion from {request.source_format} to {request.target_format} not supported")
