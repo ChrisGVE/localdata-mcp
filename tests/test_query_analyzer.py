@@ -277,7 +277,7 @@ class TestQueryAnalyzer(unittest.TestCase):
                     memory_analysis["risk_level"], ["low", "medium", "high", "critical"]
                 )
 
-    @patch("localdata_mcp.query_analyzer.tiktoken")
+    @patch("localdata_mcp.query_analyzer.analyzer.tiktoken")
     def test_token_estimation(self, mock_tiktoken):
         """Test token count estimation using tiktoken."""
         # Mock tiktoken encoding
