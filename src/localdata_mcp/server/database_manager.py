@@ -22,7 +22,7 @@ from sqlalchemy.sql import quoted_name
 from ..json_utils import safe_dumps
 from ..query_parser import parse_and_validate_sql, SQLSecurityError, check_readonly
 from ..query_analyzer import analyze_query, QueryAnalysis
-from ..streaming_executor import StreamingQueryExecutor, create_streaming_source
+from ..streaming import StreamingQueryExecutor, create_streaming_source
 from ..timeout_manager import QueryTimeoutError, get_timeout_manager
 from ..file_processor import create_streaming_file_engine, FileProcessorFactory
 from ..response_metadata import (

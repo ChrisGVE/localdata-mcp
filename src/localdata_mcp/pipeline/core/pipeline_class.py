@@ -34,7 +34,7 @@ from ..base import (
     ErrorClassification,
     StreamingConfig,
 )
-from ...streaming_executor import (
+from ...streaming import (
     StreamingQueryExecutor,
     MemoryStatus,
     StreamingDataSource,

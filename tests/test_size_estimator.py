@@ -799,7 +799,7 @@ class TestStreamingIntegrationMock:
 
     def test_streaming_executor_calls_size_estimator(self):
         """Verify size estimation runs when a SQL source is used."""
-        from localdata_mcp.streaming_executor import StreamingSQLSource
+        from localdata_mcp.streaming import StreamingSQLSource
 
         engine = MagicMock()
         engine.dialect.name = "sqlite"

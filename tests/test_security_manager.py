@@ -14,7 +14,7 @@ import time
 import threading
 from unittest.mock import Mock, patch, MagicMock
 
-from localdata_mcp.security_manager import (
+from localdata_mcp.security import (
     SecurityManager,
     SecurityConfig,
     SecurityEvent,

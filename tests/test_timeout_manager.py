@@ -316,7 +316,7 @@ class TestTimeoutIntegration(unittest.TestCase):
         mock_get_config.return_value = mock_config_manager
 
         # Import and test streaming executor
-        from localdata_mcp.streaming_executor import (
+        from localdata_mcp.streaming import (
             StreamingQueryExecutor,
             create_streaming_source,
         )

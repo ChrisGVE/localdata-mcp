@@ -66,7 +66,7 @@ _pm.Counter = _safe_counter
 _pm.Histogram = _safe_histogram
 _pm.Gauge = _safe_gauge
 
-from localdata_mcp.streaming_executor import (  # noqa: E402
+from localdata_mcp.streaming import (  # noqa: E402
     StreamingQueryExecutor,
     StreamingDataSource,
     MemoryStatus,
@@ -120,11 +120,9 @@ def _build_executor_and_source(chunks):
 class TestStreamingWithDiskMonitorNoAbort:
     """135.17 - test_streaming_with_disk_monitor_no_abort."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_monitor_always_allows_continuation(
         self, mock_mem, mock_token_mgr, mock_log_mgr
     ):
@@ -154,11 +152,9 @@ class TestStreamingWithDiskMonitorNoAbort:
 class TestStreamingWithDiskMonitorAbort:
     """135.17 - test_streaming_with_disk_monitor_abort."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_monitor_aborts_at_row_threshold(
         self, mock_mem, mock_token_mgr, mock_log_mgr
     ):
@@ -194,11 +190,9 @@ class TestStreamingWithDiskMonitorAbort:
 class TestStreamingWithoutDiskMonitor:
     """135.17 - test_streaming_without_disk_monitor (backward compat)."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_no_monitor_processes_all_chunks(
         self, mock_mem, mock_token_mgr, mock_log_mgr
     ):
@@ -224,11 +218,9 @@ class TestStreamingWithoutDiskMonitor:
 class TestTruncationMetadataOnAbort:
     """135.17 - test_truncation_metadata_on_abort."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_metadata_fields_present_on_abort(
         self, mock_mem, mock_token_mgr, mock_log_mgr
     ):
@@ -259,11 +251,9 @@ class TestTruncationMetadataOnAbort:
 class TestAbortSuggestionPresent:
     """135.17 - test_abort_suggestion_present."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_suggestion_text_content(self, mock_mem, mock_token_mgr, mock_log_mgr):
         mock_mem.return_value = _make_memory_status()
         mock_log_mgr.return_value = MagicMock()
