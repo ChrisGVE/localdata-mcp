@@ -22,7 +22,7 @@ from ..base import (
     ErrorClassification,
     StreamingConfig,
 )
-from ...streaming_executor import StreamingQueryExecutor, MemoryStatus
+from ...streaming import StreamingQueryExecutor, MemoryStatus
 from ...logging_manager import get_logging_manager, get_logger
 
 from .pipeline_class import DataSciencePipeline

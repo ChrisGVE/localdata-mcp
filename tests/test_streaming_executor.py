@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import Mock, patch
 import sqlite3
 
-from localdata_mcp.streaming_executor import (
+from localdata_mcp.streaming import (
     StreamingQueryExecutor,
     StreamingSQLSource,
     StreamingFileSource,
@@ -181,7 +181,7 @@ class TestStreamingQueryExecutor:
         assert memory_status.recommended_chunk_size > 0
         assert memory_status.max_safe_chunk_size > 0
 
-    @patch("src.localdata_mcp.streaming_executor.create_streaming_source")
+    @patch("localdata_mcp.streaming_executor.create_streaming_source")
     def test_streaming_execution_basic(self, mock_create_source):
         """Test basic streaming execution."""
         config = PerformanceConfig(chunk_size=50)

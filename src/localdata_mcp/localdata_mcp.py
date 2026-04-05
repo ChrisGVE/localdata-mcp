@@ -43,7 +43,7 @@ from .query_parser import parse_and_validate_sql, SQLSecurityError, check_readon
 from .query_analyzer import analyze_query, QueryAnalysis
 
 # Import streaming executor for memory-bounded processing
-from .streaming_executor import StreamingQueryExecutor, create_streaming_source
+from .streaming import StreamingQueryExecutor, create_streaming_source
 
 # Import timeout manager for query timeout handling
 from .timeout_manager import QueryTimeoutError, get_timeout_manager

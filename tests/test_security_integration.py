@@ -11,7 +11,7 @@ import time
 from unittest.mock import Mock, patch, MagicMock
 
 from localdata_mcp.enhanced_database_tools import EnhancedDatabaseTools
-from localdata_mcp.security_manager import (
+from localdata_mcp.security import (
     SecurityManager,
     SecurityConfig,
     SecurityEventType,
@@ -454,7 +454,7 @@ class TestSecurityManagerLifecycle:
 
     def test_security_manager_initialization_with_config(self):
         """Test security manager initialization with custom config."""
-        from localdata_mcp.security_manager import initialize_security_manager
+        from localdata_mcp.security import initialize_security_manager
 
         config = SecurityConfig(
             queries_per_minute=30, audit_enabled=False, enable_pattern_detection=False
@@ -472,7 +472,7 @@ class TestSecurityManagerLifecycle:
 
     def test_security_manager_resource_cleanup(self):
         """Test security manager resource cleanup."""
-        from localdata_mcp.security_manager import initialize_security_manager
+        from localdata_mcp.security import initialize_security_manager
 
         # Create manager with events
         manager = initialize_security_manager()

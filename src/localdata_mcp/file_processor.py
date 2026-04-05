@@ -22,7 +22,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 
 # Import streaming infrastructure
-from .streaming_executor import (
+from .streaming import (
     StreamingDataSource,
     StreamingQueryExecutor,
     create_streaming_source,
