@@ -719,7 +719,7 @@ class TestEdgeCasesAndErrorHandling:
 
         # Test UMAP when not available (mocked)
         with patch(
-            "localdata_mcp.domains.pattern_recognition.UMAP_AVAILABLE", False
+            "localdata_mcp.domains.pattern_recognition._reduction.UMAP_AVAILABLE", False
         ):
             with pytest.raises((ImportError, Exception)):
                 reduce_dimensions(X, algorithm="umap")
