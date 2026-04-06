@@ -157,66 +157,40 @@ class StructuralBreakTester(TimeSeriesTransformer):
                 processing_time=time.time() - start_time,
             )
 
+    def _resolve_break_index(self, n: int) -> int:
+        """Resolve the break index from self.break_point or default to midpoint."""
+        if self.break_point is None:
+            break_idx = n // 2
+        elif isinstance(self.break_point, float) and 0 < self.break_point < 1:
+            break_idx = int(self.break_point * n)
+        else:
+            break_idx = int(self.break_point)
+        return max(self.min_segment_size, min(break_idx, n - self.min_segment_size))
+
+    def _fit_ols_segment(self, X_design: np.ndarray, y_segment: np.ndarray) -> tuple:
+        """Fit OLS on a segment; return (beta, rss). Falls back to mean on failure."""
+        try:
+            beta = np.linalg.lstsq(X_design, y_segment, rcond=None)[0]
+            residuals = y_segment - X_design @ beta
+            return beta, float(np.sum(residuals**2))
+        except Exception:
+            mean_val = np.mean(y_segment)
+            return np.array([mean_val, 0.0]), float(np.sum((y_segment - mean_val) ** 2))
+
     def _perform_chow_test(self, series: pd.Series) -> Dict:
         """Perform Chow test for structural break at known point."""
         try:
             n = len(series)
+            break_idx = self._resolve_break_index(n)
 
-            # Determine break point
-            if self.break_point is None:
-                # Default to middle of series
-                break_idx = n // 2
-            elif isinstance(self.break_point, float) and 0 < self.break_point < 1:
-                # Fraction of series
-                break_idx = int(self.break_point * n)
-            else:
-                # Absolute index
-                break_idx = int(self.break_point)
-
-            # Ensure minimum segment sizes
-            break_idx = max(
-                self.min_segment_size, min(break_idx, n - self.min_segment_size)
-            )
-
-            # Create time trend variable
-            t = np.arange(len(series))
+            t = np.arange(n)
             y = series.values
-
-            # Fit full sample regression
             X_full = np.column_stack([np.ones(n), t])
 
-            try:
-                beta_full = np.linalg.lstsq(X_full, y, rcond=None)[0]
-                residuals_full = y - X_full @ beta_full
-                rss_full = np.sum(residuals_full**2)
-            except:
-                # Fallback to simple mean if regression fails
-                beta_full = [np.mean(y), 0]
-                rss_full = np.sum((y - np.mean(y)) ** 2)
+            beta_full, rss_full = self._fit_ols_segment(X_full, y)
+            beta1, rss1 = self._fit_ols_segment(X_full[:break_idx], y[:break_idx])
+            beta2, rss2 = self._fit_ols_segment(X_full[break_idx:], y[break_idx:])
 
-            # Fit first sub-sample
-            y1 = y[:break_idx]
-            X1 = X_full[:break_idx]
-            try:
-                beta1 = np.linalg.lstsq(X1, y1, rcond=None)[0]
-                residuals1 = y1 - X1 @ beta1
-                rss1 = np.sum(residuals1**2)
-            except:
-                beta1 = [np.mean(y1), 0]
-                rss1 = np.sum((y1 - np.mean(y1)) ** 2)
-
-            # Fit second sub-sample
-            y2 = y[break_idx:]
-            X2 = X_full[break_idx:]
-            try:
-                beta2 = np.linalg.lstsq(X2, y2, rcond=None)[0]
-                residuals2 = y2 - X2 @ beta2
-                rss2 = np.sum(residuals2**2)
-            except:
-                beta2 = [np.mean(y2), 0]
-                rss2 = np.sum((y2 - np.mean(y2)) ** 2)
-
-            # Calculate Chow test statistic
             rss_unrestricted = rss1 + rss2
             k = 2  # Number of parameters
 
@@ -225,9 +199,8 @@ class StructuralBreakTester(TimeSeriesTransformer):
                     rss_unrestricted / (n - 2 * k)
                 )
             else:
-                chow_stat = 0
+                chow_stat = 0.0
 
-            # Calculate p-value and critical value using F-distribution
             from scipy.stats import f
 
             p_value = 1 - f.cdf(chow_stat, k, n - 2 * k)
