@@ -176,9 +176,9 @@ class TestDescribeDatabase:
             # Must return something non-empty
             assert result is not None
             result_str = str(result)
-            assert len(result_str) > 2, (
-                f"describe_database returned empty for {db_type}"
-            )
+            assert (
+                len(result_str) > 2
+            ), f"describe_database returned empty for {db_type}"
         finally:
             call_tool("disconnect_database", {"name": conn_name})
 
@@ -203,9 +203,9 @@ class TestErrorClassification:
                 {"name": conn_name, "query": "SELECT * FROM nonexistent_table_xyz"},
             )
             result_str = str(result).lower()
-            assert "error" in result_str, (
-                f"Expected error for nonexistent table on {db_type}, got: {result_str[:200]}"
-            )
+            assert (
+                "error" in result_str
+            ), f"Expected error for nonexistent table on {db_type}, got: {result_str[:200]}"
         finally:
             call_tool("disconnect_database", {"name": conn_name})
 
@@ -221,9 +221,9 @@ class TestErrorClassification:
                 {"name": conn_name, "query": "SELECTTTT BADSQL FROM"},
             )
             result_str = str(result).lower()
-            assert "error" in result_str, (
-                f"Expected error for malformed SQL on {db_type}, got: {result_str[:200]}"
-            )
+            assert (
+                "error" in result_str
+            ), f"Expected error for malformed SQL on {db_type}, got: {result_str[:200]}"
         finally:
             call_tool("disconnect_database", {"name": conn_name})
 
@@ -249,9 +249,9 @@ class TestSchemaExport:
             )
             result_str = str(result)
             # Should contain the table name and some schema structure
-            assert "data_table" in result_str, (
-                f"json_schema missing table name for {db_type}: {result_str[:200]}"
-            )
+            assert (
+                "data_table" in result_str
+            ), f"json_schema missing table name for {db_type}: {result_str[:200]}"
         finally:
             call_tool("disconnect_database", {"name": conn_name})
 
@@ -318,9 +318,9 @@ class TestBasicQuery:
                 {"name": conn_name, "query": "SELECT * FROM data_table"},
             )
             result_str = str(result)
-            assert "Alice" in result_str, (
-                f"Missing expected data for {db_type}: {result_str[:200]}"
-            )
+            assert (
+                "Alice" in result_str
+            ), f"Missing expected data for {db_type}: {result_str[:200]}"
             assert "Bob" in result_str
             assert "Charlie" in result_str
         finally:
@@ -337,9 +337,9 @@ class TestBasicQuery:
                 "execute_query",
                 {"name": conn_name, "query": "SELECT COUNT(*) as cnt FROM data_table"},
             )
-            assert "3" in str(result), (
-                f"Expected count 3 for {db_type}, got: {str(result)[:200]}"
-            )
+            assert "3" in str(
+                result
+            ), f"Expected count 3 for {db_type}, got: {str(result)[:200]}"
         finally:
             call_tool("disconnect_database", {"name": conn_name})
 
@@ -371,9 +371,9 @@ class TestTreeOperations:
             # Root level contains a single 'root' node
             result = call_tool("get_children", {"name": conn_name})
             result_str = str(result)
-            assert "root" in result_str, (
-                f"get_children missing 'root' for {db_type}: {result_str[:200]}"
-            )
+            assert (
+                "root" in result_str
+            ), f"get_children missing 'root' for {db_type}: {result_str[:200]}"
         finally:
             call_tool("disconnect_database", {"name": conn_name})
 
@@ -387,9 +387,9 @@ class TestTreeOperations:
             # list_keys requires a path; use 'root' to see top-level keys
             result = call_tool("list_keys", {"name": conn_name, "path": "root"})
             result_str = str(result)
-            assert "key" in result_str, (
-                f"list_keys missing 'key' for {db_type}: {result_str[:200]}"
-            )
+            assert (
+                "key" in result_str
+            ), f"list_keys missing 'key' for {db_type}: {result_str[:200]}"
         finally:
             call_tool("disconnect_database", {"name": conn_name})
 
@@ -404,8 +404,8 @@ class TestTreeOperations:
                 "get_value",
                 {"name": conn_name, "path": "root", "key": "key"},
             )
-            assert "value" in str(result), (
-                f"get_value unexpected for {db_type}: {str(result)[:200]}"
-            )
+            assert "value" in str(
+                result
+            ), f"get_value unexpected for {db_type}: {str(result)[:200]}"
         finally:
             call_tool("disconnect_database", {"name": conn_name})

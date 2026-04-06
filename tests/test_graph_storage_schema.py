@@ -13,7 +13,6 @@ from localdata_mcp.graph_storage import (
 )
 from localdata_mcp.tree_storage import ValueType, deserialize_value, serialize_value
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

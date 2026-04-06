@@ -6,22 +6,21 @@ plus edge cases and cross-cutting concerns (retryability, suggestion quality).
 
 import pytest
 
-from localdata_mcp.error_handler import ErrorCategory
 from localdata_mcp.error_classification import (
     ErrorMapperRegistry,
     GenericDatabaseErrorMapper,
     StructuredErrorResponse,
     classify_error,
-    is_error_retryable,
     get_error_suggestion,
+    is_error_retryable,
 )
+from localdata_mcp.error_handler import ErrorCategory
 from localdata_mcp.error_mappers import (
     DuckDBErrorMapper,
     MySQLErrorMapper,
     PostgreSQLErrorMapper,
     SQLiteErrorMapper,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

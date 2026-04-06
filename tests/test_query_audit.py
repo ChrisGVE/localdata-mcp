@@ -10,7 +10,6 @@ from localdata_mcp.query_audit import (
 )
 from localdata_mcp.query_parser import check_readonly
 
-
 # ---------------------------------------------------------------------------
 # QueryAuditEntry
 # ---------------------------------------------------------------------------

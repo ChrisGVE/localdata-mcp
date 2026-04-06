@@ -5,27 +5,28 @@ This module contains comprehensive tests for the regression modeling domain,
 including all transformers, pipelines, and high-level functions.
 """
 
-import pytest
+from unittest.mock import Mock, patch
+
 import numpy as np
 import pandas as pd
-from unittest.mock import Mock, patch
-from sklearn.datasets import make_regression, make_classification
+import pytest
+from sklearn.datasets import make_classification, make_regression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 from localdata_mcp.domains.regression_modeling import (
+    FeatureSelectionTransformer,
     LinearRegressionTransformer,
-    RegularizedRegressionTransformer,
     LogisticRegressionTransformer,
     PolynomialRegressionTransformer,
-    ResidualAnalysisTransformer,
-    FeatureSelectionTransformer,
     RegressionModelingPipeline,
     RegressionModelResult,
+    RegularizedRegressionTransformer,
     ResidualAnalysisResult,
-    fit_regression_model,
-    evaluate_model_performance,
+    ResidualAnalysisTransformer,
     analyze_residuals,
+    evaluate_model_performance,
+    fit_regression_model,
     select_features,
 )
 

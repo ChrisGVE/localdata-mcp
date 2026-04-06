@@ -44,9 +44,7 @@ def setup_mysql_data():
     engine = create_engine(MYSQL_URL)
     with engine.connect() as conn:
         conn.execute(text("DROP TABLE IF EXISTS test_data"))
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
             CREATE TABLE test_data (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 name VARCHAR(100),
@@ -57,9 +55,7 @@ def setup_mysql_data():
                 is_active TINYINT(1),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-            """
-            )
-        )
+            """))
         for i in range(1000):
             conn.execute(
                 text(
@@ -345,8 +341,8 @@ class TestMySQLDataFidelity:
             )
             result_str = str(result)
             assert "error" not in result_str.lower(), f"SELECT * crashed: {result_str}"
-            assert "user_" in result_str, (
-                f"Expected user data in SELECT * results: {result_str}"
-            )
+            assert (
+                "user_" in result_str
+            ), f"Expected user data in SELECT * results: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": "mysql_star"})

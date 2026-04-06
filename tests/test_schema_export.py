@@ -2,7 +2,9 @@
 
 import pytest
 from sqlalchemy import (
+    Boolean,
     Column,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -10,8 +12,6 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    Boolean,
-    Float,
     create_engine,
 )
 

@@ -5,36 +5,37 @@ This test module validates the functionality of domain-specific shims including
 StatisticalShim, RegressionShim, TimeSeriesShim, and PatternRecognitionShim.
 """
 
-import pytest
-import numpy as np
-import pandas as pd
-from unittest.mock import Mock, patch
 from dataclasses import dataclass
 from typing import Any, Dict, List
+from unittest.mock import Mock, patch
+
+import numpy as np
+import pandas as pd
+import pytest
 
 from localdata_mcp.pipeline.integration.domain_shims import (
     BaseDomainShim,
-    StatisticalShim,
-    RegressionShim,
-    TimeSeriesShim,
-    PatternRecognitionShim,
-    DomainShimType,
     DomainMapping,
+    DomainShimType,
+    PatternRecognitionShim,
+    RegressionShim,
     SemanticContext,
-    create_statistical_shim,
-    create_regression_shim,
-    create_time_series_shim,
-    create_pattern_recognition_shim,
+    StatisticalShim,
+    TimeSeriesShim,
     create_all_domain_shims,
+    create_pattern_recognition_shim,
+    create_regression_shim,
+    create_statistical_shim,
+    create_time_series_shim,
     get_compatible_domain_shims,
     validate_domain_shim_configuration,
 )
 from localdata_mcp.pipeline.integration.interfaces import (
-    DataFormat,
-    ConversionRequest,
-    ConversionResult,
     ConversionContext,
     ConversionError,
+    ConversionRequest,
+    ConversionResult,
+    DataFormat,
 )
 from localdata_mcp.pipeline.integration.shim_registry import AdapterConfig
 
@@ -1005,7 +1006,10 @@ class TestDomainShimUtilities:
 
         assert len(result.warnings) > 0
         assert "Missing domain shims" in result.warnings[0]
-        assert set(result.details["missing_shims"]) == {"pattern_recognition", "time_series"}
+        assert set(result.details["missing_shims"]) == {
+            "pattern_recognition",
+            "time_series",
+        }
 
     def test_factory_functions(self):
         """Test individual factory functions."""

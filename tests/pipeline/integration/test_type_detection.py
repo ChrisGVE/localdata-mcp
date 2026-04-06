@@ -8,26 +8,27 @@ Tests cover:
 - Conversion complexity assessment and recommendations
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-from datetime import datetime, date
-import tempfile
 import json
+import tempfile
+from datetime import date, datetime
 
-from localdata_mcp.pipeline.integration.type_detection import (
-    TypeDetectionEngine,
-    FormatDetectionResult,
-    SchemaInfo,
-    PandasDataFrameDetector,
-    NumpyArrayDetector,
-    TimeSeriesDetector,
-    CategoricalDetector,
-    detect_data_format,
-)
+import numpy as np
+import pandas as pd
+import pytest
+
 from localdata_mcp.pipeline.integration.interfaces import (
     DataFormat,
     ValidationResult,
+)
+from localdata_mcp.pipeline.integration.type_detection import (
+    CategoricalDetector,
+    FormatDetectionResult,
+    NumpyArrayDetector,
+    PandasDataFrameDetector,
+    SchemaInfo,
+    TimeSeriesDetector,
+    TypeDetectionEngine,
+    detect_data_format,
 )
 
 
@@ -303,9 +304,7 @@ class TestCategoricalDetector:
         schema = self.detector.extract_schema(self.categorical_df)
 
         assert schema.data_format == DataFormat.CATEGORICAL
-        assert (
-            schema.structure_type == "tabular"
-        )  # DataFrame is tabular structure
+        assert schema.structure_type == "tabular"  # DataFrame is tabular structure
 
 
 class TestTypeDetectionEngine:

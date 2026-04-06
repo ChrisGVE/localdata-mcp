@@ -11,15 +11,16 @@ This module tests the pre-query analysis system including:
 
 import json
 import unittest
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import MagicMock, Mock, patch
+
 import pandas as pd
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from localdata_mcp.query_analyzer import (
-    QueryAnalyzer,
     QueryAnalysis,
+    QueryAnalyzer,
     analyze_query,
     get_query_analyzer,
 )
@@ -38,8 +39,7 @@ class TestQueryAnalyzer(unittest.TestCase):
 
         # Create test table with sample data
         with self.engine.connect() as conn:
-            conn.execute(
-                text("""
+            conn.execute(text("""
                 CREATE TABLE test_table (
                     id INTEGER PRIMARY KEY,
                     name TEXT,
@@ -48,8 +48,7 @@ class TestQueryAnalyzer(unittest.TestCase):
                     is_active BOOLEAN,
                     description TEXT
                 )
-            """)
-            )
+            """))
 
             # Insert test data
             test_data = [
@@ -466,8 +465,8 @@ class TestQueryAnalyzerIntegration(unittest.TestCase):
         self.db_manager = DatabaseManager()
 
         # Create test CSV file for integration testing
-        import tempfile
         import os
+        import tempfile
 
         self.temp_dir = tempfile.mkdtemp()
         self.csv_path = os.path.join(self.temp_dir, "test_data.csv")
@@ -636,8 +635,7 @@ class TestQueryAnalyzerAccuracy(unittest.TestCase):
 
         # Create larger test dataset for accuracy testing
         with self.engine.connect() as conn:
-            conn.execute(
-                text("""
+            conn.execute(text("""
                 CREATE TABLE large_table (
                     id INTEGER PRIMARY KEY,
                     category TEXT,
@@ -645,12 +643,11 @@ class TestQueryAnalyzerAccuracy(unittest.TestCase):
                     description TEXT,
                     created_date TEXT
                 )
-            """)
-            )
+            """))
 
             # Insert more test data for better accuracy testing
-            import random
             import datetime
+            import random
 
             categories = ["A", "B", "C", "D", "E"]
             base_date = datetime.datetime(2023, 1, 1)

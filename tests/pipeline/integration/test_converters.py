@@ -10,30 +10,31 @@ Tests cover:
 - Edge cases and error handling
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-from scipy import sparse
 import warnings
 from unittest.mock import Mock, patch
 
+import numpy as np
+import pandas as pd
+import pytest
+from scipy import sparse
+
 from localdata_mcp.pipeline.integration.converters import (
-    PandasConverter,
-    NumpyConverter,
-    SparseMatrixConverter,
     ConversionOptions,
     ConversionQuality,
-    create_pandas_converter,
-    create_numpy_converter,
-    create_sparse_converter,
-    create_memory_efficient_options,
+    NumpyConverter,
+    PandasConverter,
+    SparseMatrixConverter,
     create_high_fidelity_options,
+    create_memory_efficient_options,
+    create_numpy_converter,
+    create_pandas_converter,
+    create_sparse_converter,
     create_streaming_options,
 )
 from localdata_mcp.pipeline.integration.interfaces import (
-    DataFormat,
-    ConversionRequest,
     ConversionError,
+    ConversionRequest,
+    DataFormat,
     create_conversion_request,
 )
 

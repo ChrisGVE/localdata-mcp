@@ -1,8 +1,8 @@
 """Tests for list_databases with include_staging parameter."""
 
 import json
-from unittest.mock import patch, MagicMock
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 from localdata_mcp import DatabaseManager
 

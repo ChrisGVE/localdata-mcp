@@ -28,37 +28,32 @@ import pandas as pd
 import pytest
 from scipy import sparse
 
-from localdata_mcp.pipeline.integration import (
-    # Core components
-    ShimRegistry,
-    DataFormat,
+from localdata_mcp.pipeline.integration import (  # Core components; Error handling and recovery; Validation components; Domain shims for error testing; Converters for error scenarios
+    AlternativePathwayEngine,
+    ConversionError,
+    ConversionErrorHandler,
     ConversionRequest,
     ConversionResult,
-    ConversionError,
-    ValidationResult,
-    # Error handling and recovery
-    create_complete_error_recovery_system,
-    ConversionErrorHandler,
-    AlternativePathwayEngine,
-    RollbackManager,
-    RecoveryStrategyEngine,
+    DataFormat,
     ErrorClassificationEnhanced,
-    # Validation components
-    SchemaValidator,
+    RecoveryStrategyEngine,
+    RollbackManager,
     SchemaInferenceEngine,
+    SchemaValidator,
+    ShimRegistry,
     ValidationError,
-    # Domain shims for error testing
+    ValidationResult,
     create_all_domain_shims,
-    # Converters for error scenarios
-    create_pandas_converter,
+    create_complete_error_recovery_system,
     create_numpy_converter,
+    create_pandas_converter,
     create_sparse_converter,
 )
 
 # Test fixtures and utilities
 from ..fixtures.sample_datasets import (
-    create_pandas_dataframe,
     create_numpy_array,
+    create_pandas_dataframe,
     create_sparse_matrix,
     create_streaming_data_source,
 )
@@ -67,9 +62,9 @@ from ..utils.test_helpers import (
 )
 
 logger = logging.getLogger(__name__)
-pytestmark = pytest.mark.skip(reason="Integration test fixtures not yet compatible with current implementation")
-
-
+pytestmark = pytest.mark.skip(
+    reason="Integration test fixtures not yet compatible with current implementation"
+)
 
 
 class TestErrorScenarios:
@@ -168,6 +163,7 @@ class TestErrorScenarios:
         }
 
         logger.info("Error handling framework initialized for testing")
+
     def test_data_format_incompatibility_errors(self):
         """
         Test handling of data format incompatibility errors.
@@ -259,23 +255,23 @@ class TestErrorScenarios:
                     "original_error_type": (result.metadata or {})
                     .get("original_error", {})
                     .get("type"),
-                    "final_data_shape": getattr(result.data, "shape", "unknown")
-                    if result.success
-                    else None,
+                    "final_data_shape": (
+                        getattr(result.data, "shape", "unknown")
+                        if result.success
+                        else None
+                    ),
                 }
 
                 # Validate recovery success
                 if result.success:
-                    assert scenario_result["recovery_applied"], (
-                        f"Expected recovery to be applied for {scenario['name']}"
-                    )
+                    assert scenario_result[
+                        "recovery_applied"
+                    ], f"Expected recovery to be applied for {scenario['name']}"
 
                     assert (
                         scenario_result["recovery_strategy_used"]
                         == scenario["recovery_strategy"]
-                    ), (
-                        f"Wrong recovery strategy for {scenario['name']}: got {scenario_result['recovery_strategy_used']}"
-                    )
+                    ), f"Wrong recovery strategy for {scenario['name']}: got {scenario_result['recovery_strategy_used']}"
 
                     self.recovery_statistics["successful_recoveries"] += 1
                     logger.info(
@@ -305,9 +301,9 @@ class TestErrorScenarios:
                     == scenario["expected_error_type"],
                 }
 
-                assert scenario_result["error_properly_classified"], (
-                    f"Wrong error classification for {scenario['name']}: got {e.error_type}, expected {scenario['expected_error_type']}"
-                )
+                assert scenario_result[
+                    "error_properly_classified"
+                ], f"Wrong error classification for {scenario['name']}: got {e.error_type}, expected {scenario['expected_error_type']}"
 
                 self.recovery_statistics["graceful_failures"] += 1
                 logger.info(f"    ⚠️  Proper error classification: {e.error_type}")
@@ -319,6 +315,7 @@ class TestErrorScenarios:
             format_incompatibility_results
         )
         logger.info("✅ Data format incompatibility error handling validated")
+
     def test_memory_constraint_violation_recovery(self):
         """
         Test handling of memory constraint violations and adaptive processing.
@@ -397,12 +394,10 @@ class TestErrorScenarios:
                     )
 
                     try:
-                        result = (
-                            self.error_handler.handle_conversion_with_recovery(
-                                request,
-                                self.converters[scenario["target_format"]],
-                                memory_callback=memory_callback,
-                            )
+                        result = self.error_handler.handle_conversion_with_recovery(
+                            request,
+                            self.converters[scenario["target_format"]],
+                            memory_callback=memory_callback,
                         )
                         batch_results.append(result)
                     except Exception as e:
@@ -413,10 +408,8 @@ class TestErrorScenarios:
                         request.context["memory_limit"] = scenario["memory_limit"] // 2
                         request.context["force_streaming"] = True
 
-                        result = (
-                            self.error_handler.handle_conversion_with_recovery(
-                                request, self.converters[scenario["target_format"]]
-                            )
+                        result = self.error_handler.handle_conversion_with_recovery(
+                            request, self.converters[scenario["target_format"]]
                         )
                         batch_results.append(result)
 
@@ -434,9 +427,11 @@ class TestErrorScenarios:
             else:
                 # Single dataset processing with memory constraints
                 request = ConversionRequest(
-                    source_format=DataFormat.PANDAS_DATAFRAME
-                    if isinstance(test_data, pd.DataFrame)
-                    else DataFormat.NUMPY_ARRAY,
+                    source_format=(
+                        DataFormat.PANDAS_DATAFRAME
+                        if isinstance(test_data, pd.DataFrame)
+                        else DataFormat.NUMPY_ARRAY
+                    ),
                     target_format=scenario["target_format"],
                     data=test_data,
                     context={
@@ -458,13 +453,14 @@ class TestErrorScenarios:
                         "memory_strategy_used": (result.metadata or {}).get(
                             "processing_strategy"
                         ),
-                        "peak_memory_usage": max(memory_monitor)
-                        if memory_monitor
-                        else 0,
-                        "memory_limit_respected": max(memory_monitor)
-                        <= scenario["memory_limit"] * 1.1
-                        if memory_monitor
-                        else True,
+                        "peak_memory_usage": (
+                            max(memory_monitor) if memory_monitor else 0
+                        ),
+                        "memory_limit_respected": (
+                            max(memory_monitor) <= scenario["memory_limit"] * 1.1
+                            if memory_monitor
+                            else True
+                        ),
                         "recovery_applied": "memory_recovery"
                         in (result.metadata or {}),
                     }
@@ -473,13 +469,11 @@ class TestErrorScenarios:
                         assert (
                             scenario_result["memory_strategy_used"]
                             == scenario["expected_strategy"]
-                        ), (
-                            f"Wrong memory strategy for {scenario['name']}: got {scenario_result['memory_strategy_used']}"
-                        )
+                        ), f"Wrong memory strategy for {scenario['name']}: got {scenario_result['memory_strategy_used']}"
 
-                        assert scenario_result["memory_limit_respected"], (
-                            f"Memory limit not respected for {scenario['name']}"
-                        )
+                        assert scenario_result[
+                            "memory_limit_respected"
+                        ], f"Memory limit not respected for {scenario['name']}"
 
                         self.recovery_statistics["successful_recoveries"] += 1
                     else:
@@ -489,9 +483,9 @@ class TestErrorScenarios:
                     scenario_result = {
                         "conversion_successful": False,
                         "exception_raised": str(e),
-                        "peak_memory_usage": max(memory_monitor)
-                        if memory_monitor
-                        else 0,
+                        "peak_memory_usage": (
+                            max(memory_monitor) if memory_monitor else 0
+                        ),
                     }
                     self.recovery_statistics["failed_recoveries"] += 1
 
@@ -505,6 +499,7 @@ class TestErrorScenarios:
 
         self.error_test_results["memory_constraints"] = memory_constraint_results
         logger.info("✅ Memory constraint violation recovery validated")
+
     def test_invalid_input_data_handling(self):
         """
         Test handling of invalid input data and data sanitization.
@@ -620,9 +615,11 @@ class TestErrorScenarios:
 
                 scenario_result = {
                     "validation_performed": True,
-                    "validation_issues_detected": len(validation_result.issues)
-                    if hasattr(validation_result, "issues")
-                    else 0,
+                    "validation_issues_detected": (
+                        len(validation_result.issues)
+                        if hasattr(validation_result, "issues")
+                        else 0
+                    ),
                     "conversion_attempted": True,
                     "conversion_successful": result.success,
                     "data_sanitization_applied": "data_sanitization"
@@ -645,16 +642,16 @@ class TestErrorScenarios:
                             f"    Expected failure for {scenario['name']} but conversion succeeded"
                         )
                     else:
-                        assert "graceful_failure" in (result.metadata or {}), (
-                            f"Expected graceful failure for {scenario['name']}"
-                        )
+                        assert "graceful_failure" in (
+                            result.metadata or {}
+                        ), f"Expected graceful failure for {scenario['name']}"
                         self.recovery_statistics["graceful_failures"] += 1
                 else:
                     # Should recover successfully
                     if result.success:
-                        assert scenario_result["data_sanitization_applied"], (
-                            f"Expected data sanitization for {scenario['name']}"
-                        )
+                        assert scenario_result[
+                            "data_sanitization_applied"
+                        ], f"Expected data sanitization for {scenario['name']}"
 
                         assert (
                             scenario_result["recovery_strategy_used"]
@@ -684,6 +681,7 @@ class TestErrorScenarios:
 
         self.error_test_results["invalid_data"] = invalid_data_results
         logger.info("✅ Invalid input data handling validated")
+
     def test_concurrent_operation_conflict_resolution(self):
         """
         Test handling of concurrent operation conflicts and race conditions.
@@ -831,30 +829,32 @@ class TestErrorScenarios:
                 scenario_result = {
                     "total_operations": scenario["num_operations"],
                     "successful_operations": successful_operations,
-                    "success_rate": successful_operations / len(results)
-                    if results
-                    else 0,
+                    "success_rate": (
+                        successful_operations / len(results) if results else 0
+                    ),
                     "total_conflicts_detected": total_conflicts,
                     "conflicts_resolved": resolved_conflicts,
                     "execution_time": end_time - start_time,
-                    "conflict_resolution_rate": resolved_conflicts / total_conflicts
-                    if total_conflicts > 0
-                    else 1.0,
+                    "conflict_resolution_rate": (
+                        resolved_conflicts / total_conflicts
+                        if total_conflicts > 0
+                        else 1.0
+                    ),
                 }
 
                 # Validate conflict handling
                 if callable(scenario["expected_conflicts"]):
-                    assert scenario["expected_conflicts"](total_conflicts), (
-                        f"Conflict expectations not met for {scenario['name']}: {total_conflicts} conflicts"
-                    )
+                    assert scenario["expected_conflicts"](
+                        total_conflicts
+                    ), f"Conflict expectations not met for {scenario['name']}: {total_conflicts} conflicts"
                 else:
-                    assert total_conflicts == scenario["expected_conflicts"], (
-                        f"Wrong number of conflicts for {scenario['name']}: got {total_conflicts}, expected {scenario['expected_conflicts']}"
-                    )
+                    assert (
+                        total_conflicts == scenario["expected_conflicts"]
+                    ), f"Wrong number of conflicts for {scenario['name']}: got {total_conflicts}, expected {scenario['expected_conflicts']}"
 
-                assert scenario_result["success_rate"] >= 0.8, (
-                    f"Success rate too low for {scenario['name']}: {scenario_result['success_rate']:.2f}"
-                )
+                assert (
+                    scenario_result["success_rate"] >= 0.8
+                ), f"Success rate too low for {scenario['name']}: {scenario_result['success_rate']:.2f}"
 
                 logger.info(
                     f"    Operations: {successful_operations}/{len(results)}, "
@@ -881,6 +881,7 @@ class TestErrorScenarios:
 
         self.error_test_results["concurrent_conflicts"] = concurrent_conflict_results
         logger.info("✅ Concurrent operation conflict resolution validated")
+
     def test_error_recovery_pathway_effectiveness(self):
         """
         Test the overall effectiveness of error recovery pathways.
@@ -1014,23 +1015,23 @@ class TestErrorScenarios:
                     "pathway_discovery_time": pathway_discovery_time,
                     "best_pathway": best_pathway,
                     "overall_success": len(successful_pathways) > 0,
-                    "pathway_efficiency": len(successful_pathways) / len(pathways)
-                    if pathways
-                    else 0,
+                    "pathway_efficiency": (
+                        len(successful_pathways) / len(pathways) if pathways else 0
+                    ),
                     "expected_pathway_type": scenario["expected_pathway"],
                 }
 
                 # Validate pathway effectiveness
-                assert len(pathways) > 0, (
-                    f"No recovery pathways discovered for {scenario['scenario']}"
-                )
+                assert (
+                    len(pathways) > 0
+                ), f"No recovery pathways discovered for {scenario['scenario']}"
 
                 if (
                     scenario["category"] != "data_corruption"
                 ):  # Corruption might not always be recoverable
-                    assert len(successful_pathways) > 0, (
-                        f"No successful recovery pathway for {scenario['scenario']}"
-                    )
+                    assert (
+                        len(successful_pathways) > 0
+                    ), f"No successful recovery pathway for {scenario['scenario']}"
 
                 if best_pathway:
                     self.recovery_statistics["successful_recoveries"] += 1
@@ -1076,21 +1077,22 @@ class TestErrorScenarios:
             "scenario_success_rate": successful_scenarios / len(pathway_test_scenarios),
             "total_pathways_discovered": total_pathways_discovered,
             "total_successful_pathways": total_successful_pathways,
-            "pathway_success_rate": total_successful_pathways
-            / total_pathways_discovered
-            if total_pathways_discovered > 0
-            else 0,
+            "pathway_success_rate": (
+                total_successful_pathways / total_pathways_discovered
+                if total_pathways_discovered > 0
+                else 0
+            ),
             "scenario_results": pathway_effectiveness_results,
         }
 
         # Validate overall effectiveness
-        assert effectiveness_summary["scenario_success_rate"] >= 0.75, (
-            f"Overall pathway effectiveness too low: {effectiveness_summary['scenario_success_rate']:.2f}"
-        )
+        assert (
+            effectiveness_summary["scenario_success_rate"] >= 0.75
+        ), f"Overall pathway effectiveness too low: {effectiveness_summary['scenario_success_rate']:.2f}"
 
-        assert effectiveness_summary["pathway_success_rate"] >= 0.6, (
-            f"Individual pathway success rate too low: {effectiveness_summary['pathway_success_rate']:.2f}"
-        )
+        assert (
+            effectiveness_summary["pathway_success_rate"] >= 0.6
+        ), f"Individual pathway success rate too low: {effectiveness_summary['pathway_success_rate']:.2f}"
 
         self.error_test_results["pathway_effectiveness"] = effectiveness_summary
 

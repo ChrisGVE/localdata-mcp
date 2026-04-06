@@ -6,12 +6,13 @@ dangerous SQL operations.
 """
 
 import pytest
+
 from localdata_mcp.query_parser import (
     QueryParser,
     SQLSecurityError,
     get_query_parser,
-    validate_sql_query,
     parse_and_validate_sql,
+    validate_sql_query,
 )
 
 

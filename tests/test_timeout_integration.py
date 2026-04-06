@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 import yaml
+
 from localdata_mcp.localdata_mcp import DatabaseManager
 
 
@@ -311,8 +312,8 @@ class TestTimeoutManagerUtilities(unittest.TestCase):
 
     def test_timeout_config_validation(self):
         """Test timeout configuration edge cases."""
-        from localdata_mcp.timeout_manager import TimeoutConfig
         from localdata_mcp.config_manager import DatabaseType
+        from localdata_mcp.timeout_manager import TimeoutConfig
 
         # Valid configuration
         config = TimeoutConfig(

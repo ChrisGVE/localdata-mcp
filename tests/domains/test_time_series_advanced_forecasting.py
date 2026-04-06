@@ -5,16 +5,17 @@ This module tests the advanced forecasting capabilities including
 Exponential Smoothing, Ensemble methods, and forecast evaluation metrics.
 """
 
-import pytest
+import warnings
+from datetime import datetime, timedelta
+
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
-import warnings
+import pytest
 
 from localdata_mcp.domains.time_series_analysis import (
     AdvancedForecastingTransformer,
-    ExponentialSmoothingForecaster,
     EnsembleForecaster,
+    ExponentialSmoothingForecaster,
     ForecastEvaluator,
     TimeSeriesValidationError,
 )
@@ -176,7 +177,6 @@ class TestAdvancedForecastingTransformer:
 
         with pytest.raises(ValueError):
             transformer.fit(multi_data)
-
 
 
 class TestExponentialSmoothingForecaster:

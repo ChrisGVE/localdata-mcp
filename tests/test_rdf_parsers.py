@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from localdata_mcp.rdf_storage import RDFStorageManager
 from localdata_mcp.rdf_parsers import parse_ntriples_to_rdf, parse_turtle_to_rdf
+from localdata_mcp.rdf_storage import RDFStorageManager
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 

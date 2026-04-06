@@ -6,19 +6,20 @@ and Task 10 (SecurityManager) integration.
 """
 
 import json
-import pytest
 import time
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
+import pytest
+
+from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
 from localdata_mcp.enhanced_database_tools import EnhancedDatabaseTools
 from localdata_mcp.security import (
-    SecurityManager,
     SecurityConfig,
     SecurityEventType,
+    SecurityManager,
     SecurityThreatLevel,
     get_security_manager,
 )
-from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
 
 
 class TestSecurityIntegration:
@@ -388,8 +389,8 @@ class TestSecurityIntegration:
     def test_security_mcp_tools_integration(self):
         """Test security-related MCP tools integration."""
         from localdata_mcp.enhanced_database_tools import (
-            get_security_statistics,
             get_security_events,
+            get_security_statistics,
             validate_query_security_standalone,
         )
 

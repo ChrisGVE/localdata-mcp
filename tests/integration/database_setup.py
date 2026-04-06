@@ -22,15 +22,13 @@ def create_sqlite_test_db(rows: int = 1000, path: str = None) -> str:
     data = gen.generate_standard_rows(rows)
 
     with engine.connect() as conn:
-        conn.execute(
-            text("""
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS test_data (
                 id INTEGER PRIMARY KEY, name TEXT, email TEXT,
                 amount REAL, created_at TEXT, is_active INTEGER,
                 category TEXT, score REAL, notes TEXT
             )
-        """)
-        )
+        """))
         for row in data:
             conn.execute(
                 text(

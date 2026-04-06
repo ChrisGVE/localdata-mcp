@@ -5,24 +5,24 @@ and integration with configuration and timeout systems.
 """
 
 import os
-import pytest
 import tempfile
 import threading
 import time
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
+import pytest
 from sqlalchemy import create_engine
 
+from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
 from localdata_mcp.connection_manager import (
-    EnhancedConnectionManager,
-    ConnectionState,
-    ResourceType,
     ConnectionMetrics,
+    ConnectionState,
+    EnhancedConnectionManager,
     HealthCheckResult,
     ResourceLimit,
+    ResourceType,
     get_enhanced_connection_manager,
 )
-from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
 
 
 class TestEnhancedConnectionManager:

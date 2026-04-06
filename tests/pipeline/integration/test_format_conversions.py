@@ -26,55 +26,49 @@ import pandas as pd
 import pytest
 from scipy import sparse
 
-from localdata_mcp.pipeline.integration import (
-    # Core conversion components
-    ConversionRegistry,
-    DataFormat,
-    ConversionRequest,
-    ConversionResult,
+from localdata_mcp.pipeline.integration import (  # Core conversion components; Format converters; Conversion options; Type detection and validation; Performance optimization; Error handling
+    ConversionCache,
     ConversionCost,
-    # Format converters
-    PandasConverter,
-    NumpyConverter,
-    SparseMatrixConverter,
-    create_pandas_converter,
-    create_numpy_converter,
-    create_sparse_converter,
-    # Conversion options
+    ConversionError,
     ConversionOptions,
     ConversionQuality,
-    create_memory_efficient_options,
-    create_high_fidelity_options,
-    create_streaming_options,
-    # Type detection and validation
-    TypeDetectionEngine,
-    detect_data_format,
+    ConversionRegistry,
+    ConversionRequest,
+    ConversionResult,
+    DataFormat,
+    LazyLoadingManager,
+    NumpyConverter,
+    PandasConverter,
     SchemaInferenceEngine,
     SchemaValidator,
-    # Performance optimization
-    ConversionCache,
-    LazyLoadingManager,
-    # Error handling
-    ConversionError,
+    SparseMatrixConverter,
+    TypeDetectionEngine,
     ValidationResult,
     create_conversion_error_handler,
+    create_high_fidelity_options,
+    create_memory_efficient_options,
+    create_numpy_converter,
+    create_pandas_converter,
+    create_sparse_converter,
+    create_streaming_options,
+    detect_data_format,
 )
 
 # Test fixtures and utilities
 from ..fixtures.sample_datasets import (
-    create_pandas_dataframe,
-    create_numpy_array,
-    create_sparse_matrix,
-    create_mixed_type_dataframe,
-    create_temporal_dataframe,
     create_high_dimensional_array,
+    create_mixed_type_dataframe,
+    create_numpy_array,
+    create_pandas_dataframe,
+    create_sparse_matrix,
     create_streaming_data_source,
+    create_temporal_dataframe,
 )
 from ..utils.test_helpers import (
-    validate_data_integrity,
-    measure_conversion_performance,
     assert_format_compatibility,
     create_format_test_suite,
+    measure_conversion_performance,
+    validate_data_integrity,
 )
 
 logger = logging.getLogger(__name__)
@@ -241,9 +235,9 @@ class TestFormatConversions:
         conversion_time = time.time() - start_time
 
         # Validate conversion success
-        assert conversion_result.success, (
-            f"Conversion {source_format}→{target_format} failed: {conversion_result.error}"
-        )
+        assert (
+            conversion_result.success
+        ), f"Conversion {source_format}→{target_format} failed: {conversion_result.error}"
 
         # Validate data integrity
         await self._validate_conversion_integrity(
@@ -429,9 +423,9 @@ class TestFormatConversions:
 
         async def memory_callback(current_usage):
             memory_monitor.append(current_usage)
-            assert current_usage < 120 * 1024 * 1024, (
-                f"Memory limit exceeded: {current_usage}"
-            )
+            assert (
+                current_usage < 120 * 1024 * 1024
+            ), f"Memory limit exceeded: {current_usage}"
 
         # Execute streaming conversion
         start_time = time.time()
@@ -559,12 +553,12 @@ class TestFormatConversions:
 
             # Validate detection
             assert detection_result.success, f"Detection failed for {test_case['name']}"
-            assert detection_result.detected_format == test_case["expected_format"], (
-                f"Wrong format detected for {test_case['name']}: got {detection_result.detected_format}, expected {test_case['expected_format']}"
-            )
-            assert detection_result.confidence >= test_case["confidence_threshold"], (
-                f"Confidence too low for {test_case['name']}: {detection_result.confidence}"
-            )
+            assert (
+                detection_result.detected_format == test_case["expected_format"]
+            ), f"Wrong format detected for {test_case['name']}: got {detection_result.detected_format}, expected {test_case['expected_format']}"
+            assert (
+                detection_result.confidence >= test_case["confidence_threshold"]
+            ), f"Confidence too low for {test_case['name']}: {detection_result.confidence}"
 
             detection_results[test_case["name"]] = detection_result
             logger.info(
@@ -685,9 +679,9 @@ class TestFormatConversions:
 
                 if test_case["recovery_expected"]:
                     # Recovery should have succeeded
-                    assert result.success, (
-                        f"Expected recovery to succeed for {test_case['name']}"
-                    )
+                    assert (
+                        result.success
+                    ), f"Expected recovery to succeed for {test_case['name']}"
                     assert "error_recovery_applied" in result.metadata
                     assert "original_error" in result.metadata
 
@@ -706,9 +700,9 @@ class TestFormatConversions:
 
                 else:
                     # Recovery not expected - should fail gracefully
-                    assert not result.success, (
-                        f"Expected failure for {test_case['name']}"
-                    )
+                    assert (
+                        not result.success
+                    ), f"Expected failure for {test_case['name']}"
                     assert "error_classification" in result.metadata
 
                     recovery_results[test_case["name"]] = {
@@ -836,9 +830,9 @@ class TestFormatConversions:
 
         assert lazy_result.success
         max_memory = max(memory_samples) if memory_samples else 0
-        assert max_memory < 250 * 1024 * 1024, (
-            f"Lazy loading used too much memory: {max_memory / 1024 / 1024:.1f}MB"
-        )
+        assert (
+            max_memory < 250 * 1024 * 1024
+        ), f"Lazy loading used too much memory: {max_memory / 1024 / 1024:.1f}MB"
 
         # Test 3: Performance config optimization
         # create_performance_config is not yet implemented; skip this section
@@ -1023,8 +1017,9 @@ class TestFormatConversions:
 
     def _get_memory_usage(self) -> int:
         """Get current memory usage in bytes."""
-        import psutil
         import os
+
+        import psutil
 
         process = psutil.Process(os.getpid())
         return process.memory_info().rss

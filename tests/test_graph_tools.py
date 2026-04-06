@@ -7,6 +7,7 @@ from sqlalchemy.pool import StaticPool
 from localdata_mcp.graph_manager import GraphStorageManager
 from localdata_mcp.graph_storage import create_graph_schema
 from localdata_mcp.graph_tools import (
+    MAX_EXPORT_BYTES,
     tool_add_edge,
     tool_delete_key_graph,
     tool_delete_node_graph,
@@ -21,9 +22,7 @@ from localdata_mcp.graph_tools import (
     tool_remove_edge,
     tool_set_node_graph,
     tool_set_value_graph,
-    MAX_EXPORT_BYTES,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

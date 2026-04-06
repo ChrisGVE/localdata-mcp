@@ -33,46 +33,41 @@ import pandas as pd
 import pytest
 from scipy import sparse
 
-from localdata_mcp.pipeline.integration import (
-    # Core integration components
+from localdata_mcp.pipeline.integration import (  # Core integration components; Domain shims; Pipeline analysis; Compatibility matrix; Schema validation
+    CompatibilityLevel,
     ConversionRegistry,
-    DataFormat,
     ConversionRequest,
     ConversionResult,
-    # Domain shims
-    StatisticalShim,
-    RegressionShim,
-    TimeSeriesShim,
+    DataFormat,
     PatternRecognitionShim,
-    create_all_domain_shims,
-    get_compatible_domain_shims,
-    # Pipeline analysis
     PipelineAnalyzer,
-    create_pipeline_step,
-    analyze_and_fix_pipeline,
-    # Compatibility matrix
     PipelineCompatibilityMatrix,
-    CompatibilityLevel,
-    assess_pipeline_compatibility,
-    find_optimal_format_for_domains,
-    # Schema validation
+    RegressionShim,
     SchemaInferenceEngine,
     SchemaValidator,
+    StatisticalShim,
+    TimeSeriesShim,
+    analyze_and_fix_pipeline,
+    assess_pipeline_compatibility,
+    create_all_domain_shims,
+    create_pipeline_step,
+    find_optimal_format_for_domains,
+    get_compatible_domain_shims,
 )
 
 # Test fixtures and utilities
 from ..fixtures.sample_datasets import (
+    create_mixed_domain_dataset,
+    create_pattern_recognition_dataset,
+    create_regression_dataset,
     create_statistical_dataset,
     create_time_series_dataset,
-    create_regression_dataset,
-    create_pattern_recognition_dataset,
-    create_mixed_domain_dataset,
 )
 from ..utils.test_helpers import (
-    validate_domain_combination,
-    measure_cross_domain_performance,
     assess_semantic_preservation,
     create_domain_context_chain,
+    measure_cross_domain_performance,
+    validate_domain_combination,
 )
 
 logger = logging.getLogger(__name__)
@@ -241,9 +236,9 @@ class TestDomainCombinations:
         )
 
         target_result = await target_shim.convert(cross_domain_request)
-        assert target_result.success, (
-            f"Cross-domain {source_domain}→{target_domain} conversion failed"
-        )
+        assert (
+            target_result.success
+        ), f"Cross-domain {source_domain}→{target_domain} conversion failed"
 
         # Validation: Cross-domain integration quality
         await self._validate_cross_domain_integration(
@@ -706,15 +701,15 @@ class TestDomainCombinations:
             s["interpretability_score"] for s in semantic_lineage
         )
 
-        assert final_preservation_score > 0.8, (
-            f"Semantic preservation too low: {final_preservation_score}"
-        )
-        assert avg_enrichment_score > 0.6, (
-            f"Insufficient semantic enrichment: {avg_enrichment_score}"
-        )
-        assert min_interpretability > 0.7, (
-            f"Interpretability degraded: {min_interpretability}"
-        )
+        assert (
+            final_preservation_score > 0.8
+        ), f"Semantic preservation too low: {final_preservation_score}"
+        assert (
+            avg_enrichment_score > 0.6
+        ), f"Insufficient semantic enrichment: {avg_enrichment_score}"
+        assert (
+            min_interpretability > 0.7
+        ), f"Interpretability degraded: {min_interpretability}"
 
         logger.info(
             f"Semantic preservation validated: Final={final_preservation_score:.3f}, "

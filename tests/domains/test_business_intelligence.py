@@ -5,40 +5,37 @@ This module tests the comprehensive business intelligence capabilities including
 customer analytics, A/B testing, attribution modeling, and funnel analysis.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
-from localdata_mcp.domains.business_intelligence import (
-    # Core transformers
-    RFMAnalysisTransformer,
-    CohortAnalysisTransformer,
-    CLVCalculator,
+import numpy as np
+import pandas as pd
+import pytest
+
+from localdata_mcp.domains.business_intelligence import (  # Core transformers; High-level functions; Result classes; Enums
     ABTestAnalyzer,
-    PowerAnalysisTransformer,
+    ABTestResult,
     AttributionAnalyzer,
-    FunnelAnalyzer,
+    AttributionModel,
+    AttributionResult,
     BusinessIntelligencePipeline,
-    # High-level functions
-    analyze_rfm,
-    perform_cohort_analysis,
-    calculate_clv,
-    perform_ab_test,
+    CLVCalculator,
+    CLVResult,
+    CohortAnalysisResult,
+    CohortAnalysisTransformer,
+    ExperimentStatus,
+    FunnelAnalysisResult,
+    FunnelAnalyzer,
+    PowerAnalysisTransformer,
+    RFMAnalysisTransformer,
+    RFMResult,
     analyze_attribution,
     analyze_funnel,
+    analyze_rfm,
+    calculate_clv,
     enhanced_ab_test,
-    # Result classes
-    RFMResult,
-    CohortAnalysisResult,
-    CLVResult,
-    ABTestResult,
-    AttributionResult,
-    FunnelAnalysisResult,
-    # Enums
-    AttributionModel,
-    ExperimentStatus,
+    perform_ab_test,
+    perform_cohort_analysis,
 )
 
 

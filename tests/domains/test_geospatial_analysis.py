@@ -2,33 +2,34 @@
 Tests for geospatial analysis domain functionality.
 """
 
-import pytest
-import numpy as np
-import pandas as pd
 from unittest.mock import Mock, patch
 
+import numpy as np
+import pandas as pd
+import pytest
+
 from localdata_mcp.domains.geospatial_analysis import (
+    AccessibilityAnalyzer,
+    GeospatialAnalysisPipeline,
     GeospatialDependencyChecker,
-    SpatialPoint,
+    GeospatialLibrary,
+    NetworkAnalysisType,
+    NetworkRouter,
+    OverlayOperation,
+    SpatialAutocorrelationTransformer,
     SpatialDataFrame,
     SpatialDistanceCalculator,
     SpatialDistanceTransformer,
     SpatialGeometryTransformer,
-    SpatialAutocorrelationTransformer,
     SpatialInterpolationTransformer,
     SpatialJoinEngine,
-    SpatialOverlayEngine,
-    SpatialNetwork,
-    NetworkRouter,
-    AccessibilityAnalyzer,
-    GeospatialAnalysisPipeline,
-    analyze_spatial_autocorrelation,
-    perform_spatial_clustering,
-    calculate_spatial_distance,
-    GeospatialLibrary,
     SpatialJoinType,
-    OverlayOperation,
-    NetworkAnalysisType,
+    SpatialNetwork,
+    SpatialOverlayEngine,
+    SpatialPoint,
+    analyze_spatial_autocorrelation,
+    calculate_spatial_distance,
+    perform_spatial_clustering,
 )
 
 

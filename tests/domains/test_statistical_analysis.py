@@ -5,24 +5,25 @@ Tests validate statistical computations against known reference datasets,
 edge cases, and cross-validation with established statistical methods.
 """
 
-import pytest
+import warnings
+from typing import Any, Dict
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
+import pytest
 from scipy import stats
-import warnings
-from unittest.mock import patch
-from typing import Dict, Any
 
 from localdata_mcp.domains.statistical_analysis import (
-    HypothesisTestingTransformer,
     ANOVAAnalysisTransformer,
-    NonParametricTestTransformer,
     ExperimentalDesignTransformer,
+    HypothesisTestingTransformer,
+    NonParametricTestTransformer,
     StatisticalTestResult,
-    run_hypothesis_test,
-    perform_anova,
     analyze_experiment_design,
     calculate_effect_sizes,
+    perform_anova,
+    run_hypothesis_test,
 )
 
 # Suppress warnings during testing
@@ -1112,8 +1113,9 @@ class TestIntegrationAndPerformance:
     def test_memory_efficiency(self):
         """Test memory efficiency with streaming-like processing."""
         # This test ensures the transformers don't hold excessive memory
-        import psutil
         import os
+
+        import psutil
 
         process = psutil.Process(os.getpid())
         initial_memory = process.memory_info().rss / 1024 / 1024  # MB

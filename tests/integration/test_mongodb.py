@@ -88,9 +88,9 @@ class TestMongoDBConnection:
             # The server should not crash; it should return a response.
             assert result_str, "connect_database returned empty result"
             # Connection should report success even if summary building fails
-            assert "success" in result_str.lower() or "mongo_conn" in result_str, (
-                f"Unexpected connect result: {result_str}"
-            )
+            assert (
+                "success" in result_str.lower() or "mongo_conn" in result_str
+            ), f"Unexpected connect result: {result_str}"
         finally:
             _try_disconnect("mongo_conn")
 
@@ -103,9 +103,9 @@ class TestMongoDBConnection:
         try:
             list_result = call_tool("list_databases", {})
             list_str = str(list_result)
-            assert "mongo_ls" in list_str, (
-                f"mongo_ls not in list_databases after connect: {list_str}"
-            )
+            assert (
+                "mongo_ls" in list_str
+            ), f"mongo_ls not in list_databases after connect: {list_str}"
         finally:
             _try_disconnect("mongo_ls")
 
@@ -117,9 +117,9 @@ class TestMongoDBConnection:
         )
         result = call_tool("disconnect_database", {"name": "mongo_dc"})
         result_str = str(result)
-        assert "disconnect" in result_str.lower() or "success" in result_str.lower(), (
-            f"Expected successful disconnect, got: {result_str}"
-        )
+        assert (
+            "disconnect" in result_str.lower() or "success" in result_str.lower()
+        ), f"Expected successful disconnect, got: {result_str}"
 
     def test_connect_invalid_url(self):
         """Connecting with an unreachable host should return an error, not crash."""
@@ -154,9 +154,9 @@ class TestMongoDBConnection:
                 },
             )
             result_str = str(result)
-            assert "already" in result_str.lower() or "error" in result_str.lower(), (
-                f"Expected duplicate-name error: {result_str}"
-            )
+            assert (
+                "already" in result_str.lower() or "error" in result_str.lower()
+            ), f"Expected duplicate-name error: {result_str}"
         finally:
             _try_disconnect("mongo_dup")
 
@@ -211,17 +211,17 @@ class TestMongoDBErrorHandling:
         """Disconnecting a nonexistent connection should return error."""
         result = call_tool("disconnect_database", {"name": "mongo_nonexist_xyz"})
         result_str = str(result)
-        assert "error" in result_str.lower() or "not" in result_str.lower(), (
-            f"Expected error for nonexistent disconnect: {result_str}"
-        )
+        assert (
+            "error" in result_str.lower() or "not" in result_str.lower()
+        ), f"Expected error for nonexistent disconnect: {result_str}"
 
     def test_describe_nonexistent(self):
         """Describing a nonexistent connection should return error."""
         result = call_tool("describe_database", {"name": "mongo_nonexist_xyz"})
         result_str = str(result)
-        assert "error" in result_str.lower() or "not" in result_str.lower(), (
-            f"Expected error for nonexistent describe: {result_str}"
-        )
+        assert (
+            "error" in result_str.lower() or "not" in result_str.lower()
+        ), f"Expected error for nonexistent describe: {result_str}"
 
     def test_query_nonexistent_connection(self):
         """Querying a nonexistent connection should return error."""
@@ -230,6 +230,6 @@ class TestMongoDBErrorHandling:
             {"name": "mongo_nonexist_xyz", "query": "SELECT 1"},
         )
         result_str = str(result)
-        assert "error" in result_str.lower() or "not" in result_str.lower(), (
-            f"Expected error for nonexistent query: {result_str}"
-        )
+        assert (
+            "error" in result_str.lower() or "not" in result_str.lower()
+        ), f"Expected error for nonexistent query: {result_str}"

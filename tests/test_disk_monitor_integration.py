@@ -2,9 +2,9 @@
 
 import logging
 import sys
+from unittest.mock import MagicMock, Mock, patch
+
 import pandas as pd
-import pytest
-from unittest.mock import Mock, patch, MagicMock
 
 # Work around a pre-existing circular-import bug in the package:
 # size_estimator.py uses ``from localdata_mcp._size_types import …``
@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch, MagicMock
 # Fix: make MetricsCollector.__init__ silently reuse existing collectors
 # instead of crashing on duplicate registration.
 import prometheus_client
+import pytest
 
 _orig_counter = prometheus_client.Counter
 _orig_histogram = prometheus_client.Histogram
@@ -66,13 +67,13 @@ _pm.Counter = _safe_counter
 _pm.Histogram = _safe_histogram
 _pm.Gauge = _safe_gauge
 
-from localdata_mcp.streaming import (  # noqa: E402
-    StreamingQueryExecutor,
-    StreamingDataSource,
-    MemoryStatus,
-)
 from localdata_mcp.config_manager import PerformanceConfig  # noqa: E402
 from localdata_mcp.disk_monitor import DiskMonitor  # noqa: E402
+from localdata_mcp.streaming import (  # noqa: E402
+    MemoryStatus,
+    StreamingDataSource,
+    StreamingQueryExecutor,
+)
 
 
 def _make_memory_status(low=False):
