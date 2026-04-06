@@ -12,6 +12,7 @@ import pandas as pd
 from ..config_manager import get_config_manager, PerformanceConfig
 from ..disk_monitor import DiskMonitor
 from ..logging_manager import get_logger, get_logging_manager
+from ..memory_budget import MemoryBudget
 from ..timeout_manager import get_timeout_manager, QueryTimeoutError
 from .buffers import (
     clear_buffer as _clear_buffer,
@@ -66,6 +67,7 @@ class StreamingQueryExecutor:
         initial_chunk_size: Optional[int] = None,
         database_name: Optional[str] = None,
         disk_monitor: Optional[DiskMonitor] = None,
+        memory_budget: Optional[MemoryBudget] = None,
     ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """Execute streaming query with adaptive memory management.
 
@@ -75,6 +77,9 @@ class StreamingQueryExecutor:
             initial_chunk_size: Initial chunk size (adaptive if None)
             database_name: Name of the database for timeout configuration
             disk_monitor: Optional disk space monitor for abort-on-full
+            memory_budget: Optional memory budget for chunk size tuning.
+                When provided, budget info is included in the returned
+                metadata dict under the ``memory_budget`` key.
 
         Returns:
             Tuple of (first_chunk_df, metadata_dict)
@@ -107,6 +112,14 @@ class StreamingQueryExecutor:
                     timeout_seconds=timeout_config.query_timeout,
                     database_name=database_name,
                 )
+
+        if memory_budget is not None:
+            logger.info(
+                "Memory budget provided: %d bytes (aggressive=%s, ram=%.2f GB)",
+                memory_budget.budget_bytes,
+                memory_budget.is_aggressive_mode,
+                memory_budget.available_ram_gb,
+            )
 
         memory_status = get_memory_status(self.config)
         chunk_size = initial_chunk_size or memory_status.recommended_chunk_size
@@ -141,6 +154,7 @@ class StreamingQueryExecutor:
                 disk_monitor,
             )
             self._attach_size_estimate(source, chunk_size, metadata)
+            self._attach_memory_budget(memory_budget, metadata)
             log_streaming_success(
                 start_time,
                 request_id,
@@ -190,6 +204,21 @@ class StreamingQueryExecutor:
                 "confidence": size_estimate.confidence,
                 "source": size_estimate.source,
             }
+
+    @staticmethod
+    def _attach_memory_budget(
+        budget: Optional[MemoryBudget],
+        metadata: Dict[str, Any],
+    ) -> None:
+        """Attach memory budget info to streaming metadata."""
+        if budget is None:
+            return
+        metadata["memory_budget"] = {
+            "budget_bytes": budget.budget_bytes,
+            "max_budget_mb": budget.max_budget_mb,
+            "is_aggressive_mode": budget.is_aggressive_mode,
+            "available_ram_gb": budget.available_ram_gb,
+        }
 
     def _dispatch_execution(
         self,

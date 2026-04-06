@@ -2,6 +2,7 @@
 
 The implementation is split across:
   - ``database_manager`` -- QueryBuffer dataclass and DatabaseManager class
+  - ``query_execution``  -- Memory-aware query execution decision logic
   - ``cli``              -- CLI argument parsing and ``main()`` entry point
 
 Module-level state (MCP instance, feature flags, logging singletons) remains

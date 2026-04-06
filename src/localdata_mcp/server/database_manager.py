@@ -2735,20 +2735,37 @@ class DatabaseManager:
         include_blobs: bool = False,
         preflight: bool = False,
     ) -> str:
-        """
-        Execute a SQL query and return results as JSON.
+        """Execute a SQL query and return results as JSON.
 
-        For large result sets (>100 rows), automatically creates chunked response with pagination.
-        Includes pre-query analysis to estimate resource usage and prevent crashes.
-        Auto-clears buffers from the same database when memory is high.
+        Uses a memory-aware three-path execution model:
+
+        1. **In-memory** -- estimated result fits within the RAM budget
+           calculated by ``MemoryBudget``.  Results are returned in full
+           (or chunked for display) without staging.
+        2. **Staging** -- estimated result exceeds RAM but fits within
+           the disk budget.  Data streams through a temporary staging
+           SQLite database with disk monitoring.
+        3. **Refinement** -- estimated result exceeds both RAM and disk
+           budgets.  Returns a ``requires_refinement`` response with
+           suggestions (add LIMIT, WHERE, GROUP BY, etc.) instead of
+           executing.
+
+        When ``MemoryBudget`` detects low available RAM (< 1 GB by
+        default), aggressive mode activates with tighter thresholds.
 
         Args:
             name: The name of the database connection.
             query: The SQL query to execute.
-            chunk_size: Optional chunk size for pagination. If not specified, uses analysis recommendations.
-            enable_analysis: Whether to perform pre-query analysis (default: True).
-            include_blobs: When True, base64-encode small BLOBs in results. When False (default), replace BLOBs with informative placeholders.
-            preflight: When True, run EXPLAIN without executing and return size/row estimates.
+            chunk_size: Optional chunk size for pagination.  When not
+                specified, a dynamic chunk size is calculated from the
+                memory budget and estimated row size.
+            enable_analysis: Whether to perform pre-query analysis
+                (default: True).
+            include_blobs: When True, base64-encode small BLOBs in
+                results.  When False (default), replace BLOBs with
+                informative placeholders.
+            preflight: When True, run EXPLAIN without executing and
+                return size/row estimates.
         """
         # Dispatch SPARQL queries for remote SPARQL endpoints
         if name in self._sparql_connections:
@@ -2858,6 +2875,37 @@ class DatabaseManager:
             # Clean up expired buffers
             self._cleanup_expired_buffers()
 
+            # Memory-aware execution decision
+            from .query_execution import (
+                get_memory_budget,
+                decide_execution_path,
+                build_refinement_response,
+                calculate_dynamic_chunk_size,
+            )
+
+            memory_budget = get_memory_budget()
+            logger.info(
+                "Memory budget: %d bytes (aggressive=%s, ram=%.2f GB)",
+                memory_budget.budget_bytes,
+                memory_budget.is_aggressive_mode,
+                memory_budget.available_ram_gb,
+            )
+
+            decision = decide_execution_path(query_analysis, memory_budget)
+            logger.info(
+                "Execution decision: path=%s, reason=%s",
+                decision.path,
+                decision.reason,
+            )
+
+            # Return refinement response when query exceeds all budgets
+            if decision.path == "refinement":
+                return build_refinement_response(
+                    decision.estimated_bytes,
+                    memory_budget,
+                    decision.disk_budget_bytes or 0,
+                )
+
             # Use streaming execution for memory-bounded processing
             _query_start_time = time.time()
             query_id = self._generate_query_id(name, query)
@@ -2867,13 +2915,12 @@ class DatabaseManager:
                 engine=engine, query=validated_query, query_analysis=query_analysis
             )
 
-            # Determine initial chunk size
+            # Determine initial chunk size dynamically from memory budget
             initial_chunk_size = chunk_size
             if initial_chunk_size is None:
-                if query_analysis and query_analysis.should_chunk:
-                    initial_chunk_size = query_analysis.recommended_chunk_size or 100
-                else:
-                    initial_chunk_size = 100  # Default
+                initial_chunk_size = calculate_dynamic_chunk_size(
+                    memory_budget, query_analysis
+                )
 
             # Execute streaming query with timeout management
             try:
@@ -2882,7 +2929,8 @@ class DatabaseManager:
                         streaming_source,
                         query_id,
                         initial_chunk_size,
-                        database_name=name,  # Pass database name for timeout configuration
+                        database_name=name,
+                        memory_budget=memory_budget,
                     )
                 )
                 self.query_history[name].append(query)
@@ -2980,7 +3028,7 @@ class DatabaseManager:
                             blob_warnings,
                         ),
                         "pagination": {
-                            "use_next_chunk": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size=100)",
+                            "use_next_chunk": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size={initial_chunk_size})",
                             "get_all_remaining": f"next_chunk(query_id='{query_id}', start_row={chunk_limit + 1}, chunk_size='all')",
                         },
                         "streaming_metadata": streaming_metadata,
