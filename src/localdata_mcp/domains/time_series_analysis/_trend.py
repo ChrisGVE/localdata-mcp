@@ -64,6 +64,56 @@ class TrendAnalysisTransformer(TimeSeriesTransformer):
         self.is_fitted_ = True
         return self
 
+    def _build_trend_interpretation(
+        self, trend_direction: str, trend_strength: float, changepoints: List[int]
+    ) -> str:
+        """Build human-readable interpretation from trend analysis results."""
+        if trend_strength < 0.1:
+            interpretation = (
+                "No significant trend detected - series appears stationary around mean"
+            )
+        elif trend_strength < 0.3:
+            interpretation = f"Weak {trend_direction} trend detected (strength: {trend_strength:.2f})"
+        elif trend_strength < 0.7:
+            interpretation = f"Moderate {trend_direction} trend detected (strength: {trend_strength:.2f})"
+        else:
+            interpretation = f"Strong {trend_direction} trend detected (strength: {trend_strength:.2f})"
+        if len(changepoints) > 0:
+            interpretation += f" with {len(changepoints)} trend changepoint(s)"
+        return interpretation
+
+    def _build_trend_recommendations(
+        self,
+        trend_strength: float,
+        changepoints: List[int],
+        series: pd.Series,
+        trend_analysis: Dict[str, Any],
+    ) -> tuple:
+        """Return (recommendations, warnings_list) from trend analysis data."""
+        recommendations = []
+        warnings_list = []
+        if trend_strength > 0.5:
+            recommendations.append(
+                "Strong trend detected - detrending may be necessary for stationary modeling"
+            )
+            recommendations.append("Consider trend-aware forecasting methods")
+        else:
+            recommendations.append(
+                "Weak or no trend - focus on seasonal or residual patterns"
+            )
+        if len(changepoints) > 0:
+            recommendations.append(
+                "Trend changepoints detected - consider structural break models"
+            )
+            for i, cp in enumerate(changepoints[:3]):
+                cp_date = series.index[cp] if cp < len(series.index) else "unknown"
+                recommendations.append(
+                    f"Changepoint {i + 1} at position {cp} ({cp_date})"
+                )
+        recommendations.extend(trend_analysis.get("recommendations", []))
+        warnings_list.extend(trend_analysis.get("warnings", []))
+        return recommendations, warnings_list
+
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
         """
         Perform trend analysis on time series data.
@@ -79,7 +129,6 @@ class TrendAnalysisTransformer(TimeSeriesTransformer):
             X, _ = self._validate_time_series(X, None)
 
         try:
-            # Use first column for analysis
             if len(X.columns) == 0:
                 raise ValueError("No columns found in time series data")
 
@@ -87,15 +136,11 @@ class TrendAnalysisTransformer(TimeSeriesTransformer):
             if len(series) < 10:
                 raise ValueError("Insufficient data points for trend analysis")
 
-            # Extract trend using specified method
             trend_result = self._extract_trend(series)
-
-            # Analyze trend properties
             trend_analysis = self._analyze_trend_properties(
                 series, trend_result["trend"]
             )
 
-            # Detect changepoints if requested
             changepoints = []
             if self.changepoint_detection:
                 changepoints = self._detect_changepoints(series)
@@ -103,51 +148,16 @@ class TrendAnalysisTransformer(TimeSeriesTransformer):
             self.trend_parameters_ = trend_result
             self.changepoints_ = changepoints
 
-            # Generate interpretation
             trend_direction = trend_analysis["direction"]
             trend_strength = trend_analysis["strength"]
+            interpretation = self._build_trend_interpretation(
+                trend_direction, trend_strength, changepoints
+            )
+            recommendations, warnings_list = self._build_trend_recommendations(
+                trend_strength, changepoints, series, trend_analysis
+            )
 
-            if trend_strength < 0.1:
-                interpretation = "No significant trend detected - series appears stationary around mean"
-            elif trend_strength < 0.3:
-                interpretation = f"Weak {trend_direction} trend detected (strength: {trend_strength:.2f})"
-            elif trend_strength < 0.7:
-                interpretation = f"Moderate {trend_direction} trend detected (strength: {trend_strength:.2f})"
-            else:
-                interpretation = f"Strong {trend_direction} trend detected (strength: {trend_strength:.2f})"
-
-            if len(changepoints) > 0:
-                interpretation += f" with {len(changepoints)} trend changepoint(s)"
-
-            # Generate recommendations
-            recommendations = []
-            warnings_list = []
-
-            if trend_strength > 0.5:
-                recommendations.append(
-                    "Strong trend detected - detrending may be necessary for stationary modeling"
-                )
-                recommendations.append("Consider trend-aware forecasting methods")
-            else:
-                recommendations.append(
-                    "Weak or no trend - focus on seasonal or residual patterns"
-                )
-
-            if len(changepoints) > 0:
-                recommendations.append(
-                    f"Trend changepoints detected - consider structural break models"
-                )
-                for i, cp in enumerate(changepoints[:3]):  # Show first 3
-                    cp_date = series.index[cp] if cp < len(series.index) else "unknown"
-                    recommendations.append(
-                        f"Changepoint {i + 1} at position {cp} ({cp_date})"
-                    )
-
-            # Add analysis-specific recommendations
-            recommendations.extend(trend_analysis.get("recommendations", []))
-            warnings_list.extend(trend_analysis.get("warnings", []))
-
-            result = TimeSeriesAnalysisResult(
+            return TimeSeriesAnalysisResult(
                 analysis_type="trend_analysis",
                 interpretation=interpretation,
                 trend_component=trend_result["trend"],
@@ -164,8 +174,6 @@ class TrendAnalysisTransformer(TimeSeriesTransformer):
                 warnings=warnings_list,
                 processing_time=time.time() - start_time,
             )
-
-            return result
 
         except Exception as e:
             logger.error(f"Error in trend analysis: {e}")
