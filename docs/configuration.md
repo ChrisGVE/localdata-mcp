@@ -29,7 +29,7 @@ If you pass `--config PATH` (or set `LOCALDATA_CONFIG`), that single file is use
 
 Environment variables are applied last and override any value set in YAML.
 
-Using the legacy path (`~/.localdata.yaml`) emits a deprecation warning at startup. See [Migration guide](#migration-guide) for how to move to the recommended location.
+Using the legacy path (`~/.localdata.yaml`) emits a deprecation warning at startup. See the Migration guide section below for how to move to the recommended location.
 
 ## Environment variables
 
@@ -204,7 +204,7 @@ Controls query and path security.
 |-----|------|---------|-------------|
 | `restrict_paths` | `bool` | `true` | When enabled, file access is limited to `allowed_paths` |
 | `allowed_paths` | `list[str]` | `["."]` | Directories the server can access (only enforced when `restrict_paths` is true) |
-| `readonly` | `bool` | `false` | Block all write-oriented SQL operations (see [Readonly mode](#readonly-mode)) |
+| `readonly` | `bool` | `false` | Block all write-oriented SQL operations (see Readonly mode section below) |
 | `max_query_length` | `int` | `10000` | Maximum allowed SQL query length in characters |
 | `blocked_keywords` | `list[str]` | `[]` | SQL keywords to reject (e.g., `["DROP", "TRUNCATE"]`) |
 

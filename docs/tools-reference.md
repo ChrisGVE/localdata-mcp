@@ -4,14 +4,14 @@ Complete reference documentation for all 52 MCP tools. Organized by category for
 
 ## Table of Contents
 
-1. [Core Database](#core-database-8-tools)
-2. [Streaming & Memory](#streaming--memory-9-tools)
-3. [Tree/Structured Data](#treestructured-data-10-tools)
-4. [Graph Operations](#graph-operations-7-tools)
-5. [Search & Transform](#search--transform-2-tools)
-6. [Schema & Audit](#schema--audit-3-tools)
-7. [System](#system-1-tool)
-8. [Data Science](#data-science-12-tools)
+1. Core Database (8 tools)
+2. Streaming & Memory (9 tools)
+3. Tree/Structured Data (10 tools)
+4. Graph Operations (7 tools)
+5. Search & Transform (2 tools)
+6. Schema & Audit (3 tools)
+7. System (1 tool)
+8. Data Science (12 tools)
 
 ---
 

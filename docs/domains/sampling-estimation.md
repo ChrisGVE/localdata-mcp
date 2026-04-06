@@ -61,7 +61,7 @@ Draw a sample from a dataset using a chosen sampling method.
 
 **Return format**
 
-```json
+```text
 {
   "sample_data": [
     {"col_a": 1.2, "col_b": "foo"},
@@ -139,7 +139,7 @@ Run a Monte Carlo simulation or numerical integration.
 
 **Return format**
 
-```json
+```text
 {
   "simulation_type": "simulation",
   "n_simulations": 10000,
