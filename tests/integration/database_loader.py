@@ -415,21 +415,27 @@ def _load_influxdb(df: pd.DataFrame, table_name: str) -> int:
                 )
                 .tag(
                     "PULocationID",
-                    str(int(row["PULocationID"]))
-                    if pd.notna(row["PULocationID"])
-                    else "0",
+                    (
+                        str(int(row["PULocationID"]))
+                        if pd.notna(row["PULocationID"])
+                        else "0"
+                    ),
                 )
                 .tag(
                     "payment_type",
-                    str(int(row["payment_type"]))
-                    if pd.notna(row["payment_type"])
-                    else "0",
+                    (
+                        str(int(row["payment_type"]))
+                        if pd.notna(row["payment_type"])
+                        else "0"
+                    ),
                 )
                 .field(
                     "trip_distance",
-                    float(row["trip_distance"])
-                    if pd.notna(row["trip_distance"])
-                    else 0.0,
+                    (
+                        float(row["trip_distance"])
+                        if pd.notna(row["trip_distance"])
+                        else 0.0
+                    ),
                 )
                 .field(
                     "fare_amount",
@@ -441,15 +447,19 @@ def _load_influxdb(df: pd.DataFrame, table_name: str) -> int:
                 )
                 .field(
                     "total_amount",
-                    float(row["total_amount"])
-                    if pd.notna(row["total_amount"])
-                    else 0.0,
+                    (
+                        float(row["total_amount"])
+                        if pd.notna(row["total_amount"])
+                        else 0.0
+                    ),
                 )
                 .field(
                     "passenger_count",
-                    float(row["passenger_count"])
-                    if pd.notna(row["passenger_count"])
-                    else 0.0,
+                    (
+                        float(row["passenger_count"])
+                        if pd.notna(row["passenger_count"])
+                        else 0.0
+                    ),
                 )
                 .time(row["tpep_pickup_datetime"], WritePrecision.S)
             )

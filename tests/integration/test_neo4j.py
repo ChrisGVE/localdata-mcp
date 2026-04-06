@@ -94,9 +94,9 @@ class TestNeo4jConnection:
         try:
             result_str = str(result)
             assert result_str, "connect_database returned empty result"
-            assert "success" in result_str.lower() or "neo4j_conn" in result_str, (
-                f"Unexpected connect result: {result_str}"
-            )
+            assert (
+                "success" in result_str.lower() or "neo4j_conn" in result_str
+            ), f"Unexpected connect result: {result_str}"
         finally:
             _try_disconnect("neo4j_conn")
 
@@ -109,9 +109,9 @@ class TestNeo4jConnection:
         try:
             list_result = call_tool("list_databases", {})
             list_str = str(list_result)
-            assert "neo4j_ls" in list_str, (
-                f"neo4j_ls not in list_databases after connect: {list_str}"
-            )
+            assert (
+                "neo4j_ls" in list_str
+            ), f"neo4j_ls not in list_databases after connect: {list_str}"
         finally:
             _try_disconnect("neo4j_ls")
 
@@ -123,9 +123,9 @@ class TestNeo4jConnection:
         )
         result = call_tool("disconnect_database", {"name": "neo4j_dc"})
         result_str = str(result)
-        assert "disconnect" in result_str.lower() or "success" in result_str.lower(), (
-            f"Expected successful disconnect, got: {result_str}"
-        )
+        assert (
+            "disconnect" in result_str.lower() or "success" in result_str.lower()
+        ), f"Expected successful disconnect, got: {result_str}"
 
     def test_duplicate_connect_rejected(self):
         """Connecting with a name already in use should return an error."""
@@ -143,9 +143,9 @@ class TestNeo4jConnection:
                 },
             )
             result_str = str(result)
-            assert "already" in result_str.lower() or "error" in result_str.lower(), (
-                f"Expected duplicate-name error: {result_str}"
-            )
+            assert (
+                "already" in result_str.lower() or "error" in result_str.lower()
+            ), f"Expected duplicate-name error: {result_str}"
         finally:
             _try_disconnect("neo4j_dup")
 
@@ -170,9 +170,9 @@ class TestCypherQueries:
             result_str = str(result)
             assert result_str, "execute_query returned empty result"
             # Should contain at least one person name
-            assert "person_0" in result_str or "person" in result_str.lower(), (
-                f"Expected person data in result: {result_str}"
-            )
+            assert (
+                "person_0" in result_str or "person" in result_str.lower()
+            ), f"Expected person data in result: {result_str}"
         finally:
             _try_disconnect("neo4j_qm")
 
@@ -264,9 +264,9 @@ class TestNeo4jErrors:
         """Disconnecting a nonexistent connection should return error."""
         result = call_tool("disconnect_database", {"name": "neo4j_nonexist_xyz"})
         result_str = str(result)
-        assert "error" in result_str.lower() or "not" in result_str.lower(), (
-            f"Expected error for nonexistent disconnect: {result_str}"
-        )
+        assert (
+            "error" in result_str.lower() or "not" in result_str.lower()
+        ), f"Expected error for nonexistent disconnect: {result_str}"
 
     def test_query_nonexistent_connection(self):
         """Querying a nonexistent connection should return error."""
@@ -275,6 +275,6 @@ class TestNeo4jErrors:
             {"name": "neo4j_nonexist_xyz", "query": "MATCH (n) RETURN n"},
         )
         result_str = str(result)
-        assert "error" in result_str.lower() or "not" in result_str.lower(), (
-            f"Expected error for nonexistent query: {result_str}"
-        )
+        assert (
+            "error" in result_str.lower() or "not" in result_str.lower()
+        ), f"Expected error for nonexistent query: {result_str}"

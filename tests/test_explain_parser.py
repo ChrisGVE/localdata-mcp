@@ -5,9 +5,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from localdata_mcp.explain_parser import (
+    _PARSER_REGISTRY,
     ExplainResult,
     PreflightResult,
-    _PARSER_REGISTRY,
     generate_suggestion,
     get_parser,
     register_parser,

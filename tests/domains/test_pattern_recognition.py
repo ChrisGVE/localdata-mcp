@@ -11,27 +11,28 @@ Tests validate:
 - Error handling and edge cases
 """
 
-import pytest
+from unittest.mock import Mock, patch
+
 import numpy as np
 import pandas as pd
-from unittest.mock import Mock, patch
+import pytest
 from sklearn.datasets import make_blobs, make_classification
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 
 # Import the pattern recognition domain components
 from localdata_mcp.domains.pattern_recognition import (
-    ClusteringTransformer,
-    DimensionalityReductionTransformer,
+    AnomalyDetectionResult,
     AnomalyDetectionTransformer,
+    ClusteringResult,
+    ClusteringTransformer,
+    DimensionalityReductionResult,
+    DimensionalityReductionTransformer,
+    PatternEvaluationResult,
     PatternEvaluationTransformer,
-    perform_clustering,
-    reduce_dimensions,
     detect_anomalies,
     evaluate_patterns,
-    ClusteringResult,
-    DimensionalityReductionResult,
-    AnomalyDetectionResult,
-    PatternEvaluationResult,
+    perform_clustering,
+    reduce_dimensions,
 )
 
 

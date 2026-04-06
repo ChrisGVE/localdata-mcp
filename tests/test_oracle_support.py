@@ -13,7 +13,6 @@ from localdata_mcp.error_classification import (
 from localdata_mcp.error_handler import ErrorCategory
 from localdata_mcp.error_mappers import OracleErrorMapper
 
-
 # ---------------------------------------------------------------------------
 # 138.1-2: Import guard and DatabaseType enum
 # ---------------------------------------------------------------------------
@@ -125,6 +124,7 @@ def test_oracle_error_mapper_no_ora_code(mapper):
 def test_oracle_mapper_registered():
     """The Oracle mapper is registered in ErrorMapperRegistry."""
     import importlib
+
     import localdata_mcp.error_mappers as em
 
     importlib.reload(em)
@@ -302,7 +302,8 @@ def test_extract_oracle_rows_no_match():
 
 def test_connection_manager_oracle_type():
     """_create_enhanced_engine handles Oracle config via create_oracle_engine."""
-    from unittest.mock import MagicMock, patch as _patch
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as _patch
 
     from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
     from localdata_mcp.connection_manager import EnhancedConnectionManager
@@ -335,9 +336,10 @@ def test_connection_manager_oracle_type():
 
 def test_connection_manager_oracle_no_driver():
     """_create_enhanced_engine raises ValueError when oracledb is missing."""
+    from unittest.mock import patch as _patch
+
     from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
     from localdata_mcp.connection_manager import EnhancedConnectionManager
-    from unittest.mock import patch as _patch
 
     config = DatabaseConfig(
         name="ora_test",
@@ -353,12 +355,13 @@ def test_connection_manager_oracle_no_driver():
 
 def test_health_check_uses_dual():
     """_perform_health_check uses SELECT 1 FROM DUAL for Oracle databases."""
-    from unittest.mock import MagicMock, patch as _patch, call
+    from unittest.mock import MagicMock, call
+    from unittest.mock import patch as _patch
 
     from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
     from localdata_mcp.connection_manager import (
-        EnhancedConnectionManager,
         ConnectionMetrics,
+        EnhancedConnectionManager,
     )
 
     config = DatabaseConfig(
@@ -393,7 +396,8 @@ def test_health_check_uses_dual():
 
 def test_get_engine_oracle():
     """_get_engine returns engine from create_oracle_engine for oracle type."""
-    from unittest.mock import MagicMock, patch as _patch
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as _patch
 
     mock_engine = MagicMock()
 
@@ -425,7 +429,8 @@ def test_get_engine_oracle_no_driver():
 def test_oracle_auth_from_sheet_name_json():
     """_get_engine parses JSON auth from sheet_name parameter."""
     import json
-    from unittest.mock import MagicMock, patch as _patch
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as _patch
 
     auth_dict = {"method": "wallet", "wallet_path": "/opt/wallet"}
     mock_engine = MagicMock()

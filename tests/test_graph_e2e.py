@@ -113,9 +113,9 @@ class TestMermaidSpecific:
         # Check that shape properties exist on at least one node
         keys_a = db.list_keys("m", "A")
         key_names = [k["key"] for k in keys_a.get("keys", [])]
-        assert "shape" in key_names, (
-            "Node A should have a 'shape' property from Mermaid bracket syntax"
-        )
+        assert (
+            "shape" in key_names
+        ), "Node A should have a 'shape' property from Mermaid bracket syntax"
 
         db.disconnect_database("m")
 
@@ -135,9 +135,9 @@ class TestMermaidSpecific:
                 found_label = True
                 break
         # At least the |yes| and |no| edges should have labels
-        assert found_label, (
-            "Expected at least one edge with a label from Mermaid syntax"
-        )
+        assert (
+            found_label
+        ), "Expected at least one edge with a label from Mermaid syntax"
 
         db.disconnect_database("m")
 
@@ -149,9 +149,9 @@ class TestMermaidSpecific:
         # B is inside 'subgraph Backend'
         keys_b = db.list_keys("m", "B")
         key_names = [k["key"] for k in keys_b.get("keys", [])]
-        assert "subgraph" in key_names, (
-            "Node B should have a 'subgraph' property indicating membership"
-        )
+        assert (
+            "subgraph" in key_names
+        ), "Node B should have a 'subgraph' property indicating membership"
 
         val = db.get_value("m", "B", "subgraph")
         assert val["value"] is not None
@@ -168,9 +168,9 @@ class TestMermaidSpecific:
         edges = db.get_edges("m")
         # Count edges originating from A (should have at least 2: A->B, A->C)
         a_edges = [e for e in edges["edges"] if e["source"] == "A"]
-        assert len(a_edges) >= 2, (
-            f"Node A should have at least 2 outgoing edges, got {len(a_edges)}"
-        )
+        assert (
+            len(a_edges) >= 2
+        ), f"Node A should have at least 2 outgoing edges, got {len(a_edges)}"
 
         db.disconnect_database("m")
 

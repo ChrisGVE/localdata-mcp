@@ -5,27 +5,28 @@ Tests comprehensive bidirectional conversion workflows and integration
 with metadata management and type detection systems.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-from scipy import sparse
-import time
-import tempfile
 import os
+import tempfile
+import time
+
+import numpy as np
+import pandas as pd
+import pytest
+from scipy import sparse
 
 from localdata_mcp.pipeline.integration.converters import (
-    PandasConverter,
-    NumpyConverter,
-    SparseMatrixConverter,
     ConversionOptions,
     ConversionQuality,
+    NumpyConverter,
+    PandasConverter,
+    SparseMatrixConverter,
 )
 from localdata_mcp.pipeline.integration.interfaces import (
     DataFormat,
     create_conversion_request,
 )
-from localdata_mcp.pipeline.integration.type_detection import TypeDetectionEngine
 from localdata_mcp.pipeline.integration.metadata_manager import MetadataManager
+from localdata_mcp.pipeline.integration.type_detection import TypeDetectionEngine
 
 
 class TestBidirectionalConversions:

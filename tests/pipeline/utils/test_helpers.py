@@ -18,7 +18,7 @@ Helper Categories:
 import asyncio
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import numpy as np
 import pandas as pd
@@ -57,14 +57,14 @@ def assert_workflow_integrity(
         final_result = results[-1]
         if "data_lineage" in final_result.metadata:
             actual_lineage = final_result.metadata["data_lineage"]
-            assert len(actual_lineage) == len(expected_lineage), (
-                f"Lineage length mismatch: expected {len(expected_lineage)}, got {len(actual_lineage)}"
-            )
+            assert len(actual_lineage) == len(
+                expected_lineage
+            ), f"Lineage length mismatch: expected {len(expected_lineage)}, got {len(actual_lineage)}"
 
             for expected, actual in zip(expected_lineage, actual_lineage):
-                assert expected == actual, (
-                    f"Lineage mismatch: expected {expected}, got {actual}"
-                )
+                assert (
+                    expected == actual
+                ), f"Lineage mismatch: expected {expected}, got {actual}"
 
     # Check metadata continuity
     for i in range(1, len(results)):
@@ -86,9 +86,9 @@ def assert_workflow_integrity(
         # Format progression should make sense
         source_format = current_result.metadata["source_format"]
         target_format = current_result.metadata["target_format"]
-        assert source_format != target_format, (
-            f"Step {i} has same source and target format"
-        )
+        assert (
+            source_format != target_format
+        ), f"Step {i} has same source and target format"
 
 
 def measure_performance(func: callable, *args, **kwargs) -> Tuple[Any, float, int]:
@@ -103,8 +103,9 @@ def measure_performance(func: callable, *args, **kwargs) -> Tuple[Any, float, in
     Returns:
         Tuple of (result, execution_time_seconds, memory_usage_bytes)
     """
-    import psutil
     import os
+
+    import psutil
 
     process = psutil.Process(os.getpid())
     memory_before = process.memory_info().rss
@@ -133,8 +134,9 @@ async def measure_async_performance(
     Returns:
         Tuple of (result, execution_time_seconds, memory_usage_bytes)
     """
-    import psutil
     import os
+
+    import psutil
 
     process = psutil.Process(os.getpid())
     memory_before = process.memory_info().rss
@@ -451,9 +453,9 @@ def assert_format_compatibility(
     elif source_format == DataFormat.NUMPY_ARRAY:
         assert isinstance(data, np.ndarray), f"Expected ndarray for {source_format}"
     elif source_format == DataFormat.SCIPY_SPARSE:
-        assert isinstance(data, sparse.spmatrix), (
-            f"Expected sparse matrix for {source_format}"
-        )
+        assert isinstance(
+            data, sparse.spmatrix
+        ), f"Expected sparse matrix for {source_format}"
 
     # Check conversion compatibility
     compatible_conversions = {
@@ -476,9 +478,9 @@ def assert_format_compatibility(
     }
 
     if source_format in compatible_conversions:
-        assert target_format in compatible_conversions[source_format], (
-            f"Incompatible conversion: {source_format} → {target_format}"
-        )
+        assert (
+            target_format in compatible_conversions[source_format]
+        ), f"Incompatible conversion: {source_format} → {target_format}"
 
 
 def create_format_test_suite(

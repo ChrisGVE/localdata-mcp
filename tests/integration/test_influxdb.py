@@ -152,9 +152,9 @@ class TestInfluxDBConnection:
         try:
             result = _connect(name)
             result_str = str(result)
-            assert "success" in result_str.lower() or name in result_str, (
-                f"Connect did not indicate success: {result_str}"
-            )
+            assert (
+                "success" in result_str.lower() or name in result_str
+            ), f"Connect did not indicate success: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": name})
 
@@ -164,9 +164,9 @@ class TestInfluxDBConnection:
         try:
             result = _connect(name)
             if isinstance(result, dict):
-                assert result.get("success") is True, (
-                    f"Expected success=True in dict result: {result}"
-                )
+                assert (
+                    result.get("success") is True
+                ), f"Expected success=True in dict result: {result}"
             else:
                 assert (
                     '"success": true' in str(result).lower()
@@ -182,12 +182,12 @@ class TestInfluxDBConnection:
         try:
             result = call_tool("list_databases", {})
             result_str = str(result)
-            assert name in result_str, (
-                f"Connection '{name}' not found in list_databases: {result_str}"
-            )
-            assert "influxdb" in result_str.lower(), (
-                f"db_type 'influxdb' not shown in list_databases: {result_str}"
-            )
+            assert (
+                name in result_str
+            ), f"Connection '{name}' not found in list_databases: {result_str}"
+            assert (
+                "influxdb" in result_str.lower()
+            ), f"db_type 'influxdb' not shown in list_databases: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": name})
 
@@ -197,9 +197,9 @@ class TestInfluxDBConnection:
         _connect(name)
         result = call_tool("disconnect_database", {"name": name})
         result_str = str(result)
-        assert "disconnect" in result_str.lower() or "success" in result_str.lower(), (
-            f"Expected successful disconnect, got: {result_str}"
-        )
+        assert (
+            "disconnect" in result_str.lower() or "success" in result_str.lower()
+        ), f"Expected successful disconnect, got: {result_str}"
 
     def test_duplicate_connection_rejected(self):
         """Connecting with an already-used name returns an error."""
@@ -208,9 +208,9 @@ class TestInfluxDBConnection:
         try:
             result = _connect(name)
             result_str = str(result).lower()
-            assert "error" in result_str or "already" in result_str, (
-                f"Expected error for duplicate connection: {result}"
-            )
+            assert (
+                "error" in result_str or "already" in result_str
+            ), f"Expected error for duplicate connection: {result}"
         finally:
             call_tool("disconnect_database", {"name": name})
 
@@ -253,9 +253,9 @@ class TestInfluxDBQueries:
                 "execute_query",
                 {"name": name, "query": query},
             )
-            assert result is not None, (
-                "execute_query returned None for filtered Flux query"
-            )
+            assert (
+                result is not None
+            ), "execute_query returned None for filtered Flux query"
         finally:
             call_tool("disconnect_database", {"name": name})
 
@@ -275,9 +275,9 @@ class TestInfluxDBQueries:
                 "execute_query",
                 {"name": name, "query": query},
             )
-            assert result is not None, (
-                "execute_query returned None for aggregation query"
-            )
+            assert (
+                result is not None
+            ), "execute_query returned None for aggregation query"
         finally:
             call_tool("disconnect_database", {"name": name})
 
@@ -311,9 +311,9 @@ class TestInfluxDBErrors:
             {"name": "idb_nonexistent", "query": "SELECT 1"},
         )
         result_str = str(result).lower()
-        assert "error" in result_str or "not connected" in result_str, (
-            f"Expected error for nonexistent connection: {result}"
-        )
+        assert (
+            "error" in result_str or "not connected" in result_str
+        ), f"Expected error for nonexistent connection: {result}"
 
     def test_describe_nonexistent_connection(self):
         """Describing a non-existent connection returns an error."""
@@ -322,9 +322,9 @@ class TestInfluxDBErrors:
             {"name": "idb_no_such"},
         )
         result_str = str(result).lower()
-        assert "error" in result_str or "not connected" in result_str, (
-            f"Expected error for nonexistent connection: {result}"
-        )
+        assert (
+            "error" in result_str or "not connected" in result_str
+        ), f"Expected error for nonexistent connection: {result}"
 
     def test_bad_flux_query(self):
         """A malformed Flux query returns an error, not a crash."""
@@ -360,6 +360,6 @@ class TestInfluxDBErrors:
         """Disconnecting a non-existent connection returns an error."""
         result = call_tool("disconnect_database", {"name": "idb_nonexistent_xyz"})
         result_str = str(result).lower()
-        assert "not connected" in result_str or "error" in result_str, (
-            f"Expected not-connected error, got: {result_str}"
-        )
+        assert (
+            "not connected" in result_str or "error" in result_str
+        ), f"Expected not-connected error, got: {result_str}"

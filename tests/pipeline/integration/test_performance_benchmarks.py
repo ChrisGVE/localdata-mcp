@@ -29,34 +29,30 @@ import pandas as pd
 import pytest
 from scipy import sparse
 
-from localdata_mcp.pipeline.integration import (
-    # Core components
-    ShimRegistry,
-    DataFormat,
+from localdata_mcp.pipeline.integration import (  # Core components; Performance optimization; Domain shims for performance testing; Converters
+    ConversionCache,
     ConversionRequest,
     ConversionResult,
-    # Performance optimization
-    ConversionCache,
+    DataFormat,
     LazyLoadingManager,
-    create_memory_efficient_options,
-    create_high_fidelity_options,
-    create_streaming_options,
-    # Domain shims for performance testing
+    ShimRegistry,
     create_all_domain_shims,
-    # Converters
-    create_pandas_converter,
+    create_high_fidelity_options,
+    create_memory_efficient_options,
     create_numpy_converter,
+    create_pandas_converter,
     create_sparse_converter,
+    create_streaming_options,
 )
 
 # Test fixtures and utilities
 from ..fixtures.sample_datasets import (
-    create_statistical_dataset,
-    create_pandas_dataframe,
-    create_numpy_array,
-    create_sparse_matrix,
-    create_streaming_data_source,
     create_high_dimensional_array,
+    create_numpy_array,
+    create_pandas_dataframe,
+    create_sparse_matrix,
+    create_statistical_dataset,
+    create_streaming_data_source,
 )
 from ..utils.test_helpers import (
     measure_async_performance,
@@ -64,9 +60,9 @@ from ..utils.test_helpers import (
 )
 
 logger = logging.getLogger(__name__)
-pytestmark = pytest.mark.skip(reason="Integration test fixtures not yet compatible with current implementation")
-
-
+pytestmark = pytest.mark.skip(
+    reason="Integration test fixtures not yet compatible with current implementation"
+)
 
 
 class TestPerformanceBenchmarks:
@@ -205,9 +201,9 @@ class TestPerformanceBenchmarks:
                     converter.convert, request
                 )
 
-                assert result.success, (
-                    f"Conversion failed for {conversion_name} at size {data_size}"
-                )
+                assert (
+                    result.success
+                ), f"Conversion failed for {conversion_name} at size {data_size}"
 
                 run_times.append(exec_time)
                 memory_usages.append(memory_usage)
@@ -224,15 +220,15 @@ class TestPerformanceBenchmarks:
                 "data_size": data_size,
                 "rows": config["rows"],
                 "columns": config["cols"],
-                "throughput_rows_per_second": config["rows"] / avg_time
-                if avg_time > 0
-                else 0,
+                "throughput_rows_per_second": (
+                    config["rows"] / avg_time if avg_time > 0 else 0
+                ),
             }
 
             # Validate performance threshold
-            assert avg_time < time_threshold, (
-                f"{conversion_name} too slow for {data_size}: {avg_time:.2f}s > {time_threshold}s"
-            )
+            assert (
+                avg_time < time_threshold
+            ), f"{conversion_name} too slow for {data_size}: {avg_time:.2f}s > {time_threshold}s"
 
             logger.info(
                 f"    {conversion_name}: {avg_time:.3f}s ± {std_time:.3f}s, "
@@ -324,9 +320,9 @@ class TestPerformanceBenchmarks:
                 >= self.PERFORMANCE_THRESHOLDS["cache_hit_rate_threshold"]
             ), f"Cache hit rate too low for {dataset_name}: {cache_stats.hit_rate:.2f}"
 
-            assert cache_speedup >= 3.0, (
-                f"Cache speedup insufficient for {dataset_name}: {cache_speedup:.1f}x"
-            )
+            assert (
+                cache_speedup >= 3.0
+            ), f"Cache speedup insufficient for {dataset_name}: {cache_speedup:.1f}x"
 
             logger.info(
                 f"    {dataset_name}: Hit rate: {cache_stats.hit_rate:.2f}, "
@@ -357,9 +353,9 @@ class TestPerformanceBenchmarks:
 
         # Validate cache size stayed within limits
         final_cache_stats = cache.get_statistics()
-        assert final_cache_stats.current_size <= cache.max_size, (
-            "Cache failed to evict items properly"
-        )
+        assert (
+            final_cache_stats.current_size <= cache.max_size
+        ), "Cache failed to evict items properly"
 
         self.performance_results["cache_effectiveness"] = cache_results
         logger.info("✅ Cache effectiveness benchmark validated")
@@ -422,9 +418,7 @@ class TestPerformanceBenchmarks:
         assert (
             memory_limit_adherence
             <= self.PERFORMANCE_THRESHOLDS["streaming_memory_limit_adherence"]
-        ), (
-            f"Memory limit exceeded: {memory_limit_adherence:.1f} > {self.PERFORMANCE_THRESHOLDS['streaming_memory_limit_adherence']}"
-        )
+        ), f"Memory limit exceeded: {memory_limit_adherence:.1f} > {self.PERFORMANCE_THRESHOLDS['streaming_memory_limit_adherence']}"
 
         memory_results["streaming_memory_constrained"] = {
             "memory_limit": memory_limit,
@@ -476,17 +470,18 @@ class TestPerformanceBenchmarks:
         memory_efficient_usage = strategy_results["memory_efficient"]["memory_usage"]
         high_fidelity_usage = strategy_results["high_fidelity"]["memory_usage"]
 
-        assert memory_efficient_usage <= high_fidelity_usage, (
-            "Memory-efficient strategy should use less memory"
-        )
+        assert (
+            memory_efficient_usage <= high_fidelity_usage
+        ), "Memory-efficient strategy should use less memory"
 
         memory_results["optimization_strategies"] = strategy_results
 
         # Test 3: Memory cleanup and garbage collection
         logger.info("  Testing memory cleanup effectiveness")
 
-        import psutil
         import os
+
+        import psutil
 
         process = psutil.Process(os.getpid())
         initial_memory = process.memory_info().rss
@@ -521,9 +516,9 @@ class TestPerformanceBenchmarks:
         memory_growth = (final_memory - initial_memory) / initial_memory
 
         # Memory growth should be reasonable after cleanup
-        assert memory_growth < 0.5, (
-            f"Excessive memory growth after cleanup: {memory_growth:.1%}"
-        )
+        assert (
+            memory_growth < 0.5
+        ), f"Excessive memory growth after cleanup: {memory_growth:.1%}"
 
         memory_results["memory_cleanup"] = {
             "initial_memory": initial_memory,
@@ -614,9 +609,9 @@ class TestPerformanceBenchmarks:
 
         # Validate all conversions succeeded
         for result in concurrent_results:
-            assert result["success"], (
-                f"Concurrent conversion {result['dataset_id']} failed"
-            )
+            assert result[
+                "success"
+            ], f"Concurrent conversion {result['dataset_id']} failed"
 
         concurrent_times = [result["execution_time"] for result in concurrent_results]
         concurrent_avg_time = statistics.mean(concurrent_times)
@@ -639,9 +634,9 @@ class TestPerformanceBenchmarks:
             >= self.PERFORMANCE_THRESHOLDS["concurrent_throughput_factor"]
         ), f"Concurrent throughput too low: {throughput_factor:.2f}"
 
-        assert individual_slowdown < 2.0, (
-            f"Individual operation slowdown too high: {individual_slowdown:.2f}x"
-        )
+        assert (
+            individual_slowdown < 2.0
+        ), f"Individual operation slowdown too high: {individual_slowdown:.2f}x"
 
         logger.info(f"  Concurrent throughput: {throughput_factor:.2f}x improvement")
         logger.info(f"  Individual operation slowdown: {individual_slowdown:.2f}x")
@@ -677,9 +672,9 @@ class TestPerformanceBenchmarks:
 
         success_rate = sum(high_concurrency_results) / len(high_concurrency_results)
 
-        assert success_rate >= 0.95, (
-            f"High concurrency success rate too low: {success_rate:.2%}"
-        )
+        assert (
+            success_rate >= 0.95
+        ), f"High concurrency success rate too low: {success_rate:.2%}"
 
         concurrent_performance["high_concurrency"] = {
             "operations": len(high_concurrency_datasets),
@@ -799,13 +794,13 @@ class TestPerformanceBenchmarks:
         )
 
         # Validate workflow performance requirements
-        assert total_workflow_time < 30.0, (
-            f"Complete workflow too slow: {total_workflow_time:.2f}s"
-        )
+        assert (
+            total_workflow_time < 30.0
+        ), f"Complete workflow too slow: {total_workflow_time:.2f}s"
 
-        assert workflow_metrics["peak_memory_usage"] < 500 * 1024 * 1024, (
-            f"Workflow memory usage too high: {workflow_metrics['peak_memory_usage'] / 1024 / 1024:.1f}MB"
-        )
+        assert (
+            workflow_metrics["peak_memory_usage"] < 500 * 1024 * 1024
+        ), f"Workflow memory usage too high: {workflow_metrics['peak_memory_usage'] / 1024 / 1024:.1f}MB"
 
         logger.info(
             f"  Complete workflow: {total_workflow_time:.2f}s, "
@@ -880,9 +875,9 @@ class TestPerformanceBenchmarks:
                 )
 
                 result = domain_shim.convert(request)
-                assert result.success, (
-                    f"Strategy {strategy['name']} failed at step {i + 1}"
-                )
+                assert (
+                    result.success
+                ), f"Strategy {strategy['name']} failed at step {i + 1}"
 
                 strategy_workflow_data = result.data
 
@@ -900,9 +895,9 @@ class TestPerformanceBenchmarks:
         ]
 
         performance_improvement = baseline_time / performance_optimized_time
-        assert performance_improvement >= 1.1, (
-            f"Performance optimization insufficient: {performance_improvement:.2f}x"
-        )
+        assert (
+            performance_improvement >= 1.1
+        ), f"Performance optimization insufficient: {performance_improvement:.2f}x"
 
         workflow_performance = {
             "complete_workflow_metrics": workflow_metrics,
@@ -919,6 +914,7 @@ class TestPerformanceBenchmarks:
     def _gather_system_info(self) -> Dict[str, Any]:
         """Gather system information for benchmark context."""
         import platform
+
         import psutil
 
         return {
@@ -976,12 +972,12 @@ class TestPerformanceBenchmarks:
                     "memory_within_baseline": memory_mb <= baseline["max_memory_mb"],
                 }
 
-                assert exec_time <= baseline["max_time"], (
-                    f"Performance regression in {scenario}: {exec_time:.2f}s > {baseline['max_time']}s"
-                )
-                assert memory_mb <= baseline["max_memory_mb"], (
-                    f"Memory regression in {scenario}: {memory_mb:.1f}MB > {baseline['max_memory_mb']}MB"
-                )
+                assert (
+                    exec_time <= baseline["max_time"]
+                ), f"Performance regression in {scenario}: {exec_time:.2f}s > {baseline['max_time']}s"
+                assert (
+                    memory_mb <= baseline["max_memory_mb"]
+                ), f"Memory regression in {scenario}: {memory_mb:.1f}MB > {baseline['max_memory_mb']}MB"
 
         # Store regression test results
         self.performance_results["regression_detection"] = regression_results

@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from scipy import sparse
-from sklearn.datasets import make_classification, make_regression, make_blobs
+from sklearn.datasets import make_blobs, make_classification, make_regression
 
 
 def create_statistical_dataset(
@@ -80,7 +80,9 @@ def create_statistical_dataset(
     for i in range(n_features // 3):
         data[f"skewed_{i}"] = np.random.exponential(
             scale=random.uniform(0.5, 2.0), size=n_samples
-        ) * random.choice([-1, 1])  # Random direction
+        ) * random.choice(
+            [-1, 1]
+        )  # Random direction
 
     # Uniform distributions
     remaining_features = n_features - len(data)

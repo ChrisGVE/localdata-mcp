@@ -30,7 +30,9 @@ def _make_analysis(estimated_mb: float, row_size: float = 256.0):
     return SimpleNamespace(
         estimated_total_memory_mb=estimated_mb,
         estimated_row_size_bytes=row_size,
-        estimated_rows=int(estimated_mb * 1024 * 1024 / row_size) if row_size > 0 else 0,
+        estimated_rows=(
+            int(estimated_mb * 1024 * 1024 / row_size) if row_size > 0 else 0
+        ),
         should_chunk=True,
         recommended_chunk_size=500,
     )

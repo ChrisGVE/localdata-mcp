@@ -8,26 +8,27 @@ Tests cover:
 - PassThroughAdapter and ValidationAdapter utilities
 """
 
-import pytest
-import pandas as pd
-import numpy as np
 import time
-from unittest.mock import Mock, patch
 from datetime import datetime
+from unittest.mock import Mock, patch
+
+import numpy as np
+import pandas as pd
+import pytest
 
 from localdata_mcp.pipeline.integration.base_adapters import (
     BaseShimAdapter,
-    StreamingShimAdapter,
     CachingShimAdapter,
-    PassThroughAdapter,
-    ValidationAdapter,
     ConversionContext,
+    PassThroughAdapter,
+    StreamingShimAdapter,
+    ValidationAdapter,
 )
 from localdata_mcp.pipeline.integration.interfaces import (
-    DataFormat,
+    ConversionError,
     ConversionRequest,
     ConversionResult,
-    ConversionError,
+    DataFormat,
     MemoryConstraints,
     PerformanceRequirements,
     create_conversion_request,

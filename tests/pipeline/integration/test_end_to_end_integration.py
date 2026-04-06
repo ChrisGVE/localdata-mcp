@@ -25,55 +25,48 @@ import pandas as pd
 import pytest
 from scipy import sparse
 
-from localdata_mcp.pipeline.integration import (
-    # Core integration components
-    ShimRegistry,
-    DataFormat,
+from localdata_mcp.pipeline.integration import (  # Core integration components; Domain shims; Pipeline analysis; Performance optimization; Error recovery; Schema validation; Compatibility matrix
+    ConversionCache,
     ConversionRequest,
     ConversionResult,
-    # Domain shims
-    StatisticalShim,
-    RegressionShim,
-    TimeSeriesShim,
-    PatternRecognitionShim,
-    create_all_domain_shims,
-    # Pipeline analysis
-    PipelineAnalyzer,
-    analyze_and_fix_pipeline,
-    create_pipeline_step,
-    OptimizationCriteria,
-    # Performance optimization
-    ConversionCache,
+    DataFormat,
     LazyLoadingManager,
-    # Error recovery
-    create_complete_error_recovery_system,
-    # Schema validation
+    OptimizationCriteria,
+    PatternRecognitionShim,
+    PipelineAnalyzer,
+    PipelineCompatibilityMatrix,
+    RegressionShim,
     SchemaInferenceEngine,
     SchemaValidator,
-    # Compatibility matrix
-    PipelineCompatibilityMatrix,
+    ShimRegistry,
+    StatisticalShim,
+    TimeSeriesShim,
+    analyze_and_fix_pipeline,
+    create_all_domain_shims,
     create_compatibility_matrix,
+    create_complete_error_recovery_system,
+    create_pipeline_step,
 )
 
 # Test fixtures and utilities
 from ..fixtures.sample_datasets import (
-    create_statistical_dataset,
-    create_time_series_dataset,
-    create_regression_dataset,
     create_high_dimensional_dataset,
+    create_regression_dataset,
+    create_statistical_dataset,
     create_streaming_dataset,
+    create_time_series_dataset,
 )
 from ..utils.test_helpers import (
     assert_workflow_integrity,
+    create_mock_domain_pipeline,
     measure_performance,
     validate_first_principles,
-    create_mock_domain_pipeline,
 )
 
 logger = logging.getLogger(__name__)
-pytestmark = pytest.mark.skip(reason="Integration test fixtures not yet compatible with current implementation")
-
-
+pytestmark = pytest.mark.skip(
+    reason="Integration test fixtures not yet compatible with current implementation"
+)
 
 
 class TestEndToEndIntegration:
@@ -117,6 +110,7 @@ class TestEndToEndIntegration:
         logger.info(
             f"Integration framework initialized with {len(self.domain_shims)} domain shims"
         )
+
     def test_complete_statistical_to_regression_workflow(self):
         """
         Test complete workflow: Statistical Analysis → Regression Modeling
@@ -199,6 +193,7 @@ class TestEndToEndIntegration:
         logger.info(
             f"Complete statistical→regression workflow: {statistical_time + regression_time:.2f}s"
         )
+
     def test_time_series_to_pattern_recognition_workflow(self):
         """
         Test workflow: Time Series Analysis → Pattern Recognition
@@ -302,6 +297,7 @@ class TestEndToEndIntegration:
         logger.info(
             f"Time series→pattern workflow: {total_time:.2f}s (simple: {simple_processing_time:.2f}s, advanced: {advanced_processing_time:.2f}s)"
         )
+
     def test_four_domain_cross_composition_workflow(self):
         """
         Test complete four-domain workflow:
@@ -455,6 +451,7 @@ class TestEndToEndIntegration:
         logger.info(
             f"Four-domain workflow completed: {total_time:.2f}s, peak memory: {max_memory / 1024 / 1024:.1f}MB"
         )
+
     def test_streaming_large_dataset_workflow(self):
         """
         Test streaming-first processing with memory constraints.
@@ -496,9 +493,9 @@ class TestEndToEndIntegration:
 
         def memory_callback(current_memory):
             memory_monitor.append(current_memory)
-            assert current_memory <= memory_limit, (
-                f"Memory limit exceeded: {current_memory} > {memory_limit}"
-            )
+            assert (
+                current_memory <= memory_limit
+            ), f"Memory limit exceeded: {current_memory} > {memory_limit}"
 
         # Execute with memory monitoring
         statistical_shim = self.domain_shims["statistical"]
@@ -529,6 +526,7 @@ class TestEndToEndIntegration:
         logger.info(
             f"Streaming workflow: {processing_time:.2f}s, {throughput:.0f} samples/s, peak memory: {max_memory / 1024 / 1024:.1f}MB"
         )
+
     def test_error_recovery_and_alternative_pathways(self):
         """
         Test error recovery and alternative pathway discovery.
@@ -616,6 +614,7 @@ class TestEndToEndIntegration:
         assert "sample_ratio" in result_with_sampling.metadata
 
         logger.info("Error recovery tests completed successfully")
+
     def test_performance_optimization_effectiveness(self):
         """
         Test performance optimization components.
@@ -729,6 +728,7 @@ class TestEndToEndIntegration:
         logger.info(
             f"Performance optimization: Cache hit rate: {cache_stats.hit_rate:.2f}, Max memory: {max_memory / 1024 / 1024:.1f}MB"
         )
+
     def test_first_principles_validation(self):
         """
         Comprehensive validation of the Five First Principles adherence.
@@ -818,9 +818,7 @@ class TestEndToEndIntegration:
             },
         )
 
-        detailed_result = self.domain_shims["time_series"].convert(
-            detailed_request
-        )
+        detailed_result = self.domain_shims["time_series"].convert(detailed_request)
         assert detailed_result.success
         assert len(detailed_result.data["features"]) > len(
             simple_result.data["features"]

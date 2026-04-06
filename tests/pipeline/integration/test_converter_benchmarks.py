@@ -5,21 +5,22 @@ Measures memory efficiency, conversion speed, and quality metrics
 for different data sizes and types.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-from scipy import sparse
-import time
-import psutil
 import os
-from typing import Dict, Any, List, Tuple
+import time
 from dataclasses import dataclass
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
+import psutil
+import pytest
+from scipy import sparse
 
 from localdata_mcp.pipeline.integration.converters import (
-    PandasConverter,
-    NumpyConverter,
-    SparseMatrixConverter,
     ConversionOptions,
+    NumpyConverter,
+    PandasConverter,
+    SparseMatrixConverter,
     create_memory_efficient_options,
     create_streaming_options,
 )
@@ -140,15 +141,15 @@ class TestPandasConverterBenchmarks:
 
                 # Performance assertions
                 assert benchmark.success, f"Conversion failed for {name} dataset"
-                assert benchmark.conversion_time < 10.0, (
-                    f"Conversion took too long for {name}: {benchmark.conversion_time}s"
-                )
+                assert (
+                    benchmark.conversion_time < 10.0
+                ), f"Conversion took too long for {name}: {benchmark.conversion_time}s"
 
                 # Memory efficiency check
                 memory_increase = benchmark.memory_after - benchmark.memory_before
-                assert memory_increase < 500, (
-                    f"Excessive memory usage for {name}: {memory_increase}MB"
-                )
+                assert (
+                    memory_increase < 500
+                ), f"Excessive memory usage for {name}: {memory_increase}MB"
 
         # Print results for analysis
         self._print_benchmark_results(results, "DataFrame to NumPy")
@@ -172,9 +173,9 @@ class TestPandasConverterBenchmarks:
                 assert benchmark.success, f"Sparse conversion failed for {name}"
 
                 # Sparse conversion might be slower but should be memory efficient
-                assert benchmark.conversion_time < 30.0, (
-                    f"Sparse conversion too slow for {name}"
-                )
+                assert (
+                    benchmark.conversion_time < 30.0
+                ), f"Sparse conversion too slow for {name}"
 
         self._print_benchmark_results(results, "DataFrame to Sparse")
 
@@ -416,9 +417,9 @@ class TestSparseMatrixBenchmarks:
                     )
                     results.append(benchmark)
 
-                    assert benchmark.success, (
-                        f"Conversion failed for {name} to {target_format.value}"
-                    )
+                    assert (
+                        benchmark.success
+                    ), f"Conversion failed for {name} to {target_format.value}"
 
                     # Dense conversion should warn about memory usage for sparse data
                     if sparse_matrix.nnz / sparse_matrix.size < 0.1:  # Very sparse

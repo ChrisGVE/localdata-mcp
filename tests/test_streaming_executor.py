@@ -1,22 +1,23 @@
 """Test streaming executor functionality."""
 
 import os
+import sqlite3
 import tempfile
+from unittest.mock import Mock, patch
+
 import pandas as pd
 import pytest
-from unittest.mock import Mock, patch
-import sqlite3
+from sqlalchemy import create_engine
 
+from localdata_mcp.config_manager import PerformanceConfig
 from localdata_mcp.streaming import (
-    StreamingQueryExecutor,
-    StreamingSQLSource,
-    StreamingFileSource,
-    create_streaming_source,
     MemoryStatus,
     ResultBuffer,
+    StreamingFileSource,
+    StreamingQueryExecutor,
+    StreamingSQLSource,
+    create_streaming_source,
 )
-from localdata_mcp.config_manager import PerformanceConfig
-from sqlalchemy import create_engine
 
 
 class TestResultBuffer:

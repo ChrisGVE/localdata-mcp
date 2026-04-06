@@ -9,27 +9,28 @@ Tests cover:
 - MetadataLineage tracking with transformation history
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-from datetime import datetime
 import time
+from datetime import datetime
 
-from localdata_mcp.pipeline.integration.metadata_manager import (
-    MetadataManager,
-    PreservationRule,
-    MetadataSchema,
-    PreservationStrategy,
-    MetadataType,
-    MetadataLineage,
-    PandasMetadataTransformer,
-    NumpyMetadataTransformer,
-    create_preservation_rule,
-    create_metadata_schema,
-)
+import numpy as np
+import pandas as pd
+import pytest
+
 from localdata_mcp.pipeline.integration.interfaces import (
     DataFormat,
     ValidationResult,
+)
+from localdata_mcp.pipeline.integration.metadata_manager import (
+    MetadataLineage,
+    MetadataManager,
+    MetadataSchema,
+    MetadataType,
+    NumpyMetadataTransformer,
+    PandasMetadataTransformer,
+    PreservationRule,
+    PreservationStrategy,
+    create_metadata_schema,
+    create_preservation_rule,
 )
 
 

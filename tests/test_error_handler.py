@@ -1,43 +1,38 @@
 """Comprehensive tests for the advanced error handling system."""
 
-import pytest
-import time
 import threading
-from unittest.mock import Mock, patch, MagicMock
+import time
 from collections import deque
+from unittest.mock import MagicMock, Mock, patch
 
-from localdata_mcp.error_handler import (
-    # Exception classes
-    LocalDataError,
-    DatabaseConnectionError,
-    QueryExecutionError,
-    SecurityViolationError,
-    QueryTimeoutError,
-    ResourceExhaustionError,
-    ConfigurationError,
-    # Enums
-    ErrorCategory,
-    ErrorSeverity,
-    RetryStrategy,
-    CircuitState,
-    # Retry mechanism
-    RetryPolicy,
-    RetryableOperation,
-    retry_on_failure,
-    # Circuit breaker
+import pytest
+
+from localdata_mcp.error_handler import (  # Exception classes; Enums; Retry mechanism; Circuit breaker; Recovery system; Error handling
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitBreakerRegistry,
-    circuit_breaker_protection,
-    # Recovery system
-    ErrorRecoveryManager,
-    RecoveryStrategy,
-    RecoveryAction,
-    # Error handling
+    CircuitState,
+    ConfigurationError,
+    DatabaseConnectionError,
+    ErrorCategory,
     ErrorHandler,
     ErrorLogger,
+    ErrorRecoveryManager,
+    ErrorSeverity,
+    LocalDataError,
+    QueryExecutionError,
+    QueryTimeoutError,
+    RecoveryAction,
+    RecoveryStrategy,
+    ResourceExhaustionError,
+    RetryableOperation,
+    RetryPolicy,
+    RetryStrategy,
+    SecurityViolationError,
+    circuit_breaker_protection,
     get_error_handler,
     initialize_error_handler,
+    retry_on_failure,
 )
 
 

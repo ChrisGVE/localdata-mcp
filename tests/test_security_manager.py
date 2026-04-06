@@ -9,25 +9,26 @@ Tests cover all security features including:
 """
 
 import hashlib
-import pytest
-import time
 import threading
-from unittest.mock import Mock, patch, MagicMock
+import time
+from unittest.mock import MagicMock, Mock, patch
 
+import pytest
+
+from localdata_mcp.query_parser import SQLSecurityError
 from localdata_mcp.security import (
-    SecurityManager,
-    SecurityConfig,
-    SecurityEvent,
-    SecurityEventType,
-    SecurityThreatLevel,
     AttackPattern,
     QueryComplexity,
     RateLimitState,
+    SecurityConfig,
+    SecurityEvent,
+    SecurityEventType,
+    SecurityManager,
+    SecurityThreatLevel,
     get_security_manager,
     initialize_security_manager,
     validate_query_security,
 )
-from localdata_mcp.query_parser import SQLSecurityError
 
 
 class TestSecurityConfig:
@@ -174,9 +175,9 @@ class TestSecurityManager:
 
         for expected_pattern, query in test_cases.items():
             detected_patterns = security_manager.detect_attack_patterns(query)
-            assert expected_pattern in detected_patterns, (
-                f"Failed to detect {expected_pattern.value} in query: {query}"
-            )
+            assert (
+                expected_pattern in detected_patterns
+            ), f"Failed to detect {expected_pattern.value} in query: {query}"
 
     def test_rate_limiting_minute_limit(self):
         """Test rate limiting per minute."""
@@ -563,9 +564,9 @@ class TestOWASPSQLInjectionCases:
 
         for query in malicious_queries:
             detected_patterns = security_manager.detect_attack_patterns(query)
-            assert AttackPattern.UNION_INJECTION in detected_patterns, (
-                f"Failed to detect UNION injection in: {query}"
-            )
+            assert (
+                AttackPattern.UNION_INJECTION in detected_patterns
+            ), f"Failed to detect UNION injection in: {query}"
 
     def test_time_based_blind_injection(self, security_manager):
         """Test time-based blind SQL injection detection."""
@@ -579,9 +580,9 @@ class TestOWASPSQLInjectionCases:
 
         for query in malicious_queries:
             detected_patterns = security_manager.detect_attack_patterns(query)
-            assert AttackPattern.TIME_BASED_BLIND in detected_patterns, (
-                f"Failed to detect time-based blind injection in: {query}"
-            )
+            assert (
+                AttackPattern.TIME_BASED_BLIND in detected_patterns
+            ), f"Failed to detect time-based blind injection in: {query}"
 
     def test_boolean_based_blind_injection(self, security_manager):
         """Test boolean-based blind SQL injection detection."""
@@ -595,9 +596,9 @@ class TestOWASPSQLInjectionCases:
 
         for query in malicious_queries:
             detected_patterns = security_manager.detect_attack_patterns(query)
-            assert AttackPattern.BOOLEAN_BLIND in detected_patterns, (
-                f"Failed to detect boolean-based blind injection in: {query}"
-            )
+            assert (
+                AttackPattern.BOOLEAN_BLIND in detected_patterns
+            ), f"Failed to detect boolean-based blind injection in: {query}"
 
     def test_error_based_injection(self, security_manager):
         """Test error-based SQL injection detection."""
@@ -610,9 +611,9 @@ class TestOWASPSQLInjectionCases:
 
         for query in malicious_queries:
             detected_patterns = security_manager.detect_attack_patterns(query)
-            assert AttackPattern.ERROR_BASED in detected_patterns, (
-                f"Failed to detect error-based injection in: {query}"
-            )
+            assert (
+                AttackPattern.ERROR_BASED in detected_patterns
+            ), f"Failed to detect error-based injection in: {query}"
 
     def test_information_schema_exploitation(self, security_manager):
         """Test information schema exploitation detection."""
@@ -627,9 +628,9 @@ class TestOWASPSQLInjectionCases:
 
         for query in malicious_queries:
             detected_patterns = security_manager.detect_attack_patterns(query)
-            assert AttackPattern.INFORMATION_EXTRACTION in detected_patterns, (
-                f"Failed to detect information extraction in: {query}"
-            )
+            assert (
+                AttackPattern.INFORMATION_EXTRACTION in detected_patterns
+            ), f"Failed to detect information extraction in: {query}"
 
     def test_stacked_queries_injection(self, security_manager):
         """Test stacked queries injection detection."""
@@ -642,9 +643,9 @@ class TestOWASPSQLInjectionCases:
 
         for query in malicious_queries:
             detected_patterns = security_manager.detect_attack_patterns(query)
-            assert AttackPattern.STACKED_QUERIES in detected_patterns, (
-                f"Failed to detect stacked queries in: {query}"
-            )
+            assert (
+                AttackPattern.STACKED_QUERIES in detected_patterns
+            ), f"Failed to detect stacked queries in: {query}"
 
     def test_function_abuse_injection(self, security_manager):
         """Test function abuse injection detection."""
@@ -658,9 +659,9 @@ class TestOWASPSQLInjectionCases:
 
         for query in malicious_queries:
             detected_patterns = security_manager.detect_attack_patterns(query)
-            assert AttackPattern.FUNCTION_ABUSE in detected_patterns, (
-                f"Failed to detect function abuse in: {query}"
-            )
+            assert (
+                AttackPattern.FUNCTION_ABUSE in detected_patterns
+            ), f"Failed to detect function abuse in: {query}"
 
     def test_comment_injection_detection(self, security_manager):
         """Test SQL comment injection detection."""
@@ -674,9 +675,9 @@ class TestOWASPSQLInjectionCases:
 
         for query in malicious_queries:
             detected_patterns = security_manager.detect_attack_patterns(query)
-            assert AttackPattern.COMMENT_INJECTION in detected_patterns, (
-                f"Failed to detect comment injection in: {query}"
-            )
+            assert (
+                AttackPattern.COMMENT_INJECTION in detected_patterns
+            ), f"Failed to detect comment injection in: {query}"
 
     def test_comprehensive_owasp_validation(self, security_manager):
         """Test comprehensive validation of OWASP attack patterns."""
@@ -749,9 +750,9 @@ class TestOWASPSQLInjectionCases:
                     malicious_query
                 )
                 for expected_pattern in expected_patterns:
-                    assert expected_pattern in detected_patterns, (
-                        f"Should detect {expected_pattern.value} in: {malicious_query}"
-                    )
+                    assert (
+                        expected_pattern in detected_patterns
+                    ), f"Should detect {expected_pattern.value} in: {malicious_query}"
 
 
 class TestGlobalSecurityManagerFunctions:

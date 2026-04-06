@@ -7,20 +7,21 @@ pathway discovery, and pipeline validation for the Integration Shims Framework.
 
 import unittest
 from unittest.mock import Mock, patch
+
 import pytest
 
 from localdata_mcp.pipeline.integration.compatibility_matrix import (
-    PipelineCompatibilityMatrix,
     CompatibilityLevel,
     DomainProfile,
-    create_compatibility_matrix,
+    PipelineCompatibilityMatrix,
     assess_pipeline_compatibility,
+    create_compatibility_matrix,
     find_optimal_format_for_domains,
 )
 from localdata_mcp.pipeline.integration.interfaces import (
+    CompatibilityScore,
     DataFormat,
     DomainRequirements,
-    CompatibilityScore,
     ValidationResult,
 )
 

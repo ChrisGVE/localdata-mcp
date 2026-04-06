@@ -2,18 +2,17 @@
 
 import pytest
 
-from localdata_mcp.error_handler import ErrorCategory
 from localdata_mcp.error_classification import (
     ErrorMapperRegistry,
     GenericDatabaseErrorMapper,
 )
+from localdata_mcp.error_handler import ErrorCategory
 from localdata_mcp.error_mappers import (
     DuckDBErrorMapper,
     MySQLErrorMapper,
     PostgreSQLErrorMapper,
     SQLiteErrorMapper,
 )
-
 
 # ---------------------------------------------------------------------------
 # 132.5 -- SQLiteErrorMapper
@@ -271,9 +270,9 @@ class TestMapperRegistration:
             "duckdb",
             "generic",
         ):
-            assert ErrorMapperRegistry.get_mapper(db_type) is not None, (
-                f"{db_type} not registered"
-            )
+            assert (
+                ErrorMapperRegistry.get_mapper(db_type) is not None
+            ), f"{db_type} not registered"
 
     def test_get_or_default_returns_generic(self) -> None:
         mapper = ErrorMapperRegistry.get_or_default("oracle")

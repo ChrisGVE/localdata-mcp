@@ -4,9 +4,10 @@ Covers handle_graceful_abort, add_truncation_metadata, and the
 execute_streaming_core abort path with disk monitor integration.
 """
 
+from unittest.mock import Mock, patch
+
 import pandas as pd
 import pytest
-from unittest.mock import Mock, patch
 
 from localdata_mcp.streaming.execution import (
     _ABORT_SUGGESTION,
@@ -14,7 +15,6 @@ from localdata_mcp.streaming.execution import (
     handle_graceful_abort,
 )
 from localdata_mcp.streaming.models import ResultBuffer
-
 
 # ------------------------------------------------------------------
 # handle_graceful_abort unit tests

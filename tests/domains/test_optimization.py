@@ -2,27 +2,28 @@
 Tests for optimization domain functionality.
 """
 
-import pytest
+from unittest.mock import MagicMock, Mock, patch
+
 import numpy as np
 import pandas as pd
-from unittest.mock import Mock, patch, MagicMock
+import pytest
 from scipy.optimize import OptimizeResult
 
 from localdata_mcp.domains.optimization import (
-    LinearProgrammingSolver,
-    ConstrainedOptimizer,
-    NetworkAnalyzer,
-    AssignmentSolver,
-    OptimizationResult,
-    LinearProgramResult,
-    ConstrainedOptResult,
-    NetworkAnalysisResult,
-    AssignmentResult,
-    solve_linear_program,
-    optimize_constrained,
-    analyze_network,
-    solve_assignment_problem,
     NETWORKX_AVAILABLE,
+    AssignmentResult,
+    AssignmentSolver,
+    ConstrainedOptimizer,
+    ConstrainedOptResult,
+    LinearProgrammingSolver,
+    LinearProgramResult,
+    NetworkAnalysisResult,
+    NetworkAnalyzer,
+    OptimizationResult,
+    analyze_network,
+    optimize_constrained,
+    solve_assignment_problem,
+    solve_linear_program,
 )
 
 

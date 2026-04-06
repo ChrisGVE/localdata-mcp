@@ -6,20 +6,21 @@ VAR modeling, cointegration analysis, Granger causality testing, and impulse
 response analysis.
 """
 
-import pytest
+import warnings
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
-import warnings
+import pytest
 
 from localdata_mcp.domains.time_series_analysis import (
-    MultivariateTimeSeriesTransformer,
-    VARModelForecaster,
     CointegrationAnalyzer,
     GrangerCausalityAnalyzer,
     ImpulseResponseAnalyzer,
+    MultivariateTimeSeriesTransformer,
     TimeSeriesValidationError,
+    VARModelForecaster,
 )
 
 

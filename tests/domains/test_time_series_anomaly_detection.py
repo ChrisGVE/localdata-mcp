@@ -6,15 +6,17 @@ including ChangePointDetector, AnomalyDetector, StructuralBreakTester, and
 SeasonalAnomalyDetector classes.
 """
 
-import pytest
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
-from unittest.mock import patch, MagicMock
+import pytest
+
 from localdata_mcp.domains.time_series_analysis import (
-    ChangePointDetector,
     AnomalyDetector,
-    StructuralBreakTester,
+    ChangePointDetector,
     SeasonalAnomalyDetector,
+    StructuralBreakTester,
 )
 
 
@@ -124,9 +126,9 @@ class TestChangePointDetector:
 
         # At least one change point should be near the true break at position 100
         near_true_break = any(80 <= cp <= 120 for cp in changepoints)
-        assert near_true_break, (
-            f"No change point detected near position 100; got {changepoints}"
-        )
+        assert (
+            near_true_break
+        ), f"No change point detected near position 100; got {changepoints}"
 
     def test_statistical_method(self, change_point_series):
         """Test statistical change point detection method."""

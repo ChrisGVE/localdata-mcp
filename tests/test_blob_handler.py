@@ -12,7 +12,6 @@ from localdata_mcp.blob_handler import (
     process_blob_columns,
 )
 
-
 # --- is_blob_type tests ---
 
 

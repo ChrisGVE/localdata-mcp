@@ -12,21 +12,22 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 import pytest
 
+from localdata_mcp.config_manager import ConfigManager, DatabaseConfig, DatabaseType
+
 # Import the modules we're testing
 from localdata_mcp.timeout_manager import (
+    QueryTimeoutError,
     QueryTimeoutManager,
     TimeoutConfig,
     TimeoutReason,
-    QueryTimeoutError,
     get_timeout_manager,
     with_timeout,
 )
-from localdata_mcp.config_manager import ConfigManager, DatabaseConfig, DatabaseType
 
 
 class TestQueryTimeoutManager(unittest.TestCase):
@@ -316,11 +317,12 @@ class TestTimeoutIntegration(unittest.TestCase):
         mock_get_config.return_value = mock_config_manager
 
         # Import and test streaming executor
+        from sqlalchemy import create_engine
+
         from localdata_mcp.streaming import (
             StreamingQueryExecutor,
             create_streaming_source,
         )
-        from sqlalchemy import create_engine
 
         # Create engine and streaming components
         engine = create_engine(f"sqlite:///{self.db_path}")
