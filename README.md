@@ -1,4 +1,4 @@
-<p align="center"> 
+<p align="center">
   <img src="assets/logo.png" alt="LocalData MCP Server" width="250">
 </p>
 
@@ -15,101 +15,21 @@
 ![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
 ![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
 
-**A comprehensive MCP server for databases, spreadsheets, structured data files, and directed graphs. Connects LLM agents to 13 database types, 20+ file formats, and RDF/SPARQL endpoints with streaming query execution, memory-bounded operations, and enterprise-scale support.**
+LocalData MCP gives LLM agents access to local and remote data — databases, files, graphs, and structured documents — along with a full data science toolkit for analysis and modeling. It exposes 52 MCP tools across 13 database types and 20+ file formats, with memory-bounded streaming so agents can work safely on large datasets without exceeding available RAM.
 
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
 
-## Table of Contents
-
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Available Tools](#available-tools)
-- [Working with Graphs](#working-with-graphs)
-- [Supported Data Sources](#supported-data-sources)
-- [Security Features](#security-features)
-- [Performance & Scalability](#performance--scalability)
-- [Examples](#examples)
-- [Testing & Quality](#testing--quality)
-- [Troubleshooting](#troubleshooting)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-
-## Features
-
-### **Multi-Database Support**
-
-- **SQL Databases**: PostgreSQL, MySQL, SQLite, DuckDB, Oracle, MS SQL Server
-- **NoSQL Databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j, CouchDB
-- **RDF/SPARQL**: Turtle, N-Triples files and remote SPARQL endpoints
-- **Spreadsheets**: Excel (.xlsx/.xls), LibreOffice Calc (.ods), Apple Numbers (.numbers)
-- **Structured Files**: CSV, TSV, JSON, YAML, TOML, XML, INI
-- **Graph Files**: DOT (Graphviz), GML, GraphML, Mermaid flowcharts
-- **Analytical Formats**: Parquet, Feather, Arrow, HDF5
-
-### **Streaming Query Execution**
-
-- **Memory-Bounded**: All queries execute within configurable memory limits (default 2GB)
-- **Automatic Streaming**: Large result sets stream in chunks with pagination
-- **Pre-Query Analysis**: Resource estimation before execution to prevent crashes
-- **Preflight Mode**: EXPLAIN-based cost analysis without executing the query
-
-### **Security**
-
-- **Path Restriction**: File access confined to the current working directory
-- **SQL Validation**: Only SELECT and CTE queries allowed; injection prevention
-- **Connection Limits**: Maximum 10 concurrent database connections
-- **Query Audit**: Full query and error logging for compliance
-
-### **Data Science Analysis** *(v2.0)*
-
-- **Statistical Analysis**: Hypothesis testing, ANOVA, effect sizes
-- **Regression Modeling**: Linear, ridge, lasso, polynomial with diagnostics
-- **Pattern Recognition**: Clustering, anomaly detection, dimensionality reduction
-- **Time Series**: Decomposition, ARIMA/ETS forecasting, change point detection
-- **Geospatial Analysis**: Spatial joins, distance calculation, coordinate transforms
-- **Business Intelligence**: RFM segmentation, A/B testing, cohort analysis
-- **Optimization**: Linear programming, constrained optimization, network analysis
-
-### **52 MCP Tools**
-
-- 8 core database tools, 9 tree tools, 14 graph tools
-- 9 streaming and memory management tools
-- 12 data science analysis tools
-- Schema export, data quality reports, regex search, and data transformation
-
 ## Quick Start
 
-### Installation
-
 ```bash
-# Install permanently (recommended)
+# Install permanently
 uv tool install localdata-mcp
-
-# Update to latest version
-uv tool upgrade localdata-mcp
 
 # Or run directly without installing
 uvx localdata-mcp
 ```
 
-> **First install note:** LocalData MCP includes data science libraries (scipy,
-> scikit-learn, statsmodels, geopandas, ruptures) that total around 200 MB.
-> The first install or first `uvx` run may take a minute or two while these are
-> downloaded and cached. Subsequent runs reuse the cache and start immediately.
->
-> If your LLM client times out waiting for the MCP server to start on the first
-> run, reconnect the MCP server from your client's interface or restart the LLM
-> application. The dependencies will already be cached and the next start will
-> be fast.
-
-```bash
-# Development installation
-git clone https://github.com/ChrisGVE/localdata-mcp.git
-cd localdata-mcp
-uv sync --dev
-```
-
-### Configuration
+> **First-run note:** Data science dependencies (scipy, scikit-learn, statsmodels, geopandas) total around 200 MB and are downloaded on first use. Subsequent starts reuse the cache. If your MCP client times out on the first launch, reconnect — the next start will be immediate.
 
 Add to your MCP client configuration:
 
@@ -117,526 +37,211 @@ Add to your MCP client configuration:
 {
   "mcpServers": {
     "localdata": {
-      "command": "localdata-mcp",
-      "env": {}
+      "command": "localdata-mcp"
     }
   }
 }
 ```
 
-For `uvx` usage (no permanent install):
+For `uvx` (no permanent install):
 
 ```json
 {
   "mcpServers": {
     "localdata": {
       "command": "uvx",
-      "args": ["localdata-mcp"],
-      "env": {}
+      "args": ["localdata-mcp"]
     }
   }
 }
 ```
 
-**Docker Usage**: See [Docker Usage Guide](DOCKER_USAGE.md) for container deployment and configuration.
-
-### Usage Examples
-
-#### Connect to Databases
+Then connect to any supported source and start querying:
 
 ```python
-# SQL databases
-connect_database("analytics", "postgresql", "postgresql://user:pass@localhost/db")
-connect_database("local", "sqlite", "./data.sqlite")
-connect_database("erp", "oracle", "oracle+oracledb://user:pass@host:1521/?service_name=ORCL")
-connect_database("warehouse", "mssql", "mssql+pymssql://sa:pass@host:1433/master")
+connect_database("sales", "postgresql", "postgresql://user:pass@localhost/db")
+execute_query("sales", "SELECT product, SUM(amount) FROM orders GROUP BY product")
 
-# NoSQL databases
-connect_database("docs", "mongodb", "mongodb://localhost:27017/mydb")
-connect_database("cache", "redis", "redis://localhost:6379/0")
-connect_database("search", "elasticsearch", "http://localhost:9200")
-
-# Files — CSV, Excel, Parquet, JSON, YAML, TOML, XML, INI, and more
-connect_database("csvdata", "csv", "./data.csv")
-connect_database("sales", "xlsx", "./sales_data.xlsx")
-connect_database("analytics", "parquet", "./data.parquet")
-connect_database("config", "toml", "./config.toml")
+connect_database("data", "csv", "./records.csv")
+analyze_hypothesis_test("data", "SELECT amount, region FROM data", column="amount", group_column="region")
 ```
 
-#### Work with Structured Files (TOML, JSON, YAML)
+## Feature Overview
 
-```python
-# Connect — returns tree summary (root nodes, depths, property counts)
-connect_database("cfg", "toml", "./config.toml")
+### Core Database (8 tools)
 
-# Navigate the tree
-get_node("cfg")                          # Root summary
-get_node("cfg", "server")               # Node properties + children info
-get_children("cfg", "server")           # List child nodes
+Connect, query, and inspect databases and files. All queries execute within configurable memory limits (default 2 GB) with automatic chunked streaming for large result sets.
 
-# Read and write properties
-get_value("cfg", "server", "port")       # → 8080
-set_value("cfg", "server", "port", "9090")
-set_value("cfg", "monitoring.alerts", "enabled", "true")  # auto-creates node
+| Tool | Description |
+| --- | --- |
+| `connect_database` | Open a connection to any supported database or file |
+| `disconnect_database` | Close a connection |
+| `list_databases` | List active connections |
+| `execute_query` | Run SQL with streaming, chunking, and preflight mode |
+| `describe_database` | Show schema and table list |
+| `describe_table` | Column types, indexes, row count |
+| `find_table` | Locate a table across all active connections |
+| `analyze_query_preview` | Estimate query cost before execution |
 
-# Export back to any format
-export_structured("cfg", "toml")         # Modified TOML output
-export_structured("cfg", "json")         # Convert to JSON
-```
+### Streaming and Memory (9 tools)
 
-#### Query Data
+| Tool | Description |
+| --- | --- |
+| `next_chunk` | Retrieve the next chunk of a streamed result |
+| `request_data_chunk` | Fetch a specific chunk by row range |
+| `request_multiple_chunks` | Batch-fetch multiple chunks in one call |
+| `manage_memory_bounds` | View and configure memory limits |
+| `get_streaming_status` | Check active streams and buffer usage |
+| `clear_streaming_buffer` | Free memory from a specific buffer |
+| `get_query_metadata` | Rich metadata for a completed query |
+| `cancel_query_operation` | Cancel a running or buffered query |
+| `get_data_quality_report` | Column statistics, null rates, and quality metrics |
 
-```python
-# Execute queries — large results automatically stream in chunks
-execute_query("analytics", "SELECT * FROM users LIMIT 50")
+### Tree / Structured Data (10 tools)
 
-# Pre-flight analysis without executing
-execute_query("analytics", "SELECT * FROM large_table", preflight=True)
+Navigate and edit TOML, JSON, and YAML files as navigable trees. Supports full CRUD with auto-creation of ancestor nodes and round-trip export to any supported format.
 
-# Retrieve subsequent chunks using query_id from the response metadata
-next_chunk(query_id="analytics_1712345678_a1b2", start_row=101, chunk_size="500")
+| Tool | Description |
+| --- | --- |
+| `get_node` / `get_children` | Navigate the tree |
+| `set_node` / `delete_node` | Create or remove nodes |
+| `get_value` / `set_value` / `delete_key` | Read and write properties |
+| `list_keys` | List key-value pairs at a node |
+| `move_node` | Relocate a node within the tree |
+| `export_structured` | Export as TOML, JSON, or YAML |
 
-# Check streaming status and memory usage
-get_streaming_status()
-manage_memory_bounds()
-```
+### Graph (14 tools)
 
-## Available Tools
+Work with DOT, GML, GraphML, and Mermaid files as directed multigraphs. Supports full CRUD on nodes and edges, shortest-path and all-paths queries, structural statistics, and multi-format export.
 
-### Core Database Tools
+| Tool | Description |
+| --- | --- |
+| `get_node_graph` / `get_neighbors` / `get_edges` | Navigate the graph |
+| `set_node_graph` / `delete_node_graph` | Create or remove nodes |
+| `add_edge` / `remove_edge` | Manage edges |
+| `get_value_graph` / `set_value_graph` / `delete_key_graph` / `list_keys_graph` | Node properties |
+| `find_path` | Shortest or all paths between two nodes |
+| `get_graph_stats` | Node/edge counts, density, DAG validation |
+| `export_graph` | Export as DOT, GML, GraphML, or Mermaid |
 
-| Tool                 | Description                                    |
-| -------------------- | ---------------------------------------------- |
-| `connect_database`   | Connect to a database, file, or SPARQL endpoint |
-| `disconnect_database`| Close a connection                             |
-| `list_databases`     | List active connections                        |
-| `execute_query`      | Run SQL with streaming, chunking, and preflight |
-| `next_chunk`         | Retrieve the next chunk of a streamed result   |
-| `describe_database`  | Show database schema and table list            |
-| `describe_table`     | Show column types, indexes, row count          |
-| `find_table`         | Locate a table across all connections          |
-| `export_schema`      | Export full schema as JSON                     |
+### Search and Transform (2 tools)
 
-### Streaming and Memory Tools
+| Tool | Description |
+| --- | --- |
+| `search_data` | Regex search across query results |
+| `transform_data` | Apply column transformations to result sets |
 
-| Tool                       | Description                                     |
-| -------------------------- | ----------------------------------------------- |
-| `analyze_query_preview`    | Pre-query cost and resource estimation          |
-| `manage_memory_bounds`     | View and configure memory limits                |
-| `get_streaming_status`     | Check active streams and buffer usage           |
-| `clear_streaming_buffer`   | Free memory by clearing a specific buffer       |
-| `get_query_metadata`       | Rich metadata for a completed query             |
-| `request_data_chunk`       | Request a specific chunk by row range           |
-| `request_multiple_chunks`  | Batch-request multiple chunks at once           |
-| `cancel_query_operation`   | Cancel a running or buffered query              |
-| `get_data_quality_report`  | Column stats, nulls, and data quality metrics   |
-| `check_compatibility`      | Check API backward compatibility                |
+### Schema and Audit (3 tools)
 
-### Query Audit Tools
+| Tool | Description |
+| --- | --- |
+| `export_schema` | Export full schema as JSON |
+| `get_query_log` | Recent query execution history |
+| `get_error_log` | Recent error log |
 
-| Tool                 | Description                                    |
-| -------------------- | ---------------------------------------------- |
-| `get_query_log`      | View recent query execution history            |
-| `get_error_log`      | View recent error log                          |
-| `search_data`        | Regex search across query results              |
-| `transform_data`     | Apply transformations to query results         |
+### System (2 tools)
 
-### Tree Tools (TOML, JSON, YAML)
+| Tool | Description |
+| --- | --- |
+| `check_compatibility` | Verify API backward compatibility |
+| `get_metrics` | Server performance and resource metrics |
 
-These tools are available when connected to a structured data file.
+### Data Science (12 tools)
 
-| Tool                 | Description                              | Use Case         |
-| -------------------- | ---------------------------------------- | ---------------- |
-| `get_node`           | View node properties and children info   | Navigation       |
-| `get_children`       | List child nodes with pagination         | Navigation       |
-| `set_node`           | Create a node (auto-creates ancestors)   | Structure edit   |
-| `delete_node`        | Remove node and all descendants          | Structure edit   |
-| `list_keys`          | List key-value pairs at a node           | Inspection       |
-| `get_value`          | Read a single property value             | Inspection       |
-| `set_value`          | Create or update a property              | Data edit        |
-| `delete_key`         | Remove a property from a node            | Data edit        |
-| `export_structured`  | Export tree as TOML, JSON, or YAML       | Export           |
+Run statistical analysis, modeling, and pattern detection directly on query results from any connected source.
 
-### Graph Tools (DOT, GML, GraphML, Mermaid)
-
-These tools are available when connected to a graph file.
-
-| Tool                 | Description                              | Use Case         |
-| -------------------- | ---------------------------------------- | ---------------- |
-| `set_node`           | Create or update a graph node            | Structure edit   |
-| `delete_node`        | Remove node, cascade edges and properties| Structure edit   |
-| `get_node`           | Inspect a node's label and properties    | Navigation       |
-| `add_edge`           | Create a directed edge between nodes     | Structure edit   |
-| `remove_edge`        | Remove an edge by source/target/label    | Structure edit   |
-| `get_edges`          | List edges for a node                    | Navigation       |
-| `get_neighbors`      | List adjacent nodes (in/out/both)        | Navigation       |
-| `get_value`          | Read a typed property from a node        | Inspection       |
-| `set_value`          | Set a typed property on a node           | Data edit        |
-| `delete_key`         | Remove a property from a node            | Data edit        |
-| `list_keys`          | List properties on a node with pagination| Inspection       |
-| `find_path`          | Find shortest or all paths between nodes | Analysis         |
-| `get_graph_stats`    | Node/edge counts, density, DAG test      | Analysis         |
-| `export_graph`       | Export as DOT, GML, GraphML, or Mermaid  | Export           |
-
-### Data Science Tools *(v2.0)*
-
-These tools run analysis on query results from any connected database.
-
-| Tool                         | Description                                      | Domain         |
-| ---------------------------- | ------------------------------------------------ | -------------- |
-| `analyze_hypothesis_test`    | Run t-tests, chi-squared, Mann-Whitney, etc.     | Statistics     |
-| `analyze_anova`              | One-way ANOVA with post-hoc tests                | Statistics     |
-| `analyze_effect_sizes`       | Cohen's d, eta-squared for group comparisons     | Statistics     |
-| `analyze_regression`         | Fit linear, ridge, lasso, or polynomial models   | Regression     |
-| `evaluate_model_performance` | R², RMSE, MAE, or classification metrics         | Regression     |
-| `analyze_clusters`           | K-means, DBSCAN, hierarchical clustering         | Patterns       |
-| `detect_anomalies`           | Isolation forest, LOF, one-class SVM             | Patterns       |
-| `reduce_dimensions`          | PCA, t-SNE, UMAP                                 | Patterns       |
-| `analyze_time_series`        | Decomposition, stationarity, autocorrelation     | Time Series    |
-| `forecast_time_series`       | ARIMA or exponential smoothing forecasts         | Time Series    |
-| `analyze_rfm`                | RFM customer segmentation                        | BI             |
-| `analyze_ab_test`            | A/B test statistical analysis                    | BI             |
-
-```python
-# Connect to a database, then analyze
-connect_database("sales", "sqlite", "/path/to/sales.db")
-
-# Hypothesis test: are sales different between regions?
-analyze_hypothesis_test("sales",
-    "SELECT amount, region FROM transactions",
-    column="amount", group_column="region")
-
-# Cluster customers by purchase behavior
-analyze_clusters("sales",
-    "SELECT total_spent, frequency, recency FROM customer_metrics",
-    method="kmeans", n_clusters=4)
-
-# Forecast monthly revenue
-forecast_time_series("sales",
-    "SELECT month, revenue FROM monthly_summary",
-    date_column="month", value_column="revenue",
-    horizon=12, method="arima")
-```
-
-## Working with Graphs
-
-```python
-# Connect to a graph file
-connect_database("taxonomy", "graphml", "./knowledge_graph.graphml")
-connect_database("flow", "dot", "./pipeline.dot")
-connect_database("diagram", "mermaid", "./architecture.mmd")
-
-# Navigate the graph
-get_node("taxonomy", "machine_learning")
-get_neighbors("taxonomy", "machine_learning", direction="out")
-get_edges("taxonomy", node_id="machine_learning")
-
-# Edit nodes and edges
-set_node("taxonomy", "deep_learning", label="Deep Learning")
-add_edge("taxonomy", "machine_learning", "deep_learning", label="broader")
-set_value("taxonomy", "deep_learning", "field", "Computer Science")
-
-# Algorithmic analysis
-find_path("taxonomy", "statistics", "neural_networks")
-get_graph_stats("taxonomy")
-
-# Export to any supported format (includes metadata)
-export_graph("taxonomy", "graphml")
-export_graph("taxonomy", "mermaid")
-```
-
-Mutation and import operations return validation warnings when issues are detected:
-
-```python
-# Adding a self-loop returns a warning
-add_edge("taxonomy", "A", "A", label="related")
-# → {"source": "A", "target": "A", ..., "warnings": [{"code": "self_loop", ...}]}
-
-# Importing a file with issues reports them all
-connect_database("g", "dot", "./messy_graph.dot")
-# → {"node_count": 42, ..., "warnings": [{"code": "orphan_nodes", ...}, ...]}
-```
+| Tool | Domain |
+| --- | --- |
+| `analyze_hypothesis_test` | Statistical Analysis |
+| `analyze_anova` | Statistical Analysis |
+| `analyze_effect_sizes` | Statistical Analysis |
+| `analyze_regression` | Regression and Modeling |
+| `evaluate_model_performance` | Regression and Modeling |
+| `analyze_clusters` | Pattern Recognition |
+| `detect_anomalies` | Pattern Recognition |
+| `reduce_dimensions` | Pattern Recognition |
+| `analyze_time_series` | Time Series |
+| `forecast_time_series` | Time Series |
+| `analyze_rfm` | Business Intelligence |
+| `analyze_ab_test` | Business Intelligence |
 
 ## Supported Data Sources
 
-**Detailed Connection Guide**: See [Database Connections Guide](DATABASE_CONNECTIONS.md) for setup instructions, connection strings, and security practices.
+### Databases
 
-### SQL Databases
+| Type | Engines |
+| --- | --- |
+| SQL | SQLite, PostgreSQL, MySQL, DuckDB |
+| SQL (enterprise) | Oracle, MS SQL Server (`pip install localdata-mcp[enterprise]`) |
+| Document | MongoDB, CouchDB (`pip install localdata-mcp[modern-databases]`) |
+| Key-value | Redis (`pip install localdata-mcp[modern-databases]`) |
+| Search | Elasticsearch (`pip install localdata-mcp[modern-databases]`) |
+| Time series | InfluxDB (`pip install localdata-mcp[modern-databases]`) |
+| Graph | Neo4j (`pip install localdata-mcp[modern-databases]`) |
+| RDF / SPARQL | Turtle (.ttl), N-Triples (.nt), remote SPARQL endpoints |
 
-- **PostgreSQL**: Full support with connection pooling
-- **MySQL**: Complete MySQL/MariaDB compatibility
-- **SQLite**: Local file and in-memory databases
-- **DuckDB**: High-performance analytical SQL database
-- **Oracle**: Enterprise support via oracledb thin mode (`pip install localdata-mcp[enterprise]`)
-- **MS SQL Server**: Enterprise support via pymssql (`pip install localdata-mcp[enterprise]`)
+### File Formats
 
-### NoSQL Databases
+| Category | Formats |
+| --- | --- |
+| Tabular | CSV, TSV |
+| Structured | JSON, JSONL, YAML, TOML, XML, INI |
+| Spreadsheet | Excel (.xlsx, .xls), LibreOffice Calc (.ods), Apple Numbers (.numbers) |
+| Analytical | Parquet, Feather, Arrow, HDF5 |
+| Graph | DOT (Graphviz), GML, GraphML, Mermaid |
+| RDF | Turtle (.ttl), N-Triples (.nt) |
 
-- **MongoDB**: Document store with collection queries and aggregation
-- **Redis**: High-performance key-value store
-- **Elasticsearch**: Full-text search and analytics engine
-- **InfluxDB**: Time-series database for metrics and IoT data
-- **Neo4j**: Graph database for relationship queries
-- **CouchDB**: Document-oriented database with HTTP API
+Multi-sheet spreadsheets are fully supported: each sheet becomes a separately queryable table. Connect to a specific sheet with `?sheet=SheetName` in the path.
 
-### RDF and SPARQL
+## Data Science Domains
 
-- **Turtle (.ttl)**: RDF file format with SPARQL query support
-- **N-Triples (.nt)**: Line-based RDF format
-- **SPARQL Endpoints**: Connect to remote RDF stores (Wikidata, DBpedia, etc.)
+**Statistical Analysis** — t-tests, chi-squared, Mann-Whitney, Kruskal-Wallis, and related hypothesis tests; one-way ANOVA with post-hoc tests; Cohen's d, eta-squared, and other effect size measures.
 
-### Structured Files
+**Regression and Modeling** — linear, polynomial, logistic, ridge, lasso, and elastic net regression; model evaluation with R², RMSE, MAE, and classification metrics; automated feature selection.
 
-#### Spreadsheet Formats
+**Pattern Recognition** — K-means, DBSCAN, and hierarchical clustering; anomaly detection via isolation forest, LOF, and one-class SVM; dimensionality reduction with PCA, t-SNE, and UMAP.
 
-- **Excel (.xlsx, .xls)**: Full multi-sheet support with automatic table creation
-- **LibreOffice Calc (.ods)**: Complete ODS support with sheet handling
-- **Apple Numbers (.numbers)**: Native support for Numbers documents
-- **Multi-sheet handling**: Each sheet becomes a separate queryable table
+**Time Series** — decomposition, stationarity testing, autocorrelation analysis; ARIMA, SARIMA, and ETS forecasting; change point detection; multivariate analysis with VAR, Granger causality, and cointegration tests.
 
-#### Text-Based Formats
+**Business Intelligence** — A/B test statistical analysis; RFM customer segmentation; cohort analysis, CLV modeling, and funnel analysis.
 
-- **CSV**: Large file automatic SQLite conversion
-- **TSV**: Tab-separated values with same features as CSV
-- **JSON**: Tree storage with node navigation and CRUD (v1.4.0)
-- **YAML**: Tree storage with multi-document support (v1.4.0)
-- **TOML**: Tree storage with array-of-tables support (v1.4.0)
-- **XML**: Structured XML document parsing
-- **INI**: Configuration file format support
+**Geospatial** — distance and coordinate calculations, spatial joins, interpolation, and network analysis.
 
-#### Graph Formats (v1.5.0)
+**Optimization** — linear programming, constrained optimization, assignment problems, and network optimization.
 
-- **DOT** (Graphviz): Directed and undirected graph descriptions
-- **GML**: Graph Modelling Language with nested attributes
-- **GraphML**: XML-based format with typed node/edge properties
-- **Mermaid**: Flowchart syntax with subgraphs, edge labels, and node shapes
+**Sampling and Estimation** — bootstrap confidence intervals, Bayesian estimation, Monte Carlo simulation, and stratified sampling.
 
-#### Analytical Formats
+## Architecture
 
-- **Parquet**: High-performance columnar data format
-- **Feather**: Fast binary format for data interchange
-- **Arrow**: In-memory columnar format support
-- **HDF5**: Hierarchical data format for scientific computing
+- **Intention-driven interface** — tools accept semantic parameters ("find strong correlations") rather than requiring statistical procedure names or threshold values
+- **Progressive disclosure** — simple calls return high-level insights with sensible defaults; advanced parameters are available when needed
+- **Streaming-first execution** — all operations are designed for chunked processing; tools automatically switch strategies based on data size, keeping memory usage within configured bounds
+- **Composition metadata** — every tool result includes metadata that downstream tools can use directly, enabling chained analysis without manual wiring
 
-## Security Features
+## Configuration
 
-### Path Security
+LocalData MCP uses environment variables for optional settings. The defaults work for most cases.
 
-```python
-# ✅ Allowed - current directory and subdirectories
-"./data/users.csv"
-"data/config.json"
-"subdir/file.yaml"
+| Variable | Default | Description |
+| --- | --- | --- |
+| `LOCALDATA_MEMORY_LIMIT_MB` | `2048` | Maximum memory per query result (MB) |
+| `LOCALDATA_MAX_CONNECTIONS` | `10` | Maximum concurrent database connections |
+| `LOCALDATA_CHUNK_SIZE` | `500` | Default rows per streaming chunk |
+| `LOCALDATA_BUFFER_TTL` | `600` | Streaming buffer expiry in seconds |
+| `LOCALDATA_WORKING_DIR` | process cwd | Root directory for file access (file paths are restricted to this tree) |
 
-# ❌ Blocked - parent directory access
-"../etc/passwd"
-"../../sensitive.db"
-"/etc/hosts"
-```
+Set in your MCP server configuration under `"env"`, or in a `.env` file in the working directory.
 
-### SQL Injection Prevention
+## Documentation
 
-```python
-# ✅ Safe - parameterized queries
-describe_table("mydb", "users")  # Validates table name
+- [Database Connection Guide](DATABASE_CONNECTIONS.md) — connection strings, driver setup, and security practices
+- [Docker Usage Guide](DOCKER_USAGE.md) — container deployment and configuration
+- [Advanced Examples](ADVANCED_EXAMPLES.md) — production-ready usage patterns
+- [Troubleshooting Guide](TROUBLESHOOTING.md) — common issues and solutions
+- [FAQ](FAQ.md) — frequently asked questions
+- [API Reference](https://localdata-mcp.readthedocs.io) — full tool and parameter reference
 
-# ❌ Blocked - malicious input
-describe_table("mydb", "users; DROP TABLE users; --")
-```
-
-### Resource Limits
-
-- **Connection Limit**: Maximum 10 concurrent connections
-- **File Size Threshold**: 100MB triggers temporary storage
-- **Query Buffering**: Automatic for 100+ row results
-- **Auto-Cleanup**: Buffers expire after 10 minutes
-
-## Performance & Scalability
-
-### Large File Handling
-
-- Files over 100MB automatically use temporary SQLite storage
-- Memory-efficient streaming for large datasets
-- Automatic cleanup of temporary files
-
-### Query Optimization
-
-- Results with 100+ rows automatically use buffering system
-- Chunk-based retrieval for large datasets
-- File modification detection for cache invalidation
-
-### Concurrency
-
-- Thread-safe connection management
-- Concurrent query execution support
-- Resource pooling and limits
-
-## Testing & Quality
-
-- **1,600+ unit tests** covering all tools, security, and edge cases
-- **234+ integration tests** for SQL, NoSQL, file format, and graph connections
-- **62 enterprise-scale tests** across 7 database types with 100K rows each (PostgreSQL, MySQL, MSSQL, Oracle, SQLite, MongoDB, Elasticsearch)
-- Security testing: path traversal, SQL injection, resource exhaustion
-- Streaming and memory-bounds validation under load
-
-## Examples
-
-**Production Examples**: See [Advanced Examples](ADVANCED_EXAMPLES.md) for production-ready usage patterns and complex scenarios.
-
-### Basic Database Operations
-
-```python
-# Connect to SQLite
-connect_database("sales", "sqlite", "./sales.db")
-
-# Explore structure
-describe_database("sales")
-describe_table("sales", "orders")
-
-# Query data
-execute_query("sales", "SELECT product, SUM(amount) FROM orders GROUP BY product")
-```
-
-### Large Dataset Processing
-
-```python
-# Connect to large CSV (100MB+ files use temporary SQLite storage)
-connect_database("bigdata", "csv", "./million_records.csv")
-
-# Check estimated cost before running
-execute_query("bigdata", "SELECT * FROM data WHERE category = 'A'", preflight=True)
-
-# Execute — large results stream automatically
-result = execute_query("bigdata", "SELECT * FROM data WHERE category = 'A'")
-# result.metadata contains query_id, total_rows, streaming status
-
-# Retrieve additional chunks
-next_chunk(query_id="bigdata_1712345678_a1b2", start_row=201, chunk_size="500")
-```
-
-### Multi-Database Analysis
-
-```python
-# Connect multiple sources
-connect_database("postgres", "postgresql", "postgresql://localhost/prod")
-connect_database("config", "yaml", "./config.yaml")
-connect_database("logs", "json", "./logs.json")
-
-# Query SQL databases
-execute_query("postgres", "SELECT * FROM users")
-
-# Navigate structured files as trees
-get_node("config", "database.settings")
-get_value("config", "database.settings", "host")
-```
-
-### Multi-Sheet Spreadsheet Handling
-
-LocalData MCP Server provides comprehensive support for multi-sheet spreadsheets (Excel and LibreOffice Calc):
-
-#### Automatic Multi-Sheet Processing
-
-```python
-# Connect to Excel file - all sheets become separate tables
-connect_database("workbook", "xlsx", "./financial_data.xlsx")
-
-# Query specific sheet (table names are sanitized sheet names)
-execute_query("workbook", "SELECT * FROM Q1_Sales")
-execute_query("workbook", "SELECT * FROM Q2_Budget")
-execute_query("workbook", "SELECT * FROM Annual_Summary")
-```
-
-#### Single Sheet Selection
-
-```python
-# Connect to specific sheet only using ?sheet=SheetName syntax
-connect_database("q1only", "xlsx", "./financial_data.xlsx?sheet=Q1 Sales")
-
-# The data is available as the default table
-execute_query("q1only", "SELECT * FROM data")
-```
-
-#### Sheet Name Sanitization
-
-Sheet names are automatically sanitized for SQL compatibility:
-
-| Original Sheet Name | SQL Table Name   |
-| ------------------- | ---------------- |
-| "Q1 Sales"          | Q1_Sales         |
-| "2024-Budget"       | \_2024_Budget    |
-| "Summary & Notes"   | Summary\_\_Notes |
-
-#### Discovering Available Sheets
-
-```python
-# Connect to multi-sheet workbook
-connect_database("workbook", "xlsx", "./data.xlsx")
-
-# List all available tables (sheets)
-describe_database("workbook")
-
-# Query a specific sheet
-execute_query("workbook", "SELECT * FROM Sheet1 LIMIT 10")
-```
-
-
-## Troubleshooting
-
-For comprehensive troubleshooting guidance, see [Troubleshooting Guide](TROUBLESHOOTING.md). For common questions, check the [FAQ](FAQ.md).
-
-## Release History
-
-### v2.0.0a1 (Current — Alpha)
-
-- **Data Science Domains**: 8 analysis modules with sklearn-compatible transformers
-- **12 New MCP Tools**: Statistical, regression, pattern, time series, and BI analysis
-- **Pipeline Framework**: Streaming-first data science pipeline with composition metadata
-- **52 Total Tools**: Up from 40 in v1.7.1
-
-### v1.7.0
-
-- **Enterprise Database Support**: Oracle (oracledb thin mode) and MS SQL Server (pymssql)
-- **Enterprise-Scale Testing**: 62 tests across 7 databases with 100K rows each
-- **RDF/SPARQL Support**: Turtle, N-Triples files and remote SPARQL endpoints
-- **Pydantic v2 Migration**: Configuration system updated to Pydantic v2
-
-### v1.6.0
-
-- **Streaming Query Executor**: Memory-bounded query execution with automatic chunking
-- **Pre-Query Analysis**: Cost estimation via `analyze_query_preview` and `preflight` mode
-- **Query Audit Logging**: Full query and error logs with `get_query_log` / `get_error_log`
-- **Data Quality Reports**: Column statistics and null analysis via `get_data_quality_report`
-- **Schema Export**: Full schema export as JSON via `export_schema`
-- **Regex Search and Transform**: `search_data` and `transform_data` tools
-- **Backward Compatibility Manager**: API version checking via `check_compatibility`
-
-### v1.5.0
-
-- **Graph Storage**: DOT, GML, GraphML, and Mermaid files as directed multigraphs
-- **14 Graph Tools**: Node/edge CRUD, path finding, statistics, multi-format export
-- **Graph Validation**: 13 automated checks for structural, semantic, and DAG issues
-
-### v1.4.0
-
-- **Tree Storage**: TOML, JSON, YAML as navigable trees with full CRUD
-- **9 Tree Tools**: Navigation, property management, format conversion
-- **FastMCP v3**: Updated tool registration
-
-### v1.3.0
-
-- **Structured Logging**: JSON logging with Prometheus metrics
-- **Timeout System**: Configurable query timeouts with monitoring
-
-### v1.1.0
-
-- **Spreadsheet Formats**: Excel, LibreOffice Calc, Apple Numbers
-- **Analytical Formats**: Parquet, Feather, Arrow, HDF5
-
-## Contributing
-
-Contributions welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### Development Setup
+## Development
 
 ```bash
 git clone https://github.com/ChrisGVE/localdata-mcp.git
@@ -645,19 +250,12 @@ uv sync --all-extras
 uv run pytest
 ```
 
+The test suite includes 1,600+ unit tests, 234+ integration tests, and 62 enterprise-scale tests across 7 database types with 100K rows each.
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
+
 ## License
 
-MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Links
-
-- **GitHub**: [localdata-mcp](https://github.com/ChrisGVE/localdata-mcp)
-- **PyPI**: [localdata-mcp](https://pypi.org/project/localdata-mcp/)
-- **MCP Protocol**: [Model Context Protocol](https://modelcontextprotocol.io/)
-- **FastMCP**: [FastMCP Framework](https://github.com/jlowin/fastmcp)
-
-
-
-## Tags
-
-`mcp` `model-context-protocol` `database` `postgresql` `mysql` `sqlite` `oracle` `mssql` `mongodb` `redis` `elasticsearch` `sparql` `rdf` `spreadsheet` `excel` `csv` `json` `yaml` `toml` `parquet` `graph` `graphml` `dot` `mermaid` `streaming` `data-science` `python`
+MIT — see [LICENSE](LICENSE) for details.
