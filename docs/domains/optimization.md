@@ -54,7 +54,7 @@ Solve a linear programming problem from database data.
 
 **Return format**
 
-```json
+```text
 {
   "success": true,
   "optimal_value": 1240.5,
@@ -93,7 +93,7 @@ Solve a nonlinear constrained optimisation problem.
 
 **Return format**
 
-```json
+```text
 {
   "success": true,
   "optimal_value": 87.3,
@@ -130,7 +130,7 @@ Perform comprehensive network analysis on graph edge data.
 
 **Return format**
 
-```json
+```text
 {
   "success": true,
   "graph_properties": {

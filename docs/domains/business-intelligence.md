@@ -54,7 +54,7 @@ Perform RFM customer segmentation on transaction data.
 
 **Return format**
 
-```json
+```text
 {
   "rfm_scores": [
     {"customer_id": "...", "recency": 5, "frequency": 3, "monetary": 4,
