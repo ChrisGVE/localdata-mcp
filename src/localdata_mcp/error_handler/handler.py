@@ -154,7 +154,7 @@ class ErrorHandler:
         exception: Exception,
         db_type: str = "generic",
         database_name: Optional[str] = None,
-    ) -> "StructuredErrorResponse":
+    ) -> "StructuredErrorResponse":  # noqa: F821
         """Classify a database exception into a structured error response."""
         from ..error_classification import ErrorMapperRegistry, StructuredErrorResponse
 

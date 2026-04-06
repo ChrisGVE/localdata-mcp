@@ -63,7 +63,8 @@ def create_pattern_recognition_shim(
 
 
 def create_all_domain_shims(
-    registry: Optional["ShimRegistry"] = None, auto_register: bool = True
+    registry: Optional["ShimRegistry"] = None,  # noqa: F821
+    auto_register: bool = True,
 ) -> Dict[str, BaseDomainShim]:
     """
     Create all available domain shims.

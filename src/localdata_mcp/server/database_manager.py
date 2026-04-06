@@ -823,6 +823,7 @@ class DatabaseManager:
                         "toml library is required for TOML files. "
                         "Install with: pip install toml"
                     )
+                import toml
                 with open(file_path, "r") as f:
                     toml_data = toml.load(f)
                 data = self._normalize_nested_data(toml_data)
@@ -1157,6 +1158,7 @@ class DatabaseManager:
             )
 
         try:
+            from numbers_parser import Document
             # Open Numbers document
             doc = Document(file_path)
             logger.info(f"Opened Numbers document with {len(doc.sheets)} sheets")
