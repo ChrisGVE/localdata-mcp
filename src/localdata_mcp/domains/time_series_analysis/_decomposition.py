@@ -65,22 +65,51 @@ class TimeSeriesDecompositionTransformer(TimeSeriesTransformer):
         self.is_fitted_ = True
         return self
 
-    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
-        """
-        Perform time series decomposition analysis.
+    def _run_decomposition(self, series, detected_period):
+        """Run the appropriate decomposition method based on period and method setting."""
+        if detected_period is None or detected_period < 2:
+            return (
+                self._simple_trend_decomposition(series),
+                "No clear seasonal pattern detected - performed trend-only decomposition",
+                False,
+            )
+        if self.method == "stl":
+            decomp_result = self._stl_decomposition(series, detected_period)
+        elif self.method == "x13":
+            decomp_result = self._x13_decomposition(series, detected_period)
+        else:
+            decomp_result = self._seasonal_decomposition(series, detected_period)
+        return (
+            decomp_result,
+            f"Decomposition completed with period {detected_period}",
+            True,
+        )
 
-        Returns:
-        --------
-        result : TimeSeriesAnalysisResult
-            Decomposition results with trend, seasonal, and residual components
-        """
+    def _build_decomp_recommendations(
+        self, has_seasonality, detected_period, component_analysis
+    ):
+        """Return (recommendations, warnings) lists from decomposition analysis."""
+        if has_seasonality:
+            recs = [
+                f"Strong seasonal pattern detected with period {detected_period}",
+                "Consider seasonal ARIMA or seasonal forecasting models",
+            ]
+        else:
+            recs = [
+                "No significant seasonal pattern - focus on trend modeling",
+                "Consider non-seasonal ARIMA or trend-based forecasting",
+            ]
+        recs.extend(component_analysis.get("recommendations", []))
+        return recs, component_analysis.get("warnings", [])
+
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """Perform time series decomposition analysis."""
         start_time = time.time()
 
         if self.validate_input:
             X, _ = self._validate_time_series(X, None)
 
         try:
-            # Use first column for decomposition
             if len(X.columns) == 0:
                 raise ValueError("No columns found in time series data")
 
@@ -90,64 +119,21 @@ class TimeSeriesDecompositionTransformer(TimeSeriesTransformer):
                     "Insufficient data points for decomposition (need at least 20)"
                 )
 
-            # Detect period if not provided
-            detected_period = self.period
-            if detected_period is None:
-                detected_period = self._detect_seasonal_period(series)
-
-            if detected_period is None or detected_period < 2:
-                # Fallback to simple trend extraction without seasonality
-                decomp_result = self._simple_trend_decomposition(series)
-                interpretation = "No clear seasonal pattern detected - performed trend-only decomposition"
-                has_seasonality = False
-            else:
-                # Perform full seasonal decomposition
-                if self.method == "stl":
-                    decomp_result = self._stl_decomposition(series, detected_period)
-                elif self.method == "x13":
-                    decomp_result = self._x13_decomposition(series, detected_period)
-                else:
-                    decomp_result = self._seasonal_decomposition(
-                        series, detected_period
-                    )
-
-                interpretation = (
-                    f"Decomposition completed with period {detected_period}"
-                )
-                has_seasonality = True
-
+            detected_period = self.period or self._detect_seasonal_period(series)
+            decomp_result, interpretation, has_seasonality = self._run_decomposition(
+                series, detected_period
+            )
             self.decomposition_result_ = decomp_result
             self.detected_period_ = detected_period
 
-            # Analyze decomposition components
             component_analysis = self._analyze_components(
                 decomp_result, has_seasonality
             )
+            recommendations, warnings_list = self._build_decomp_recommendations(
+                has_seasonality, detected_period, component_analysis
+            )
 
-            # Generate recommendations
-            recommendations = []
-            warnings_list = []
-
-            if has_seasonality:
-                recommendations.append(
-                    f"Strong seasonal pattern detected with period {detected_period}"
-                )
-                recommendations.append(
-                    "Consider seasonal ARIMA or seasonal forecasting models"
-                )
-            else:
-                recommendations.append(
-                    "No significant seasonal pattern - focus on trend modeling"
-                )
-                recommendations.append(
-                    "Consider non-seasonal ARIMA or trend-based forecasting"
-                )
-
-            # Add component-specific recommendations
-            recommendations.extend(component_analysis.get("recommendations", []))
-            warnings_list.extend(component_analysis.get("warnings", []))
-
-            result = TimeSeriesAnalysisResult(
+            return TimeSeriesAnalysisResult(
                 analysis_type="time_series_decomposition",
                 interpretation=interpretation,
                 trend_component=decomp_result.get("trend"),
@@ -166,8 +152,6 @@ class TimeSeriesDecompositionTransformer(TimeSeriesTransformer):
                 warnings=warnings_list,
                 processing_time=time.time() - start_time,
             )
-
-            return result
 
         except Exception as e:
             logger.error(f"Error in time series decomposition: {e}")
