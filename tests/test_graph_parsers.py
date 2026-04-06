@@ -7,13 +7,13 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.pool import StaticPool
 
+from localdata_mcp.graph_manager import GraphStorageManager
 from localdata_mcp.graph_parsers import (
     _networkx_to_storage,
     parse_dot_to_graph,
     parse_gml_to_graph,
     parse_graphml_to_graph,
 )
-from localdata_mcp.graph_manager import GraphStorageManager
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 DOT_PATH = os.path.join(FIXTURES_DIR, "sample.dot")

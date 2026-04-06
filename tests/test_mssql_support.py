@@ -18,7 +18,6 @@ from localdata_mcp.mssql_support import (
     create_mssql_engine,
 )
 
-
 # ---------------------------------------------------------------------------
 # Driver import guards (139.3)
 # ---------------------------------------------------------------------------
@@ -157,6 +156,7 @@ class TestMSSQLErrorMapperHelpers:
 def test_mssql_mapper_registered():
     """ErrorMapperRegistry returns the MSSQL mapper for 'mssql' key."""
     import importlib
+
     import localdata_mcp.error_mappers as em
 
     importlib.reload(em)
@@ -168,6 +168,7 @@ def test_mssql_mapper_registered():
 def test_sqlserver_alias_registered():
     """ErrorMapperRegistry returns an MSSQL mapper for 'sqlserver' alias."""
     import importlib
+
     import localdata_mcp.error_mappers as em
 
     importlib.reload(em)

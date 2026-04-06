@@ -1,6 +1,6 @@
 [project]
 name = "localdata-mcp"
-version = "1.7.1"
+version = "2.0.0"
 description = "MCP server for databases, spreadsheets, structured files, and directed graphs."
 readme = "README.md"
 authors = [
@@ -52,6 +52,18 @@ dependencies = [
   "pydot>=2.0.0",               # DOT (Graphviz) format parsing (pure Python)
   "rdflib>=7.0.0",              # RDF storage and SPARQL for local files
   "SPARQLWrapper>=2.0.0",       # SPARQL endpoint HTTP client
+  # Data science / pipeline framework (v2)
+  "scipy>=1.9.0",
+  "scikit-learn>=1.1.0",
+  "statsmodels>=0.13.0",
+  "numpy>=1.21.0",
+  # Change point detection
+  "ruptures>=1.1.0",
+  # Geospatial analysis
+  "geopandas>=0.12.0",
+  "shapely>=2.0.0",
+  "fiona>=1.9.0",
+  "pyproj>=3.4.0",
 ]
 
 [project.optional-dependencies]
@@ -110,6 +122,15 @@ profile = "black"
 multi_line_output = 3
 line_length = 88
 known_first_party = ["localdata_mcp"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: integration tests requiring test fixtures or external services",
+    "influxdb: tests requiring InfluxDB",
+    "neo4j: tests requiring Neo4j",
+    "couchdb: tests requiring CouchDB",
+]
+asyncio_mode = "strict"
 
 [tool.mypy]
 python_version = "3.10"

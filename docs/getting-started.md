@@ -5,47 +5,49 @@
 ### Using uv (recommended)
 
 ```bash
-# Install as a global tool
+# Install permanently
 uv tool install localdata-mcp
+
+# Update to latest version
+uv tool upgrade localdata-mcp
 
 # Or run directly without installing
 uvx localdata-mcp
 ```
 
-### Using pip
-
-```bash
-pip install localdata-mcp
-```
+> **First install note:** LocalData MCP includes data science libraries
+> (scipy, scikit-learn, statsmodels, geopandas, ruptures) that total around
+> 200 MB. The first install or first `uvx` run may take a minute or two while
+> these are downloaded and cached. Subsequent runs reuse the cache and start
+> immediately.
+>
+> If your LLM client times out waiting for the MCP server to start on the
+> first run, reconnect the MCP server from your client's interface or restart
+> the LLM application. The dependencies will already be cached and the next
+> start will be fast.
 
 ### From source
 
 ```bash
 git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
-pip install -e .
+uv sync --dev
 ```
 
 ### What's included
 
-The base install covers SQL databases (SQLite, PostgreSQL, MySQL, DuckDB), all spreadsheet formats, flat files (CSV, TSV, Parquet, Feather, Arrow, HDF5), structured data (JSON, YAML, TOML, XML, INI), and directed graphs (DOT, GML, GraphML, Mermaid). No extras needed for these.
+The base install covers all supported functionality: SQL databases (SQLite, PostgreSQL, MySQL, DuckDB), all spreadsheet formats, flat files (CSV, TSV, Parquet, Feather, Arrow, HDF5), structured data (JSON, YAML, TOML, XML, INI), directed graphs (DOT, GML, GraphML, Mermaid), and the full data science suite (statistical analysis, regression, pattern recognition, time series, geospatial, optimization).
 
-### Optional dependencies
+### Additional database drivers
 
-Support for Redis, MongoDB, Elasticsearch, InfluxDB, Neo4j, and CouchDB requires the `modern-databases` extra. These are not installed by default.
+Support for Redis, MongoDB, Elasticsearch, InfluxDB, Neo4j, and CouchDB requires the `modern-databases` extra. These are not installed by default because they require database-specific native drivers.
 
 ```bash
-# pip
-pip install "localdata-mcp[modern-databases]"
-
 # uv tool
 uv tool install "localdata-mcp[modern-databases]"
 
 # uvx (note the --from syntax)
 uvx --from "localdata-mcp[modern-databases]" localdata-mcp
-
-# pipx
-pipx install "localdata-mcp[modern-databases]"
 ```
 
 ## MCP client configuration

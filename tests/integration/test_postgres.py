@@ -35,9 +35,7 @@ def setup_postgres_data():
     engine = create_engine(POSTGRES_URL)
     with engine.connect() as conn:
         conn.execute(text("DROP TABLE IF EXISTS test_data"))
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
             CREATE TABLE test_data (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(100),
@@ -48,9 +46,7 @@ def setup_postgres_data():
                 is_active BOOLEAN,
                 created_at TIMESTAMP DEFAULT NOW()
             )
-        """
-            )
-        )
+        """))
         for i in range(1000):
             conn.execute(
                 text(
@@ -101,9 +97,9 @@ class TestPostgresConnection:
         _connect("pg_desc")
         try:
             result = call_tool("describe_database", {"name": "pg_desc"})
-            assert "test_data" in str(result), (
-                f"test_data table not found in describe_database: {result}"
-            )
+            assert "test_data" in str(
+                result
+            ), f"test_data table not found in describe_database: {result}"
         finally:
             call_tool("disconnect_database", {"name": "pg_desc"})
 
@@ -111,9 +107,9 @@ class TestPostgresConnection:
         _connect("pg_dc")
         call_tool("disconnect_database", {"name": "pg_dc"})
         result = call_tool("list_databases", {})
-        assert "pg_dc" not in str(result), (
-            f"pg_dc still listed after disconnect: {result}"
-        )
+        assert "pg_dc" not in str(
+            result
+        ), f"pg_dc still listed after disconnect: {result}"
 
 
 class TestPostgresQuery:
@@ -181,9 +177,9 @@ class TestPostgresQuery:
                 },
             )
             result_str = str(result)
-            assert "category" in result_str.lower() or "A" in result_str, (
-                f"Aggregation result missing expected data: {result_str}"
-            )
+            assert (
+                "category" in result_str.lower() or "A" in result_str
+            ), f"Aggregation result missing expected data: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": "pg_agg"})
 
@@ -196,9 +192,9 @@ class TestPostgresSchema:
                 "describe_table", {"name": "pg_tbl", "table_name": "test_data"}
             )
             result_str = str(result)
-            assert "name" in result_str, (
-                f"Column 'name' not found in describe_table: {result_str}"
-            )
+            assert (
+                "name" in result_str
+            ), f"Column 'name' not found in describe_table: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": "pg_tbl"})
 
@@ -210,9 +206,9 @@ class TestPostgresSchema:
                 {"name": "pg_expj", "tables": "test_data", "format": "json_schema"},
             )
             result_str = str(result)
-            assert "test_data" in result_str, (
-                f"json_schema export missing table name: {result_str}"
-            )
+            assert (
+                "test_data" in result_str
+            ), f"json_schema export missing table name: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": "pg_expj"})
 
@@ -239,9 +235,9 @@ class TestPostgresErrors:
                 "execute_query",
                 {"name": "pg_noex", "query": "SELECT * FROM nonexistent_table"},
             )
-            assert "error" in str(result).lower(), (
-                f"Expected error for nonexistent table: {result}"
-            )
+            assert (
+                "error" in str(result).lower()
+            ), f"Expected error for nonexistent table: {result}"
         finally:
             call_tool("disconnect_database", {"name": "pg_noex"})
 
@@ -252,9 +248,9 @@ class TestPostgresErrors:
                 "execute_query",
                 {"name": "pg_syn", "query": "SELEKT * FORM test_data"},
             )
-            assert "error" in str(result).lower(), (
-                f"Expected error for syntax error: {result}"
-            )
+            assert (
+                "error" in str(result).lower()
+            ), f"Expected error for syntax error: {result}"
         finally:
             call_tool("disconnect_database", {"name": "pg_syn"})
 
@@ -310,8 +306,8 @@ class TestPostgresDataFidelity:
             )
             result_str = str(result)
             assert "error" not in result_str.lower(), f"SELECT * crashed: {result_str}"
-            assert "user_" in result_str, (
-                f"Expected user data in SELECT * results: {result_str}"
-            )
+            assert (
+                "user_" in result_str
+            ), f"Expected user data in SELECT * results: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": "pg_star"})

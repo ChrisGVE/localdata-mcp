@@ -7,13 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
+import localdata_mcp.staging_manager as staging_module
 from localdata_mcp.staging_manager import (
     StagingDatabase,
     StagingManager,
     get_staging_manager,
     initialize_staging_manager,
 )
-import localdata_mcp.staging_manager as staging_module
 
 
 @pytest.fixture()

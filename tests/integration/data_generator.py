@@ -38,9 +38,9 @@ class TestDataGenerator:
                     "is_active": self.rng.choice([True, False]),
                     "category": self.rng.choice(categories),
                     "score": round(self.rng.gauss(50, 15), 4),
-                    "notes": f"Note for user {i + 1}"
-                    if self.rng.random() > 0.3
-                    else None,
+                    "notes": (
+                        f"Note for user {i + 1}" if self.rng.random() > 0.3 else None
+                    ),
                 }
             )
         return rows

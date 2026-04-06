@@ -4,7 +4,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import patch, mock_open
+from unittest.mock import mock_open, patch
 
 import pytest
 import yaml
@@ -12,10 +12,10 @@ import yaml
 from localdata_mcp.config_manager import (
     ConfigManager,
     DatabaseConfig,
-    LoggingConfig,
-    PerformanceConfig,
     DatabaseType,
+    LoggingConfig,
     LogLevel,
+    PerformanceConfig,
     get_config_manager,
     initialize_config,
 )

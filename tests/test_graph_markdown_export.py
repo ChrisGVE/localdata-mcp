@@ -200,6 +200,7 @@ class TestExportGraphMarkdown:
         assert "## Graph Summary" not in result["content"]
         assert "## Nodes" in result["content"]
 
+
 class TestHierarchyFormat:
     """Tests for generate_hierarchy_markdown."""
 

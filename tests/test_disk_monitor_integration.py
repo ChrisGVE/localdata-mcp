@@ -2,9 +2,9 @@
 
 import logging
 import sys
+from unittest.mock import MagicMock, Mock, patch
+
 import pandas as pd
-import pytest
-from unittest.mock import Mock, patch, MagicMock
 
 # Work around a pre-existing circular-import bug in the package:
 # size_estimator.py uses ``from localdata_mcp._size_types import …``
@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch, MagicMock
 # Fix: make MetricsCollector.__init__ silently reuse existing collectors
 # instead of crashing on duplicate registration.
 import prometheus_client
+import pytest
 
 _orig_counter = prometheus_client.Counter
 _orig_histogram = prometheus_client.Histogram
@@ -66,13 +67,13 @@ _pm.Counter = _safe_counter
 _pm.Histogram = _safe_histogram
 _pm.Gauge = _safe_gauge
 
-from localdata_mcp.streaming_executor import (  # noqa: E402
-    StreamingQueryExecutor,
-    StreamingDataSource,
-    MemoryStatus,
-)
 from localdata_mcp.config_manager import PerformanceConfig  # noqa: E402
 from localdata_mcp.disk_monitor import DiskMonitor  # noqa: E402
+from localdata_mcp.streaming import (  # noqa: E402
+    MemoryStatus,
+    StreamingDataSource,
+    StreamingQueryExecutor,
+)
 
 
 def _make_memory_status(low=False):
@@ -120,11 +121,9 @@ def _build_executor_and_source(chunks):
 class TestStreamingWithDiskMonitorNoAbort:
     """135.17 - test_streaming_with_disk_monitor_no_abort."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_monitor_always_allows_continuation(
         self, mock_mem, mock_token_mgr, mock_log_mgr
     ):
@@ -154,11 +153,9 @@ class TestStreamingWithDiskMonitorNoAbort:
 class TestStreamingWithDiskMonitorAbort:
     """135.17 - test_streaming_with_disk_monitor_abort."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_monitor_aborts_at_row_threshold(
         self, mock_mem, mock_token_mgr, mock_log_mgr
     ):
@@ -194,11 +191,9 @@ class TestStreamingWithDiskMonitorAbort:
 class TestStreamingWithoutDiskMonitor:
     """135.17 - test_streaming_without_disk_monitor (backward compat)."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_no_monitor_processes_all_chunks(
         self, mock_mem, mock_token_mgr, mock_log_mgr
     ):
@@ -224,11 +219,9 @@ class TestStreamingWithoutDiskMonitor:
 class TestTruncationMetadataOnAbort:
     """135.17 - test_truncation_metadata_on_abort."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_metadata_fields_present_on_abort(
         self, mock_mem, mock_token_mgr, mock_log_mgr
     ):
@@ -259,11 +252,9 @@ class TestTruncationMetadataOnAbort:
 class TestAbortSuggestionPresent:
     """135.17 - test_abort_suggestion_present."""
 
-    @patch("src.localdata_mcp.streaming_executor.get_logging_manager")
-    @patch("src.localdata_mcp.streaming_executor.get_token_manager")
-    @patch(
-        "src.localdata_mcp.streaming_executor.StreamingQueryExecutor._get_memory_status"
-    )
+    @patch("localdata_mcp.streaming.executor.get_logging_manager")
+    @patch("localdata_mcp.streaming.response_metadata.get_token_manager")
+    @patch("localdata_mcp.streaming.executor.StreamingQueryExecutor._get_memory_status")
     def test_suggestion_text_content(self, mock_mem, mock_token_mgr, mock_log_mgr):
         mock_mem.return_value = _make_memory_status()
         mock_log_mgr.return_value = MagicMock()
@@ -285,4 +276,6 @@ class TestAbortSuggestionPresent:
             disk_monitor=monitor,
         )
 
-        assert metadata["suggestion"] == ("Add LIMIT, WHERE clause, or use aggregation")
+        assert metadata["suggestion"] == (
+            "Add LIMIT, WHERE clause, or use aggregation (GROUP BY, COUNT)"
+        )

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- sphinx-start -->
 
+## [2.0.0] - 2026-04-06
+
+### Added
+- Data science domain modules with sklearn-compatible transformers:
+  - Statistical analysis: hypothesis testing, ANOVA, effect sizes
+  - Regression modeling: linear, regularized, polynomial with diagnostics
+  - Pattern recognition: clustering, anomaly detection, dimensionality reduction
+  - Time series: decomposition, ARIMA/ETS forecasting, change detection
+  - Business intelligence: RFM segmentation, cohort analysis, A/B testing
+  - Optimization: linear programming, constrained optimization, network analysis
+  - Sampling & estimation: bootstrap, Bayesian estimation, Monte Carlo simulation
+  - Geospatial analysis: spatial joins, routing, clustering (optional geopandas)
+- Pipeline framework: sklearn-compatible data science pipeline with streaming support
+- 12 new MCP tools for data science operations (52 total)
+- Integration shim layer for domain interoperability
+- Graph format support: DOT, GML, GraphML, Mermaid
+- RDF/SPARQL support: Turtle, N-Triples files and remote SPARQL endpoints
+- Memory-aware query execution with 3-path decision flow (in-memory, staging, refinement)
+- Graceful abort handler for streaming with partial result return
+- Claude Code plugin structure: 8 skills, 6 agents, plugin manifest
+- Comprehensive documentation: tools reference, data sources, 8 domain guides
+
+### Changed
+- Added scipy, scikit-learn, statsmodels, numpy as core dependencies
+- Added networkx, pydot, rdflib, SPARQLWrapper as core dependencies
+- Geospatial imports guarded with try/except for optional geopandas dependency
+- README rewritten for v2.0 (663 lines to 261 lines)
+- Replaced fixed 100-row query threshold with dynamic memory-based threshold
+- Refactored oversized modules into sub-packages for maintainability
+
 ## [1.7.1] - 2026-04-02
 
 ### Added

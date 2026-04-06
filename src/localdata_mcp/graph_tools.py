@@ -10,10 +10,6 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
 
-from .graph_manager import GraphStorageManager
-from .graph_storage import GraphProperty
-from .tree_storage import deserialize_value
-
 # Re-export algorithm tools for backward compatibility
 from .graph_algorithms import (  # noqa: F401
     MAX_EXPORT_BYTES,
@@ -22,6 +18,7 @@ from .graph_algorithms import (  # noqa: F401
     tool_find_path,
     tool_get_graph_stats,
 )
+from .graph_manager import GraphStorageManager
 
 # Re-export mutation/property tools for backward compatibility
 from .graph_mutation_tools import (  # noqa: F401
@@ -34,6 +31,8 @@ from .graph_mutation_tools import (  # noqa: F401
     tool_set_node_graph,
     tool_set_value_graph,
 )
+from .graph_storage import GraphProperty
+from .tree_storage import deserialize_value
 
 
 def _property_to_dict(prop: GraphProperty) -> Dict[str, Any]:

@@ -47,9 +47,7 @@ def setup_mssql_data():
                 "DROP TABLE dbo.test_data"
             )
         )
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
                 CREATE TABLE dbo.test_data (
                     id INT IDENTITY(1,1) PRIMARY KEY,
                     name NVARCHAR(100),
@@ -60,9 +58,7 @@ def setup_mssql_data():
                     is_active BIT,
                     created_at DATETIME2 DEFAULT GETDATE()
                 )
-                """
-            )
-        )
+                """))
         for i in range(1000):
             conn.execute(
                 text(
@@ -368,8 +364,8 @@ class TestMSSQLDataFidelity:
             )
             result_str = str(result)
             assert "error" not in result_str.lower(), f"SELECT * crashed: {result_str}"
-            assert "user_" in result_str, (
-                f"Expected user data in SELECT * results: {result_str}"
-            )
+            assert (
+                "user_" in result_str
+            ), f"Expected user data in SELECT * results: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": "mssql_star"})

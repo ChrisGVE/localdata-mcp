@@ -152,9 +152,9 @@ class TestLargeQueryStreaming:
         assert isinstance(result, dict)
         assert result.get("error") is not True, f"Query error: {result.get('message')}"
         meta = result.get("metadata", {})
-        assert meta.get("streaming") is True or meta.get("chunked") is True, (
-            f"Expected streaming/chunked for large result. metadata={meta}"
-        )
+        assert (
+            meta.get("streaming") is True or meta.get("chunked") is True
+        ), f"Expected streaming/chunked for large result. metadata={meta}"
 
     def test_chunked_retrieval(self, enterprise_databases, db_type):
         conn_name = _require_db(enterprise_databases, db_type)

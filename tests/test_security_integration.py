@@ -6,19 +6,20 @@ and Task 10 (SecurityManager) integration.
 """
 
 import json
-import pytest
 import time
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
+import pytest
+
+from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
 from localdata_mcp.enhanced_database_tools import EnhancedDatabaseTools
-from localdata_mcp.security_manager import (
-    SecurityManager,
+from localdata_mcp.security import (
     SecurityConfig,
     SecurityEventType,
+    SecurityManager,
     SecurityThreatLevel,
     get_security_manager,
 )
-from localdata_mcp.config_manager import DatabaseConfig, DatabaseType
 
 
 class TestSecurityIntegration:
@@ -388,8 +389,8 @@ class TestSecurityIntegration:
     def test_security_mcp_tools_integration(self):
         """Test security-related MCP tools integration."""
         from localdata_mcp.enhanced_database_tools import (
-            get_security_statistics,
             get_security_events,
+            get_security_statistics,
             validate_query_security_standalone,
         )
 
@@ -454,7 +455,7 @@ class TestSecurityManagerLifecycle:
 
     def test_security_manager_initialization_with_config(self):
         """Test security manager initialization with custom config."""
-        from localdata_mcp.security_manager import initialize_security_manager
+        from localdata_mcp.security import initialize_security_manager
 
         config = SecurityConfig(
             queries_per_minute=30, audit_enabled=False, enable_pattern_detection=False
@@ -472,7 +473,7 @@ class TestSecurityManagerLifecycle:
 
     def test_security_manager_resource_cleanup(self):
         """Test security manager resource cleanup."""
-        from localdata_mcp.security_manager import initialize_security_manager
+        from localdata_mcp.security import initialize_security_manager
 
         # Create manager with events
         manager = initialize_security_manager()
