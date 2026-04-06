@@ -48,6 +48,52 @@ class PartialAutocorrelationAnalysisTransformer(TimeSeriesTransformer):
         self.is_fitted_ = True
         return self
 
+    def _compute_pacf_nlags(self, series: pd.Series) -> int:
+        """Determine number of lags to compute."""
+        if self.max_lags is None:
+            return min(40, len(series) // 4)
+        return min(self.max_lags, len(series) - 1)
+
+    def _classify_significant_pacf_lags(
+        self, pacf_values: np.ndarray, confint: np.ndarray
+    ) -> List[Dict]:
+        """Build list of lag dicts with significance flags from PACF values and CI."""
+        significant_lags = []
+        for lag in range(1, len(pacf_values)):
+            is_significant = abs(pacf_values[lag]) > abs(
+                confint[lag, 1] - pacf_values[lag]
+            )
+            significant_lags.append(
+                {
+                    "lag": lag,
+                    "partial_correlation": pacf_values[lag],
+                    "is_significant": is_significant,
+                    "confidence_lower": confint[lag, 0],
+                    "confidence_upper": confint[lag, 1],
+                }
+            )
+        return significant_lags
+
+    def _interpret_pacf(self, ar_order_analysis: Dict) -> tuple:
+        """Return (interpretation, recommendations, warnings_list) from AR order analysis."""
+        recommendations = []
+        warnings_list = []
+        if ar_order_analysis["suggested_order"] == 0:
+            interpretation = "No significant partial autocorrelations - series may be MA or white noise"
+            recommendations.append("Consider MA model or simple forecasting methods")
+        else:
+            interpretation = f"Significant partial autocorrelations up to lag {ar_order_analysis['suggested_order']}"
+            recommendations.append(
+                f"Consider AR({ar_order_analysis['suggested_order']}) model"
+            )
+            if ar_order_analysis["seasonal_order"] > 0:
+                recommendations.append(
+                    f"Seasonal AR component suggested: P={ar_order_analysis['seasonal_order']}"
+                )
+        recommendations.extend(ar_order_analysis.get("recommendations", []))
+        warnings_list.extend(ar_order_analysis.get("warnings", []))
+        return interpretation, recommendations, warnings_list
+
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
         """
         Compute partial autocorrelation function analysis.
@@ -63,7 +109,6 @@ class PartialAutocorrelationAnalysisTransformer(TimeSeriesTransformer):
             X, _ = self._validate_time_series(X, None)
 
         try:
-            # Use first column for analysis
             if len(X.columns) == 0:
                 raise ValueError("No columns found in time series data")
 
@@ -73,64 +118,22 @@ class PartialAutocorrelationAnalysisTransformer(TimeSeriesTransformer):
                     "Insufficient data points for partial autocorrelation analysis"
                 )
 
-            # Determine number of lags
-            if self.max_lags is None:
-                nlags = min(40, len(series) // 4)
-            else:
-                nlags = min(self.max_lags, len(series) - 1)
-
-            # Compute PACF
+            nlags = self._compute_pacf_nlags(series)
             pacf_values, confint = pacf(
                 series, nlags=nlags, alpha=self.alpha, method=self.method
             )
-
             self.pacf_values_ = pacf_values
             self.confidence_intervals_ = confint
 
-            # Find significant lags
-            significant_lags = []
-            for lag in range(1, len(pacf_values)):  # Skip lag 0 (always 1.0)
-                is_significant = abs(pacf_values[lag]) > abs(
-                    confint[lag, 1] - pacf_values[lag]
-                )
-                significant_lags.append(
-                    {
-                        "lag": lag,
-                        "partial_correlation": pacf_values[lag],
-                        "is_significant": is_significant,
-                        "confidence_lower": confint[lag, 0],
-                        "confidence_upper": confint[lag, 1],
-                    }
-                )
-
-            # Analyze PACF for AR order suggestion
+            significant_lags = self._classify_significant_pacf_lags(
+                pacf_values, confint
+            )
             ar_order_analysis = self._analyze_ar_order(pacf_values, significant_lags)
+            interpretation, recommendations, warnings_list = self._interpret_pacf(
+                ar_order_analysis
+            )
 
-            # Generate recommendations
-            recommendations = []
-            warnings_list = []
-
-            if ar_order_analysis["suggested_order"] == 0:
-                interpretation = "No significant partial autocorrelations - series may be MA or white noise"
-                recommendations.append(
-                    "Consider MA model or simple forecasting methods"
-                )
-            else:
-                interpretation = f"Significant partial autocorrelations up to lag {ar_order_analysis['suggested_order']}"
-                recommendations.append(
-                    f"Consider AR({ar_order_analysis['suggested_order']}) model"
-                )
-
-                if ar_order_analysis["seasonal_order"] > 0:
-                    recommendations.append(
-                        f"Seasonal AR component suggested: P={ar_order_analysis['seasonal_order']}"
-                    )
-
-            # Add analysis-specific recommendations
-            recommendations.extend(ar_order_analysis.get("recommendations", []))
-            warnings_list.extend(ar_order_analysis.get("warnings", []))
-
-            result = TimeSeriesAnalysisResult(
+            return TimeSeriesAnalysisResult(
                 analysis_type="partial_autocorrelation_analysis",
                 interpretation=interpretation,
                 model_diagnostics={
@@ -145,8 +148,6 @@ class PartialAutocorrelationAnalysisTransformer(TimeSeriesTransformer):
                 warnings=warnings_list,
                 processing_time=time.time() - start_time,
             )
-
-            return result
 
         except Exception as e:
             logger.error(f"Error in partial autocorrelation analysis: {e}")
