@@ -123,6 +123,15 @@ multi_line_output = 3
 line_length = 88
 known_first_party = ["localdata_mcp"]
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: integration tests requiring test fixtures or external services",
+    "influxdb: tests requiring InfluxDB",
+    "neo4j: tests requiring Neo4j",
+    "couchdb: tests requiring CouchDB",
+]
+asyncio_mode = "strict"
+
 [tool.mypy]
 python_version = "3.10"
 warn_return_any = false
