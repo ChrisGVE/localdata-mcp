@@ -66,6 +66,52 @@ class AnomalyDetector(TimeSeriesTransformer):
         self.is_fitted_ = True
         return self
 
+    def _dispatch_detection(
+        self, adjusted_series: pd.Series
+    ) -> Tuple[List[int], np.ndarray]:
+        """Dispatch to the appropriate anomaly detection method."""
+        if self.method == "statistical":
+            return self._detect_statistical_anomalies(adjusted_series)
+        elif self.method == "isolation_forest":
+            return self._detect_isolation_forest_anomalies(adjusted_series)
+        elif self.method == "zscore":
+            return self._detect_zscore_anomalies(adjusted_series)
+        elif self.method == "iqr":
+            return self._detect_iqr_anomalies(adjusted_series)
+        else:
+            raise ValueError(f"Unknown anomaly detection method: {self.method}")
+
+    def _build_anomaly_result_params(
+        self,
+        series: pd.Series,
+        anomalies: List[int],
+        scores: np.ndarray,
+        seasonal_component: Optional[np.ndarray],
+        anomaly_stats: Dict,
+        pattern_analysis: Dict,
+    ) -> Tuple[Dict, Dict]:
+        """Build model_parameters and model_diagnostics dicts for the result."""
+        model_parameters = {
+            "anomalies": anomalies,
+            "anomaly_scores": scores.tolist() if scores is not None else [],
+            "n_anomalies": len(anomalies),
+            "anomaly_rate": len(anomalies) / len(series) if len(series) > 0 else 0,
+            "detection_method": self.method,
+            "threshold_used": self.threshold,
+            "window_size": self.window_size,
+            "seasonal_adjustment_applied": self.seasonal_adjustment
+            and seasonal_component is not None,
+            "seasonal_component": seasonal_component.tolist()
+            if seasonal_component is not None
+            else None,
+        }
+        model_diagnostics = {
+            "anomaly_statistics": anomaly_stats,
+            "pattern_analysis": pattern_analysis,
+            "baseline_statistics": self.baseline_stats_,
+        }
+        return model_parameters, model_diagnostics
+
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
         """
         Detect anomalies in time series data.
@@ -81,7 +127,6 @@ class AnomalyDetector(TimeSeriesTransformer):
             X, _ = self._validate_time_series(X, None)
 
         try:
-            # Use first column for anomaly detection
             if len(X.columns) == 0:
                 raise ValueError("No columns found in time series data")
 
@@ -91,7 +136,6 @@ class AnomalyDetector(TimeSeriesTransformer):
                     "Insufficient data points for anomaly detection (need at least 10)"
                 )
 
-            # Seasonal adjustment if requested
             adjusted_series = series
             seasonal_component = None
             if self.seasonal_adjustment:
@@ -99,64 +143,29 @@ class AnomalyDetector(TimeSeriesTransformer):
                     series
                 )
 
-            # Detect anomalies based on method
-            if self.method == "statistical":
-                anomalies, scores = self._detect_statistical_anomalies(adjusted_series)
-            elif self.method == "isolation_forest":
-                anomalies, scores = self._detect_isolation_forest_anomalies(
-                    adjusted_series
-                )
-            elif self.method == "zscore":
-                anomalies, scores = self._detect_zscore_anomalies(adjusted_series)
-            elif self.method == "iqr":
-                anomalies, scores = self._detect_iqr_anomalies(adjusted_series)
-            else:
-                raise ValueError(f"Unknown anomaly detection method: {self.method}")
-
+            anomalies, scores = self._dispatch_detection(adjusted_series)
             self.anomalies_ = anomalies
             self.anomaly_scores_ = scores
 
-            # Calculate anomaly statistics
             anomaly_stats = self._calculate_anomaly_statistics(
                 series, anomalies, scores
             )
-
-            # Analyze anomaly patterns
             pattern_analysis = self._analyze_anomaly_patterns(series, anomalies)
-
-            # Generate interpretation
             interpretation = self._generate_anomaly_interpretation(
                 anomalies, series, anomaly_stats, pattern_analysis
             )
-
-            # Generate recommendations
             recommendations = self._generate_anomaly_recommendations(
                 anomalies, series, anomaly_stats, pattern_analysis
             )
 
-            processing_time = time.time() - start_time
-
-            # Prepare result
-            model_parameters = {
-                "anomalies": anomalies,
-                "anomaly_scores": scores.tolist() if scores is not None else [],
-                "n_anomalies": len(anomalies),
-                "anomaly_rate": len(anomalies) / len(series) if len(series) > 0 else 0,
-                "detection_method": self.method,
-                "threshold_used": self.threshold,
-                "window_size": self.window_size,
-                "seasonal_adjustment_applied": self.seasonal_adjustment
-                and seasonal_component is not None,
-                "seasonal_component": seasonal_component.tolist()
-                if seasonal_component is not None
-                else None,
-            }
-
-            model_diagnostics = {
-                "anomaly_statistics": anomaly_stats,
-                "pattern_analysis": pattern_analysis,
-                "baseline_statistics": self.baseline_stats_,
-            }
+            model_parameters, model_diagnostics = self._build_anomaly_result_params(
+                series,
+                anomalies,
+                scores,
+                seasonal_component,
+                anomaly_stats,
+                pattern_analysis,
+            )
 
             return TimeSeriesAnalysisResult(
                 analysis_type="anomaly_detection",
@@ -164,7 +173,7 @@ class AnomalyDetector(TimeSeriesTransformer):
                 model_diagnostics=model_diagnostics,
                 interpretation=interpretation,
                 recommendations=recommendations,
-                processing_time=processing_time,
+                processing_time=time.time() - start_time,
                 data_quality_score=self._calculate_data_quality_score(X),
                 confidence_level=0.95,
             )
