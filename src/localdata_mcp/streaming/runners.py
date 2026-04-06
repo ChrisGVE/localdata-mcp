@@ -255,7 +255,7 @@ def run_with_timeout(
         metadata = build_timeout_metadata(base, tc, execution_time)
 
     if truncated:
-        add_truncation_metadata(metadata, abort_reason)
+        add_truncation_metadata(metadata, abort_reason, total_rows)
     if first_chunk is not None and len(first_chunk) > 0:
         metadata.update(generate_response_metadata(first_chunk, total_rows))
 
@@ -316,7 +316,7 @@ def run_without_timeout(
     metadata["timeout_info"] = {"timeout_configured": False}
 
     if truncated:
-        add_truncation_metadata(metadata, abort_reason)
+        add_truncation_metadata(metadata, abort_reason, total_rows)
     if first_chunk is not None and len(first_chunk) > 0:
         metadata.update(generate_response_metadata(first_chunk, total_rows))
 

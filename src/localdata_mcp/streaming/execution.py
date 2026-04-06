@@ -147,7 +147,11 @@ def execute_streaming_core(
         logger.error(f"Error during streaming execution: {e}")
         raise
 
-    result_buffer.is_complete = True
+    if truncated:
+        handle_graceful_abort(result_buffer, total_rows_processed, abort_reason)
+    else:
+        result_buffer.is_complete = True
+
     final_memory = get_memory_status(config)
     return (
         first_chunk,
@@ -160,8 +164,40 @@ def execute_streaming_core(
 
 
 # ------------------------------------------------------------------
+# Graceful abort handler
+# ------------------------------------------------------------------
+
+
+def handle_graceful_abort(
+    result_buffer: ResultBuffer,
+    total_rows_processed: int,
+    abort_reason: Optional[str],
+) -> None:
+    """Handle a graceful abort by marking the buffer as incomplete.
+
+    Sets the buffer's completion flag to False and logs the abort event
+    with contextual information for downstream consumers.
+
+    Args:
+        result_buffer: The result buffer to mark as incomplete.
+        total_rows_processed: Number of rows processed before abort.
+        abort_reason: Human-readable reason for the abort.
+    """
+    result_buffer.is_complete = False
+    logger.warning(
+        "Graceful abort: %s (rows_processed=%d, buffer=%s)",
+        abort_reason,
+        total_rows_processed,
+        result_buffer.query_id,
+    )
+
+
+# ------------------------------------------------------------------
 # Metadata builders
 # ------------------------------------------------------------------
+
+
+_ABORT_SUGGESTION = "Add LIMIT, WHERE clause, or use aggregation (GROUP BY, COUNT)"
 
 
 def build_base_metadata(
@@ -216,12 +252,22 @@ def build_timeout_metadata(
 
 
 def add_truncation_metadata(
-    metadata: Dict[str, Any], abort_reason: Optional[str]
+    metadata: Dict[str, Any],
+    abort_reason: Optional[str],
+    total_rows_processed: int,
 ) -> None:
-    """Add disk-monitor truncation fields to metadata in place."""
+    """Add graceful-abort truncation fields to metadata in place.
+
+    Args:
+        metadata: Metadata dict to augment (mutated in place).
+        abort_reason: Human-readable reason for the abort.
+        total_rows_processed: Rows processed before abort occurred.
+    """
     metadata["truncated"] = True
+    metadata["partial_result"] = True
+    metadata["total_rows_before_abort"] = total_rows_processed
     metadata["abort_reason"] = abort_reason
-    metadata["suggestion"] = "Add LIMIT, WHERE clause, or use aggregation"
+    metadata["suggestion"] = _ABORT_SUGGESTION
     metadata["disk_monitor_active"] = True
 
 

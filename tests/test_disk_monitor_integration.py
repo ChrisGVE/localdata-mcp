@@ -275,4 +275,6 @@ class TestAbortSuggestionPresent:
             disk_monitor=monitor,
         )
 
-        assert metadata["suggestion"] == ("Add LIMIT, WHERE clause, or use aggregation")
+        assert metadata["suggestion"] == (
+            "Add LIMIT, WHERE clause, or use aggregation (GROUP BY, COUNT)"
+        )
