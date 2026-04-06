@@ -8,6 +8,7 @@ Mermaid-specific logic lives in :mod:`localdata_mcp.mermaid_parser` and is
 re-exported here for convenience.
 """
 
+import inspect
 import json
 import logging
 import os
@@ -33,6 +34,31 @@ def _coerce_value(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return json.dumps(value)
     return value
+
+
+def _from_pydot_compat(P: Any) -> nx.Graph:
+    """Convert a pydot graph to NetworkX, handling API differences.
+
+    Older networkx (<3.5) calls ``pydot.Graph.get_strict(None)`` which
+    fails with pydot v4 (where ``get_strict`` takes no arguments).
+    Newer networkx (>=3.5) wraps this in a try/except but may not be
+    available on Python 3.10 where networkx caps at 3.4.x.
+
+    This wrapper patches ``get_strict`` on the pydot graph instance to
+    accept optional arguments regardless of the underlying pydot version,
+    then delegates to ``nx.drawing.nx_pydot.from_pydot``.
+    """
+    original = P.get_strict
+    sig = inspect.signature(original)
+    # If get_strict only takes 'self' (pydot v4), wrap it to ignore extra args
+    if len(sig.parameters) == 0:
+
+        def _patched(*args: Any, **kwargs: Any) -> Any:
+            return original()
+
+        P.get_strict = _patched
+
+    return nx.drawing.nx_pydot.from_pydot(P)
 
 
 def _store_and_validate(
@@ -163,7 +189,7 @@ def parse_dot_to_graph(
     if not graphs:
         raise ValueError(f"No graph found in DOT file: {file_path}")
 
-    G: nx.DiGraph = nx.drawing.nx_pydot.from_pydot(graphs[0])
+    G: nx.DiGraph = _from_pydot_compat(graphs[0])
     if not G.is_directed():
         G = G.to_directed()
     return _store_and_validate(G, manager)
