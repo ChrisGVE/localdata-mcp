@@ -12,8 +12,8 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from ...base import ErrorClassification, PipelineError
 from ....logging_manager import get_logger
+from ...base import ErrorClassification, PipelineError
 from ._types import PipelineCheckpoint
 
 logger = get_logger(__name__)

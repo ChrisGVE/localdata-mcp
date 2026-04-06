@@ -10,16 +10,16 @@ from typing import Any, Optional
 
 from scipy import sparse
 
+from ....logging_manager import get_logger
 from ..base_adapters import BaseShimAdapter
 from ..interfaces import (
-    DataFormat,
+    ConversionContext,
+    ConversionError,
     ConversionRequest,
     ConversionResult,
-    ConversionError,
-    ConversionContext,
+    DataFormat,
 )
 from ..metadata_manager import MetadataManager
-from ....logging_manager import get_logger
 from ._common import ConversionContextInternal, ConversionOptions
 from ._sparse_conversions import SparseConversionsMixin
 

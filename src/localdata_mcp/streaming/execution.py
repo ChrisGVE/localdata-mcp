@@ -238,14 +238,14 @@ def build_timeout_metadata(
     metadata = dict(base_metadata)
     metadata["timeout_info"] = {
         "timeout_configured": True,
-        "timeout_limit_seconds": timeout_config.query_timeout
-        if timeout_config
-        else None,
-        "time_remaining_seconds": max(
-            0, (timeout_config.query_timeout - execution_time)
-        )
-        if timeout_config
-        else None,
+        "timeout_limit_seconds": (
+            timeout_config.query_timeout if timeout_config else None
+        ),
+        "time_remaining_seconds": (
+            max(0, (timeout_config.query_timeout - execution_time))
+            if timeout_config
+            else None
+        ),
         "database_name": timeout_config.database_name if timeout_config else None,
     }
     return metadata

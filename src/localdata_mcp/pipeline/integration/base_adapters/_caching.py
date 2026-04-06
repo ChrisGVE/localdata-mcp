@@ -5,13 +5,13 @@ Extends BaseShimAdapter with advanced caching mechanisms including
 LRU eviction, cache warming, and intelligent cache key generation.
 """
 
-import time
 import hashlib
+import time
 from typing import Dict
 
+from ....logging_manager import get_logger
 from ..interfaces import ConversionRequest, ConversionResult
 from ._core import BaseShimAdapter
-from ....logging_manager import get_logger
 
 logger = get_logger(__name__)
 

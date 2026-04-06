@@ -8,9 +8,9 @@ from typing import Any, Dict, Optional, Union
 
 import pandas as pd
 
-from ._hypothesis import HypothesisTestingTransformer
 from ._anova import ANOVAAnalysisTransformer
 from ._experimental import ExperimentalDesignTransformer
+from ._hypothesis import HypothesisTestingTransformer
 
 
 # MCP Tool Functions

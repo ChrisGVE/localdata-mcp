@@ -5,25 +5,25 @@ Extends the basic ShimAdapter interface with lifecycle hooks,
 performance monitoring, health checks, and dependency management.
 """
 
-import time
 import logging
 import threading
-from typing import Any, Dict, List, Optional, Set
-from concurrent.futures import ThreadPoolExecutor
+import time
 import weakref
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Set
 
+from ....logging_manager import get_logger
+from ..base_adapters import BaseShimAdapter
 from ..interfaces import (
-    ShimAdapter,
     ConversionRequest,
     ConversionResult,
     DataFormat,
+    ShimAdapter,
     ValidationResult,
 )
-from ..base_adapters import BaseShimAdapter
-from ....logging_manager import get_logger
 from ._types import (
-    AdapterLifecycleState,
     AdapterConfig,
+    AdapterLifecycleState,
     AdapterMetrics,
     HealthCheckResult,
 )

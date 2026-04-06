@@ -5,9 +5,9 @@ Provides DomainShimType enum, DomainMapping and SemanticContext dataclasses
 used across all domain shim implementations.
 """
 
-from typing import Any, Dict
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict
 
 
 class DomainShimType(Enum):

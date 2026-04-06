@@ -9,7 +9,7 @@ import tracemalloc
 from typing import Any, Dict, Tuple
 
 import pandas as pd
-from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
+from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
 
 from ...logging_manager import get_logger
 

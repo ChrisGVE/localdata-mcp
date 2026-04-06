@@ -21,40 +21,34 @@ Design Principles:
 - Modular Domain Integration: Easy extension to new domains
 """
 
-from ._types import (
-    DomainShimType,
-    DomainMapping,
-    SemanticContext,
-)
-
 from ._base import (
     BaseDomainShim,
 )
-
-from ._statistical import (
-    StatisticalShim,
+from ._factories import (
+    create_all_domain_shims,
+    create_pattern_recognition_shim,
+    create_regression_shim,
+    create_statistical_shim,
+    create_time_series_shim,
+    get_compatible_domain_shims,
+    validate_domain_shim_configuration,
 )
-
-from ._regression import (
-    RegressionShim,
-)
-
-from ._time_series import (
-    TimeSeriesShim,
-)
-
 from ._pattern_recognition import (
     PatternRecognitionShim,
 )
-
-from ._factories import (
-    create_statistical_shim,
-    create_regression_shim,
-    create_time_series_shim,
-    create_pattern_recognition_shim,
-    create_all_domain_shims,
-    get_compatible_domain_shims,
-    validate_domain_shim_configuration,
+from ._regression import (
+    RegressionShim,
+)
+from ._statistical import (
+    StatisticalShim,
+)
+from ._time_series import (
+    TimeSeriesShim,
+)
+from ._types import (
+    DomainMapping,
+    DomainShimType,
+    SemanticContext,
 )
 
 __all__ = [

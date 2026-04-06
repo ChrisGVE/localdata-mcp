@@ -8,12 +8,12 @@ statistical analysis, diagnostics, and model evaluation.
 import time
 
 import numpy as np
-from scipy import stats
-from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin
-from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-from sklearn.linear_model import LinearRegression
 import statsmodels.api as sm
+from scipy import stats
+from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 from statsmodels.stats.diagnostic import het_breuschpagan, het_white, normal_ad
 
 from ._base import RegressionModelResult, logger

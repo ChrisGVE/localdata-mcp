@@ -14,21 +14,21 @@ Key Features:
 - Comprehensive result formatting
 """
 
-from ._results import (
-    ClusteringResult,
-    DimensionalityReductionResult,
-    AnomalyDetectionResult,
-    PatternEvaluationResult,
-)
-from ._clustering import ClusteringTransformer
-from ._reduction import DimensionalityReductionTransformer
 from ._anomaly import AnomalyDetectionTransformer
+from ._clustering import ClusteringTransformer
 from ._evaluation import PatternEvaluationTransformer
 from ._functions import (
-    perform_clustering,
-    reduce_dimensions,
     detect_anomalies,
     evaluate_patterns,
+    perform_clustering,
+    reduce_dimensions,
+)
+from ._reduction import DimensionalityReductionTransformer
+from ._results import (
+    AnomalyDetectionResult,
+    ClusteringResult,
+    DimensionalityReductionResult,
+    PatternEvaluationResult,
 )
 
 __all__ = [

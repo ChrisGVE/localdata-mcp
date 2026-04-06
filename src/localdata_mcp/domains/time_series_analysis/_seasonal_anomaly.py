@@ -135,9 +135,9 @@ class SeasonalAnomalyDetector(TimeSeriesTransformer):
                 analysis_type="seasonal_anomaly_detection",
                 model_parameters={
                     "seasonal_anomalies": anomalies,
-                    "adaptive_thresholds": thresholds.tolist()
-                    if thresholds is not None
-                    else [],
+                    "adaptive_thresholds": (
+                        thresholds.tolist() if thresholds is not None else []
+                    ),
                     "seasonal_period": period,
                     "detection_method": self.method,
                     "threshold_factor": self.threshold_factor,

@@ -6,9 +6,9 @@ used by all time series analysis sub-modules.
 """
 
 import warnings
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 

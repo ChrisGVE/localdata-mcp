@@ -9,15 +9,15 @@ data validation with progressive complexity levels.
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from sklearn.ensemble import IsolationForest
 
+from ...logging_manager import get_logger
 from ..base import (
     AnalysisPipelineBase,
     StreamingConfig,
 )
-from ...logging_manager import get_logger
 from ._dataclasses import CleaningOperation, DataQualityMetrics
 
 logger = get_logger(__name__)
@@ -271,20 +271,18 @@ class DataCleaningPipeline(AnalysisPipelineBase):
         _handle_basic_missing_values,
         _intelligent_missing_value_handling,
     )
-
     from ._cleaning_methods_part2 import (
         _advanced_outlier_detection,
+        _basic_data_validation,
         _remove_exact_duplicates,
         _sophisticated_duplicate_detection,
-        _basic_data_validation,
     )
-
     from ._cleaning_methods_part3 import (
+        _assess_final_quality,
         _comprehensive_data_validation,
         _data_consistency_enhancement,
         _feature_engineering_cleanup,
         _final_quality_optimization,
-        _assess_final_quality,
     )
 
     # ===========================================
@@ -403,12 +401,16 @@ class DataCleaningPipeline(AnalysisPipelineBase):
                 ),
             },
             "quality_assessment": {
-                "before": self._quality_metrics_before.__dict__
-                if self._quality_metrics_before
-                else {},
-                "after": self._quality_metrics_after.__dict__
-                if self._quality_metrics_after
-                else {},
+                "before": (
+                    self._quality_metrics_before.__dict__
+                    if self._quality_metrics_before
+                    else {}
+                ),
+                "after": (
+                    self._quality_metrics_after.__dict__
+                    if self._quality_metrics_after
+                    else {}
+                ),
                 "improvement": {
                     "overall_score": (
                         self._quality_metrics_after.overall_quality_score
@@ -420,11 +422,11 @@ class DataCleaningPipeline(AnalysisPipelineBase):
             },
             "operations_log": [op.__dict__ for op in self._cleaning_operations],
             "data_transformation": {
-                "original_shape": self._quality_metrics_before.data_profile.get(
-                    "shape", (0, 0)
-                )
-                if self._quality_metrics_before
-                else (0, 0),
+                "original_shape": (
+                    self._quality_metrics_before.data_profile.get("shape", (0, 0))
+                    if self._quality_metrics_before
+                    else (0, 0)
+                ),
                 "cleaned_shape": cleaned_data.shape,
                 "total_records_affected": sum(
                     op.records_affected
@@ -433,10 +435,12 @@ class DataCleaningPipeline(AnalysisPipelineBase):
                 ),
             },
             "composition_context": {
-                "ready_for_analysis": self._quality_metrics_after.overall_quality_score
-                >= self.quality_thresholds["overall_threshold"]
-                if self._quality_metrics_after
-                else False,
+                "ready_for_analysis": (
+                    self._quality_metrics_after.overall_quality_score
+                    >= self.quality_thresholds["overall_threshold"]
+                    if self._quality_metrics_after
+                    else False
+                ),
                 "data_characteristics": self._analyze_cleaned_data(cleaned_data),
                 "suggested_next_steps": self._suggest_post_cleaning_steps(cleaned_data),
                 "cleaning_artifacts": self._extract_cleaning_artifacts(),
@@ -450,9 +454,11 @@ class DataCleaningPipeline(AnalysisPipelineBase):
         return {
             "shape": data.shape,
             "dtypes": dict(data.dtypes),
-            "quality_score": self._quality_metrics_after.overall_quality_score
-            if self._quality_metrics_after
-            else 0,
+            "quality_score": (
+                self._quality_metrics_after.overall_quality_score
+                if self._quality_metrics_after
+                else 0
+            ),
             "numeric_columns": data.select_dtypes(include=["number"]).columns.tolist(),
             "categorical_columns": data.select_dtypes(
                 include=["object", "category"]
@@ -462,10 +468,12 @@ class DataCleaningPipeline(AnalysisPipelineBase):
             ).columns.tolist(),
             "missing_values": data.isnull().sum().sum(),
             "memory_usage_mb": data.memory_usage(deep=True).sum() / (1024 * 1024),
-            "ready_for_analysis": self._quality_metrics_after.overall_quality_score
-            >= self.quality_thresholds["overall_threshold"]
-            if self._quality_metrics_after
-            else False,
+            "ready_for_analysis": (
+                self._quality_metrics_after.overall_quality_score
+                >= self.quality_thresholds["overall_threshold"]
+                if self._quality_metrics_after
+                else False
+            ),
         }
 
     def _suggest_post_cleaning_steps(self, data: pd.DataFrame) -> List[Dict[str, Any]]:
@@ -549,12 +557,16 @@ class DataCleaningPipeline(AnalysisPipelineBase):
     def get_quality_report(self) -> Dict[str, Any]:
         """Get comprehensive quality report before and after cleaning."""
         return {
-            "before_cleaning": self._quality_metrics_before.__dict__
-            if self._quality_metrics_before
-            else {},
-            "after_cleaning": self._quality_metrics_after.__dict__
-            if self._quality_metrics_after
-            else {},
+            "before_cleaning": (
+                self._quality_metrics_before.__dict__
+                if self._quality_metrics_before
+                else {}
+            ),
+            "after_cleaning": (
+                self._quality_metrics_after.__dict__
+                if self._quality_metrics_after
+                else {}
+            ),
             "operations_performed": len(self._cleaning_operations),
             "successful_operations": sum(
                 1 for op in self._cleaning_operations if op.success

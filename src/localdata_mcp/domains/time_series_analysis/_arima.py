@@ -12,11 +12,11 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from sklearn.utils.validation import check_is_fitted
-from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.stats.diagnostic import acorr_ljungbox
+from statsmodels.tsa.arima.model import ARIMA
 
 from ...logging_manager import get_logger
-from ...pipeline.base import PipelineResult, CompositionMetadata
+from ...pipeline.base import CompositionMetadata, PipelineResult
 from ._base import TimeSeriesAnalysisResult, TimeSeriesValidationError
 from ._transformer import TimeSeriesTransformer
 
@@ -182,9 +182,11 @@ class ARIMAForecastTransformer(TimeSeriesTransformer):
                 "order": self.order,
                 "seasonal_order": self.seasonal_order,
                 "forecast_values": forecast_values.tolist(),
-                "forecast_index": forecast_index.tolist()
-                if hasattr(forecast_index, "tolist")
-                else list(forecast_index),
+                "forecast_index": (
+                    forecast_index.tolist()
+                    if hasattr(forecast_index, "tolist")
+                    else list(forecast_index)
+                ),
                 "forecast_lower_ci": forecast_ci.iloc[:, 0].tolist(),
                 "forecast_upper_ci": forecast_ci.iloc[:, 1].tolist(),
                 "confidence_level": 1 - self.alpha,

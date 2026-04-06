@@ -8,6 +8,7 @@ import time
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional
 
+from ....logging_manager import get_logger
 from ..interfaces import (
     ConversionCost,
     ConversionError,
@@ -17,7 +18,6 @@ from ..interfaces import (
     DataFormat,
 )
 from ..shim_registry import EnhancedShimAdapter, ShimRegistry
-from ....logging_manager import get_logger
 from ._types import (
     AlternativePathway,
     ErrorContext,
@@ -313,9 +313,9 @@ class AlternativePathwayEngine:
                     f"Add preprocessing step: {description}",
                     "Modify source data handling in pipeline",
                 ],
-                implementation_complexity="low"
-                if "streaming" not in option_id
-                else "medium",
+                implementation_complexity=(
+                    "low" if "streaming" not in option_id else "medium"
+                ),
             )
             alternatives.append(alternative)
 

@@ -8,10 +8,10 @@ homoscedasticity tests, outlier detection, and influence measures.
 import time
 
 import numpy as np
+import statsmodels.api as sm
 from scipy import stats
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted, check_X_y
-import statsmodels.api as sm
 from statsmodels.stats.diagnostic import het_breuschpagan, het_white
 from statsmodels.stats.outliers_influence import OLSInfluence
 

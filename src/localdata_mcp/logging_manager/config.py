@@ -1,8 +1,8 @@
 """Structlog and stdlib logging configuration for LoggingManager."""
 
-import sys
 import logging
 import logging.handlers
+import sys
 from pathlib import Path
 
 import structlog

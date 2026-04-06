@@ -5,27 +5,28 @@ Provides the BaseShimAdapter with sklearn-compatible transformer interface,
 comprehensive validation, error handling, and performance monitoring.
 """
 
-import time
 import hashlib
-from typing import Any, Dict, List, Optional, Tuple
+import time
 from dataclasses import dataclass, field
-import pandas as pd
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
+import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from ....logging_manager import get_logger
+from ...type_conversion import TypeInferenceEngine
 from ..interfaces import (
-    DataFormat,
+    ConversionCost,
+    ConversionError,
     ConversionRequest,
     ConversionResult,
-    ConversionCost,
-    ShimAdapter,
-    ConversionError,
-    ValidationResult,
+    DataFormat,
     MemoryConstraints,
     PerformanceRequirements,
+    ShimAdapter,
+    ValidationResult,
 )
-from ...type_conversion import TypeInferenceEngine
-from ....logging_manager import get_logger
 
 logger = get_logger(__name__)
 
@@ -175,9 +176,11 @@ class BaseShimAdapter(ShimAdapter, BaseEstimator, TransformerMixin):
                 logger.info(
                     "Data analysis completed for fitting",
                     adapter_id=self.adapter_id,
-                    data_size=len(sample_data)
-                    if hasattr(sample_data, "__len__")
-                    else "unknown",
+                    data_size=(
+                        len(sample_data)
+                        if hasattr(sample_data, "__len__")
+                        else "unknown"
+                    ),
                     analysis_time=time.time() - start_time,
                 )
 

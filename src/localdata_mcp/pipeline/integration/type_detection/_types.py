@@ -1,11 +1,11 @@
 """Type detection - Result dataclasses."""
 
-from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
-from ..interfaces import DataFormat
 from ...type_conversion import DataType
+from ..interfaces import DataFormat
 
 
 @dataclass

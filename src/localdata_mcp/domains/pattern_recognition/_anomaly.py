@@ -5,19 +5,19 @@ Advanced anomaly detection with multiple algorithms (Isolation Forest, One-Class
 Local Outlier Factor, statistical methods).
 """
 
+import time
 import warnings
 from typing import Any, Dict, Optional
-import time
 
 import numpy as np
-from sklearn.utils.validation import check_array, check_is_fitted
-from sklearn.preprocessing import StandardScaler
+from scipy import stats
 
 # Anomaly detection
 from sklearn.ensemble import IsolationForest
-from sklearn.svm import OneClassSVM
 from sklearn.neighbors import LocalOutlierFactor
-from scipy import stats
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import OneClassSVM
+from sklearn.utils.validation import check_array, check_is_fitted
 
 from ...logging_manager import get_logger
 from ...pipeline.base import AnalysisPipelineBase
@@ -288,10 +288,10 @@ class AnomalyDetectionTransformer(AnalysisPipelineBase):
         auc_roc = None
 
         if y_true is not None:
+            from sklearn.metrics import f1_score as f1
             from sklearn.metrics import (
                 precision_score,
                 recall_score,
-                f1_score as f1,
                 roc_auc_score,
             )
 
@@ -327,14 +327,18 @@ class AnomalyDetectionTransformer(AnalysisPipelineBase):
             anomaly_statistics = {
                 "anomaly_indices": anomaly_indices.tolist(),
                 "mean_anomaly_score": float(np.mean(anomaly_scores_subset)),
-                "mean_normal_score": float(np.mean(normal_scores_subset))
-                if len(normal_scores_subset) > 0
-                else None,
-                "score_separation": float(
-                    np.mean(anomaly_scores_subset) - np.mean(normal_scores_subset)
-                )
-                if len(normal_scores_subset) > 0
-                else None,
+                "mean_normal_score": (
+                    float(np.mean(normal_scores_subset))
+                    if len(normal_scores_subset) > 0
+                    else None
+                ),
+                "score_separation": (
+                    float(
+                        np.mean(anomaly_scores_subset) - np.mean(normal_scores_subset)
+                    )
+                    if len(normal_scores_subset) > 0
+                    else None
+                ),
             }
         else:
             anomaly_statistics = {

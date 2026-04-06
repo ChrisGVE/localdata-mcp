@@ -9,10 +9,10 @@ from typing import Any, Callable, Dict, Union
 
 import pandas as pd
 
-from ._sampling import SamplingTransformer
+from ._bayesian import BayesianEstimationTransformer
 from ._bootstrap import BootstrapTransformer
 from ._monte_carlo import MonteCarloTransformer
-from ._bayesian import BayesianEstimationTransformer
+from ._sampling import SamplingTransformer
 
 
 def generate_sample(
@@ -53,9 +53,11 @@ def generate_sample(
 
     # Return both the sample and the results
     return {
-        "sample_data": sample_data.to_dict("records")
-        if hasattr(sample_data, "to_dict")
-        else sample_data,
+        "sample_data": (
+            sample_data.to_dict("records")
+            if hasattr(sample_data, "to_dict")
+            else sample_data
+        ),
         "sampling_results": transformer.sampling_result_.to_dict(),
     }
 

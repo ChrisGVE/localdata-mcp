@@ -10,11 +10,11 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 from sklearn.metrics import (
-    silhouette_score,
+    adjusted_rand_score,
     calinski_harabasz_score,
     davies_bouldin_score,
-    adjusted_rand_score,
     normalized_mutual_info_score,
+    silhouette_score,
 )
 
 from ...logging_manager import get_logger
@@ -251,10 +251,10 @@ class PatternEvaluationTransformer(AnalysisPipelineBase):
 
             # External validation (if ground truth available)
             if y_true is not None:
+                from sklearn.metrics import f1_score as f1
                 from sklearn.metrics import (
                     precision_score,
                     recall_score,
-                    f1_score as f1,
                 )
 
                 y_pred_binary = (labels == 1).astype(int)

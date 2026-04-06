@@ -10,8 +10,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from ...logging_manager import get_logger
-from ._data import SpatialPoint
 from ._coordinates import CoordinateReferenceSystem
+from ._data import SpatialPoint
 
 logger = get_logger(__name__)
 

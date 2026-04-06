@@ -13,7 +13,7 @@ from sklearn.utils.validation import check_is_fitted
 from ...logging_manager import get_logger
 from ._base import GeospatialLibrary, NetworkAnalysisType, _dependency_status
 from ._distance import SpatialDistanceCalculator
-from ._network import RouteResult, AccessibilityResult, IsochroneResult, SpatialNetwork
+from ._network import AccessibilityResult, IsochroneResult, RouteResult, SpatialNetwork
 
 logger = get_logger(__name__)
 
@@ -328,9 +328,11 @@ class AccessibilityAnalyzer:
             "total_demand_locations": total_demand,
             "reachable_locations": reachable_count,
             "coverage_percentage": coverage_percentage,
-            "average_accessibility": np.mean(list(accessibility_scores.values()))
-            if accessibility_scores
-            else 0,
+            "average_accessibility": (
+                np.mean(list(accessibility_scores.values()))
+                if accessibility_scores
+                else 0
+            ),
         }
 
         analysis_parameters = {

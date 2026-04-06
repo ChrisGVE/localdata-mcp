@@ -7,10 +7,9 @@ Provides convenient constructors for common converter configurations.
 from typing import Optional
 
 from ._common import ConversionOptions, ConversionQuality
-from ._pandas import PandasConverter
 from ._numpy import NumpyConverter
+from ._pandas import PandasConverter
 from ._sparse import SparseMatrixConverter
-
 
 # Factory functions for easy converter creation
 

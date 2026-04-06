@@ -8,9 +8,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from ...logging_manager import get_logger
 from ._base import TimeSeriesAnalysisResult
 from ._transformer import TimeSeriesTransformer
-from ...logging_manager import get_logger
 
 logger = get_logger(__name__)
 
@@ -60,6 +60,49 @@ class LagSelectionTransformer(TimeSeriesTransformer):
         self.is_fitted_ = True
         return self
 
+    def _select_best_models(self, results_grid: Dict) -> Dict:
+        """Pick the best model per criterion from grid search results."""
+        best_models = {}
+        for criterion in self.information_criteria:
+            if criterion in results_grid and len(results_grid[criterion]) > 0:
+                best_model = min(results_grid[criterion], key=lambda x: x[criterion])
+                best_models[criterion] = {
+                    "ar_order": best_model["ar_order"],
+                    "ma_order": best_model["ma_order"],
+                    "criterion_value": best_model[criterion],
+                    "seasonal_order": best_model.get("seasonal_order", 0),
+                }
+        return best_models
+
+    def _build_lag_interpretation(self, best_models: Dict) -> tuple:
+        """Return (interpretation, recommendations, warnings_list, consensus)."""
+        recommendations: List = []
+        warnings_list: List = []
+        consensus = None
+        if len(best_models) == 0:
+            interpretation = "Could not determine optimal model orders"
+            recommendations.append("Use default ARIMA(1,0,1) or consult domain expert")
+            warnings_list.append("Model selection failed - check data quality")
+        else:
+            consensus = self._get_consensus_recommendation(best_models)
+            interpretation = (
+                f"Optimal model orders determined: "
+                f"ARIMA({consensus['ar']},{consensus['d']},{consensus['ma']})"
+            )
+            recommendations.append(
+                f"Recommended model: ARIMA({consensus['ar']},{consensus['d']},{consensus['ma']})"
+            )
+            if consensus.get("seasonal_order", 0) > 0:
+                recommendations.append(
+                    f"Seasonal component suggested: "
+                    f"({consensus['seasonal_order']},{consensus['seasonal_d']},{consensus['seasonal_ma']})"
+                )
+            for criterion, model_info in best_models.items():
+                recommendations.append(
+                    f"{criterion.upper()} suggests: AR({model_info['ar_order']}) MA({model_info['ma_order']})"
+                )
+        return interpretation, recommendations, warnings_list, consensus
+
     def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
         """
         Perform automated lag selection analysis.
@@ -75,7 +118,6 @@ class LagSelectionTransformer(TimeSeriesTransformer):
             X, _ = self._validate_time_series(X, None)
 
         try:
-            # Use first column for analysis
             if len(X.columns) == 0:
                 raise ValueError("No columns found in time series data")
 
@@ -85,72 +127,27 @@ class LagSelectionTransformer(TimeSeriesTransformer):
                     "Insufficient data points for lag selection (need at least 20)"
                 )
 
-            # Grid search over model orders
             results_grid = self._grid_search_orders(series)
-
-            # Select best models for each criterion
-            best_models = {}
-            for criterion in self.information_criteria:
-                if criterion in results_grid and len(results_grid[criterion]) > 0:
-                    best_model = min(
-                        results_grid[criterion], key=lambda x: x[criterion]
-                    )
-                    best_models[criterion] = {
-                        "ar_order": best_model["ar_order"],
-                        "ma_order": best_model["ma_order"],
-                        "criterion_value": best_model[criterion],
-                        "seasonal_order": best_model.get("seasonal_order", 0),
-                    }
-
+            best_models = self._select_best_models(results_grid)
             self.best_orders_ = best_models
 
-            # Generate recommendations
-            recommendations = []
-            warnings_list = []
+            interpretation, recommendations, warnings_list, consensus = (
+                self._build_lag_interpretation(best_models)
+            )
 
-            if len(best_models) == 0:
-                interpretation = "Could not determine optimal model orders"
-                recommendations.append(
-                    "Use default ARIMA(1,0,1) or consult domain expert"
-                )
-                warnings_list.append("Model selection failed - check data quality")
-            else:
-                # Get consensus recommendation
-                consensus = self._get_consensus_recommendation(best_models)
-
-                interpretation = f"Optimal model orders determined: ARIMA({consensus['ar']},{consensus['d']},{consensus['ma']})"
-                recommendations.append(
-                    f"Recommended model: ARIMA({consensus['ar']},{consensus['d']},{consensus['ma']})"
-                )
-
-                if consensus.get("seasonal_order", 0) > 0:
-                    recommendations.append(
-                        f"Seasonal component suggested: ({consensus['seasonal_order']},{consensus['seasonal_d']},{consensus['seasonal_ma']})"
-                    )
-
-                # Add criterion-specific information
-                for criterion, model_info in best_models.items():
-                    recommendations.append(
-                        f"{criterion.upper()} suggests: AR({model_info['ar_order']}) MA({model_info['ma_order']})"
-                    )
-
-            result = TimeSeriesAnalysisResult(
+            return TimeSeriesAnalysisResult(
                 analysis_type="lag_selection",
                 interpretation=interpretation,
                 model_diagnostics={
                     "best_models": best_models,
                     "grid_search_results": results_grid,
-                    "consensus_recommendation": consensus
-                    if len(best_models) > 0
-                    else None,
+                    "consensus_recommendation": consensus,
                     "series_length": len(series),
                 },
                 recommendations=recommendations,
                 warnings=warnings_list,
                 processing_time=time.time() - start_time,
             )
-
-            return result
 
         except Exception as e:
             logger.error(f"Error in lag selection: {e}")
@@ -198,9 +195,11 @@ class LagSelectionTransformer(TimeSeriesTransformer):
                             "aic": fitted_model.aic,
                             "bic": fitted_model.bic,
                             "hqic": fitted_model.hqic,
-                            "converged": fitted_model.mle_retvals["converged"]
-                            if hasattr(fitted_model, "mle_retvals")
-                            else True,
+                            "converged": (
+                                fitted_model.mle_retvals["converged"]
+                                if hasattr(fitted_model, "mle_retvals")
+                                else True
+                            ),
                         }
 
                         # Add to results for each criterion

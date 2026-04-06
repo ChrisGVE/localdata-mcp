@@ -9,21 +9,21 @@ preservation for inverse transforms.
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import (
-    StandardScaler,
-    RobustScaler,
     MinMaxScaler,
-    QuantileTransformer,
     PowerTransformer,
+    QuantileTransformer,
+    RobustScaler,
+    StandardScaler,
 )
 
+from ...logging_manager import get_logger
 from ..base import (
     AnalysisPipelineBase,
     StreamingConfig,
 )
-from ...logging_manager import get_logger
 
 logger = get_logger(__name__)
 
@@ -310,16 +310,22 @@ class FeatureScalingPipeline(AnalysisPipelineBase):
                     "has_invalid_values": (
                         np.isinf(col_data) | np.isnan(col_data)
                     ).any(),
-                    "scaling_quality": "good"
-                    if abs(col_data.mean()) < 2 and col_data.std() > 0
-                    else "check_needed",
+                    "scaling_quality": (
+                        "good"
+                        if abs(col_data.mean()) < 2 and col_data.std() > 0
+                        else "check_needed"
+                    ),
                 }
 
         metadata = {
             "validation_results": validation_results,
-            "overall_quality": "good"
-            if all(v["scaling_quality"] == "good" for v in validation_results.values())
-            else "needs_review",
+            "overall_quality": (
+                "good"
+                if all(
+                    v["scaling_quality"] == "good" for v in validation_results.values()
+                )
+                else "needs_review"
+            ),
         }
 
         return data, metadata

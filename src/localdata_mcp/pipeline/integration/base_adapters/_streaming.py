@@ -6,11 +6,12 @@ datasets that don't fit in memory.
 """
 
 from typing import Any
+
 import pandas as pd
 
+from ....logging_manager import get_logger
 from ..interfaces import ConversionRequest, MemoryConstraints
 from ._core import BaseShimAdapter, ConversionContext
-from ....logging_manager import get_logger
 
 logger = get_logger(__name__)
 

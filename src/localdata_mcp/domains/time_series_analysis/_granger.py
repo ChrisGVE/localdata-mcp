@@ -128,9 +128,11 @@ class GrangerCausalityAnalyzer(MultivariateTimeSeriesTransformer):
             "best_lag": best_lag,
             "min_p_value": min_p_value,
             "significant": min_p_value < self.significance_level,
-            "f_statistic_best": lag_results[best_lag]["f_statistic"]
-            if best_lag in lag_results
-            else None,
+            "f_statistic_best": (
+                lag_results[best_lag]["f_statistic"]
+                if best_lag in lag_results
+                else None
+            ),
         }
 
     def _run_pairwise_tests(self, X: pd.DataFrame, series_names: List[str]):
@@ -213,12 +215,16 @@ class GrangerCausalityAnalyzer(MultivariateTimeSeriesTransformer):
 
             return self._prepare_multivariate_result(
                 analysis_type="granger_causality",
-                statistic=significant_relationships[0]["f_statistic"]
-                if significant_relationships
-                else None,
-                p_value=significant_relationships[0]["p_value"]
-                if significant_relationships
-                else None,
+                statistic=(
+                    significant_relationships[0]["f_statistic"]
+                    if significant_relationships
+                    else None
+                ),
+                p_value=(
+                    significant_relationships[0]["p_value"]
+                    if significant_relationships
+                    else None
+                ),
                 model_parameters=model_parameters,
                 model_diagnostics=model_diagnostics,
                 interpretation=interpretation,

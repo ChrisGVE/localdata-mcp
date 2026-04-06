@@ -13,6 +13,12 @@ Key Features:
 - Integration with existing pipeline metadata systems
 """
 
+from ._manager import MetadataManager
+from ._transformers import (
+    MetadataTransformer,
+    NumpyMetadataTransformer,
+    PandasMetadataTransformer,
+)
 from ._types import (
     MetadataLineage,
     MetadataSchema,
@@ -20,12 +26,6 @@ from ._types import (
     PreservationRule,
     PreservationStrategy,
 )
-from ._transformers import (
-    MetadataTransformer,
-    NumpyMetadataTransformer,
-    PandasMetadataTransformer,
-)
-from ._manager import MetadataManager
 from ._utils import create_metadata_schema, create_preservation_rule
 
 __all__ = [

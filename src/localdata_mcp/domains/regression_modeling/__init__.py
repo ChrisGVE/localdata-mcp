@@ -18,25 +18,25 @@ Key Features:
 
 # Base types
 from ._base import RegressionModelResult, ResidualAnalysisResult
-
-# Transformers
-from ._linear import LinearRegressionTransformer
-from ._regularized import RegularizedRegressionTransformer
-from ._logistic import LogisticRegressionTransformer
-from ._polynomial import PolynomialRegressionTransformer
-from ._residuals import ResidualAnalysisTransformer
 from ._feature_selection import FeatureSelectionTransformer
-
-# Pipeline
-from ._pipeline import RegressionModelingPipeline
 
 # Convenience functions
 from ._functions import (
-    fit_regression_model,
-    evaluate_model_performance,
     analyze_residuals,
+    evaluate_model_performance,
+    fit_regression_model,
     select_features,
 )
+
+# Transformers
+from ._linear import LinearRegressionTransformer
+from ._logistic import LogisticRegressionTransformer
+
+# Pipeline
+from ._pipeline import RegressionModelingPipeline
+from ._polynomial import PolynomialRegressionTransformer
+from ._regularized import RegularizedRegressionTransformer
+from ._residuals import ResidualAnalysisTransformer
 
 __all__ = [
     "RegressionModelResult",

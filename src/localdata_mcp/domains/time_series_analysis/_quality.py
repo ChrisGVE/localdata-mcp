@@ -12,8 +12,8 @@ import pandas as pd
 
 from ...logging_manager import get_logger
 from ._base import TimeSeriesAnalysisResult
-from ._transformer import TimeSeriesTransformer
 from ._pipeline import validate_time_series_continuity
+from ._transformer import TimeSeriesTransformer
 
 logger = get_logger(__name__)
 

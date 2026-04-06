@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .error_handler import ErrorCategory
 
-
 # ---------------------------------------------------------------------------
 # Structured error response
 # ---------------------------------------------------------------------------

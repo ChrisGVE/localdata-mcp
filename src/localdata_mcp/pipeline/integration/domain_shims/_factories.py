@@ -7,15 +7,14 @@ finding compatible shims, and validating shim configurations.
 
 from typing import Dict, List, Optional
 
-from ..shim_registry import AdapterConfig
-from ..interfaces import ValidationResult
 from ....logging_manager import get_logger
-
+from ..interfaces import ValidationResult
+from ..shim_registry import AdapterConfig
 from ._base import BaseDomainShim
-from ._statistical import StatisticalShim
-from ._regression import RegressionShim
-from ._time_series import TimeSeriesShim
 from ._pattern_recognition import PatternRecognitionShim
+from ._regression import RegressionShim
+from ._statistical import StatisticalShim
+from ._time_series import TimeSeriesShim
 
 logger = get_logger(__name__)
 

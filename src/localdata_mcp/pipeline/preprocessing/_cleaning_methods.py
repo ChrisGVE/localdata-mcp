@@ -9,11 +9,11 @@ and advanced outlier detection.
 import re
 import time
 import warnings
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-from difflib import SequenceMatcher
 from sklearn.ensemble import IsolationForest
 from sklearn.impute import KNNImputer, SimpleImputer
 from sklearn.neighbors import LocalOutlierFactor

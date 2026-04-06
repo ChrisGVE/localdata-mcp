@@ -16,193 +16,160 @@ Available domains:
 - geospatial_analysis: Spatial analysis, routing, clustering
 """
 
-from .statistical_analysis import (
-    HypothesisTestingTransformer,
-    ANOVAAnalysisTransformer,
-    NonParametricTestTransformer,
-    ExperimentalDesignTransformer,
-    run_hypothesis_test,
-    perform_anova,
-    analyze_experiment_design,
-    calculate_effect_sizes,
-)
-
-from .regression_modeling import (
-    # Core transformers
-    LinearRegressionTransformer,
-    RegularizedRegressionTransformer,
-    LogisticRegressionTransformer,
-    PolynomialRegressionTransformer,
-    ResidualAnalysisTransformer,
-    FeatureSelectionTransformer,
-    # Pipeline
-    RegressionModelingPipeline,
-    # High-level functions
-    fit_regression_model,
-    evaluate_model_performance,
-    analyze_residuals,
-    select_features,
-    # Result classes
-    RegressionModelResult,
-    ResidualAnalysisResult,
-)
-
-from .pattern_recognition import (
-    # Core transformers
-    ClusteringTransformer,
-    DimensionalityReductionTransformer,
-    AnomalyDetectionTransformer,
-    PatternEvaluationTransformer,
-    # High-level functions
-    perform_clustering,
-    reduce_dimensions,
-    detect_anomalies,
-    evaluate_patterns,
-    # Result classes
-    ClusteringResult,
-    DimensionalityReductionResult,
-    AnomalyDetectionResult,
-    PatternEvaluationResult,
-)
-
-from .time_series import (
-    # Core transformers
-    TimeSeriesAnalyzer,
-    BasicTimeSeriesAnalyzer,
-    ARIMAForecaster,
-    ExponentialSmoothingForecaster,
-    AnomalyDetector,
-    ChangePointDetector,
-    MultivariateAnalyzer,
-    # High-level functions
-    analyze_time_series_basic,
-    forecast_arima,
-    forecast_exponential_smoothing,
-    detect_time_series_anomalies,
-    detect_change_points,
-    analyze_multivariate_time_series,
-    # Result classes
-    TimeSeriesResult,
-    BasicAnalysisResult,
-    ForecastResult,
-    AnomalyDetectionResult as TimeSeriesAnomalyDetectionResult,
-    ChangePointResult,
-)
-
-from .optimization import (
-    # Core transformers
-    LinearProgrammingSolver,
-    ConstrainedOptimizer,
-    NetworkAnalyzer,
-    AssignmentSolver,
-    # High-level functions
-    solve_linear_program,
-    optimize_constrained,
-    analyze_network,
-    solve_assignment_problem,
-    # Result classes
-    OptimizationResult,
-    LinearProgramResult,
-    ConstrainedOptResult,
-    NetworkAnalysisResult,
-    AssignmentResult,
-)
-
-from .business_intelligence import (
-    # Core transformers
-    RFMAnalysisTransformer,
-    CohortAnalysisTransformer,
-    CLVCalculator,
+from .business_intelligence import (  # Core transformers; Pipeline; High-level functions; Result classes; Enums
     ABTestAnalyzer,
-    PowerAnalysisTransformer,
+    ABTestResult,
     AttributionAnalyzer,
-    FunnelAnalyzer,
-    # Pipeline
+    AttributionModel,
+    AttributionResult,
     BusinessIntelligencePipeline,
-    # High-level functions
-    analyze_rfm,
-    perform_cohort_analysis,
-    calculate_clv,
-    perform_ab_test,
+    CLVCalculator,
+    CLVResult,
+    CohortAnalysisResult,
+    CohortAnalysisTransformer,
+    ExperimentStatus,
+    FunnelAnalysisResult,
+    FunnelAnalyzer,
+    PowerAnalysisTransformer,
+    RFMAnalysisTransformer,
+    RFMResult,
     analyze_attribution,
     analyze_funnel,
+    analyze_rfm,
+    calculate_clv,
     enhanced_ab_test,
-    # Result classes
-    RFMResult,
-    CohortAnalysisResult,
-    CLVResult,
-    ABTestResult,
-    AttributionResult,
-    FunnelAnalysisResult,
-    # Enums
-    AttributionModel,
-    ExperimentStatus,
+    perform_ab_test,
+    perform_cohort_analysis,
 )
-
-from .sampling_estimation import (
-    # Core transformers
-    BootstrapTransformer,
-    BayesianEstimationTransformer,
-    MonteCarloTransformer,
-    SamplingTransformer,
-    # High-level functions
-    bootstrap_statistic,
-    bayesian_estimate,
-    monte_carlo_simulate,
-    generate_sample,
-    # Result classes
-    BootstrapResult,
-    BayesianResult,
-    MonteCarloResult,
-    SamplingResult,
-)
-
-from .geospatial_analysis import (
-    # Core transformers
-    GeospatialDependencyChecker,
-    SpatialCoordinateTransformer,
-    SpatialDistanceTransformer,
-    SpatialGeometryTransformer,
-    SpatialAutocorrelationTransformer,
-    SpatialInterpolationTransformer,
-    SpatialJoinTransformer,
-    SpatialOverlayTransformer,
-    SpatialNetworkTransformer,
-    # Spatial data structures
-    SpatialPoint,
-    SpatialDataFrame,
-    # Analysis engines
-    SpatialJoinEngine,
-    SpatialOverlayEngine,
-    SpatialAggregator,
-    SpatialNetwork,
-    NetworkRouter,
+from .geospatial_analysis import (  # Core transformers; Spatial data structures; Analysis engines; High-level functions; Result classes; Pipeline; Enums
     AccessibilityAnalyzer,
+    AccessibilityResult,
+    GeospatialAnalysisPipeline,
+    GeospatialDependencyChecker,
+    GeospatialLibrary,
     IsochroneGenerator,
-    # High-level functions
-    analyze_spatial_autocorrelation,
-    perform_spatial_clustering,
-    calculate_spatial_distance,
-    optimize_route,
-    optimize_routes,
-    analyze_accessibility,
-    generate_service_isochrones,
-    perform_spatial_join,
-    perform_spatial_overlay,
-    aggregate_points_in_polygons,
-    # Result classes
-    SpatialJoinResult,
+    IsochroneResult,
+    NetworkAnalysisType,
+    NetworkRouter,
+    OverlayOperation,
     OverlayResult,
     RouteResult,
-    AccessibilityResult,
-    IsochroneResult,
-    # Pipeline
-    GeospatialAnalysisPipeline,
-    # Enums
-    GeospatialLibrary,
+    SpatialAggregator,
+    SpatialAutocorrelationTransformer,
+    SpatialCoordinateTransformer,
+    SpatialDataFrame,
+    SpatialDistanceTransformer,
+    SpatialGeometryTransformer,
+    SpatialInterpolationTransformer,
+    SpatialJoinEngine,
+    SpatialJoinResult,
+    SpatialJoinTransformer,
     SpatialJoinType,
-    OverlayOperation,
-    NetworkAnalysisType,
+    SpatialNetwork,
+    SpatialNetworkTransformer,
+    SpatialOverlayEngine,
+    SpatialOverlayTransformer,
+    SpatialPoint,
+    aggregate_points_in_polygons,
+    analyze_accessibility,
+    analyze_spatial_autocorrelation,
+    calculate_spatial_distance,
+    generate_service_isochrones,
+    optimize_route,
+    optimize_routes,
+    perform_spatial_clustering,
+    perform_spatial_join,
+    perform_spatial_overlay,
+)
+from .optimization import (  # Core transformers; High-level functions; Result classes
+    AssignmentResult,
+    AssignmentSolver,
+    ConstrainedOptimizer,
+    ConstrainedOptResult,
+    LinearProgrammingSolver,
+    LinearProgramResult,
+    NetworkAnalysisResult,
+    NetworkAnalyzer,
+    OptimizationResult,
+    analyze_network,
+    optimize_constrained,
+    solve_assignment_problem,
+    solve_linear_program,
+)
+from .pattern_recognition import (  # Core transformers; High-level functions; Result classes
+    AnomalyDetectionResult,
+    AnomalyDetectionTransformer,
+    ClusteringResult,
+    ClusteringTransformer,
+    DimensionalityReductionResult,
+    DimensionalityReductionTransformer,
+    PatternEvaluationResult,
+    PatternEvaluationTransformer,
+    detect_anomalies,
+    evaluate_patterns,
+    perform_clustering,
+    reduce_dimensions,
+)
+from .regression_modeling import (  # Core transformers; Pipeline; High-level functions; Result classes
+    FeatureSelectionTransformer,
+    LinearRegressionTransformer,
+    LogisticRegressionTransformer,
+    PolynomialRegressionTransformer,
+    RegressionModelingPipeline,
+    RegressionModelResult,
+    RegularizedRegressionTransformer,
+    ResidualAnalysisResult,
+    ResidualAnalysisTransformer,
+    analyze_residuals,
+    evaluate_model_performance,
+    fit_regression_model,
+    select_features,
+)
+from .sampling_estimation import (  # Core transformers; High-level functions; Result classes
+    BayesianEstimationTransformer,
+    BayesianResult,
+    BootstrapResult,
+    BootstrapTransformer,
+    MonteCarloResult,
+    MonteCarloTransformer,
+    SamplingResult,
+    SamplingTransformer,
+    bayesian_estimate,
+    bootstrap_statistic,
+    generate_sample,
+    monte_carlo_simulate,
+)
+from .statistical_analysis import (
+    ANOVAAnalysisTransformer,
+    ExperimentalDesignTransformer,
+    HypothesisTestingTransformer,
+    NonParametricTestTransformer,
+    analyze_experiment_design,
+    calculate_effect_sizes,
+    perform_anova,
+    run_hypothesis_test,
+)
+from .time_series import (
+    AnomalyDetectionResult as TimeSeriesAnomalyDetectionResult,  # Core transformers; High-level functions; Result classes
+)
+from .time_series import (
+    AnomalyDetector,
+    ARIMAForecaster,
+    BasicAnalysisResult,
+    BasicTimeSeriesAnalyzer,
+    ChangePointDetector,
+    ChangePointResult,
+    ExponentialSmoothingForecaster,
+    ForecastResult,
+    MultivariateAnalyzer,
+    TimeSeriesAnalyzer,
+    TimeSeriesResult,
+    analyze_multivariate_time_series,
+    analyze_time_series_basic,
+    detect_change_points,
+    detect_time_series_anomalies,
+    forecast_arima,
+    forecast_exponential_smoothing,
 )
 
 __all__ = [

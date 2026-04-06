@@ -13,7 +13,7 @@ from scipy import stats
 from scipy.stats import pearsonr
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
-from statsmodels.stats.power import ttest_power, tt_solve_power
+from statsmodels.stats.power import tt_solve_power, ttest_power
 
 from ...logging_manager import get_logger
 

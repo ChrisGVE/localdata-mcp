@@ -5,16 +5,16 @@ Provides StatisticalShim for bridging statistical analysis with other domains,
 handling correlation matrices, hypothesis test results, and descriptive statistics.
 """
 
-import numpy as np
-import pandas as pd
 from typing import Any, Dict, Optional
 
-from ..shim_registry import AdapterConfig
-from ..interfaces import ConversionRequest, ConversionError
-from ....logging_manager import get_logger
+import numpy as np
+import pandas as pd
 
-from ._types import DomainShimType, DomainMapping, SemanticContext
+from ....logging_manager import get_logger
+from ..interfaces import ConversionError, ConversionRequest
+from ..shim_registry import AdapterConfig
 from ._base import BaseDomainShim
+from ._types import DomainMapping, DomainShimType, SemanticContext
 
 logger = get_logger(__name__)
 
@@ -256,9 +256,9 @@ class StatisticalShim(BaseDomainShim):
                 return {
                     "decomposition_statistics": data.to_dict(),
                     "components": list(data.columns),
-                    "time_index": data.index.tolist()
-                    if hasattr(data, "index")
-                    else None,
+                    "time_index": (
+                        data.index.tolist() if hasattr(data, "index") else None
+                    ),
                 }
 
         # Fallback

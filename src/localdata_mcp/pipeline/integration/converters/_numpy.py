@@ -10,17 +10,17 @@ from typing import Any, Optional
 
 import numpy as np
 
+from ....logging_manager import get_logger
 from ..base_adapters import BaseShimAdapter
 from ..interfaces import (
-    DataFormat,
+    ConversionContext,
+    ConversionError,
     ConversionRequest,
     ConversionResult,
-    ConversionError,
-    ConversionContext,
+    DataFormat,
 )
-from ..type_detection import TypeDetectionEngine
 from ..metadata_manager import MetadataManager
-from ....logging_manager import get_logger
+from ..type_detection import TypeDetectionEngine
 from ._common import ConversionContextInternal, ConversionOptions
 from ._numpy_conversions import NumpyConversionsMixin
 

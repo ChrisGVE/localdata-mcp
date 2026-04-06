@@ -5,12 +5,12 @@ Contains shared data structures and strategy selectors used across
 preprocessing pipeline modules.
 """
 
-from typing import Any, Dict, Optional
-from dataclasses import dataclass, field
-
-import pandas as pd
-import numpy as np
 import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
+
+import numpy as np
+import pandas as pd
 
 
 @dataclass

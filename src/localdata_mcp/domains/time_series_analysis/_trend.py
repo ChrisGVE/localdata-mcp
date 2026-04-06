@@ -11,9 +11,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from ...logging_manager import get_logger
 from ._base import TimeSeriesAnalysisResult
 from ._transformer import TimeSeriesTransformer
-from ...logging_manager import get_logger
 
 logger = get_logger(__name__)
 

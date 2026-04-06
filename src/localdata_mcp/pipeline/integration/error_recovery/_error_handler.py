@@ -10,13 +10,13 @@ import time
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ....logging_manager import get_logger
+from ...base import ErrorClassification, PipelineError
 from ..interfaces import (
     ConversionContext,
     ConversionError,
     ConversionRequest,
 )
-from ...base import ErrorClassification, PipelineError
-from ....logging_manager import get_logger
 from ._circuit_breaker import CircuitBreaker
 from ._types import (
     CircuitBreakerState,
@@ -871,21 +871,23 @@ class ConversionErrorHandler:
             message=str(error),
             exception=error,
             conversion_request=conversion_request,
-            pipeline_id=pipeline_context.get("pipeline_id")
-            if pipeline_context
-            else None,
-            pipeline_step=pipeline_context.get("pipeline_step")
-            if pipeline_context
-            else None,
+            pipeline_id=(
+                pipeline_context.get("pipeline_id") if pipeline_context else None
+            ),
+            pipeline_step=(
+                pipeline_context.get("pipeline_step") if pipeline_context else None
+            ),
             execution_environment={
                 "timestamp": time.time(),
                 "thread_id": threading.current_thread().ident,
                 "process_id": os.getpid(),
             },
             system_state=self._capture_system_state(),
-            performance_metrics=pipeline_context.get("performance_metrics", {})
-            if pipeline_context
-            else {},
+            performance_metrics=(
+                pipeline_context.get("performance_metrics", {})
+                if pipeline_context
+                else {}
+            ),
         )
 
     def _classify_error(self, error_context: ErrorContext) -> None:
@@ -1126,12 +1128,16 @@ class ConversionErrorHandler:
         return {
             "fallback": True,
             "error_context": error_context.error_id,
-            "original_source_format": error_context.conversion_request.source_format.value
-            if error_context.conversion_request
-            else "unknown",
-            "original_target_format": error_context.conversion_request.target_format.value
-            if error_context.conversion_request
-            else "unknown",
+            "original_source_format": (
+                error_context.conversion_request.source_format.value
+                if error_context.conversion_request
+                else "unknown"
+            ),
+            "original_target_format": (
+                error_context.conversion_request.target_format.value
+                if error_context.conversion_request
+                else "unknown"
+            ),
         }
 
     def _generate_troubleshooting_guide(self, error_context: ErrorContext) -> List[str]:
@@ -1210,12 +1216,15 @@ class ConversionErrorHandler:
                 "recent_error_types": [
                     ctx.error_type for ctx in self.error_history[-10:]
                 ],
-                "average_recovery_attempts": sum(
-                    len(ctx.attempted_strategies) for ctx in self.error_history[-100:]
-                )
-                / min(len(self.error_history), 100)
-                if self.error_history
-                else 0,
+                "average_recovery_attempts": (
+                    sum(
+                        len(ctx.attempted_strategies)
+                        for ctx in self.error_history[-100:]
+                    )
+                    / min(len(self.error_history), 100)
+                    if self.error_history
+                    else 0
+                ),
             }
 
     def clear_error_history(self) -> None:
@@ -1260,10 +1269,13 @@ class ConversionErrorHandler:
                 "recent_error_types": [
                     ctx.error_type for ctx in self.error_history[-10:]
                 ],
-                "average_recovery_attempts": sum(
-                    len(ctx.attempted_strategies) for ctx in self.error_history[-100:]
-                )
-                / min(len(self.error_history), 100)
-                if self.error_history
-                else 0,
+                "average_recovery_attempts": (
+                    sum(
+                        len(ctx.attempted_strategies)
+                        for ctx in self.error_history[-100:]
+                    )
+                    / min(len(self.error_history), 100)
+                    if self.error_history
+                    else 0
+                ),
             }

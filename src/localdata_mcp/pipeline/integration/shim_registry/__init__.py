@@ -20,19 +20,19 @@ Design Principles:
 - Modular Domain Integration: Easy integration with existing domains and new additions
 """
 
+from ._enhanced_adapter import EnhancedShimAdapter
+from ._registry import ShimRegistry
 from ._types import (
-    AdapterLifecycleState,
     AdapterConfig,
+    AdapterLifecycleState,
     AdapterMetrics,
     HealthCheckResult,
 )
-from ._enhanced_adapter import EnhancedShimAdapter
-from ._registry import ShimRegistry
 from ._utils import (
-    create_shim_registry,
     create_adapter_config,
-    validate_adapter_dependencies,
+    create_shim_registry,
     monitor_adapter_performance,
+    validate_adapter_dependencies,
 )
 
 __all__ = [

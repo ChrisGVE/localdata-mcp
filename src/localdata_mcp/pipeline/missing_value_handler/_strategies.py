@@ -8,8 +8,8 @@ from typing import Any, Dict, Tuple
 
 import pandas as pd
 
-from ._types import MissingValuePattern
 from ...logging_manager import get_logger
+from ._types import MissingValuePattern
 
 logger = get_logger(__name__)
 

@@ -8,16 +8,16 @@ levels (minimal, auto, comprehensive, custom) and streaming support.
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+import pandas as pd
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
+from ...logging_manager import get_logger
 from ..base import (
     AnalysisPipelineBase,
     PreprocessingIntent,
     StreamingConfig,
 )
-from ...logging_manager import get_logger
 from ._dataclasses import TransformationStrategy
 
 logger = get_logger(__name__)
@@ -543,9 +543,11 @@ class DataPreprocessingPipeline(AnalysisPipelineBase):
             "correlation_threshold": threshold,
             "highly_correlated_pairs": len(highly_correlated_pairs),
             "correlation_details": highly_correlated_pairs[:10],  # Limit to first 10
-            "recommendations": ["Consider removing highly correlated features"]
-            if highly_correlated_pairs
-            else [],
+            "recommendations": (
+                ["Consider removing highly correlated features"]
+                if highly_correlated_pairs
+                else []
+            ),
         }
 
         return result_data, metadata
@@ -574,9 +576,11 @@ class DataPreprocessingPipeline(AnalysisPipelineBase):
         metadata = {
             "duplicates_removed": duplicates_removed,
             "constant_columns": constant_columns,
-            "constant_columns_removed": len(constant_columns)
-            if kwargs.get("remove_constant_columns", True)
-            else 0,
+            "constant_columns_removed": (
+                len(constant_columns)
+                if kwargs.get("remove_constant_columns", True)
+                else 0
+            ),
             "final_shape": result_data.shape,
         }
 

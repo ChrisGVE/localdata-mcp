@@ -5,26 +5,26 @@ Provides adapter registration, lifecycle management, automatic discovery,
 health monitoring, conversion path discovery, and statistics.
 """
 
-import time
-import logging
 import importlib
 import inspect
+import logging
 import threading
-from typing import Any, Dict, List, Optional, Set, Tuple, Type
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 import weakref
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Set, Tuple, Type
 
+from ....logging_manager import get_logger
+from ..compatibility_matrix import PipelineCompatibilityMatrix
 from ..interfaces import (
+    ConversionPath,
+    ConversionRegistry,
     ConversionRequest,
     ConversionResult,
     DataFormat,
-    ConversionRegistry,
-    ConversionPath,
 )
-from ..compatibility_matrix import PipelineCompatibilityMatrix
-from ....logging_manager import get_logger
-from ._types import AdapterLifecycleState, AdapterConfig, HealthCheckResult
 from ._enhanced_adapter import EnhancedShimAdapter
+from ._types import AdapterConfig, AdapterLifecycleState, HealthCheckResult
 
 logger = get_logger(__name__)
 

@@ -232,11 +232,11 @@ class StreamingBenchmark:
             rows_processed=int(avg_processing_rate * avg_execution_time),
             processing_rate_rows_per_second=avg_processing_rate,
             chunk_count=int(avg_chunk_count),
-            average_chunk_size=int(
-                avg_processing_rate * avg_execution_time / avg_chunk_count
-            )
-            if avg_chunk_count > 0
-            else 0,
+            average_chunk_size=(
+                int(avg_processing_rate * avg_execution_time / avg_chunk_count)
+                if avg_chunk_count > 0
+                else 0
+            ),
             memory_samples=performance_data["memory_samples"],
             memory_timestamps=performance_data["timestamps"],
         )

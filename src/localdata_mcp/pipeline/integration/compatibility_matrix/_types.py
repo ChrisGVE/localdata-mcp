@@ -6,11 +6,11 @@ compatibility matrix sub-package.
 """
 
 import time
-from typing import Any, Dict, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, Tuple
 
-from ..interfaces import DataFormat, DomainRequirements, DataFormatSpec
+from ..interfaces import DataFormat, DataFormatSpec, DomainRequirements
 
 
 class CompatibilityLevel(Enum):

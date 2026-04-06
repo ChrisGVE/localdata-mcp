@@ -11,8 +11,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 from scipy import stats
-from statsmodels.tsa.vector_ar.var_model import VAR
 from statsmodels.stats.diagnostic import acorr_ljungbox
+from statsmodels.tsa.vector_ar.var_model import VAR
 
 from ...logging_manager import get_logger
 from ._base import TimeSeriesAnalysisResult, TimeSeriesValidationError

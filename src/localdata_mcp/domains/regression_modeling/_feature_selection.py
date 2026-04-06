@@ -9,9 +9,9 @@ import time
 
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.feature_selection import RFE, RFECV, SelectFromModel
+from sklearn.linear_model import LassoCV, LinearRegression
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
-from sklearn.linear_model import LinearRegression, LassoCV
-from sklearn.feature_selection import SelectFromModel, RFE, RFECV
 
 from ._base import logger
 
@@ -156,12 +156,14 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
                 "n_selected": len(selected_features),
                 "n_original": len(feature_names),
                 "selection_ratio": len(selected_features) / len(feature_names),
-                "feature_importance": feature_importance.tolist()
-                if feature_importance is not None
-                else None,
-                "feature_scores": feature_scores.tolist()
-                if feature_scores is not None
-                else None,
+                "feature_importance": (
+                    feature_importance.tolist()
+                    if feature_importance is not None
+                    else None
+                ),
+                "feature_scores": (
+                    feature_scores.tolist() if feature_scores is not None else None
+                ),
                 "comparison": comparison_results,
             }
 

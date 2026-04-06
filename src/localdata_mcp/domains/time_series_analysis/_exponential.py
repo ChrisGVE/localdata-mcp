@@ -16,7 +16,7 @@ from sklearn.utils.validation import check_is_fitted
 from statsmodels.tsa.seasonal import seasonal_decompose
 
 from ...logging_manager import get_logger
-from ...pipeline.base import PipelineResult, CompositionMetadata
+from ...pipeline.base import CompositionMetadata, PipelineResult
 from ._base import TimeSeriesValidationError
 from ._transformer import TimeSeriesTransformer
 
@@ -387,9 +387,11 @@ class ExponentialSmoothingForecaster(TimeSeriesTransformer):
                 "diagnostics": {
                     "mean_interval_width": interval_width,
                     "training_data_points": len(self.training_data_),
-                    "model_fit_quality": "good"
-                    if self.fitted_model_.aic < len(self.training_data_) * 2
-                    else "moderate",
+                    "model_fit_quality": (
+                        "good"
+                        if self.fitted_model_.aic < len(self.training_data_) * 2
+                        else "moderate"
+                    ),
                 },
                 "interpretation": self._generate_interpretation(
                     forecast_result, confidence_intervals

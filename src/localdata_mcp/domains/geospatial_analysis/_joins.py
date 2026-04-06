@@ -3,8 +3,8 @@ Spatial join and overlay operations for the geospatial analysis domain.
 """
 
 import time
-from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -14,8 +14,8 @@ from sklearn.utils.validation import check_is_fitted
 from ...logging_manager import get_logger
 from ._base import (
     GeospatialLibrary,
-    SpatialJoinType,
     OverlayOperation,
+    SpatialJoinType,
     _dependency_status,
 )
 from ._dependency import GeospatialDependencyChecker
@@ -63,9 +63,9 @@ class OverlayResult:
             "input_counts": self.input_counts,
             "output_count": self.output_count,
             "execution_time_seconds": self.execution_time,
-            "columns": list(self.result_data.columns)
-            if self.result_data is not None
-            else [],
+            "columns": (
+                list(self.result_data.columns) if self.result_data is not None else []
+            ),
         }
 
 

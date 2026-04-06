@@ -1,20 +1,20 @@
 """ConfigManager class and singleton access for LocalData MCP."""
 
 import os
-import time
 import threading
+import time
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
 from .env_loader import load_env_config
 from .loaders import deep_merge, load_yaml_config, validate_config
-from .types import DatabaseType, LogLevel
 from .models import (
     DatabaseConfig,
     LoggingConfig,
     PerformanceConfig,
 )
+from .types import DatabaseType, LogLevel
 
 
 class ConfigManager:

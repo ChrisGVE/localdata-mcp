@@ -4,8 +4,8 @@ Missing Value Handler - Data Types
 Dataclasses used across the missing value handling pipeline.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 

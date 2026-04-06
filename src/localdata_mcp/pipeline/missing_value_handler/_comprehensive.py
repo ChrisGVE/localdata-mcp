@@ -7,8 +7,8 @@ metrics, coverage statistics, data integrity, and artifact detection.
 
 from typing import Any, Dict, List, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from sklearn.model_selection import KFold
 
 from ...logging_manager import get_logger
@@ -111,11 +111,11 @@ class ComprehensiveAssessmentMixin:
         metadata = {
             "cross_validation_results": cv_results,
             "tested_columns": testable_cols[:3],
-            "best_cv_strategy": max(
-                cv_results.keys(), key=lambda k: cv_results[k]["mean_score"]
-            )
-            if cv_results
-            else None,
+            "best_cv_strategy": (
+                max(cv_results.keys(), key=lambda k: cv_results[k]["mean_score"])
+                if cv_results
+                else None
+            ),
         }
 
         return data.copy(), metadata
@@ -218,9 +218,11 @@ class ComprehensiveAssessmentMixin:
         coverage = {
             "original_missing_values": original_missing,
             "remaining_missing_values": current_missing,
-            "imputation_rate": (original_missing - current_missing) / original_missing
-            if original_missing > 0
-            else 1.0,
+            "imputation_rate": (
+                (original_missing - current_missing) / original_missing
+                if original_missing > 0
+                else 1.0
+            ),
             "complete_imputation": current_missing == 0,
         }
 
@@ -243,9 +245,11 @@ class ComprehensiveAssessmentMixin:
                 integrity_checks[col] = {
                     "values_within_original_range": curr_min >= orig_min
                     and curr_max <= orig_max,
-                    "range_expansion": (curr_max - curr_min) / (orig_max - orig_min)
-                    if orig_max != orig_min
-                    else 1.0,
+                    "range_expansion": (
+                        (curr_max - curr_min) / (orig_max - orig_min)
+                        if orig_max != orig_min
+                        else 1.0
+                    ),
                 }
 
         return integrity_checks

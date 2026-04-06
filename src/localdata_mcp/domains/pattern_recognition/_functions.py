@@ -10,10 +10,10 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from ...logging_manager import get_logger
-from ._clustering import ClusteringTransformer
-from ._reduction import DimensionalityReductionTransformer
 from ._anomaly import AnomalyDetectionTransformer
+from ._clustering import ClusteringTransformer
 from ._evaluation import PatternEvaluationTransformer
+from ._reduction import DimensionalityReductionTransformer
 
 logger = get_logger(__name__)
 

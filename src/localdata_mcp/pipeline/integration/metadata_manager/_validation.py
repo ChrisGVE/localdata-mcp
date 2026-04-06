@@ -5,20 +5,20 @@ Provides the _MetadataValidationMixin with validation, preservation rule applica
 merge conflict resolution, metadata change calculation, and lineage ID generation.
 """
 
-from typing import Any, Dict, List, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from ..interfaces import DataFormat, ValidationResult
+from ._transformers import (
+    MetadataTransformer,
+    NumpyMetadataTransformer,
+    PandasMetadataTransformer,
+)
 from ._types import (
     MetadataSchema,
     MetadataType,
     PreservationRule,
     PreservationStrategy,
-)
-from ._transformers import (
-    MetadataTransformer,
-    NumpyMetadataTransformer,
-    PandasMetadataTransformer,
 )
 
 

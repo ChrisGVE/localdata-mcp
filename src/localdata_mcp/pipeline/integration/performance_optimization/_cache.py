@@ -27,8 +27,8 @@ try:
 except ImportError:
     HAS_PANDAS = False
 
-from ..interfaces import ConversionRequest, ConversionResult
 from ....logging_manager import get_logger
+from ..interfaces import ConversionRequest, ConversionResult
 from ._types import CachedConversion, CacheEvictionPolicy, CacheStatistics
 
 logger = get_logger(__name__)

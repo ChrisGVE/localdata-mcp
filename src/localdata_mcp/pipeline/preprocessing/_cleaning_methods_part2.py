@@ -116,9 +116,9 @@ def _advanced_outlier_detection(
         "records_affected": records_affected,
         "outlier_log": outlier_log,
         "reversibility_data": {
-            "outlier_indices": combined_outliers
-            if "combined_outliers" in locals()
-            else []
+            "outlier_indices": (
+                combined_outliers if "combined_outliers" in locals() else []
+            )
         },
     }
 

@@ -108,12 +108,12 @@ def validate_config(config_data: Dict[str, Any]) -> None:
         print(f"Configuration validation errors: {e}")
 
     from ..config_schemas import (
-        StagingConfig,
+        ConnectionsConfig,
+        DiskBudgetConfig,
         MemoryConfig,
         QueryConfig,
-        ConnectionsConfig,
         SecurityConfig,
-        DiskBudgetConfig,
+        StagingConfig,
     )
 
     for section, cls in [

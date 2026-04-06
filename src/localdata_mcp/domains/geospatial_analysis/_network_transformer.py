@@ -11,9 +11,9 @@ from sklearn.utils.validation import check_is_fitted
 
 from ...logging_manager import get_logger
 from ._base import NetworkAnalysisType
-from ._network import RouteResult, AccessibilityResult, IsochroneResult, SpatialNetwork
-from ._network_analysis import NetworkRouter, AccessibilityAnalyzer
 from ._isochrone import IsochroneGenerator
+from ._network import AccessibilityResult, IsochroneResult, RouteResult, SpatialNetwork
+from ._network_analysis import AccessibilityAnalyzer, NetworkRouter
 
 logger = get_logger(__name__)
 

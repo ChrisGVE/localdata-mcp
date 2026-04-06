@@ -7,8 +7,8 @@ correlation preservation, and overall quality scoring.
 
 from typing import Any, Dict, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from scipy import stats
 
 from ...logging_manager import get_logger

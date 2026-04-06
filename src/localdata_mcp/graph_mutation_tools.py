@@ -13,7 +13,6 @@ from .graph_manager import GraphStorageManager
 from .graph_storage import GraphProperty
 from .tree_storage import ValueType, deserialize_value, infer_value_type_from_string
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

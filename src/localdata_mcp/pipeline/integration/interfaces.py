@@ -5,33 +5,33 @@ This module defines the fundamental interfaces, data structures, and abstract
 base classes that form the foundation of the integration system.
 """
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union, Iterator
-import time
 from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 from ..base import PipelineError
 
 
 class DataFormat(Enum):
     """Enumeration of all supported data formats across domains."""
-    
+
     # Basic data structures
     PANDAS_DATAFRAME = "pandas_dataframe"
     NUMPY_ARRAY = "numpy_array"
     SCIPY_SPARSE = "scipy_sparse_matrix"
     PYTHON_LIST = "python_list"
     PYTHON_DICT = "python_dict"
-    
+
     # Specialized scientific formats
     TIME_SERIES = "time_series"
     GEOSPATIAL = "geospatial"
     CATEGORICAL = "categorical"
     MIXED_TYPES = "mixed_types"
     HIERARCHICAL = "hierarchical"
-    
+
     # Domain-specific result formats
     STATISTICAL_RESULT = "statistical_result"
     REGRESSION_MODEL = "regression_model"
@@ -41,19 +41,19 @@ class DataFormat(Enum):
     PATTERN_RECOGNITION_RESULT = "pattern_recognition_result"
     GEOSPATIAL_RESULT = "geospatial_result"
     BUSINESS_INTELLIGENCE_RESULT = "business_intelligence_result"
-    
+
     # Complex multi-dimensional formats
     MULTI_INDEX = "multi_index"
     MULTI_LEVEL = "multi_level"
     STREAMING = "streaming"
     CHUNKED = "chunked"
-    
+
     # File-like formats
     JSON = "json"
     CSV = "csv"
     PARQUET = "parquet"
     HDF5 = "hdf5"
-    
+
     # Unknown or auto-detect
     UNKNOWN = "unknown"
     AUTO_DETECT = "auto_detect"
@@ -62,6 +62,7 @@ class DataFormat(Enum):
 @dataclass
 class MemoryConstraints:
     """Memory constraints for conversion operations."""
+
     max_memory_mb: Optional[int] = None
     prefer_streaming: bool = False
     chunk_size: Optional[int] = None
@@ -71,6 +72,7 @@ class MemoryConstraints:
 @dataclass
 class PerformanceRequirements:
     """Performance requirements for conversion operations."""
+
     max_execution_time_seconds: Optional[float] = None
     prefer_parallel: bool = False
     cpu_intensive_allowed: bool = True
@@ -80,6 +82,7 @@ class PerformanceRequirements:
 @dataclass
 class DataFormatSpec:
     """Specification of data format requirements and constraints."""
+
     format_type: DataFormat
     schema_requirements: Dict[str, Any] = field(default_factory=dict)
     memory_constraints: Optional[MemoryConstraints] = None
@@ -91,6 +94,7 @@ class DataFormatSpec:
 @dataclass
 class ConversionContext:
     """Context information for conversion operations."""
+
     source_domain: str
     target_domain: str
     user_intention: str = ""
@@ -102,11 +106,16 @@ class ConversionContext:
 @dataclass
 class ConversionRequest:
     """Request for data format conversion between domains."""
+
     source_data: Any
     source_format: DataFormat
     target_format: DataFormat
     metadata: Dict[str, Any] = field(default_factory=dict)
-    context: ConversionContext = field(default_factory=lambda: ConversionContext(source_domain='unknown', target_domain='unknown'))
+    context: ConversionContext = field(
+        default_factory=lambda: ConversionContext(
+            source_domain="unknown", target_domain="unknown"
+        )
+    )
     format_spec: Optional[DataFormatSpec] = None
     request_id: str = field(default_factory=lambda: f"req_{int(time.time() * 1000)}")
     timestamp: datetime = field(default_factory=datetime.now)
@@ -115,6 +124,7 @@ class ConversionRequest:
 @dataclass
 class ConversionCost:
     """Estimated or actual cost of a conversion operation."""
+
     computational_cost: float  # Relative cost (0-1 scale)
     memory_cost_mb: float
     time_estimate_seconds: float
@@ -126,6 +136,7 @@ class ConversionCost:
 @dataclass
 class ConversionResult:
     """Result of a data format conversion operation."""
+
     converted_data: Any
     success: bool
     original_format: DataFormat
@@ -146,6 +157,7 @@ class ConversionResult:
 @dataclass
 class ConversionStep:
     """Single step in a multi-step conversion path."""
+
     adapter_id: str
     source_format: DataFormat
     target_format: DataFormat
@@ -157,6 +169,7 @@ class ConversionStep:
 @dataclass
 class ConversionPath:
     """Complete path for converting between two formats."""
+
     source_format: DataFormat
     target_format: DataFormat
     steps: List[ConversionStep]
@@ -167,7 +180,7 @@ class ConversionPath:
 
 class ConversionError(PipelineError):
     """Base class for conversion-related errors."""
-    
+
     class Type(Enum):
         TYPE_MISMATCH = "type_mismatch"
         SCHEMA_INVALID = "schema_invalid"
@@ -177,23 +190,27 @@ class ConversionError(PipelineError):
         CONVERSION_FAILED = "conversion_failed"
         METADATA_LOSS = "metadata_loss"
         QUALITY_DEGRADED = "quality_degraded"
-    
-    def __init__(self, error_type: Type, message: str, context: Optional[Dict[str, Any]] = None):
+
+    def __init__(
+        self, error_type: Type, message: str, context: Optional[Dict[str, Any]] = None
+    ):
         self.error_type = error_type
         self._conversion_context = context or {}
         # PipelineError requires classification and pipeline_stage
         from ..base import ErrorClassification
+
         super().__init__(
             message,
             classification=ErrorClassification.DATA_QUALITY_FAILURE,
             pipeline_stage="conversion",
-            context=self._conversion_context
+            context=self._conversion_context,
         )
 
 
 @dataclass
 class ValidationResult:
     """Result of validation operations."""
+
     is_valid: bool
     score: float  # 0-1 validation score
     errors: List[str] = field(default_factory=list)
@@ -205,6 +222,7 @@ class ValidationResult:
 @dataclass
 class CompatibilityScore:
     """Score representing compatibility between two components."""
+
     score: float  # 0-1 compatibility score
     direct_compatible: bool
     conversion_required: bool
@@ -215,77 +233,78 @@ class CompatibilityScore:
 
 # Abstract Base Classes
 
+
 class ShimAdapter(ABC):
     """Abstract base class for all integration shim adapters."""
-    
+
     def __init__(self, adapter_id: str):
         self.adapter_id = adapter_id
         self.supported_conversions: List[Tuple[DataFormat, DataFormat]] = []
         self.performance_profile: Dict[str, Any] = {}
         self.quality_profile: Dict[str, Any] = {}
-    
+
     @abstractmethod
     def can_convert(self, request: ConversionRequest) -> float:
         """
         Return confidence score (0-1) for handling this conversion.
-        
+
         Args:
             request: Conversion request to evaluate
-            
+
         Returns:
             Confidence score (0 = cannot handle, 1 = perfect match)
         """
         pass
-    
+
     @abstractmethod
     def convert(self, request: ConversionRequest) -> ConversionResult:
         """
         Perform the data conversion.
-        
+
         Args:
             request: Conversion request with all parameters
-            
+
         Returns:
             Conversion result with converted data and metadata
         """
         pass
-    
+
     @abstractmethod
     def estimate_cost(self, request: ConversionRequest) -> ConversionCost:
         """
         Estimate computational cost of conversion.
-        
+
         Args:
             request: Conversion request to estimate
-            
+
         Returns:
             Estimated cost breakdown
         """
         pass
-    
+
     @abstractmethod
     def get_supported_conversions(self) -> List[Tuple[DataFormat, DataFormat]]:
         """
         Return list of supported conversion paths.
-        
+
         Returns:
             List of (source_format, target_format) tuples
         """
         pass
-    
+
     def validate_request(self, request: ConversionRequest) -> ValidationResult:
         """
         Validate conversion request before processing.
-        
+
         Args:
             request: Request to validate
-            
+
         Returns:
             Validation result with errors and warnings
         """
         errors = []
         warnings = []
-        
+
         # Check if conversion is supported (pass-through always allowed)
         if request.source_format == request.target_format:
             conversion_supported = True
@@ -295,30 +314,32 @@ class ShimAdapter(ABC):
                 source == request.source_format and target == request.target_format
                 for source, target in supported_conversions
             )
-        
+
         if not conversion_supported:
-            errors.append(f"Conversion from {request.source_format} to {request.target_format} not supported")
-        
+            errors.append(
+                f"Conversion from {request.source_format} to {request.target_format} not supported"
+            )
+
         # Validate source data
         if request.source_data is None:
             errors.append("Source data cannot be None")
-        
+
         return ValidationResult(
             is_valid=len(errors) == 0,
             score=1.0 if len(errors) == 0 else 0.0,
             errors=errors,
-            warnings=warnings
+            warnings=warnings,
         )
 
 
 class TypeDetector(ABC):
     """Abstract base class for data type detection."""
-    
+
     @abstractmethod
-    def detect_format(self, data: Any) -> 'FormatDetectionResult':  # noqa: F821
+    def detect_format(self, data: Any) -> "FormatDetectionResult":  # noqa: F821
         """Detect the format of input data."""
         pass
-    
+
     @abstractmethod
     def get_confidence_threshold(self) -> float:
         """Get minimum confidence threshold for detection."""
@@ -327,18 +348,19 @@ class TypeDetector(ABC):
 
 class MetadataPreserver(ABC):
     """Abstract base class for metadata preservation."""
-    
+
     @abstractmethod
     def extract_metadata(self, data: Any, format_type: DataFormat) -> Dict[str, Any]:
         """Extract metadata from data."""
         pass
-    
+
     @abstractmethod
-    def apply_metadata(self, data: Any, metadata: Dict[str, Any], 
-                      target_format: DataFormat) -> Any:
+    def apply_metadata(
+        self, data: Any, metadata: Dict[str, Any], target_format: DataFormat
+    ) -> Any:
         """Apply metadata to converted data."""
         pass
-    
+
     @abstractmethod
     def merge_metadata(self, metadata_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Merge metadata from multiple sources."""
@@ -347,44 +369,49 @@ class MetadataPreserver(ABC):
 
 class ConversionRegistry(ABC):
     """Abstract base class for conversion registry."""
-    
+
     @abstractmethod
     def register_adapter(self, adapter: ShimAdapter) -> None:
         """Register a conversion adapter."""
         pass
-    
+
     @abstractmethod
     def get_adapter(self, adapter_id: str) -> Optional[ShimAdapter]:
         """Get adapter by ID."""
         pass
-    
+
     @abstractmethod
-    def find_conversion_path(self, source_format: DataFormat, 
-                           target_format: DataFormat) -> Optional[ConversionPath]:
+    def find_conversion_path(
+        self, source_format: DataFormat, target_format: DataFormat
+    ) -> Optional[ConversionPath]:
         """Find optimal conversion path between formats."""
         pass
-    
+
     @abstractmethod
-    def get_compatible_adapters(self, request: ConversionRequest) -> List[Tuple[ShimAdapter, float]]:
+    def get_compatible_adapters(
+        self, request: ConversionRequest
+    ) -> List[Tuple[ShimAdapter, float]]:
         """Get adapters that can handle the request with confidence scores."""
         pass
 
 
 class CompatibilityMatrix(ABC):
     """Abstract base class for compatibility matrix."""
-    
+
     @abstractmethod
-    def get_compatibility(self, source_format: DataFormat, 
-                         target_format: DataFormat) -> CompatibilityScore:
+    def get_compatibility(
+        self, source_format: DataFormat, target_format: DataFormat
+    ) -> CompatibilityScore:
         """Get compatibility score between formats."""
         pass
-    
+
     @abstractmethod
-    def register_domain_requirements(self, domain_name: str, 
-                                   requirements: DataFormatSpec) -> None:
+    def register_domain_requirements(
+        self, domain_name: str, requirements: DataFormatSpec
+    ) -> None:
         """Register domain's format requirements."""
         pass
-    
+
     @abstractmethod
     def validate_pipeline(self, pipeline_steps: List[str]) -> ValidationResult:
         """Validate pipeline compatibility."""
@@ -393,9 +420,11 @@ class CompatibilityMatrix(ABC):
 
 # Utility Classes
 
+
 @dataclass
 class DomainRequirements:
     """Requirements specification for a domain."""
+
     domain_name: str
     input_formats: List[DataFormat]
     output_formats: List[DataFormat]
@@ -409,6 +438,7 @@ class DomainRequirements:
 @dataclass
 class AdapterProfile:
     """Profile information for a shim adapter."""
+
     adapter_id: str
     name: str
     description: str
@@ -423,6 +453,7 @@ class AdapterProfile:
 @dataclass
 class ConversionStats:
     """Statistics for conversion operations."""
+
     total_conversions: int = 0
     successful_conversions: int = 0
     failed_conversions: int = 0
@@ -435,58 +466,53 @@ class ConversionStats:
 
 # Factory Functions
 
-def create_conversion_request(source_data: Any, 
-                            source_format: DataFormat, 
-                            target_format: DataFormat,
-                            **kwargs) -> ConversionRequest:
+
+def create_conversion_request(
+    source_data: Any, source_format: DataFormat, target_format: DataFormat, **kwargs
+) -> ConversionRequest:
     """Factory function to create a conversion request."""
     # Create context with appropriate domains if not provided
-    if 'context' not in kwargs:
+    if "context" not in kwargs:
         context = ConversionContext(
-            source_domain=source_format.value.split('_')[0],  # Use format prefix as domain
-            target_domain=target_format.value.split('_')[0],
-            user_intention=f"Convert {source_format.value} to {target_format.value}"
+            source_domain=source_format.value.split("_")[
+                0
+            ],  # Use format prefix as domain
+            target_domain=target_format.value.split("_")[0],
+            user_intention=f"Convert {source_format.value} to {target_format.value}",
         )
-        kwargs['context'] = context
-    
+        kwargs["context"] = context
+
     return ConversionRequest(
         source_data=source_data,
         source_format=source_format,
         target_format=target_format,
-        **kwargs
+        **kwargs,
     )
 
 
-def create_format_spec(format_type: DataFormat, 
-                      **requirements) -> DataFormatSpec:
+def create_format_spec(format_type: DataFormat, **requirements) -> DataFormatSpec:
     """Factory function to create a format specification."""
-    return DataFormatSpec(
-        format_type=format_type,
-        **requirements
-    )
+    return DataFormatSpec(format_type=format_type, **requirements)
 
 
 # Constants
 
 DEFAULT_MEMORY_CONSTRAINTS = MemoryConstraints(
-    max_memory_mb=1024,
-    prefer_streaming=False,
-    chunk_size=10000,
-    memory_efficient=True
+    max_memory_mb=1024, prefer_streaming=False, chunk_size=10000, memory_efficient=True
 )
 
 DEFAULT_PERFORMANCE_REQUIREMENTS = PerformanceRequirements(
     max_execution_time_seconds=300,
     prefer_parallel=True,
     cpu_intensive_allowed=True,
-    io_intensive_allowed=True
+    io_intensive_allowed=True,
 )
 
 # Conversion quality thresholds
 QUALITY_THRESHOLDS = {
-    'excellent': 0.95,
-    'good': 0.8,
-    'acceptable': 0.6,
-    'poor': 0.4,
-    'unacceptable': 0.2
+    "excellent": 0.95,
+    "good": 0.8,
+    "acceptable": 0.6,
+    "poor": 0.4,
+    "unacceptable": 0.2,
 }

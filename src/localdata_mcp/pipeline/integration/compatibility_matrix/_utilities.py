@@ -7,9 +7,8 @@ Provides convenient creation functions and pipeline analysis utilities.
 from typing import List, Optional
 
 from ..interfaces import DataFormat, ValidationResult
-from ._types import DomainProfile
 from ._matrix import PipelineCompatibilityMatrix
-
+from ._types import DomainProfile
 
 # Factory Functions
 

@@ -7,24 +7,24 @@ validation for LocalData MCP domains with LLM-friendly interfaces.
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from ....logging_manager import get_logger
 from ..interfaces import (
-    DataFormat,
     CompatibilityMatrix,
     CompatibilityScore,
     ConversionPath,
-    ValidationResult,
+    DataFormat,
     DomainRequirements,
+    ValidationResult,
 )
-from ....logging_manager import get_logger
-from ._types import CompatibilityLevel, DomainProfile
 from ._domains import build_standard_domain_profiles
 from ._scoring import (
     build_format_compatibility_matrix,
     calculate_compatibility_score,
     find_conversion_path,
-    identify_compatibility_issues,
     generate_recommendations,
+    identify_compatibility_issues,
 )
+from ._types import CompatibilityLevel, DomainProfile
 
 logger = get_logger(__name__)
 

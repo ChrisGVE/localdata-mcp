@@ -13,12 +13,12 @@ from sklearn.utils.validation import check_is_fitted
 from ...logging_manager import get_logger
 from ._base import (
     GeospatialLibrary,
-    SpatialJoinType,
     OverlayOperation,
+    SpatialJoinType,
     _dependency_status,
 )
 from ._dependency import GeospatialDependencyChecker
-from ._joins import SpatialJoinEngine, SpatialJoinResult, OverlayResult
+from ._joins import OverlayResult, SpatialJoinEngine, SpatialJoinResult
 
 logger = get_logger(__name__)
 

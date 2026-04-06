@@ -8,18 +8,18 @@ hyperparameter tuning via cross-validation and comprehensive evaluation.
 import time
 
 import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin
-from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-from sklearn.model_selection import cross_val_score
+from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
 from sklearn.linear_model import (
-    Ridge,
-    Lasso,
     ElasticNet,
-    RidgeCV,
-    LassoCV,
     ElasticNetCV,
+    Lasso,
+    LassoCV,
+    Ridge,
+    RidgeCV,
 )
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import cross_val_score
+from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 from ._base import RegressionModelResult, logger
 

@@ -2,16 +2,16 @@
 SchemaEvolutionManager class.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
+from ....logging_manager import get_logger
+from ._inference import SchemaInferenceEngine
+from ._schema import DataSchema
 from ._types import (
     SchemaConstraint,
     ValidationRuleType,
 )
-from ._schema import DataSchema
-from ._inference import SchemaInferenceEngine
-from ....logging_manager import get_logger
 
 logger = get_logger(__name__)
 

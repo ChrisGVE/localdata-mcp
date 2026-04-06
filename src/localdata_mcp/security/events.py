@@ -11,7 +11,7 @@ from typing import Any, Deque, Dict, List, Optional
 
 import psutil
 
-from ..logging_manager import get_logging_manager, get_logger
+from ..logging_manager import get_logger, get_logging_manager
 from .models import (
     RateLimitState,
     SecurityConfig,

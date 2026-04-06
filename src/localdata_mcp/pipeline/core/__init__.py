@@ -9,9 +9,9 @@ This package provides the foundational pipeline classes:
 - SklearnStreamingAdapter: Bridge between sklearn and StreamingQueryExecutor
 """
 
-from .pipeline_class import DataSciencePipeline, DataFrameStreamingSource
 from .composer import PipelineComposer
-from .streaming import StreamingDataPipeline, SklearnStreamingAdapter
+from .pipeline_class import DataFrameStreamingSource, DataSciencePipeline
+from .streaming import SklearnStreamingAdapter, StreamingDataPipeline
 
 __all__ = [
     "DataSciencePipeline",

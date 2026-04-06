@@ -7,8 +7,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.utils.validation import check_is_fitted
 from scipy.optimize import linprog
+from sklearn.utils.validation import check_is_fitted
 
 from ...logging_manager import get_logger
 from ...pipeline.base import (

@@ -3,8 +3,8 @@ Geometric operations and spatial indexing for the geospatial analysis domain.
 """
 
 import math
-from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -44,16 +44,16 @@ class _GeometricOperationsBase:
 
         if self.shapely_available:
             try:
+                import shapely.speedups
+                from shapely import affinity, validation
                 from shapely.geometry import (
-                    Point,
-                    Polygon,
                     LineString,
                     MultiPoint,
                     MultiPolygon,
+                    Point,
+                    Polygon,
                 )
                 from shapely.ops import cascaded_union, unary_union
-                from shapely import affinity, validation
-                import shapely.speedups
 
                 if shapely.speedups.available:
                     shapely.speedups.enable()
@@ -67,9 +67,11 @@ class _GeometricOperationsBase:
                 }
                 self.shapely_ops = {
                     "unary_union": unary_union,
-                    "cascaded_union": cascaded_union
-                    if hasattr(shapely.ops, "cascaded_union")
-                    else unary_union,
+                    "cascaded_union": (
+                        cascaded_union
+                        if hasattr(shapely.ops, "cascaded_union")
+                        else unary_union
+                    ),
                 }
                 self.shapely_affinity = affinity
                 self.shapely_validation = validation
@@ -263,9 +265,11 @@ class _GeometricOperationsBase:
                 "hull_vertices": len(hull_coords),
                 "approximated": not self.shapely_available,
             },
-            warnings=["Using Graham scan algorithm (Shapely not available)"]
-            if not self.shapely_available
-            else [],
+            warnings=(
+                ["Using Graham scan algorithm (Shapely not available)"]
+                if not self.shapely_available
+                else []
+            ),
         )
 
     def _graham_scan(

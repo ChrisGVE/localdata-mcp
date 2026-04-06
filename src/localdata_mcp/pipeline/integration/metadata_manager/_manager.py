@@ -5,13 +5,16 @@ Implements the MetadataPreserver interface providing metadata extraction,
 application, merging, transformation, validation, and lineage tracking.
 """
 
-from typing import Any, Dict, List, Optional
 from datetime import datetime
-import pandas as pd
-import numpy as np
+from typing import Any, Dict, List, Optional
 
-from ..interfaces import DataFormat, MetadataPreserver, ValidationResult
+import numpy as np
+import pandas as pd
+
 from ....logging_manager import get_logger
+from ..interfaces import DataFormat, MetadataPreserver, ValidationResult
+from ._extraction import _MetadataExtractionMixin
+from ._transformers import MetadataTransformer
 from ._types import (
     MetadataLineage,
     MetadataSchema,
@@ -19,8 +22,6 @@ from ._types import (
     PreservationRule,
     PreservationStrategy,
 )
-from ._transformers import MetadataTransformer
-from ._extraction import _MetadataExtractionMixin
 from ._validation import _MetadataValidationMixin
 
 logger = get_logger(__name__)

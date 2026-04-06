@@ -139,9 +139,11 @@ class NetworkAnalyzer(AnalysisPipelineBase):
                 "num_nodes": self.graph_.number_of_nodes(),
                 "num_edges": self.graph_.number_of_edges(),
                 "is_directed": nx.is_directed(self.graph_),
-                "is_connected": nx.is_connected(self.graph_)
-                if not nx.is_directed(self.graph_)
-                else nx.is_weakly_connected(self.graph_),
+                "is_connected": (
+                    nx.is_connected(self.graph_)
+                    if not nx.is_directed(self.graph_)
+                    else nx.is_weakly_connected(self.graph_)
+                ),
                 "density": nx.density(self.graph_),
             }
 

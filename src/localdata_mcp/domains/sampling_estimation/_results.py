@@ -5,30 +5,30 @@ Standardized result structures for sampling, bootstrap, Monte Carlo,
 and Bayesian estimation operations.
 """
 
-import warnings
-from typing import Any, Dict, List, Optional, Tuple, Union, Callable
-from dataclasses import dataclass, field
-import time
 import json
+import time
+import warnings
 from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.stats import bootstrap
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.utils.validation import check_array, check_is_fitted
-from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.cluster import KMeans
+from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.utils.validation import check_array, check_is_fitted
 
 try:
     from ...logging_manager import get_logger
     from ...pipeline.base import (
         AnalysisPipelineBase,
-        PipelineResult,
         CompositionMetadata,
-        StreamingConfig,
+        PipelineResult,
         PipelineState,
+        StreamingConfig,
     )
 except ImportError:
     # For testing and standalone usage

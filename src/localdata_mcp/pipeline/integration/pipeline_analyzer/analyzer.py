@@ -5,23 +5,22 @@ Analyzes pipeline chains to identify format incompatibilities, performance bottl
 and optimization opportunities with detailed reporting and recommendations.
 """
 
-import time
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Tuple
 
-from ..interfaces import ConversionRequest, ConversionCost
-from ..compatibility_matrix import PipelineCompatibilityMatrix
-from ..shim_registry import ShimRegistry
 from ....logging_manager import get_logger
-
+from ..compatibility_matrix import PipelineCompatibilityMatrix
+from ..interfaces import ConversionCost, ConversionRequest
+from ..shim_registry import ShimRegistry
 from .types import (
     AnalysisType,
-    PipelineStep,
-    PipelineConnection,
     IncompatibilityIssue,
-    ShimRecommendation,
     PipelineAnalysisResult,
+    PipelineConnection,
+    PipelineStep,
+    ShimRecommendation,
 )
 
 logger = get_logger(__name__)
@@ -282,9 +281,11 @@ class PipelineAnalyzer:
                     severity=severity,
                     description=description,
                     suggested_solutions=solutions,
-                    cost_estimate=connection.conversion_path.total_cost
-                    if connection.conversion_path
-                    else None,
+                    cost_estimate=(
+                        connection.conversion_path.total_cost
+                        if connection.conversion_path
+                        else None
+                    ),
                 )
 
                 issues.append(issue)

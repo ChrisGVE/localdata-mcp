@@ -14,22 +14,23 @@ Key Features:
 - Comprehensive result formatting
 """
 
+from ._anova import ANOVAAnalysisTransformer
+
 # Base types
 from ._base import StatisticalTestResult
-
-# Transformers
-from ._hypothesis import HypothesisTestingTransformer
-from ._anova import ANOVAAnalysisTransformer
-from ._nonparametric import NonParametricTestTransformer
 from ._experimental import ExperimentalDesignTransformer
 
 # Convenience functions
 from ._functions import (
-    run_hypothesis_test,
-    perform_anova,
     analyze_experiment_design,
     calculate_effect_sizes,
+    perform_anova,
+    run_hypothesis_test,
 )
+
+# Transformers
+from ._hypothesis import HypothesisTestingTransformer
+from ._nonparametric import NonParametricTestTransformer
 
 __all__ = [
     "StatisticalTestResult",

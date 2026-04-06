@@ -5,8 +5,8 @@ Comprehensive result containers for clustering, dimensionality reduction,
 anomaly detection, and pattern evaluation analyses.
 """
 
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -46,14 +46,18 @@ class ClusteringResult:
             "algorithm": self.algorithm,
             "n_clusters": self.n_clusters,
             "labels": self.labels.tolist() if self.labels is not None else None,
-            "cluster_centers": self.cluster_centers.tolist()
-            if self.cluster_centers is not None
-            else None,
+            "cluster_centers": (
+                self.cluster_centers.tolist()
+                if self.cluster_centers is not None
+                else None
+            ),
             "inertia": self.inertia,
             "silhouette_avg": self.silhouette_avg,
-            "silhouette_samples": self.silhouette_samples.tolist()
-            if self.silhouette_samples is not None
-            else None,
+            "silhouette_samples": (
+                self.silhouette_samples.tolist()
+                if self.silhouette_samples is not None
+                else None
+            ),
             "calinski_harabasz": self.calinski_harabasz,
             "davies_bouldin": self.davies_bouldin,
             "adjusted_rand_score": self.adjusted_rand_score,
@@ -103,18 +107,24 @@ class DimensionalityReductionResult:
             "original_dimensions": self.original_dimensions,
             "reduced_dimensions": self.reduced_dimensions,
             "transformed_data": self.transformed_data.tolist(),
-            "explained_variance_ratio": self.explained_variance_ratio.tolist()
-            if self.explained_variance_ratio is not None
-            else None,
-            "cumulative_variance_ratio": self.cumulative_variance_ratio.tolist()
-            if self.cumulative_variance_ratio is not None
-            else None,
-            "singular_values": self.singular_values.tolist()
-            if self.singular_values is not None
-            else None,
-            "components": self.components.tolist()
-            if self.components is not None
-            else None,
+            "explained_variance_ratio": (
+                self.explained_variance_ratio.tolist()
+                if self.explained_variance_ratio is not None
+                else None
+            ),
+            "cumulative_variance_ratio": (
+                self.cumulative_variance_ratio.tolist()
+                if self.cumulative_variance_ratio is not None
+                else None
+            ),
+            "singular_values": (
+                self.singular_values.tolist()
+                if self.singular_values is not None
+                else None
+            ),
+            "components": (
+                self.components.tolist() if self.components is not None else None
+            ),
             "reconstruction_error": self.reconstruction_error,
             "kl_divergence": self.kl_divergence,
             "trustworthiness": self.trustworthiness,
@@ -163,9 +173,11 @@ class AnomalyDetectionResult:
             "n_samples": self.n_samples,
             "n_anomalies": self.n_anomalies,
             "anomaly_labels": self.anomaly_labels.tolist(),
-            "anomaly_scores": self.anomaly_scores.tolist()
-            if self.anomaly_scores is not None
-            else None,
+            "anomaly_scores": (
+                self.anomaly_scores.tolist()
+                if self.anomaly_scores is not None
+                else None
+            ),
             "threshold": self.threshold,
             "contamination": self.contamination,
             "precision": self.precision,

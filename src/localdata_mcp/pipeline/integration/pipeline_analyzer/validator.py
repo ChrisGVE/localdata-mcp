@@ -10,17 +10,16 @@ from typing import Any, Dict, List
 
 import networkx as nx
 
+from ....logging_manager import get_logger
 from ..compatibility_matrix import PipelineCompatibilityMatrix
 from ..shim_registry import ShimRegistry
-from ....logging_manager import get_logger
-
+from .analyzer import PipelineAnalyzer
+from .injector import ShimInjector
 from .types import (
     AnalysisType,
     InjectionStrategy,
     PipelineStep,
 )
-from .analyzer import PipelineAnalyzer
-from .injector import ShimInjector
 
 logger = get_logger(__name__)
 

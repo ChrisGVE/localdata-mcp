@@ -2,10 +2,10 @@
 Schema validation types: enums and dataclasses.
 """
 
-from typing import Any, Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
@@ -91,7 +91,9 @@ class SchemaInferenceResult:
     # Inference metrics
     sample_size: int = 0
     inference_time: float = 0.0
-    alternative_schemas: List[Tuple["DataSchema", float]]  # noqa: F821 = field(default_factory=list)
+    alternative_schemas: List[Tuple["DataSchema", float]] = field(  # noqa: F821
+        default_factory=list
+    )
 
     # Quality assessment
     data_quality_score: float = 1.0

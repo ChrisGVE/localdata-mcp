@@ -5,18 +5,18 @@ SchemaInferenceEngine class.
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from scipy import sparse
 
 from ..interfaces import DataFormat
 from ..type_detection import TypeDetectionEngine
+from ._schema import DataSchema
 from ._types import (
     SchemaConstraint,
     SchemaInferenceResult,
     ValidationRuleType,
 )
-from ._schema import DataSchema
 
 
 class SchemaInferenceEngine:
@@ -333,9 +333,11 @@ class SchemaInferenceEngine:
                 "shape": data.shape,
                 "format": data.format,
                 "nnz": data.nnz,
-                "density": data.nnz / (data.shape[0] * data.shape[1])
-                if data.shape[0] * data.shape[1] > 0
-                else 0,
+                "density": (
+                    data.nnz / (data.shape[0] * data.shape[1])
+                    if data.shape[0] * data.shape[1] > 0
+                    else 0
+                ),
                 "nullable": True,
             }
         }

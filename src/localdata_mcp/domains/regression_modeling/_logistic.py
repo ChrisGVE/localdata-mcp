@@ -10,9 +10,9 @@ import time
 import numpy as np
 from scipy import stats
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
-from sklearn.model_selection import cross_val_score
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score
+from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 from ._base import RegressionModelResult, logger
 
@@ -57,9 +57,9 @@ class LogisticRegressionTransformer(BaseEstimator, TransformerMixin):
         """Compute classification metrics: accuracy, precision, recall, f1."""
         from sklearn.metrics import (
             accuracy_score,
+            f1_score,
             precision_score,
             recall_score,
-            f1_score,
         )
 
         accuracy = accuracy_score(y, y_pred)

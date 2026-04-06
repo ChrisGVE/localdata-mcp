@@ -7,8 +7,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import OptimizeResult, differential_evolution, minimize
 from sklearn.utils.validation import check_is_fitted
-from scipy.optimize import minimize, differential_evolution, OptimizeResult
 
 from ...logging_manager import get_logger
 from ...pipeline.base import (

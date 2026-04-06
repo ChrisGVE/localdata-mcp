@@ -101,9 +101,9 @@ class AnomalyDetector(TimeSeriesTransformer):
             "window_size": self.window_size,
             "seasonal_adjustment_applied": self.seasonal_adjustment
             and seasonal_component is not None,
-            "seasonal_component": seasonal_component.tolist()
-            if seasonal_component is not None
-            else None,
+            "seasonal_component": (
+                seasonal_component.tolist() if seasonal_component is not None else None
+            ),
         }
         model_diagnostics = {
             "anomaly_statistics": anomaly_stats,
@@ -420,9 +420,7 @@ class AnomalyDetector(TimeSeriesTransformer):
         analysis["anomaly_bias"] = (
             "high"
             if len(high_anomalies) > len(low_anomalies)
-            else "low"
-            if len(low_anomalies) > len(high_anomalies)
-            else "balanced"
+            else "low" if len(low_anomalies) > len(high_anomalies) else "balanced"
         )
 
         return analysis

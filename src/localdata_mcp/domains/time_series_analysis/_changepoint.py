@@ -393,12 +393,12 @@ class ChangePointDetector(TimeSeriesTransformer):
         """Calculate quality metrics for change point detection."""
         metrics = {
             "n_changepoints": len(changepoints),
-            "changepoint_density": len(changepoints) / len(series)
-            if len(series) > 0
-            else 0,
-            "avg_segment_length": len(series) / (len(changepoints) + 1)
-            if changepoints
-            else len(series),
+            "changepoint_density": (
+                len(changepoints) / len(series) if len(series) > 0 else 0
+            ),
+            "avg_segment_length": (
+                len(series) / (len(changepoints) + 1) if changepoints else len(series)
+            ),
             "detection_confidence": self.confidence_level,
         }
 

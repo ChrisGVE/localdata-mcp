@@ -9,15 +9,15 @@ streaming compatibility.
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, OrdinalEncoder
 
+from ...logging_manager import get_logger
 from ..base import (
     AnalysisPipelineBase,
     StreamingConfig,
 )
-from ...logging_manager import get_logger
 
 logger = get_logger(__name__)
 
@@ -340,9 +340,9 @@ class CategoricalEncodingPipeline(AnalysisPipelineBase):
             "encoded_columns_created": len(encoded_columns),
             "encoders_fitted": len(self._encoders),
             "memory_increase_mb": data.memory_usage(deep=True).sum() / (1024 * 1024),
-            "encoding_quality": "good"
-            if len(encoded_columns) > 0
-            else "no_encoding_applied",
+            "encoding_quality": (
+                "good" if len(encoded_columns) > 0 else "no_encoding_applied"
+            ),
         }
 
         metadata = {

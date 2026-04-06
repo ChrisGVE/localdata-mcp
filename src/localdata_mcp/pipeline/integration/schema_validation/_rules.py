@@ -2,14 +2,14 @@
 Validation rule classes: ABC and concrete implementations.
 """
 
-from typing import Any, Dict, List, Optional, Union
 from abc import ABC, abstractmethod
-from datetime import datetime, date
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Union
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-from ._types import ValidationRuleType, ValidationError
+from ._types import ValidationError, ValidationRuleType
 
 
 class ValidationRule(ABC):
