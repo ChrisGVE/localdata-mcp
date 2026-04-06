@@ -66,115 +66,93 @@ class SeasonalAnomalyDetector(TimeSeriesTransformer):
         self.is_fitted_ = True
         return self
 
-    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
-        """
-        Detect seasonal anomalies in time series data.
+    def _detect_anomalies_for_period(self, series, period):
+        """Run anomaly detection for a given (possibly None) seasonal period."""
+        if period is None or period < 2:
+            anomalies, thresholds = self._detect_non_seasonal_anomalies(series)
+            return anomalies, thresholds, None
 
-        Returns:
-        --------
-        result : TimeSeriesAnalysisResult
-            Seasonal anomaly detection results with adaptive thresholds
-        """
+        seasonal_info = self._perform_seasonal_decomposition(series, period)
+        if self.method == "adaptive_threshold":
+            anomalies, thresholds = self._detect_adaptive_threshold_anomalies(
+                series, seasonal_info, period
+            )
+        elif self.method == "seasonal_iqr":
+            anomalies, thresholds = self._detect_seasonal_iqr_anomalies(
+                series, seasonal_info, period
+            )
+        elif self.method == "seasonal_zscore":
+            anomalies, thresholds = self._detect_seasonal_zscore_anomalies(
+                series, seasonal_info, period
+            )
+        else:
+            raise ValueError(
+                f"Unknown seasonal anomaly detection method: {self.method}"
+            )
+        return anomalies, thresholds, seasonal_info
+
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """Detect seasonal anomalies in time series data."""
         start_time = time.time()
 
         if self.validate_input:
             X, _ = self._validate_time_series(X, None)
 
         try:
-            # Use first column for seasonal anomaly detection
             if len(X.columns) == 0:
                 raise ValueError("No columns found in time series data")
 
             series = X.iloc[:, 0].dropna()
             if len(series) < self.min_history:
                 raise ValueError(
-                    f"Insufficient data points for seasonal anomaly detection (need at least {self.min_history})"
+                    f"Insufficient data points for seasonal anomaly detection"
+                    f" (need at least {self.min_history})"
                 )
 
-            # Detect seasonal period if not provided
-            period = self.seasonal_period
-            if period is None:
-                period = self._detect_seasonal_period(series)
-
-            if period is None or period < 2:
-                # Fallback to non-seasonal anomaly detection
-                anomalies, thresholds = self._detect_non_seasonal_anomalies(series)
-                seasonal_info = None
-            else:
-                # Perform seasonal decomposition
-                seasonal_info = self._perform_seasonal_decomposition(series, period)
-
-                # Detect anomalies based on method
-                if self.method == "adaptive_threshold":
-                    anomalies, thresholds = self._detect_adaptive_threshold_anomalies(
-                        series, seasonal_info, period
-                    )
-                elif self.method == "seasonal_iqr":
-                    anomalies, thresholds = self._detect_seasonal_iqr_anomalies(
-                        series, seasonal_info, period
-                    )
-                elif self.method == "seasonal_zscore":
-                    anomalies, thresholds = self._detect_seasonal_zscore_anomalies(
-                        series, seasonal_info, period
-                    )
-                else:
-                    raise ValueError(
-                        f"Unknown seasonal anomaly detection method: {self.method}"
-                    )
+            period = self.seasonal_period or self._detect_seasonal_period(series)
+            anomalies, thresholds, seasonal_info = self._detect_anomalies_for_period(
+                series, period
+            )
 
             self.seasonal_components_ = seasonal_info
             self.adaptive_thresholds_ = thresholds
             self.seasonal_anomalies_ = anomalies
 
-            # Calculate seasonal anomaly statistics
             anomaly_stats = self._calculate_seasonal_anomaly_statistics(
                 series, anomalies, period
             )
-
-            # Analyze seasonal patterns
             seasonal_analysis = self._analyze_seasonal_patterns(
                 series, anomalies, seasonal_info, period
             )
-
-            # Generate interpretation
             interpretation = self._generate_seasonal_interpretation(
                 anomalies, series, seasonal_info, period, anomaly_stats
             )
-
-            # Generate recommendations
             recommendations = self._generate_seasonal_recommendations(
                 anomalies, series, seasonal_info, period, seasonal_analysis
             )
 
-            processing_time = time.time() - start_time
-
-            # Prepare result
-            model_parameters = {
-                "seasonal_anomalies": anomalies,
-                "adaptive_thresholds": thresholds.tolist()
-                if thresholds is not None
-                else [],
-                "seasonal_period": period,
-                "detection_method": self.method,
-                "threshold_factor": self.threshold_factor,
-                "adaptation_rate": self.adaptation_rate,
-                "seasonal_components": seasonal_info,
-                "n_seasonal_anomalies": len(anomalies),
-            }
-
-            model_diagnostics = {
-                "anomaly_statistics": anomaly_stats,
-                "seasonal_analysis": seasonal_analysis,
-                "period_detected": period,
-            }
-
             return TimeSeriesAnalysisResult(
                 analysis_type="seasonal_anomaly_detection",
-                model_parameters=model_parameters,
-                model_diagnostics=model_diagnostics,
+                model_parameters={
+                    "seasonal_anomalies": anomalies,
+                    "adaptive_thresholds": thresholds.tolist()
+                    if thresholds is not None
+                    else [],
+                    "seasonal_period": period,
+                    "detection_method": self.method,
+                    "threshold_factor": self.threshold_factor,
+                    "adaptation_rate": self.adaptation_rate,
+                    "seasonal_components": seasonal_info,
+                    "n_seasonal_anomalies": len(anomalies),
+                },
+                model_diagnostics={
+                    "anomaly_statistics": anomaly_stats,
+                    "seasonal_analysis": seasonal_analysis,
+                    "period_detected": period,
+                },
                 interpretation=interpretation,
                 recommendations=recommendations,
-                processing_time=processing_time,
+                processing_time=time.time() - start_time,
                 data_quality_score=self._calculate_data_quality_score(X),
                 confidence_level=0.95,
             )

@@ -51,22 +51,56 @@ class AutocorrelationAnalysisTransformer(TimeSeriesTransformer):
         self.is_fitted_ = True
         return self
 
-    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
-        """
-        Compute autocorrelation function analysis.
+    def _compute_acf_lags(self, series: "pd.Series") -> int:
+        """Determine number of lags based on series length and max_lags setting."""
+        if self.max_lags is None:
+            return min(40, len(series) // 4)
+        return min(self.max_lags, len(series) - 1)
 
-        Returns:
-        --------
-        result : TimeSeriesAnalysisResult
-            ACF analysis results with lag recommendations
-        """
+    def _classify_significant_lags(self, acf_values, confint) -> List[Dict]:
+        """Build list of lag dicts with significance flags from ACF values and CI."""
+        significant_lags = []
+        for lag in range(1, len(acf_values)):
+            is_sig = abs(acf_values[lag]) > abs(confint[lag, 1] - acf_values[lag])
+            significant_lags.append(
+                {
+                    "lag": lag,
+                    "correlation": acf_values[lag],
+                    "is_significant": is_sig,
+                    "confidence_lower": confint[lag, 0],
+                    "confidence_upper": confint[lag, 1],
+                }
+            )
+        return significant_lags
+
+    def _interpret_acf(self, significant_lags: List[Dict]) -> tuple:
+        """Return (interpretation, base_recommendations) based on significant lag count."""
+        num_significant = sum(
+            1 for lag_info in significant_lags if lag_info["is_significant"]
+        )
+        if num_significant == 0:
+            return (
+                "No significant autocorrelations detected - series appears to be white noise",
+                ["Series may be suitable for simple forecasting methods"],
+            )
+        elif num_significant <= 3:
+            return (
+                f"Few significant autocorrelations detected ({num_significant} lags)",
+                ["Consider MA or low-order ARMA models"],
+            )
+        return (
+            f"Multiple significant autocorrelations detected ({num_significant} lags)",
+            ["Consider higher-order ARMA models or seasonal patterns"],
+        )
+
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """Compute autocorrelation function analysis."""
         start_time = time.time()
 
         if self.validate_input:
             X, _ = self._validate_time_series(X, None)
 
         try:
-            # Use first column for analysis
             if len(X.columns) == 0:
                 raise ValueError("No columns found in time series data")
 
@@ -76,13 +110,7 @@ class AutocorrelationAnalysisTransformer(TimeSeriesTransformer):
                     "Insufficient data points for autocorrelation analysis"
                 )
 
-            # Determine number of lags
-            if self.max_lags is None:
-                nlags = min(40, len(series) // 4)
-            else:
-                nlags = min(self.max_lags, len(series) - 1)
-
-            # Compute ACF
+            nlags = self._compute_acf_lags(series)
             acf_values, confint = acf(
                 series,
                 nlags=nlags,
@@ -90,63 +118,16 @@ class AutocorrelationAnalysisTransformer(TimeSeriesTransformer):
                 fft=self.fft,
                 missing=self.missing,
             )
-
             self.acf_values_ = acf_values
             self.confidence_intervals_ = confint
 
-            # Find significant lags
-            significant_lags = []
-            for lag in range(1, len(acf_values)):  # Skip lag 0 (always 1.0)
-                if abs(acf_values[lag]) > abs(confint[lag, 1] - acf_values[lag]):
-                    significant_lags.append(
-                        {
-                            "lag": lag,
-                            "correlation": acf_values[lag],
-                            "is_significant": True,
-                            "confidence_lower": confint[lag, 0],
-                            "confidence_upper": confint[lag, 1],
-                        }
-                    )
-                else:
-                    significant_lags.append(
-                        {
-                            "lag": lag,
-                            "correlation": acf_values[lag],
-                            "is_significant": False,
-                            "confidence_lower": confint[lag, 0],
-                            "confidence_upper": confint[lag, 1],
-                        }
-                    )
-
-            # Identify patterns and generate recommendations
-            recommendations = []
-            warnings_list = []
+            significant_lags = self._classify_significant_lags(acf_values, confint)
             pattern_analysis = self._analyze_acf_patterns(acf_values, significant_lags)
-
-            # Generate interpretation
-            num_significant = sum(
-                1 for lag_info in significant_lags if lag_info["is_significant"]
-            )
-
-            if num_significant == 0:
-                interpretation = "No significant autocorrelations detected - series appears to be white noise"
-                recommendations.append(
-                    "Series may be suitable for simple forecasting methods"
-                )
-            elif num_significant <= 3:
-                interpretation = f"Few significant autocorrelations detected ({num_significant} lags)"
-                recommendations.append("Consider MA or low-order ARMA models")
-            else:
-                interpretation = f"Multiple significant autocorrelations detected ({num_significant} lags)"
-                recommendations.append(
-                    "Consider higher-order ARMA models or seasonal patterns"
-                )
-
-            # Add pattern-specific recommendations
+            interpretation, recommendations = self._interpret_acf(significant_lags)
             recommendations.extend(pattern_analysis["recommendations"])
-            warnings_list.extend(pattern_analysis.get("warnings", []))
+            warnings_list = pattern_analysis.get("warnings", [])
 
-            result = TimeSeriesAnalysisResult(
+            return TimeSeriesAnalysisResult(
                 analysis_type="autocorrelation_analysis",
                 interpretation=interpretation,
                 model_diagnostics={
@@ -161,8 +142,6 @@ class AutocorrelationAnalysisTransformer(TimeSeriesTransformer):
                 warnings=warnings_list,
                 processing_time=time.time() - start_time,
             )
-
-            return result
 
         except Exception as e:
             logger.error(f"Error in autocorrelation analysis: {e}")
