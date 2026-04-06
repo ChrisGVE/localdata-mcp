@@ -53,6 +53,45 @@ class LogisticRegressionTransformer(BaseEstimator, TransformerMixin):
         )
         self.result_ = None
 
+    def _compute_classification_metrics(self, y, y_pred):
+        """Compute classification metrics: accuracy, precision, recall, f1."""
+        from sklearn.metrics import (
+            accuracy_score,
+            precision_score,
+            recall_score,
+            f1_score,
+        )
+
+        accuracy = accuracy_score(y, y_pred)
+        avg_method = "macro" if len(np.unique(y)) > 2 else "binary"
+        precision = precision_score(y, y_pred, average=avg_method, zero_division=0)
+        recall = recall_score(y, y_pred, average=avg_method, zero_division=0)
+        f1 = f1_score(y, y_pred, average=avg_method, zero_division=0)
+        return accuracy, precision, recall, f1
+
+    def _compute_mcfadden_r2(self, X, y, y_proba):
+        """Compute McFadden's pseudo R² for logistic regression."""
+        try:
+            from sklearn.metrics import log_loss
+
+            null_log_loss = log_loss(y, self.model.predict_proba(X)[:, [0] * len(y)])
+            model_log_loss = log_loss(y, y_proba)
+            return 1 - (model_log_loss / null_log_loss)
+        except Exception:
+            return None
+
+    def _extract_logistic_feature_info(self):
+        """Extract coefficients and feature importance from fitted logistic model."""
+        if not hasattr(self.model, "coef_"):
+            return None, None
+        if self.model.coef_.ndim > 1:
+            feature_importance = np.mean(np.abs(self.model.coef_), axis=0)
+            coefficients = self.model.coef_
+        else:
+            feature_importance = np.abs(self.model.coef_[0])
+            coefficients = self.model.coef_[0]
+        return coefficients, feature_importance
+
     def fit(self, X, y, sample_weight=None, feature_names=None):
         """
         Fit logistic regression model.
@@ -76,75 +115,31 @@ class LogisticRegressionTransformer(BaseEstimator, TransformerMixin):
         start_time = time.time()
         logger.info("Starting logistic regression fit")
 
-        # Validate inputs
         X, y = check_X_y(X, y, accept_sparse=False)
 
-        # Store feature names
         if feature_names is None:
             feature_names = [f"feature_{i}" for i in range(X.shape[1])]
         self.feature_names_ = feature_names
 
         try:
-            # Fit the model
             self.model.fit(X, y, sample_weight=sample_weight)
 
-            # Get predictions and probabilities
             y_pred = self.model.predict(X)
             y_proba = self.model.predict_proba(X)
 
-            # Calculate metrics (using accuracy as proxy for R² in classification)
-            from sklearn.metrics import (
-                accuracy_score,
-                precision_score,
-                recall_score,
-                f1_score,
+            accuracy, precision, recall, f1 = self._compute_classification_metrics(
+                y, y_pred
             )
-            from sklearn.metrics import classification_report, confusion_matrix
+            mcfadden_r2 = self._compute_mcfadden_r2(X, y, y_proba)
 
-            accuracy = accuracy_score(y, y_pred)
-
-            # Handle multi-class averaging
-            avg_method = "macro" if len(np.unique(y)) > 2 else "binary"
-            precision = precision_score(y, y_pred, average=avg_method, zero_division=0)
-            recall = recall_score(y, y_pred, average=avg_method, zero_division=0)
-            f1 = f1_score(y, y_pred, average=avg_method, zero_division=0)
-
-            # Pseudo R² (McFadden's R²)
-            try:
-                from sklearn.metrics import log_loss
-
-                y_null = np.full_like(y, stats.mode(y)[0][0])  # Most frequent class
-                null_log_loss = log_loss(
-                    y, self.model.predict_proba(X)[:, [0] * len(y)]
-                )
-                model_log_loss = log_loss(y, y_proba)
-                mcfadden_r2 = 1 - (model_log_loss / null_log_loss)
-            except:
-                mcfadden_r2 = None
-
-            # Cross-validation scores
             cv_scores = cross_val_score(self.model, X, y, cv=5, scoring="accuracy")
+            coefficients, feature_importance = self._extract_logistic_feature_info()
 
-            # Feature importance (absolute coefficient values)
-            if hasattr(self.model, "coef_"):
-                if self.model.coef_.ndim > 1:
-                    # Multi-class: average across classes
-                    feature_importance = np.mean(np.abs(self.model.coef_), axis=0)
-                    coefficients = self.model.coef_
-                else:
-                    feature_importance = np.abs(self.model.coef_[0])
-                    coefficients = self.model.coef_[0]
-            else:
-                feature_importance = None
-                coefficients = None
-
-            # Convergence information
             convergence_info = {
                 "converged": getattr(self.model, "n_iter_", [0])[0] < self.max_iter,
                 "n_iterations": getattr(self.model, "n_iter_", None),
             }
 
-            # Create result object
             self.result_ = RegressionModelResult(
                 model_type="Logistic Regression",
                 model_params={
@@ -155,8 +150,8 @@ class LogisticRegressionTransformer(BaseEstimator, TransformerMixin):
                     "max_iter": self.max_iter,
                 },
                 fitted_model=self.model,
-                r2_score=accuracy,  # Using accuracy as classification equivalent
-                mse=1 - accuracy,  # Error rate as MSE equivalent
+                r2_score=accuracy,
+                mse=1 - accuracy,
                 mae=1 - accuracy,
                 rmse=np.sqrt(1 - accuracy),
                 feature_names=feature_names,
@@ -168,7 +163,6 @@ class LogisticRegressionTransformer(BaseEstimator, TransformerMixin):
                 n_features=X.shape[1],
                 n_samples=X.shape[0],
                 convergence_info=convergence_info,
-                # Store additional classification metrics
                 additional_info={
                     "accuracy": accuracy,
                     "precision": precision,

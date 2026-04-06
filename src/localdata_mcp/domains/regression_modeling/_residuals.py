@@ -41,6 +41,114 @@ class ResidualAnalysisTransformer(BaseEstimator, TransformerMixin):
         self.include_influence = include_influence
         self.result_ = None
 
+    def _compute_residual_stats(self, residuals):
+        """Compute basic residual statistics and standardized residuals."""
+        residual_std = np.std(residuals)
+        standardized_residuals = (
+            residuals / residual_std if residual_std > 0 else residuals
+        )
+        residual_stats = {
+            "mean": np.mean(residuals),
+            "std": residual_std,
+            "min": np.min(residuals),
+            "max": np.max(residuals),
+            "skewness": stats.skew(residuals),
+            "kurtosis": stats.kurtosis(residuals),
+        }
+        return standardized_residuals, residual_stats
+
+    def _run_normality_tests(self, residuals):
+        """Run normality tests on residuals and return results dict."""
+        normality_test = {}
+        if len(residuals) < 5000:
+            sw_stat, sw_p = stats.shapiro(residuals)
+            normality_test["shapiro_wilk"] = {
+                "statistic": sw_stat,
+                "p_value": sw_p,
+                "is_normal": sw_p > self.alpha,
+            }
+        try:
+            ad_stat, ad_critical, _ = stats.anderson(residuals, dist="norm")
+            normality_test["anderson_darling"] = {
+                "statistic": ad_stat,
+                "critical_values": ad_critical.tolist(),
+                "significance_levels": [15, 10, 5, 2.5, 1],
+                "is_normal": ad_stat < ad_critical[2],
+            }
+        except Exception:
+            pass
+        try:
+            jb_stat, jb_p = stats.jarque_bera(residuals)
+            normality_test["jarque_bera"] = {
+                "statistic": jb_stat,
+                "p_value": jb_p,
+                "is_normal": jb_p > self.alpha,
+            }
+        except Exception:
+            pass
+        return normality_test
+
+    def _run_homoscedasticity_tests(self, residuals, X):
+        """Run homoscedasticity tests and return results dict."""
+        homoscedasticity_test = {}
+        X_sm = sm.add_constant(X)
+        try:
+            bp_stat, bp_p, bp_f, bp_fp = het_breuschpagan(residuals, X_sm)
+            homoscedasticity_test["breusch_pagan"] = {
+                "lm_statistic": bp_stat,
+                "p_value": bp_p,
+                "f_statistic": bp_f,
+                "f_p_value": bp_fp,
+                "is_homoscedastic": bp_p > self.alpha,
+            }
+        except Exception as e:
+            logger.debug(f"Breusch-Pagan test failed: {e}")
+        try:
+            w_stat, w_p, w_f, w_fp = het_white(residuals, X_sm)
+            homoscedasticity_test["white"] = {
+                "lm_statistic": w_stat,
+                "p_value": w_p,
+                "f_statistic": w_f,
+                "f_p_value": w_fp,
+                "is_homoscedastic": w_p > self.alpha,
+            }
+        except Exception as e:
+            logger.debug(f"White test failed: {e}")
+        return homoscedasticity_test
+
+    def _run_autocorrelation_tests(self, residuals):
+        """Run autocorrelation tests and return results dict."""
+        autocorrelation_test = {}
+        try:
+            from statsmodels.stats.diagnostic import durbin_watson
+
+            dw_stat = durbin_watson(residuals)
+            autocorrelation_test["durbin_watson"] = {
+                "statistic": dw_stat,
+                "interpretation": self._interpret_durbin_watson(dw_stat),
+                "no_autocorrelation": 1.5 <= dw_stat <= 2.5,
+            }
+        except Exception as e:
+            logger.debug(f"Durbin-Watson test failed: {e}")
+        return autocorrelation_test
+
+    def _compute_influence_measures(self, X, y):
+        """Compute leverage, Cook's distance, and studentized residuals."""
+        leverage = None
+        cooks_distance = None
+        studentized_residuals = None
+        if self.include_influence:
+            try:
+                X_sm = sm.add_constant(X)
+                ols_model = sm.OLS(y, X_sm).fit()
+                influence = OLSInfluence(ols_model)
+                leverage = influence.hat_matrix_diag
+                cooks_distance = influence.cooks_distance[0]
+                studentized_residuals = influence.resid_studentized_external
+            except Exception as e:
+                logger.debug(f"Influence measures computation failed: {e}")
+        return leverage, cooks_distance, studentized_residuals
+
     def fit(self, X, y, residuals=None, fitted_values=None):
         """
         Perform comprehensive residual analysis.
@@ -64,139 +172,28 @@ class ResidualAnalysisTransformer(BaseEstimator, TransformerMixin):
         start_time = time.time()
         logger.info("Starting residual analysis")
 
-        # Validate inputs
         X, y = check_X_y(X, y, accept_sparse=False, y_numeric=True)
 
-        # Handle residuals and fitted values
         if fitted_values is None:
-            fitted_values = y  # Fallback if not provided
+            fitted_values = y
         if residuals is None:
             residuals = y - fitted_values
 
         try:
-            # Standardized residuals
-            residual_std = np.std(residuals)
-            standardized_residuals = (
-                residuals / residual_std if residual_std > 0 else residuals
+            standardized_residuals, residual_stats = self._compute_residual_stats(
+                residuals
             )
+            normality_test = self._run_normality_tests(residuals)
+            homoscedasticity_test = self._run_homoscedasticity_tests(residuals, X)
+            autocorrelation_test = self._run_autocorrelation_tests(residuals)
 
-            # Basic residual statistics
-            residual_stats = {
-                "mean": np.mean(residuals),
-                "std": residual_std,
-                "min": np.min(residuals),
-                "max": np.max(residuals),
-                "skewness": stats.skew(residuals),
-                "kurtosis": stats.kurtosis(residuals),
-            }
-
-            # 1. Normality tests
-            normality_test = {}
-
-            # Shapiro-Wilk test (for n < 5000)
-            if len(residuals) < 5000:
-                sw_stat, sw_p = stats.shapiro(residuals)
-                normality_test["shapiro_wilk"] = {
-                    "statistic": sw_stat,
-                    "p_value": sw_p,
-                    "is_normal": sw_p > self.alpha,
-                }
-
-            # Anderson-Darling test
-            try:
-                ad_stat, ad_critical, ad_p = stats.anderson(residuals, dist="norm")
-                normality_test["anderson_darling"] = {
-                    "statistic": ad_stat,
-                    "critical_values": ad_critical.tolist(),
-                    "significance_levels": [15, 10, 5, 2.5, 1],
-                    "is_normal": ad_stat < ad_critical[2],  # 5% level
-                }
-            except:
-                pass
-
-            # Jarque-Bera test
-            try:
-                jb_stat, jb_p = stats.jarque_bera(residuals)
-                normality_test["jarque_bera"] = {
-                    "statistic": jb_stat,
-                    "p_value": jb_p,
-                    "is_normal": jb_p > self.alpha,
-                }
-            except:
-                pass
-
-            # 2. Homoscedasticity tests
-            homoscedasticity_test = {}
-
-            # Breusch-Pagan test (requires statsmodels)
-            try:
-                X_sm = sm.add_constant(X)
-                bp_stat, bp_p, bp_f, bp_fp = het_breuschpagan(residuals, X_sm)
-                homoscedasticity_test["breusch_pagan"] = {
-                    "lm_statistic": bp_stat,
-                    "p_value": bp_p,
-                    "f_statistic": bp_f,
-                    "f_p_value": bp_fp,
-                    "is_homoscedastic": bp_p > self.alpha,
-                }
-            except Exception as e:
-                logger.debug(f"Breusch-Pagan test failed: {e}")
-
-            # White test
-            try:
-                X_sm = sm.add_constant(X)
-                w_stat, w_p, w_f, w_fp = het_white(residuals, X_sm)
-                homoscedasticity_test["white"] = {
-                    "lm_statistic": w_stat,
-                    "p_value": w_p,
-                    "f_statistic": w_f,
-                    "f_p_value": w_fp,
-                    "is_homoscedastic": w_p > self.alpha,
-                }
-            except Exception as e:
-                logger.debug(f"White test failed: {e}")
-
-            # 3. Autocorrelation test (Durbin-Watson)
-            autocorrelation_test = {}
-            try:
-                from statsmodels.stats.diagnostic import durbin_watson
-
-                dw_stat = durbin_watson(residuals)
-                autocorrelation_test["durbin_watson"] = {
-                    "statistic": dw_stat,
-                    "interpretation": self._interpret_durbin_watson(dw_stat),
-                    "no_autocorrelation": 1.5 <= dw_stat <= 2.5,
-                }
-            except Exception as e:
-                logger.debug(f"Durbin-Watson test failed: {e}")
-
-            # 4. Outlier detection
-            outliers = []
-            outlier_threshold_abs = self.outlier_threshold
-
-            # Using standardized residuals
-            outlier_mask = np.abs(standardized_residuals) > outlier_threshold_abs
+            outlier_mask = np.abs(standardized_residuals) > self.outlier_threshold
             outliers = np.where(outlier_mask)[0].tolist()
 
-            # 5. Influence measures (if requested and data allows)
-            leverage = None
-            cooks_distance = None
-            studentized_residuals = None
+            leverage, cooks_distance, studentized_residuals = (
+                self._compute_influence_measures(X, y)
+            )
 
-            if self.include_influence:
-                try:
-                    X_sm = sm.add_constant(X)
-                    ols_model = sm.OLS(y, X_sm).fit()
-                    influence = OLSInfluence(ols_model)
-
-                    leverage = influence.hat_matrix_diag
-                    cooks_distance = influence.cooks_distance[0]
-                    studentized_residuals = influence.resid_studentized_external
-
-                except Exception as e:
-                    logger.debug(f"Influence measures computation failed: {e}")
-
-            # Create result object
             self.result_ = ResidualAnalysisResult(
                 residuals=residuals,
                 standardized_residuals=standardized_residuals,

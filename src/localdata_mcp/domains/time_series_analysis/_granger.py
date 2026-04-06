@@ -90,127 +90,103 @@ class GrangerCausalityAnalyzer(MultivariateTimeSeriesTransformer):
         if significance_level <= 0 or significance_level >= 1:
             raise ValueError("significance_level must be between 0 and 1")
 
+    def _test_pair(
+        self, X: pd.DataFrame, cause_var: str, effect_var: str
+    ) -> Optional[Dict]:
+        """Run Granger causality test for one (cause, effect) pair; return result dict or None."""
+        pair_name = f"{cause_var} \u2192 {effect_var}"
+        test_data = X[[effect_var, cause_var]].dropna()
+        if len(test_data) < self.max_lags + 20:
+            logger.warning(f"Insufficient data for {pair_name} causality test")
+            return None
+
+        granger_result = grangercausalitytests(
+            test_data, maxlag=self.max_lags, verbose=False
+        )
+
+        lag_results: Dict = {}
+        min_p_value = 1.0
+        best_lag = 1
+        for lag in range(1, self.max_lags + 1):
+            if lag in granger_result:
+                f_stat = granger_result[lag][0]["ssr_ftest"][0]
+                p_val = granger_result[lag][0]["ssr_ftest"][1]
+                lag_results[lag] = {
+                    "f_statistic": f_stat,
+                    "p_value": p_val,
+                    "significant": p_val < self.significance_level,
+                }
+                if p_val < min_p_value:
+                    min_p_value = p_val
+                    best_lag = lag
+
+        return {
+            "pair_name": pair_name,
+            "cause": cause_var,
+            "effect": effect_var,
+            "lag_results": lag_results,
+            "best_lag": best_lag,
+            "min_p_value": min_p_value,
+            "significant": min_p_value < self.significance_level,
+            "f_statistic_best": lag_results[best_lag]["f_statistic"]
+            if best_lag in lag_results
+            else None,
+        }
+
+    def _run_pairwise_tests(self, X: pd.DataFrame, series_names: List[str]):
+        """Run all pairwise Granger causality tests and collect results."""
+        causality_results: Dict = {}
+        f_statistics: Dict = {}
+        p_values: Dict = {}
+        significant_relationships: List[Dict] = []
+
+        for i, cause_var in enumerate(series_names):
+            for j, effect_var in enumerate(series_names):
+                if i == j:
+                    continue
+                pair_name = f"{cause_var} \u2192 {effect_var}"
+                try:
+                    result = self._test_pair(X, cause_var, effect_var)
+                    if result is None:
+                        continue
+                    causality_results[pair_name] = {
+                        k: v for k, v in result.items() if k != "pair_name"
+                    }
+                    f_statistics[pair_name] = result["f_statistic_best"]
+                    p_values[pair_name] = result["min_p_value"]
+                    if result["significant"]:
+                        significant_relationships.append(
+                            {
+                                "relationship": pair_name,
+                                "p_value": result["min_p_value"],
+                                "lag": result["best_lag"],
+                                "f_statistic": result["f_statistic_best"],
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Granger causality test failed for {pair_name}: {e}"
+                    )
+
+        significant_relationships.sort(key=lambda x: x["p_value"])
+        return causality_results, f_statistics, p_values, significant_relationships
+
     def _analysis_logic(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
-        """
-        Core Granger causality analysis logic.
-
-        Parameters:
-        -----------
-        X : pd.DataFrame
-            Input multivariate time series data
-
-        Returns:
-        --------
-        result : TimeSeriesAnalysisResult
-            Granger causality analysis results
-        """
+        """Core Granger causality analysis logic."""
         start_time = time.time()
 
         try:
-            # Validate multivariate data
             X = self._validate_multivariate_data(X)
-
-            n_series = X.shape[1]
             series_names = list(X.columns)
 
-            # Initialize results storage
-            causality_results = {}
-            f_statistics = {}
-            p_values = {}
-            significant_relationships = []
+            causality_results, f_statistics, p_values, significant_relationships = (
+                self._run_pairwise_tests(X, series_names)
+            )
 
-            # Perform pairwise Granger causality tests
-            for i, cause_var in enumerate(series_names):
-                for j, effect_var in enumerate(series_names):
-                    if i != j:  # Don't test variable against itself
-                        pair_name = f"{cause_var} \u2192 {effect_var}"
-
-                        try:
-                            # Prepare data for Granger causality test
-                            test_data = X[[effect_var, cause_var]].dropna()
-
-                            if (
-                                len(test_data) < self.max_lags + 20
-                            ):  # Need sufficient data
-                                logger.warning(
-                                    f"Insufficient data for {pair_name} causality test"
-                                )
-                                continue
-
-                            # Perform Granger causality test
-                            granger_result = grangercausalitytests(
-                                test_data, maxlag=self.max_lags, verbose=False
-                            )
-
-                            # Extract results for different lag orders
-                            lag_results = {}
-                            min_p_value = 1.0
-                            best_lag = 1
-
-                            for lag in range(1, self.max_lags + 1):
-                                if lag in granger_result:
-                                    # Get F-statistic and p-value
-                                    f_stat = granger_result[lag][0]["ssr_ftest"][0]
-                                    p_val = granger_result[lag][0]["ssr_ftest"][1]
-
-                                    lag_results[lag] = {
-                                        "f_statistic": f_stat,
-                                        "p_value": p_val,
-                                        "significant": p_val < self.significance_level,
-                                    }
-
-                                    if p_val < min_p_value:
-                                        min_p_value = p_val
-                                        best_lag = lag
-
-                            # Store overall results for this pair
-                            causality_results[pair_name] = {
-                                "cause": cause_var,
-                                "effect": effect_var,
-                                "lag_results": lag_results,
-                                "best_lag": best_lag,
-                                "min_p_value": min_p_value,
-                                "significant": min_p_value < self.significance_level,
-                                "f_statistic_best": lag_results[best_lag]["f_statistic"]
-                                if best_lag in lag_results
-                                else None,
-                            }
-
-                            # Track significant relationships
-                            if min_p_value < self.significance_level:
-                                significant_relationships.append(
-                                    {
-                                        "relationship": pair_name,
-                                        "p_value": min_p_value,
-                                        "lag": best_lag,
-                                        "f_statistic": lag_results[best_lag][
-                                            "f_statistic"
-                                        ],
-                                    }
-                                )
-
-                            f_statistics[pair_name] = (
-                                lag_results[best_lag]["f_statistic"]
-                                if best_lag in lag_results
-                                else None
-                            )
-                            p_values[pair_name] = min_p_value
-
-                        except Exception as e:
-                            logger.warning(
-                                f"Granger causality test failed for {pair_name}: {e}"
-                            )
-                            continue
-
-            # Sort significant relationships by strength (lowest p-value)
-            significant_relationships.sort(key=lambda x: x["p_value"])
-
-            # Create causality network summary
             causality_matrix = self._create_causality_matrix(
                 causality_results, series_names
             )
 
-            # Model diagnostics
             model_diagnostics = {
                 "n_relationships_tested": len(causality_results),
                 "n_significant_relationships": len(significant_relationships),
@@ -218,8 +194,6 @@ class GrangerCausalityAnalyzer(MultivariateTimeSeriesTransformer):
                 "max_lags_tested": self.max_lags,
                 "causality_matrix": causality_matrix,
             }
-
-            # Model parameters
             model_parameters = {
                 "causality_results": causality_results,
                 "significant_relationships": significant_relationships,
@@ -229,16 +203,12 @@ class GrangerCausalityAnalyzer(MultivariateTimeSeriesTransformer):
                 "series_names": series_names,
             }
 
-            # Generate interpretation
             interpretation = self._generate_granger_interpretation(
                 significant_relationships, len(causality_results), series_names
             )
-
-            # Generate recommendations
             recommendations = self._generate_granger_recommendations(
                 significant_relationships, causality_results, X
             )
-
             processing_time = time.time() - start_time
 
             return self._prepare_multivariate_result(

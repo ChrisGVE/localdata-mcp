@@ -255,15 +255,56 @@ class AutoARIMATransformer(TimeSeriesTransformer):
 
         return combinations
 
-    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
-        """
-        Generate forecasts using the best Auto-ARIMA model.
+    def _build_forecast_index(self):
+        """Build a forecast index based on the training data's time index."""
+        if hasattr(self.training_data_, "index") and isinstance(
+            self.training_data_.index, pd.DatetimeIndex
+        ):
+            last_date = self.training_data_.index[-1]
+            freq = self.training_data_.index.freq or pd.infer_freq(
+                self.training_data_.index
+            )
+            if freq is not None:
+                return pd.date_range(
+                    start=last_date + pd.Timedelta(freq),
+                    periods=self.forecast_steps,
+                    freq=freq,
+                )
+        return range(
+            len(self.training_data_), len(self.training_data_) + self.forecast_steps
+        )
 
-        Returns:
-        --------
-        result : TimeSeriesAnalysisResult
-            Auto-ARIMA results with optimal model parameters and forecasts
-        """
+    def _compute_residual_diagnostics(self, residuals):
+        """Run Ljung-Box test and return diagnostics dict."""
+        ljung_box = acorr_ljungbox(
+            residuals, lags=min(10, len(residuals) // 5), return_df=True
+        )
+        last_row = ljung_box.iloc[-1]
+        return {
+            "ljung_box_stat": float(last_row["lb_stat"]),
+            "ljung_box_pvalue": float(last_row["lb_pvalue"]),
+            "residual_autocorrelation": (
+                "No significant autocorrelation"
+                if last_row["lb_pvalue"] > 0.05
+                else "Significant autocorrelation detected"
+            ),
+        }, last_row["lb_pvalue"]
+
+    def _build_auto_arima_recommendations(self, ljung_box_pvalue: float):
+        """Build recommendations list based on search results and diagnostics."""
+        recommendations = []
+        if len(self.model_results_) < 10:
+            recommendations.append(
+                "Limited parameter search - consider expanding search ranges"
+            )
+        if ljung_box_pvalue <= 0.05:
+            recommendations.append(
+                "Residuals show autocorrelation - model may need refinement"
+            )
+        return recommendations
+
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """Generate forecasts using the best Auto-ARIMA model."""
         start_time = time.time()
         logger = get_logger(__name__)
 
@@ -273,44 +314,16 @@ class AutoARIMATransformer(TimeSeriesTransformer):
             if self.validate_input:
                 X, _ = self._validate_time_series(X)
 
-            # Generate forecasts using best model
             forecast_result = self.best_model_.get_forecast(steps=self.forecast_steps)
             forecast_values = forecast_result.predicted_mean
             forecast_ci = forecast_result.conf_int(alpha=self.alpha)
+            forecast_index = self._build_forecast_index()
 
-            # Create forecast index
-            if hasattr(self.training_data_, "index") and isinstance(
-                self.training_data_.index, pd.DatetimeIndex
-            ):
-                last_date = self.training_data_.index[-1]
-                freq = self.training_data_.index.freq or pd.infer_freq(
-                    self.training_data_.index
-                )
-                if freq is not None:
-                    forecast_index = pd.date_range(
-                        start=last_date + pd.Timedelta(freq),
-                        periods=self.forecast_steps,
-                        freq=freq,
-                    )
-                else:
-                    forecast_index = range(
-                        len(self.training_data_),
-                        len(self.training_data_) + self.forecast_steps,
-                    )
-            else:
-                forecast_index = range(
-                    len(self.training_data_),
-                    len(self.training_data_) + self.forecast_steps,
-                )
-
-            # Model diagnostics
             residuals = self.best_model_.resid
-            ljung_box = acorr_ljungbox(
-                residuals, lags=min(10, len(residuals) // 5), return_df=True
+            residual_diagnostics, ljung_pvalue = self._compute_residual_diagnostics(
+                residuals
             )
             in_sample_pred = self.best_model_.fittedvalues
-
-            # Sort model results by IC for comparison
             sorted_models = sorted(self.model_results_, key=lambda x: x["selected_ic"])
 
             result_data = {
@@ -334,32 +347,14 @@ class AutoARIMATransformer(TimeSeriesTransformer):
                     "log_likelihood": float(self.best_model_.llf),
                     "num_params": self.best_model_.params.shape[0],
                 },
-                "residual_diagnostics": {
-                    "ljung_box_stat": float(ljung_box.iloc[-1]["lb_stat"]),
-                    "ljung_box_pvalue": float(ljung_box.iloc[-1]["lb_pvalue"]),
-                    "residual_autocorrelation": "No significant autocorrelation"
-                    if ljung_box.iloc[-1]["lb_pvalue"] > 0.05
-                    else "Significant autocorrelation detected",
-                },
-                "model_comparison": sorted_models[:10],  # Top 10 models
+                "residual_diagnostics": residual_diagnostics,
+                "model_comparison": sorted_models[:10],
                 "model_params": {
                     param: float(value)
                     for param, value in self.best_model_.params.items()
                 },
+                "recommendations": self._build_auto_arima_recommendations(ljung_pvalue),
             }
-
-            # Add recommendations
-            recommendations = []
-            if len(self.model_results_) < 10:
-                recommendations.append(
-                    "Limited parameter search - consider expanding search ranges"
-                )
-            if ljung_box.iloc[-1]["lb_pvalue"] <= 0.05:
-                recommendations.append(
-                    "Residuals show autocorrelation - model may need refinement"
-                )
-
-            result_data["recommendations"] = recommendations
 
             return PipelineResult(
                 success=True,

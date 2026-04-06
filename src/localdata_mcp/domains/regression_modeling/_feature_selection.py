@@ -53,6 +53,63 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         self.selector_ = None
         self.result_ = None
 
+    def _build_selector(self, n_cols):
+        """Instantiate the appropriate sklearn selector for the configured method."""
+        if self.method == "model_based":
+            return SelectFromModel(self.estimator)
+        elif self.method == "rfe":
+            n_features = self.k if self.k != "all" else n_cols // 2
+            return RFE(self.estimator, n_features_to_select=n_features)
+        elif self.method == "rfecv":
+            return RFECV(self.estimator, cv=self.cv, scoring=self.scoring)
+        elif self.method == "univariate":
+            from sklearn.feature_selection import SelectKBest, f_regression
+
+            k_best = self.k if self.k != "all" else n_cols
+            return SelectKBest(score_func=f_regression, k=k_best)
+        else:
+            raise ValueError(f"Unknown feature selection method: {self.method}")
+
+    def _extract_importance(self, selected_mask):
+        """Extract feature importance scores from the fitted selector."""
+        feature_scores = None
+        feature_importance = None
+        if hasattr(self.selector_, "scores_"):
+            feature_scores = self.selector_.scores_
+            feature_importance = feature_scores[selected_mask]
+        elif hasattr(self.selector_, "ranking_"):
+            max_rank = np.max(self.selector_.ranking_)
+            feature_importance = (max_rank - self.selector_.ranking_ + 1)[selected_mask]
+        elif hasattr(self.selector_, "estimator_") and hasattr(
+            self.selector_.estimator_, "coef_"
+        ):
+            coef = np.abs(self.selector_.estimator_.coef_)
+            feature_importance = (
+                coef[selected_mask] if len(coef) == len(selected_mask) else coef
+            )
+        return feature_scores, feature_importance
+
+    def _compare_performance(self, X, X_selected, y):
+        """Compare model performance before and after feature selection."""
+        if self.method not in ["rfe", "rfecv", "model_based"]:
+            return {}
+        try:
+            lr_original = LinearRegression().fit(X, y)
+            lr_selected = LinearRegression().fit(X_selected, y)
+            r2_original = lr_original.score(X, y)
+            r2_selected = lr_selected.score(X_selected, y)
+            return {
+                "original_features": X.shape[1],
+                "selected_features": X_selected.shape[1],
+                "feature_reduction": 1 - (X_selected.shape[1] / X.shape[1]),
+                "r2_original": r2_original,
+                "r2_selected": r2_selected,
+                "r2_change": r2_selected - r2_original,
+                "performance_per_feature": r2_selected / X_selected.shape[1],
+            }
+        except Exception:
+            return {}
+
     def fit(self, X, y, feature_names=None):
         """
         Perform feature selection.
@@ -74,92 +131,24 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         start_time = time.time()
         logger.info(f"Starting feature selection using {self.method}")
 
-        # Validate inputs
         X, y = check_X_y(X, y, accept_sparse=False, y_numeric=True)
 
-        # Store feature names
         if feature_names is None:
             feature_names = [f"feature_{i}" for i in range(X.shape[1])]
         self.feature_names_ = feature_names
 
         try:
-            # Initialize selector based on method
-            if self.method == "model_based":
-                self.selector_ = SelectFromModel(self.estimator)
-            elif self.method == "rfe":
-                n_features = self.k if self.k != "all" else X.shape[1] // 2
-                self.selector_ = RFE(self.estimator, n_features_to_select=n_features)
-            elif self.method == "rfecv":
-                self.selector_ = RFECV(self.estimator, cv=self.cv, scoring=self.scoring)
-            elif self.method == "univariate":
-                from sklearn.feature_selection import SelectKBest, f_regression
-
-                k_best = self.k if self.k != "all" else X.shape[1]
-                self.selector_ = SelectKBest(score_func=f_regression, k=k_best)
-            else:
-                raise ValueError(f"Unknown feature selection method: {self.method}")
-
-            # Fit the selector
+            self.selector_ = self._build_selector(X.shape[1])
             self.selector_.fit(X, y)
 
-            # Get selected features
             selected_mask = self.selector_.get_support()
             selected_indices = np.where(selected_mask)[0]
             selected_features = [feature_names[i] for i in selected_indices]
-
-            # Transform data to selected features only
             X_selected = self.selector_.transform(X)
 
-            # Calculate feature importance/scores
-            feature_scores = None
-            feature_importance = None
+            feature_scores, feature_importance = self._extract_importance(selected_mask)
+            comparison_results = self._compare_performance(X, X_selected, y)
 
-            if hasattr(self.selector_, "scores_"):
-                # Univariate selection
-                feature_scores = self.selector_.scores_
-                feature_importance = feature_scores[selected_mask]
-            elif hasattr(self.selector_, "ranking_"):
-                # RFE/RFECV - convert ranking to importance (inverse ranking)
-                max_rank = np.max(self.selector_.ranking_)
-                feature_importance = (max_rank - self.selector_.ranking_ + 1)[
-                    selected_mask
-                ]
-            elif hasattr(self.selector_, "estimator_") and hasattr(
-                self.selector_.estimator_, "coef_"
-            ):
-                # Model-based selection (SelectFromModel)
-                # estimator_.coef_ has all features for SelectFromModel
-                coef = np.abs(self.selector_.estimator_.coef_)
-                if len(coef) == len(selected_mask):
-                    feature_importance = coef[selected_mask]
-                else:
-                    # Estimator was fitted on selected features only
-                    feature_importance = coef
-
-            # Performance comparison
-            comparison_results = {}
-            if self.method in ["rfe", "rfecv", "model_based"]:
-                try:
-                    # Fit simple linear regression on original and selected features
-                    lr_original = LinearRegression().fit(X, y)
-                    lr_selected = LinearRegression().fit(X_selected, y)
-
-                    r2_original = lr_original.score(X, y)
-                    r2_selected = lr_selected.score(X_selected, y)
-
-                    comparison_results = {
-                        "original_features": X.shape[1],
-                        "selected_features": X_selected.shape[1],
-                        "feature_reduction": 1 - (X_selected.shape[1] / X.shape[1]),
-                        "r2_original": r2_original,
-                        "r2_selected": r2_selected,
-                        "r2_change": r2_selected - r2_original,
-                        "performance_per_feature": r2_selected / X_selected.shape[1],
-                    }
-                except:
-                    pass
-
-            # Store results
             self.result_ = {
                 "method": self.method,
                 "selected_features": selected_features,
@@ -176,14 +165,14 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
                 "comparison": comparison_results,
             }
 
-            # Additional info for specific methods
             if self.method == "rfecv" and hasattr(self.selector_, "grid_scores_"):
                 self.result_["cv_scores"] = self.selector_.grid_scores_.tolist()
                 self.result_["optimal_n_features"] = self.selector_.n_features_
 
             fit_time = time.time() - start_time
             logger.info(
-                f"Feature selection completed in {fit_time:.3f}s - {len(selected_features)}/{len(feature_names)} features selected"
+                f"Feature selection completed in {fit_time:.3f}s"
+                f" - {len(selected_features)}/{len(feature_names)} features selected"
             )
 
         except Exception as e:
