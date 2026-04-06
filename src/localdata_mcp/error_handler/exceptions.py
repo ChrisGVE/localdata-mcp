@@ -109,7 +109,7 @@ class LocalDataError(Exception):
             "timestamp": self.timestamp,
         }
 
-    def to_structured_response(self) -> "StructuredErrorResponse":
+    def to_structured_response(self) -> "StructuredErrorResponse":  # noqa: F821
         """Convert to StructuredErrorResponse for LLM communication."""
         from ..error_classification import StructuredErrorResponse
 

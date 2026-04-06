@@ -283,7 +283,13 @@ def calculate_spatial_distance(
         else:
             return distances
     else:
-        result = transformer.transform(data1)
+        distance_transformer = SpatialDistanceTransformer(
+            method=distance_type,
+            coordinate_columns=coordinate_columns,
+            output_format="dataframe",
+        )
+        distance_transformer.fit(data1)
+        result = distance_transformer.transform(data1)
 
         if output_format == "matrix":
             distance_columns = [

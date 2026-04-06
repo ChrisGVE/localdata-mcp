@@ -315,7 +315,7 @@ class TypeDetector(ABC):
     """Abstract base class for data type detection."""
     
     @abstractmethod
-    def detect_format(self, data: Any) -> 'FormatDetectionResult':
+    def detect_format(self, data: Any) -> 'FormatDetectionResult':  # noqa: F821
         """Detect the format of input data."""
         pass
     

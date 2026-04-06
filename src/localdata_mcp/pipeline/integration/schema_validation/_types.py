@@ -83,7 +83,7 @@ class ValidationError:
 class SchemaInferenceResult:
     """Result of schema inference operation."""
 
-    inferred_schema: "DataSchema"
+    inferred_schema: "DataSchema"  # noqa: F821
     confidence_score: float
     inference_details: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
@@ -91,7 +91,7 @@ class SchemaInferenceResult:
     # Inference metrics
     sample_size: int = 0
     inference_time: float = 0.0
-    alternative_schemas: List[Tuple["DataSchema", float]] = field(default_factory=list)
+    alternative_schemas: List[Tuple["DataSchema", float]]  # noqa: F821 = field(default_factory=list)
 
     # Quality assessment
     data_quality_score: float = 1.0
