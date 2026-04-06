@@ -50,6 +50,26 @@ class LinearRegressionTransformer(BaseEstimator, TransformerMixin, RegressorMixi
         self.model = LinearRegression(fit_intercept=fit_intercept)
         self.result_ = None
 
+    def _compute_adjusted_r2(self, r2: float, n_samples: int, n_features: int):
+        """Compute adjusted R-squared; returns None if denominator is zero."""
+        denominator = n_samples - n_features - 1
+        if denominator <= 0:
+            return None
+        return 1 - (1 - r2) * (n_samples - 1) / denominator
+
+    def _run_statsmodels_diagnostics(self, X, y, residuals):
+        """Fit OLS via statsmodels and return (aic, bic, log_likelihood, assumptions_met)."""
+        if not self.include_diagnostics:
+            return None, None, None, {}
+        try:
+            X_sm = sm.add_constant(X) if self.fit_intercept else X
+            sm_model = sm.OLS(y, X_sm).fit()
+            assumptions_met = self._check_assumptions(X, y, residuals, sm_model)
+            return sm_model.aic, sm_model.bic, sm_model.llf, assumptions_met
+        except Exception as e:
+            logger.warning(f"Failed to compute statistical diagnostics: {e}")
+            return None, None, None, {}
+
     def fit(self, X, y, sample_weight=None, feature_names=None):
         """
         Fit linear regression model.
@@ -73,58 +93,28 @@ class LinearRegressionTransformer(BaseEstimator, TransformerMixin, RegressorMixi
         start_time = time.time()
         logger.info("Starting linear regression fit")
 
-        # Validate inputs
         X, y = check_X_y(X, y, accept_sparse=False, y_numeric=True)
 
-        # Store feature names
         if feature_names is None:
             feature_names = [f"feature_{i}" for i in range(X.shape[1])]
         self.feature_names_ = feature_names
 
-        # Fit the model
         try:
             self.model.fit(X, y, sample_weight=sample_weight)
 
-            # Calculate comprehensive metrics
             y_pred = self.model.predict(X)
             residuals = y - y_pred
 
-            # Basic metrics
             r2 = r2_score(y, y_pred)
             mse = mean_squared_error(y, y_pred)
             mae = mean_absolute_error(y, y_pred)
             rmse = np.sqrt(mse)
-
-            # Adjusted R²
             n_samples, n_features = X.shape
-            denominator = n_samples - n_features - 1
-            adjusted_r2 = (
-                1 - (1 - r2) * (n_samples - 1) / denominator
-                if denominator > 0
-                else None
+            adjusted_r2 = self._compute_adjusted_r2(r2, n_samples, n_features)
+            aic, bic, log_likelihood, assumptions_met = (
+                self._run_statsmodels_diagnostics(X, y, residuals)
             )
 
-            # Statistical analysis using statsmodels for comprehensive metrics
-            aic, bic, log_likelihood = None, None, None
-            assumptions_met = {}
-
-            if self.include_diagnostics:
-                try:
-                    # Add intercept for statsmodels
-                    X_sm = sm.add_constant(X) if self.fit_intercept else X
-                    sm_model = sm.OLS(y, X_sm).fit()
-
-                    aic = sm_model.aic
-                    bic = sm_model.bic
-                    log_likelihood = sm_model.llf
-
-                    # Check assumptions
-                    assumptions_met = self._check_assumptions(X, y, residuals, sm_model)
-
-                except Exception as e:
-                    logger.warning(f"Failed to compute statistical diagnostics: {e}")
-
-            # Create result object
             self.result_ = RegressionModelResult(
                 model_type="Linear Regression",
                 model_params={
@@ -150,7 +140,6 @@ class LinearRegressionTransformer(BaseEstimator, TransformerMixin, RegressorMixi
                 assumptions_met=assumptions_met,
             )
 
-            # Add intercept to coefficients if fitted
             if self.fit_intercept:
                 self.result_.coefficients = np.concatenate(
                     [[self.model.intercept_], self.model.coef_]
