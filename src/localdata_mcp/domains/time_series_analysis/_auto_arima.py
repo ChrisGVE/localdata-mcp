@@ -113,6 +113,57 @@ class AutoARIMATransformer(TimeSeriesTransformer):
         # Default seasonal period if cannot detect
         return 12
 
+    def _fit_candidate_model(self, data, order, seasonal_order):
+        """Fit a single ARIMA/SARIMAX candidate; return (fitted_model, ic_value) or None."""
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            if self.seasonal and seasonal_order != (0, 0, 0, 0):
+                model = SARIMAX(
+                    data,
+                    order=order,
+                    seasonal_order=seasonal_order,
+                    enforce_stationarity=True,
+                    enforce_invertibility=True,
+                )
+            else:
+                model = ARIMA(
+                    data,
+                    order=order,
+                    enforce_stationarity=True,
+                    enforce_invertibility=True,
+                )
+            fitted = model.fit()
+            ic_value = fitted.aic if self.information_criterion == "aic" else fitted.bic
+            return fitted, ic_value
+
+    def _search_best_model(self, data, param_combinations, logger):
+        """Search parameter combinations; populate model_results_ and return best_ic."""
+        best_ic = np.inf
+        logger.info(f"Testing {len(param_combinations)} ARIMA parameter combinations")
+        for order, seasonal_order in param_combinations:
+            try:
+                fitted, ic_value = self._fit_candidate_model(
+                    data, order, seasonal_order
+                )
+                self.model_results_.append(
+                    {
+                        "order": order,
+                        "seasonal_order": seasonal_order,
+                        "aic": fitted.aic,
+                        "bic": fitted.bic,
+                        "log_likelihood": fitted.llf,
+                        "selected_ic": ic_value,
+                    }
+                )
+                if ic_value < best_ic:
+                    best_ic = ic_value
+                    self.best_model_ = fitted
+                    self.best_order_ = order
+                    self.best_seasonal_order_ = seasonal_order
+            except Exception as e:
+                logger.debug(f"Failed to fit model {order}, {seasonal_order}: {e}")
+        return best_ic
+
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         """Fit the Auto-ARIMA model by searching optimal parameters."""
         if self.validate_input:
@@ -121,7 +172,6 @@ class AutoARIMATransformer(TimeSeriesTransformer):
         logger = get_logger(__name__)
 
         try:
-            # Use the first column if X is a DataFrame, otherwise use y
             if isinstance(X, pd.DataFrame):
                 if X.shape[1] == 1:
                     data = X.iloc[:, 0]
@@ -134,75 +184,14 @@ class AutoARIMATransformer(TimeSeriesTransformer):
 
             self.training_data_ = data
 
-            # Detect seasonal period if not provided
             if self.seasonal and self.seasonal_period is None:
                 self.seasonal_period = self._detect_seasonal_period(data)
 
-            # Generate parameter combinations
-            if self.stepwise:
-                # Stepwise search - start with simple model and expand
-                param_combinations = self._stepwise_search()
-            else:
-                # Exhaustive search
-                param_combinations = self._exhaustive_search()
-
-            best_ic = np.inf
-            self.model_results_ = []
-
-            logger.info(
-                f"Testing {len(param_combinations)} ARIMA parameter combinations"
+            param_combinations = (
+                self._stepwise_search() if self.stepwise else self._exhaustive_search()
             )
-
-            for i, (order, seasonal_order) in enumerate(param_combinations):
-                try:
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore")
-
-                        if self.seasonal and seasonal_order != (0, 0, 0, 0):
-                            model = SARIMAX(
-                                data,
-                                order=order,
-                                seasonal_order=seasonal_order,
-                                enforce_stationarity=True,
-                                enforce_invertibility=True,
-                            )
-                        else:
-                            model = ARIMA(
-                                data,
-                                order=order,
-                                enforce_stationarity=True,
-                                enforce_invertibility=True,
-                            )
-
-                        fitted_model = model.fit()
-
-                        # Calculate information criterion
-                        ic_value = (
-                            fitted_model.aic
-                            if self.information_criterion == "aic"
-                            else fitted_model.bic
-                        )
-
-                        model_result = {
-                            "order": order,
-                            "seasonal_order": seasonal_order,
-                            "aic": fitted_model.aic,
-                            "bic": fitted_model.bic,
-                            "log_likelihood": fitted_model.llf,
-                            "selected_ic": ic_value,
-                        }
-
-                        self.model_results_.append(model_result)
-
-                        if ic_value < best_ic:
-                            best_ic = ic_value
-                            self.best_model_ = fitted_model
-                            self.best_order_ = order
-                            self.best_seasonal_order_ = seasonal_order
-
-                except Exception as e:
-                    logger.debug(f"Failed to fit model {order}, {seasonal_order}: {e}")
-                    continue
+            self.model_results_ = []
+            best_ic = self._search_best_model(data, param_combinations, logger)
 
             if self.best_model_ is None:
                 raise ValueError("No valid ARIMA model could be fitted to the data")

@@ -67,6 +67,58 @@ class RegressionModelingPipeline(AnalysisPipelineBase):
         self.feature_selection_result_ = None
         self.residual_analysis_result_ = None
 
+    def _apply_feature_selection(self, X, y, feature_names):
+        """Run feature selection if enabled; return (X_processed, feature_names)."""
+        if not self.feature_selection:
+            return X, feature_names
+        self.feature_selector_ = FeatureSelectionTransformer(
+            **self.model_kwargs.get("feature_selection_params", {})
+        )
+        self.feature_selector_.fit(X, y, feature_names=feature_names)
+        X_processed = self.feature_selector_.transform(X)
+        selected_features = self.feature_selector_.get_result()["selected_features"]
+        self.feature_selection_result_ = self.feature_selector_.get_result()
+        logger.info(
+            f"Feature selection completed - {len(selected_features)} features selected"
+        )
+        return X_processed, selected_features
+
+    def _instantiate_regressor(self):
+        """Instantiate and return the configured regressor."""
+        if self.model_type == "linear":
+            return LinearRegressionTransformer(
+                **self.model_kwargs.get("model_params", {})
+            )
+        elif self.model_type in ["ridge", "lasso", "elastic_net"]:
+            model_params = self.model_kwargs.get("model_params", {})
+            model_params["method"] = self.model_type
+            return RegularizedRegressionTransformer(**model_params)
+        elif self.model_type == "logistic":
+            return LogisticRegressionTransformer(
+                **self.model_kwargs.get("model_params", {})
+            )
+        elif self.model_type == "polynomial":
+            return PolynomialRegressionTransformer(
+                **self.model_kwargs.get("model_params", {})
+            )
+        else:
+            raise ValueError(f"Unknown model type: {self.model_type}")
+
+    def _run_residual_analysis(self, X_processed, y):
+        """Fit residual analyzer if enabled and model is not logistic."""
+        if not self.residual_analysis or self.model_type == "logistic":
+            return
+        fitted_values = self.regressor_.predict(X_processed)
+        residuals = y - fitted_values
+        self.residual_analyzer_ = ResidualAnalysisTransformer(
+            **self.model_kwargs.get("residual_params", {})
+        )
+        self.residual_analyzer_.fit(
+            X_processed, y, residuals=residuals, fitted_values=fitted_values
+        )
+        self.residual_analysis_result_ = self.residual_analyzer_.get_result()
+        logger.info("Residual analysis completed")
+
     def fit(self, X, y, feature_names=None, **fit_params):
         """
         Fit the complete regression modeling pipeline.
@@ -91,75 +143,24 @@ class RegressionModelingPipeline(AnalysisPipelineBase):
         logger.info(f"Starting regression modeling pipeline - {self.model_type}")
 
         try:
-            # Validate inputs
             X, y = check_X_y(X, y, accept_sparse=False, y_numeric=True)
 
             if feature_names is None:
                 feature_names = [f"feature_{i}" for i in range(X.shape[1])]
 
-            # Step 1: Feature selection (if requested)
-            X_processed = X.copy()
-            if self.feature_selection:
-                self.feature_selector_ = FeatureSelectionTransformer(
-                    **self.model_kwargs.get("feature_selection_params", {})
-                )
-                self.feature_selector_.fit(X_processed, y, feature_names=feature_names)
-                X_processed = self.feature_selector_.transform(X_processed)
+            X_processed, feature_names = self._apply_feature_selection(
+                X.copy(), y, feature_names
+            )
 
-                # Update feature names to selected ones
-                selected_features = self.feature_selector_.get_result()[
-                    "selected_features"
-                ]
-                feature_names = selected_features
-
-                self.feature_selection_result_ = self.feature_selector_.get_result()
-                logger.info(
-                    f"Feature selection completed - {len(selected_features)} features selected"
-                )
-
-            # Step 2: Fit regression model
-            if self.model_type == "linear":
-                self.regressor_ = LinearRegressionTransformer(
-                    **self.model_kwargs.get("model_params", {})
-                )
-            elif self.model_type in ["ridge", "lasso", "elastic_net"]:
-                model_params = self.model_kwargs.get("model_params", {})
-                model_params["method"] = self.model_type
-                self.regressor_ = RegularizedRegressionTransformer(**model_params)
-            elif self.model_type == "logistic":
-                self.regressor_ = LogisticRegressionTransformer(
-                    **self.model_kwargs.get("model_params", {})
-                )
-            elif self.model_type == "polynomial":
-                self.regressor_ = PolynomialRegressionTransformer(
-                    **self.model_kwargs.get("model_params", {})
-                )
-            else:
-                raise ValueError(f"Unknown model type: {self.model_type}")
-
-            # Fit the model
+            self.regressor_ = self._instantiate_regressor()
             self.regressor_.fit(
                 X_processed, y, feature_names=feature_names, **fit_params
             )
             self.regression_result_ = self.regressor_.get_result()
 
-            # Step 3: Residual analysis (if requested and applicable)
-            if self.residual_analysis and self.model_type != "logistic":
-                fitted_values = self.regressor_.predict(X_processed)
-                residuals = y - fitted_values
+            self._run_residual_analysis(X_processed, y)
 
-                self.residual_analyzer_ = ResidualAnalysisTransformer(
-                    **self.model_kwargs.get("residual_params", {})
-                )
-                self.residual_analyzer_.fit(
-                    X_processed, y, residuals=residuals, fitted_values=fitted_values
-                )
-                self.residual_analysis_result_ = self.residual_analyzer_.get_result()
-                logger.info("Residual analysis completed")
-
-            # Update pipeline state
             self._state = PipelineState.FITTED
-
             fit_time = time.time() - start_time
             logger.info(f"Regression modeling pipeline completed in {fit_time:.3f}s")
 
