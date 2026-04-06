@@ -268,26 +268,26 @@ Document-oriented NoSQL database.
 
 **Connection String Format:**
 ```
-mongodb://user:password@host:port/database
-mongodb+srv://user:password@cluster.mongodb.net/database
+mongodb://<user>:<password>@<host>:<port>/<database>
+mongodb+srv://<user>:<password>@<cluster>.mongodb.net/<database>
 ```
 
 **MCP Tool Call:**
 ```python
-connect_database("mongo_db", "mongodb", "mongodb://user:password@localhost:27017/mydb")
+connect_database("mongo_db", "mongodb", "mongodb://<user>:<password>@localhost:27017/mydb")
 ```
 
 **Examples:**
 
 ```python
-# Local instance
+# Local instance (no auth)
 connect_database("local_mongo", "mongodb", "mongodb://localhost:27017/test")
 
 # MongoDB Atlas (cloud)
-connect_database("atlas", "mongodb", "mongodb+srv://user:password@cluster0.abc123.mongodb.net/dbname")
+connect_database("atlas", "mongodb", "mongodb+srv://<user>:<password>@<cluster>.mongodb.net/dbname")
 
 # With authentication
-connect_database("auth_db", "mongodb", "mongodb://user:password@mongo.example.com:27017/mydb?authSource=admin")
+connect_database("auth_db", "mongodb", "mongodb://<user>:<password>@mongo.example.com:27017/mydb?authSource=admin")
 ```
 
 **Special Notes:**
