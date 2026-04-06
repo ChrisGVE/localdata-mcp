@@ -13,9 +13,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-import pandas as pd
+from typing import Any, Dict, List, Optional
 
 from ..config_schemas import DiskBudgetConfig
 from ..memory_budget import MemoryBudget
@@ -81,50 +79,37 @@ def get_disk_budget() -> int:
     return budget
 
 
-def decide_execution_path(
-    query_analysis: Optional[QueryAnalysis],
-    memory_budget: MemoryBudget,
+def _decide_in_memory(
+    estimated_bytes: int, memory_budget: MemoryBudget
+) -> Optional[ExecutionDecision]:
+    """Return an in-memory decision if the estimate fits RAM."""
+    if estimated_bytes >= memory_budget.budget_bytes:
+        return None
+    logger.info(
+        "Query fits in memory budget: %d bytes < %d bytes",
+        estimated_bytes,
+        memory_budget.budget_bytes,
+    )
+    return ExecutionDecision(
+        path="in_memory",
+        estimated_bytes=estimated_bytes,
+        memory_budget=memory_budget,
+        reason=(
+            f"Estimated {estimated_bytes} bytes fits within "
+            f"{memory_budget.budget_bytes} byte RAM budget"
+        ),
+    )
+
+
+def _decide_staging_or_refinement(
+    estimated_bytes: int, memory_budget: MemoryBudget
 ) -> ExecutionDecision:
-    """Choose in-memory, staging, or refinement based on budgets.
-
-    Args:
-        query_analysis: Pre-query analysis results (may be None).
-        memory_budget: Calculated RAM budget.
-
-    Returns:
-        An ExecutionDecision indicating which path to take.
-    """
-    if query_analysis is None:
-        return ExecutionDecision(
-            path="in_memory",
-            estimated_bytes=0,
-            memory_budget=memory_budget,
-            reason="No query analysis available; defaulting to in-memory",
-        )
-
-    estimated_bytes = int(query_analysis.estimated_total_memory_mb * 1024 * 1024)
-
-    if estimated_bytes < memory_budget.budget_bytes:
-        logger.info(
-            "Query fits in memory budget: %d bytes < %d bytes",
-            estimated_bytes,
-            memory_budget.budget_bytes,
-        )
-        return ExecutionDecision(
-            path="in_memory",
-            estimated_bytes=estimated_bytes,
-            memory_budget=memory_budget,
-            reason=(
-                f"Estimated {estimated_bytes} bytes fits within "
-                f"{memory_budget.budget_bytes} byte RAM budget"
-            ),
-        )
-
+    """Return staging or refinement based on disk budget."""
     disk_budget_bytes = get_disk_budget()
 
     if estimated_bytes < disk_budget_bytes:
         logger.info(
-            "Query exceeds RAM but fits disk: %d bytes < %d bytes",
+            "Query exceeds RAM but fits disk: %d < %d bytes",
             estimated_bytes,
             disk_budget_bytes,
         )
@@ -154,6 +139,28 @@ def decide_execution_path(
             f"({memory_budget.budget_bytes}) and disk ({disk_budget_bytes})"
         ),
     )
+
+
+def decide_execution_path(
+    query_analysis: Optional[QueryAnalysis],
+    memory_budget: MemoryBudget,
+) -> ExecutionDecision:
+    """Choose in-memory, staging, or refinement based on budgets."""
+    if query_analysis is None:
+        return ExecutionDecision(
+            path="in_memory",
+            estimated_bytes=0,
+            memory_budget=memory_budget,
+            reason="No query analysis available; defaulting to in-memory",
+        )
+
+    estimated_bytes = int(query_analysis.estimated_total_memory_mb * 1024 * 1024)
+
+    in_memory = _decide_in_memory(estimated_bytes, memory_budget)
+    if in_memory is not None:
+        return in_memory
+
+    return _decide_staging_or_refinement(estimated_bytes, memory_budget)
 
 
 def build_refinement_response(
