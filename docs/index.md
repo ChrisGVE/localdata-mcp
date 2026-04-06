@@ -1,16 +1,19 @@
 # LocalData MCP
 
-A comprehensive MCP server for databases, spreadsheets, structured files, and directed graphs.
+A data science plugin for LLM agents. Connects to 13 database types, 20+ file formats, graph and RDF sources, and provides 8 analytical domains through 52 MCP tools.
 
-LocalData MCP gives LLM agents direct access to local data sources through the [Model Context Protocol](https://modelcontextprotocol.io/). Connect to SQL databases, open spreadsheets, navigate JSON/YAML/TOML trees, or load and analyze directed graphs — all through a consistent tool interface.
+LocalData MCP gives LLM agents direct access to local and remote data sources through the [Model Context Protocol](https://modelcontextprotocol.io/). Beyond data connectivity, it provides a full data science toolkit: statistical analysis, time series forecasting, regression modeling, clustering, business intelligence, geospatial analysis, optimization, and sampling methods — all designed for LLM-driven workflows with composition metadata and progressive disclosure.
 
 ## Key capabilities
 
-- **SQL databases**: PostgreSQL, MySQL, SQLite, DuckDB — local or remote with authentication
-- **Spreadsheets**: Excel, LibreOffice Calc, Apple Numbers with multi-sheet support
-- **Flat files**: CSV, TSV, Parquet, Feather, Arrow, HDF5 with large file streaming
-- **Structured data**: JSON, YAML, TOML stored as navigable trees with full CRUD
-- **Directed graphs**: DOT, GML, GraphML, Mermaid with path finding, statistics, and validation
+- **SQL databases**: PostgreSQL, MySQL, SQLite, DuckDB, Oracle, MS SQL Server
+- **NoSQL**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j, CouchDB
+- **File formats**: CSV, TSV, JSON, YAML, TOML, XML, Excel, Parquet, Feather, HDF5
+- **Structured data**: JSON, YAML, TOML trees with full CRUD operations
+- **Graphs**: DOT, GML, GraphML, Mermaid with path finding and statistics
+- **RDF/SPARQL**: Turtle, N-Triples files and remote SPARQL endpoints
+- **Data science**: 8 analytical domains with 12 specialized tools
+- **Streaming**: Memory-bounded query execution with adaptive chunk sizing
 - **Security**: Path restrictions, SQL injection prevention, connection limits
 
 ```{toctree}
@@ -18,8 +21,10 @@ LocalData MCP gives LLM agents direct access to local data sources through the [
 :caption: Contents
 
 getting-started
+tools-reference
 configuration
 data-sources/index
+domains/index
 error-classification
 changelog
 ```
