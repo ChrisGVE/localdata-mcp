@@ -340,6 +340,94 @@ class EnsembleForecaster(TimeSeriesTransformer):
 
         return self
 
+    def _collect_individual_forecasts(
+        self, X: pd.DataFrame
+    ) -> Tuple[Dict[str, pd.Series], Dict[str, pd.DataFrame]]:
+        """Collect forecasts and confidence intervals from each fitted model."""
+        logger = get_logger(__name__)
+        individual_forecasts: Dict[str, pd.Series] = {}
+        individual_intervals: Dict[str, pd.DataFrame] = {}
+
+        for method, model in self.fitted_models_.items():
+            try:
+                result = model.transform(X)
+                if not (hasattr(result, "data") and "forecast_values" in result.data):
+                    continue
+                forecast_dict = result.data["forecast_values"]
+                forecast_values = (
+                    pd.Series(forecast_dict)
+                    if isinstance(forecast_dict, dict)
+                    else forecast_dict
+                )
+                individual_forecasts[method] = forecast_values
+
+                if "confidence_intervals" in result.data:
+                    intervals_dict = result.data["confidence_intervals"]
+                    intervals = (
+                        pd.DataFrame(intervals_dict)
+                        if isinstance(intervals_dict, dict)
+                        else intervals_dict
+                    )
+                    individual_intervals[method] = intervals
+            except Exception as e:
+                logger.warning(f"Failed to get forecast from {method}: {e}")
+
+        return individual_forecasts, individual_intervals
+
+    def _combine_forecasts(
+        self, individual_forecasts: Dict[str, pd.Series]
+    ) -> pd.Series:
+        """Combine individual forecasts using the configured combination method."""
+        if self.combination_method == "weighted_average":
+            return self._weighted_average_combination(individual_forecasts)
+        elif self.combination_method == "median":
+            return self._median_combination(individual_forecasts)
+        elif self.combination_method == "best_performer":
+            return self._best_performer_combination(individual_forecasts)
+        else:
+            raise ValueError(f"Unknown combination method: {self.combination_method}")
+
+    def _build_ensemble_result_data(
+        self,
+        ensemble_forecast: pd.Series,
+        individual_forecasts: Dict[str, pd.Series],
+        ensemble_intervals,
+    ) -> Dict:
+        """Build the result data dictionary for the ensemble forecast."""
+        forecast_std = np.std([f.values for f in individual_forecasts.values()], axis=0)
+        forecast_agreement = 1.0 - (
+            np.mean(forecast_std) / np.mean(np.abs(ensemble_forecast))
+        )
+        return {
+            "forecast_method": "Ensemble",
+            "forecast_values": ensemble_forecast.to_dict(),
+            "confidence_intervals": ensemble_intervals.to_dict()
+            if ensemble_intervals is not None
+            else None,
+            "forecast_horizon": self.forecast_steps,
+            "confidence_level": self.confidence_level,
+            "ensemble_details": {
+                "methods": list(self.fitted_models_.keys()),
+                "weights": self.computed_weights_,
+                "combination_method": self.combination_method,
+                "individual_forecasts": {
+                    m: f.to_dict() for m, f in individual_forecasts.items()
+                },
+            },
+            "ensemble_statistics": {
+                "forecast_agreement": float(forecast_agreement),
+                "method_count": len(individual_forecasts),
+                "forecast_std_dev": forecast_std.tolist()
+                if hasattr(forecast_std, "tolist")
+                else float(forecast_std),
+            },
+            "model_performance": self.model_performance_,
+            "interpretation": self._generate_interpretation(
+                ensemble_forecast, individual_forecasts
+            ),
+            "recommendations": self._generate_recommendations(),
+        }
+
     def transform(self, X: pd.DataFrame) -> PipelineResult:
         """Generate ensemble forecasts using fitted models."""
         check_is_fitted(self, ["fitted_models_", "computed_weights_", "training_data_"])
@@ -348,106 +436,20 @@ class EnsembleForecaster(TimeSeriesTransformer):
         logger = get_logger(__name__)
 
         try:
-            # Generate forecasts from each model
-            individual_forecasts = {}
-            individual_intervals = {}
-
-            for method, model in self.fitted_models_.items():
-                try:
-                    result = model.transform(X)
-
-                    # Extract forecast values
-                    if hasattr(result, "data") and "forecast_values" in result.data:
-                        forecast_dict = result.data["forecast_values"]
-                        if isinstance(forecast_dict, dict):
-                            forecast_values = pd.Series(forecast_dict)
-                        else:
-                            forecast_values = forecast_dict
-
-                        individual_forecasts[method] = forecast_values
-
-                        # Extract confidence intervals if available
-                        if "confidence_intervals" in result.data:
-                            intervals_dict = result.data["confidence_intervals"]
-                            if isinstance(intervals_dict, dict):
-                                intervals = pd.DataFrame(intervals_dict)
-                            else:
-                                intervals = intervals_dict
-                            individual_intervals[method] = intervals
-
-                except Exception as e:
-                    logger.warning(f"Failed to get forecast from {method}: {e}")
-                    continue
+            individual_forecasts, individual_intervals = (
+                self._collect_individual_forecasts(X)
+            )
 
             if not individual_forecasts:
                 raise ValueError("No individual forecasts could be generated")
 
-            # Combine forecasts based on combination method
-            if self.combination_method == "weighted_average":
-                ensemble_forecast = self._weighted_average_combination(
-                    individual_forecasts
-                )
-            elif self.combination_method == "median":
-                ensemble_forecast = self._median_combination(individual_forecasts)
-            elif self.combination_method == "best_performer":
-                ensemble_forecast = self._best_performer_combination(
-                    individual_forecasts
-                )
-            else:
-                raise ValueError(
-                    f"Unknown combination method: {self.combination_method}"
-                )
-
-            # Combine confidence intervals
+            ensemble_forecast = self._combine_forecasts(individual_forecasts)
             ensemble_intervals = self._combine_confidence_intervals(
                 individual_intervals
             )
-
-            # Calculate ensemble statistics
-            forecast_std = np.std(
-                [f.values for f in individual_forecasts.values()], axis=0
+            result_data = self._build_ensemble_result_data(
+                ensemble_forecast, individual_forecasts, ensemble_intervals
             )
-            forecast_agreement = 1.0 - (
-                np.mean(forecast_std) / np.mean(np.abs(ensemble_forecast))
-            )
-
-            # Prepare result data
-            result_data = {
-                "forecast_method": "Ensemble",
-                "forecast_values": ensemble_forecast.to_dict(),
-                "confidence_intervals": ensemble_intervals.to_dict()
-                if ensemble_intervals is not None
-                else None,
-                "forecast_horizon": self.forecast_steps,
-                "confidence_level": self.confidence_level,
-                "ensemble_details": {
-                    "methods": list(self.fitted_models_.keys()),
-                    "weights": self.computed_weights_,
-                    "combination_method": self.combination_method,
-                    "individual_forecasts": {
-                        method: f.to_dict()
-                        for method, f in individual_forecasts.items()
-                    },
-                },
-                "ensemble_statistics": {
-                    "forecast_agreement": float(forecast_agreement),
-                    "method_count": len(individual_forecasts),
-                    "forecast_std_dev": forecast_std.tolist()
-                    if hasattr(forecast_std, "tolist")
-                    else float(forecast_std),
-                },
-                "model_performance": self.model_performance_,
-            }
-
-            # Add interpretation
-            interpretation = self._generate_interpretation(
-                ensemble_forecast, individual_forecasts
-            )
-            result_data["interpretation"] = interpretation
-
-            # Add recommendations
-            recommendations = self._generate_recommendations()
-            result_data["recommendations"] = recommendations
 
             return PipelineResult(
                 success=True,

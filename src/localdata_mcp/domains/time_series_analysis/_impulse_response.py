@@ -100,151 +100,133 @@ class ImpulseResponseAnalyzer(MultivariateTimeSeriesTransformer):
         if bootstrap_reps < 100:
             raise ValueError("bootstrap_reps must be at least 100")
 
+    def _fit_var_model(self, X: pd.DataFrame):
+        """Fit a VAR model and return (var_fitted, optimal_lags)."""
+        var_model = VAR(X)
+        lag_order_results = var_model.select_order(maxlags=min(10, len(X) // 10))
+        optimal_lags = getattr(lag_order_results, "aic")
+        var_fitted = var_model.fit(maxlags=optimal_lags)
+        logger.info(f"Fitted VAR({optimal_lags}) model for impulse response analysis")
+        return var_fitted, optimal_lags
+
+    def _compute_irf_arrays(self, var_fitted):
+        """Compute IRF arrays and optional confidence intervals."""
+        irf_result = var_fitted.irf(self.periods)
+        impulse_responses = (
+            irf_result.orth_irfs if self.orthogonalized else irf_result.irfs
+        )
+        cumulative_responses = (
+            np.cumsum(impulse_responses, axis=0) if self.cumulative else None
+        )
+
+        irf_lower_approx = None
+        irf_upper_approx = None
+        try:
+            irf_result.cum_effect_cova(orth=self.orthogonalized)[-1]
+            alpha = 1 - self.confidence_level
+            z_score = stats.norm.ppf(1 - alpha / 2)
+            irf_stderr = np.std(impulse_responses, axis=0, keepdims=True)
+            irf_lower_approx = impulse_responses - z_score * irf_stderr
+            irf_upper_approx = impulse_responses + z_score * irf_stderr
+        except Exception as e:
+            logger.warning(f"Could not compute confidence intervals: {e}")
+
+        return (
+            impulse_responses,
+            cumulative_responses,
+            irf_lower_approx,
+            irf_upper_approx,
+        )
+
+    def _compute_fevd(self, var_fitted):
+        """Compute Forecast Error Variance Decomposition."""
+        try:
+            fevd_result = var_fitted.fevd(self.periods)
+            return fevd_result.decomp
+        except Exception as e:
+            logger.warning(f"Could not compute FEVD: {e}")
+            return None
+
+    def _build_irf_dataframes(
+        self, impulse_responses, cumulative_responses, fevd_decomposition, series_names
+    ):
+        """Build structured DataFrames from IRF arrays."""
+        periods_index = list(range(self.periods + 1))
+        irf_dict = {
+            f"{shock_var} \u2192 {response_var}": impulse_responses[
+                :, resp_idx, shock_idx
+            ]
+            for shock_idx, shock_var in enumerate(series_names)
+            for resp_idx, response_var in enumerate(series_names)
+        }
+        irf_df = pd.DataFrame(irf_dict, index=periods_index)
+
+        cumulative_irf_df = None
+        if cumulative_responses is not None:
+            cum_dict = {
+                f"{shock_var} \u2192 {response_var}": cumulative_responses[
+                    :, resp_idx, shock_idx
+                ]
+                for shock_idx, shock_var in enumerate(series_names)
+                for resp_idx, response_var in enumerate(series_names)
+            }
+            cumulative_irf_df = pd.DataFrame(cum_dict, index=periods_index)
+
+        fevd_df = None
+        if fevd_decomposition is not None:
+            n_fevd_periods = fevd_decomposition.shape[1]
+            fevd_dict: Dict = {}
+            for period in range(n_fevd_periods):
+                for shock_idx, shock_var in enumerate(series_names):
+                    for resp_idx, response_var in enumerate(series_names):
+                        key = f"{response_var} \u2190 {shock_var}"
+                        fevd_dict.setdefault(key, []).append(
+                            fevd_decomposition[resp_idx, period, shock_idx]
+                        )
+            fevd_df = pd.DataFrame(fevd_dict, index=list(range(n_fevd_periods)))
+
+        return irf_dict, irf_df, cumulative_irf_df, fevd_df
+
+    def _rank_significant_responses(self, irf_dict: Dict) -> List[Dict]:
+        """Rank impulse responses by magnitude and return sorted list."""
+        significant_responses = [
+            {
+                "relationship": key,
+                "max_response": np.max(np.abs(responses)),
+                "max_period": int(np.argmax(np.abs(responses))),
+                "total_cumulative_effect": float(np.sum(responses)),
+            }
+            for key, responses in irf_dict.items()
+        ]
+        significant_responses.sort(key=lambda x: abs(x["max_response"]), reverse=True)
+        return significant_responses
+
     def _analysis_logic(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
-        """
-        Core impulse response analysis logic.
-
-        Parameters:
-        -----------
-        X : pd.DataFrame
-            Input multivariate time series data
-
-        Returns:
-        --------
-        result : TimeSeriesAnalysisResult
-            Impulse response analysis results
-        """
+        """Core impulse response analysis logic."""
         start_time = time.time()
 
         try:
-            # Validate multivariate data
             X = self._validate_multivariate_data(X)
+            var_fitted, optimal_lags = self._fit_var_model(X)
 
-            # Fit VAR model first
-            var_model = VAR(X)
-            lag_order_results = var_model.select_order(maxlags=min(10, len(X) // 10))
-            optimal_lags = getattr(lag_order_results, "aic")
-            var_fitted = var_model.fit(maxlags=optimal_lags)
+            (
+                impulse_responses,
+                cumulative_responses,
+                irf_lower_approx,
+                irf_upper_approx,
+            ) = self._compute_irf_arrays(var_fitted)
+            fevd_decomposition = self._compute_fevd(var_fitted)
 
-            logger.info(
-                f"Fitted VAR({optimal_lags}) model for impulse response analysis"
-            )
-
-            # Compute impulse response functions
-            irf_result = var_fitted.irf(self.periods)
-
-            # Get impulse responses (periods x n_variables x n_variables)
-            if self.orthogonalized:
-                impulse_responses = irf_result.orth_irfs
-            else:
-                impulse_responses = irf_result.irfs
-
-            # Compute cumulative impulse responses if requested
-            cumulative_responses = None
-            if self.cumulative:
-                cumulative_responses = np.cumsum(impulse_responses, axis=0)
-
-            # Compute confidence intervals
-            try:
-                if self.orthogonalized:
-                    irf_lower, irf_upper = irf_result.cum_effect_cova(orth=True)[-1]
-                else:
-                    irf_lower, irf_upper = irf_result.cum_effect_cova(orth=False)[-1]
-
-                # Reshape confidence intervals to match IRF format
-                alpha = 1 - self.confidence_level
-                z_score = stats.norm.ppf(1 - alpha / 2)
-
-                # Approximate confidence intervals using standard errors
-                irf_stderr = np.std(impulse_responses, axis=0, keepdims=True)
-                irf_lower_approx = impulse_responses - z_score * irf_stderr
-                irf_upper_approx = impulse_responses + z_score * irf_stderr
-
-            except Exception as e:
-                logger.warning(f"Could not compute confidence intervals: {e}")
-                irf_lower_approx = None
-                irf_upper_approx = None
-
-            # Compute Forecast Error Variance Decomposition (FEVD)
-            try:
-                fevd_result = var_fitted.fevd(self.periods)
-                fevd_decomposition = fevd_result.decomp
-            except Exception as e:
-                logger.warning(f"Could not compute FEVD: {e}")
-                fevd_decomposition = None
-
-            # Create structured results
             series_names = list(X.columns)
             n_vars = len(series_names)
-
-            # Convert impulse responses to structured format
-            irf_dict = {}
-            for shock_idx, shock_var in enumerate(series_names):
-                for response_idx, response_var in enumerate(series_names):
-                    key = f"{shock_var} \u2192 {response_var}"
-                    irf_dict[key] = impulse_responses[:, response_idx, shock_idx]
-
-            # Create DataFrames for easy interpretation
-            # irf() returns periods + 1 values (period 0 through periods)
-            periods_index = list(range(self.periods + 1))
-
-            irf_df = pd.DataFrame(
-                {key: values for key, values in irf_dict.items()}, index=periods_index
+            irf_dict, irf_df, cumulative_irf_df, fevd_df = self._build_irf_dataframes(
+                impulse_responses,
+                cumulative_responses,
+                fevd_decomposition,
+                series_names,
             )
+            significant_responses = self._rank_significant_responses(irf_dict)
 
-            # Cumulative IRF DataFrame
-            cumulative_irf_df = None
-            if cumulative_responses is not None:
-                cumulative_dict = {}
-                for shock_idx, shock_var in enumerate(series_names):
-                    for response_idx, response_var in enumerate(series_names):
-                        key = f"{shock_var} \u2192 {response_var}"
-                        cumulative_dict[key] = cumulative_responses[
-                            :, response_idx, shock_idx
-                        ]
-
-                cumulative_irf_df = pd.DataFrame(cumulative_dict, index=periods_index)
-
-            # FEVD DataFrame
-            fevd_df = None
-            if fevd_decomposition is not None:
-                # fevd decomp shape is (n_vars, periods, n_vars) = (response, period, shock)
-                n_fevd_periods = fevd_decomposition.shape[1]
-                fevd_dict = {}
-                for period in range(n_fevd_periods):
-                    for shock_idx, shock_var in enumerate(series_names):
-                        for response_idx, response_var in enumerate(series_names):
-                            key = f"{response_var} \u2190 {shock_var}"
-                            if key not in fevd_dict:
-                                fevd_dict[key] = []
-                            fevd_dict[key].append(
-                                fevd_decomposition[response_idx, period, shock_idx]
-                            )
-
-                fevd_df = pd.DataFrame(fevd_dict, index=list(range(n_fevd_periods)))
-
-            # Find most significant impulse responses
-            significant_responses = []
-            for key, responses in irf_dict.items():
-                max_response = np.max(np.abs(responses))
-                max_period = np.argmax(np.abs(responses))
-                significant_responses.append(
-                    {
-                        "relationship": key,
-                        "max_response": max_response,
-                        "max_period": max_period,
-                        "total_cumulative_effect": np.sum(responses)
-                        if responses is not None
-                        else 0,
-                    }
-                )
-
-            # Sort by magnitude of response
-            significant_responses.sort(
-                key=lambda x: abs(x["max_response"]), reverse=True
-            )
-
-            # Model diagnostics
             model_diagnostics = {
                 "var_model_lags": optimal_lags,
                 "periods_analyzed": self.periods,
@@ -254,8 +236,6 @@ class ImpulseResponseAnalyzer(MultivariateTimeSeriesTransformer):
                 "has_confidence_intervals": irf_lower_approx is not None,
                 "has_fevd": fevd_decomposition is not None,
             }
-
-            # Model parameters
             model_parameters = {
                 "impulse_responses": impulse_responses,
                 "impulse_response_df": irf_df,
@@ -274,16 +254,12 @@ class ImpulseResponseAnalyzer(MultivariateTimeSeriesTransformer):
                 },
             }
 
-            # Generate interpretation
             interpretation = self._generate_irf_interpretation(
                 significant_responses, n_vars, self.periods
             )
-
-            # Generate recommendations
             recommendations = self._generate_irf_recommendations(
                 significant_responses, fevd_decomposition, X
             )
-
             processing_time = time.time() - start_time
 
             return self._prepare_multivariate_result(
@@ -367,92 +343,62 @@ class ImpulseResponseAnalyzer(MultivariateTimeSeriesTransformer):
 
         return interpretation
 
-    def _generate_irf_recommendations(
-        self, significant_responses: List[Dict], fevd_decomposition, X: pd.DataFrame
-    ) -> List[str]:
-        """
-        Generate recommendations based on impulse response analysis results.
-
-        Parameters:
-        -----------
-        significant_responses : list
-            List of impulse response relationships
-        fevd_decomposition : array or None
-            Forecast error variance decomposition results
-        X : pd.DataFrame
-            Original data
-
-        Returns:
-        --------
-        recommendations : List[str]
-            List of recommendations
-        """
-        recommendations = []
-
-        if not significant_responses:
-            recommendations.extend(
-                [
-                    "No significant impulse responses detected - system may be weakly connected",
-                    "Consider alternative shock identification strategies",
-                    "Verify VAR model specification and lag structure",
-                ]
-            )
-            return recommendations
-
-        # Analyze response patterns
-        max_periods = [r["max_period"] for r in significant_responses]
-        avg_max_period = np.mean(max_periods)
-
+    def _irf_timing_recommendation(self, significant_responses: List[Dict]) -> str:
+        """Return a recommendation based on the average timing of max shock impact."""
+        avg_max_period = np.mean([r["max_period"] for r in significant_responses])
         if avg_max_period < 2:
-            recommendations.append(
+            return (
                 "Shocks show immediate impact - system responds quickly to disturbances"
             )
         elif avg_max_period > 5:
-            recommendations.append(
-                "Shocks show delayed maximum impact - consider longer forecasting horizons"
-            )
-        else:
-            recommendations.append(
-                "Shocks show moderate response timing - standard forecasting horizons appropriate"
-            )
+            return "Shocks show delayed maximum impact - consider longer forecasting horizons"
+        return "Shocks show moderate response timing - standard forecasting horizons appropriate"
 
-        # Check persistence
+    def _fevd_recommendations(self, fevd_decomposition) -> List[str]:
+        """Return recommendations derived from FEVD results."""
+        recs = ["Use FEVD results to identify key drivers of forecast error variance"]
+        final_period_fevd = fevd_decomposition[-1]
+        if np.max(final_period_fevd) > 0.7:
+            recs.append(
+                "One variable dominates forecast error variance - focus forecasting efforts accordingly"
+            )
+        return recs
+
+    def _generate_irf_recommendations(
+        self, significant_responses: List[Dict], fevd_decomposition, X: pd.DataFrame
+    ) -> List[str]:
+        """Generate recommendations based on impulse response analysis results."""
+        if not significant_responses:
+            return [
+                "No significant impulse responses detected - system may be weakly connected",
+                "Consider alternative shock identification strategies",
+                "Verify VAR model specification and lag structure",
+            ]
+
+        recommendations = [self._irf_timing_recommendation(significant_responses)]
+
         persistent_shocks = [
             r
             for r in significant_responses
             if abs(r["total_cumulative_effect"]) > abs(r["max_response"]) * 0.7
         ]
-
         if persistent_shocks:
             recommendations.append(
                 f"{len(persistent_shocks)} persistent shock relationships detected - "
                 "permanent effects should be considered in long-term forecasting"
             )
 
-        # FEVD-based recommendations
         if fevd_decomposition is not None:
-            recommendations.append(
-                "Use FEVD results to identify key drivers of forecast error variance"
-            )
+            recommendations.extend(self._fevd_recommendations(fevd_decomposition))
 
-            # Check if any variable dominates forecast error variance
-            final_period_fevd = fevd_decomposition[-1]
-            max_contribution = np.max(final_period_fevd)
-            if max_contribution > 0.7:
-                recommendations.append(
-                    "One variable dominates forecast error variance - focus forecasting efforts accordingly"
-                )
-
-        # System complexity recommendations
-        high_impact_count = len(
-            [r for r in significant_responses if abs(r["max_response"]) > 0.1]
+        high_impact_count = sum(
+            1 for r in significant_responses if abs(r["max_response"]) > 0.1
         )
         if high_impact_count > len(X.columns) * 2:
             recommendations.append(
                 "Complex shock transmission detected - consider structural VAR identification"
             )
 
-        # Data quality recommendations
         if len(X) < 100:
             recommendations.append(
                 "Limited data for robust IRF estimation - confidence intervals may be wide"

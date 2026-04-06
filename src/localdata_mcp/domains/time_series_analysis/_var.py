@@ -99,80 +99,87 @@ class VARModelForecaster(MultivariateTimeSeriesTransformer):
         if self.trend not in valid_trend:
             raise ValueError(f"Trend specification must be one of {valid_trend}")
 
+    def _fit_var(self, X: pd.DataFrame):
+        """Select optimal lag order and fit VAR model; return (var_fitted, optimal_lags)."""
+        var_model = VAR(X)
+        lag_order_results = var_model.select_order(maxlags=self.max_lags)
+        optimal_lags = getattr(lag_order_results, self.ic)
+        logger.info(
+            f"Selected optimal lags: {optimal_lags} using {self.ic.upper()} criterion"
+        )
+        var_fitted = var_model.fit(maxlags=optimal_lags, trend=self.trend)
+        return var_fitted, optimal_lags
+
+    def _build_forecast_dataframes(self, X: pd.DataFrame, var_fitted, forecast_result):
+        """Build forecast and confidence interval DataFrames."""
+        last_date = X.index[-1]
+        if isinstance(last_date, pd.Timestamp):
+            forecast_index = pd.date_range(
+                start=last_date + pd.Timedelta(days=1),
+                periods=self.forecast_horizon,
+                freq=pd.infer_freq(X.index) or "D",
+            )
+        else:
+            forecast_index = range(len(X), len(X) + self.forecast_horizon)
+
+        forecast_df = pd.DataFrame(
+            forecast_result, index=forecast_index, columns=X.columns
+        )
+
+        forecast_stderr = var_fitted.forecast_cov(steps=self.forecast_horizon)
+        alpha = 1 - self.confidence_level
+        z_score = stats.norm.ppf(1 - alpha / 2)
+
+        confidence_intervals: Dict = {}
+        for i, col in enumerate(X.columns):
+            std_errors = np.sqrt(
+                [forecast_stderr[j][i, i] for j in range(self.forecast_horizon)]
+            )
+            confidence_intervals[f"{col}_lower"] = (
+                forecast_result[:, i] - z_score * std_errors
+            )
+            confidence_intervals[f"{col}_upper"] = (
+                forecast_result[:, i] + z_score * std_errors
+            )
+
+        confidence_df = pd.DataFrame(confidence_intervals, index=forecast_index)
+        return forecast_df, confidence_df
+
+    def _compute_fit_statistics(self, X: pd.DataFrame, var_fitted) -> Dict[str, float]:
+        """Compute R-squared fit statistics from VAR residuals."""
+        try:
+            resid = var_fitted.resid
+            y_actual = X.values[var_fitted.k_ar :]
+            ss_res = np.sum(resid**2, axis=0)
+            ss_tot = np.sum((y_actual - y_actual.mean(axis=0)) ** 2, axis=0)
+            rsquared = 1 - ss_res / np.where(ss_tot == 0, 1, ss_tot)
+            n, p = var_fitted.nobs, var_fitted.df_model
+            rsquared_adj = 1 - (1 - rsquared) * (n - 1) / max(n - p - 1, 1)
+        except Exception:
+            rsquared = np.zeros(var_fitted.neqs)
+            rsquared_adj = np.zeros(var_fitted.neqs)
+        return {
+            "rsquared_avg": float(np.mean(rsquared)),
+            "rsquared_adj_avg": float(np.mean(rsquared_adj)),
+        }
+
     def _analysis_logic(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
-        """
-        Core VAR modeling and forecasting logic.
-
-        Parameters:
-        -----------
-        X : pd.DataFrame
-            Input multivariate time series data
-
-        Returns:
-        --------
-        result : TimeSeriesAnalysisResult
-            VAR analysis results with forecasts
-        """
+        """Core VAR modeling and forecasting logic."""
         start_time = time.time()
 
         try:
-            # Validate multivariate data
             X = self._validate_multivariate_data(X)
+            var_fitted, optimal_lags = self._fit_var(X)
 
-            # Create VAR model instance
-            var_model = VAR(X)
-
-            # Select optimal lag order
-            lag_order_results = var_model.select_order(maxlags=self.max_lags)
-            optimal_lags = getattr(lag_order_results, self.ic)
-
-            logger.info(
-                f"Selected optimal lags: {optimal_lags} using {self.ic.upper()} criterion"
-            )
-
-            # Fit VAR model
-            var_fitted = var_model.fit(maxlags=optimal_lags, trend=self.trend)
-
-            # Generate forecasts
             forecast_input = X.values[-var_fitted.k_ar :]
             forecast_result = var_fitted.forecast(
                 forecast_input, steps=self.forecast_horizon
             )
-
-            # Create forecast DataFrame
-            last_date = X.index[-1]
-            if isinstance(last_date, pd.Timestamp):
-                forecast_index = pd.date_range(
-                    start=last_date + pd.Timedelta(days=1),
-                    periods=self.forecast_horizon,
-                    freq=pd.infer_freq(X.index) or "D",
-                )
-            else:
-                forecast_index = range(len(X), len(X) + self.forecast_horizon)
-
-            forecast_df = pd.DataFrame(
-                forecast_result, index=forecast_index, columns=X.columns
+            forecast_df, confidence_df = self._build_forecast_dataframes(
+                X, var_fitted, forecast_result
             )
+            fit_statistics = self._compute_fit_statistics(X, var_fitted)
 
-            # Calculate forecast confidence intervals
-            forecast_stderr = var_fitted.forecast_cov(steps=self.forecast_horizon)
-            alpha = 1 - self.confidence_level
-            z_score = stats.norm.ppf(1 - alpha / 2)
-
-            confidence_intervals = {}
-            for i, col in enumerate(X.columns):
-                std_errors = np.sqrt(
-                    [forecast_stderr[j][i, i] for j in range(self.forecast_horizon)]
-                )
-                lower_bound = forecast_result[:, i] - z_score * std_errors
-                upper_bound = forecast_result[:, i] + z_score * std_errors
-
-                confidence_intervals[f"{col}_lower"] = lower_bound
-                confidence_intervals[f"{col}_upper"] = upper_bound
-
-            confidence_df = pd.DataFrame(confidence_intervals, index=forecast_index)
-
-            # Model diagnostics
             model_diagnostics = {
                 "aic": var_fitted.aic,
                 "bic": var_fitted.bic,
@@ -184,48 +191,22 @@ class VARModelForecaster(MultivariateTimeSeriesTransformer):
                 "n_equations": var_fitted.neqs,
                 "n_coefficients": var_fitted.df_model,
             }
-
-            # Fit statistics - compute R-squared from residuals
-            try:
-                resid = var_fitted.resid
-                # Align fitted values with the portion of X used after lag trimming
-                y_actual = X.values[var_fitted.k_ar :]
-                ss_res = np.sum(resid**2, axis=0)
-                ss_tot = np.sum((y_actual - y_actual.mean(axis=0)) ** 2, axis=0)
-                rsquared = 1 - ss_res / np.where(ss_tot == 0, 1, ss_tot)
-                n = var_fitted.nobs
-                p = var_fitted.df_model
-                rsquared_adj = 1 - (1 - rsquared) * (n - 1) / max(n - p - 1, 1)
-            except Exception:
-                rsquared = np.zeros(var_fitted.neqs)
-                rsquared_adj = np.zeros(var_fitted.neqs)
-
-            fit_statistics = {
-                "rsquared_avg": float(np.mean(rsquared)),
-                "rsquared_adj_avg": float(np.mean(rsquared_adj)),
-            }
-
-            # Model parameters
             model_parameters = {
                 "optimal_lags": optimal_lags,
                 "trend": self.trend,
                 "ic_used": self.ic,
-                "lag_order_results": lag_order_results,
+                "lag_order_results": None,
                 "coefficients": var_fitted.params,
                 "coefficient_stderr": var_fitted.stderr,
                 "coefficient_pvalues": var_fitted.pvalues,
             }
 
-            # Generate interpretation
             interpretation = self._generate_var_interpretation(
                 var_fitted, optimal_lags, model_diagnostics, fit_statistics
             )
-
-            # Generate recommendations
             recommendations = self._generate_var_recommendations(
                 var_fitted, model_diagnostics, X
             )
-
             processing_time = time.time() - start_time
 
             return self._prepare_multivariate_result(

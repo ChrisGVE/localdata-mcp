@@ -55,6 +55,64 @@ class RegularizedRegressionTransformer(BaseEstimator, TransformerMixin, Regresso
         self.model = None
         self.result_ = None
 
+    def _build_model_instance(self):
+        """Instantiate the appropriate regularized regression model."""
+        if self.alpha == "auto":
+            if self.method == "ridge":
+                return RidgeCV(cv=self.cv)
+            elif self.method == "lasso":
+                return LassoCV(cv=self.cv, max_iter=self.max_iter)
+            elif self.method == "elastic_net":
+                return ElasticNetCV(
+                    cv=self.cv, l1_ratio=self.l1_ratio, max_iter=self.max_iter
+                )
+            else:
+                raise ValueError(f"Unknown method: {self.method}")
+        else:
+            if self.method == "ridge":
+                return Ridge(alpha=self.alpha)
+            elif self.method == "lasso":
+                return Lasso(alpha=self.alpha, max_iter=self.max_iter)
+            elif self.method == "elastic_net":
+                return ElasticNet(
+                    alpha=self.alpha, l1_ratio=self.l1_ratio, max_iter=self.max_iter
+                )
+            else:
+                raise ValueError(f"Unknown method: {self.method}")
+
+    def _compute_cv_scores(self, X, y):
+        """Compute cross-validation scores if alpha was auto-tuned."""
+        if self.alpha != "auto":
+            return None, None, None
+        cv_scores = cross_val_score(self.model, X, y, cv=self.cv, scoring="r2")
+        return cv_scores, np.mean(cv_scores), np.std(cv_scores)
+
+    def _extract_feature_info(self, feature_names):
+        """Extract selected features and importance from fitted model."""
+        selected_features = None
+        feature_importance = None
+        if hasattr(self.model, "coef_"):
+            if self.method == "lasso":
+                selected_mask = np.abs(self.model.coef_) > 1e-10
+                selected_features = [
+                    feature_names[i] for i, sel in enumerate(selected_mask) if sel
+                ]
+            feature_importance = np.abs(self.model.coef_)
+        return selected_features, feature_importance
+
+    def _build_convergence_info(self, optimal_alpha):
+        """Build convergence information dictionary."""
+        convergence_info = {}
+        n_iter = getattr(self.model, "n_iter_", None)
+        if n_iter is not None:
+            convergence_info["n_iterations"] = n_iter
+            convergence_info["converged"] = n_iter < self.max_iter
+        if self.alpha == "auto":
+            convergence_info["optimal_alpha"] = optimal_alpha
+            if hasattr(self.model, "alphas_"):
+                convergence_info["alphas_tested"] = len(self.model.alphas_)
+        return convergence_info
+
     def fit(self, X, y, sample_weight=None, feature_names=None):
         """
         Fit regularized regression model with optional cross-validation.
@@ -78,106 +136,33 @@ class RegularizedRegressionTransformer(BaseEstimator, TransformerMixin, Regresso
         start_time = time.time()
         logger.info(f"Starting {self.method} regression fit")
 
-        # Validate inputs
         X, y = check_X_y(X, y, accept_sparse=False, y_numeric=True)
 
-        # Store feature names
         if feature_names is None:
             feature_names = [f"feature_{i}" for i in range(X.shape[1])]
         self.feature_names_ = feature_names
 
         try:
-            # Select model based on method and alpha tuning preference
-
-            # Convergence information
-            convergence_info = {}
-            n_iter = getattr(self.model, "n_iter_", None)
-            if n_iter is not None:
-                convergence_info["n_iterations"] = n_iter
-                convergence_info["converged"] = n_iter < self.max_iter
-
-            if self.alpha == "auto":
-                if self.method == "ridge":
-                    self.model = RidgeCV(cv=self.cv)
-                elif self.method == "lasso":
-                    self.model = LassoCV(cv=self.cv, max_iter=self.max_iter)
-                elif self.method == "elastic_net":
-                    self.model = ElasticNetCV(
-                        cv=self.cv, l1_ratio=self.l1_ratio, max_iter=self.max_iter
-                    )
-                else:
-                    raise ValueError(f"Unknown method: {self.method}")
-            else:
-                if self.method == "ridge":
-                    self.model = Ridge(alpha=self.alpha)
-                elif self.method == "lasso":
-                    self.model = Lasso(alpha=self.alpha, max_iter=self.max_iter)
-                elif self.method == "elastic_net":
-                    self.model = ElasticNet(
-                        alpha=self.alpha, l1_ratio=self.l1_ratio, max_iter=self.max_iter
-                    )
-                else:
-                    raise ValueError(f"Unknown method: {self.method}")
-
-            # Fit the model
+            self.model = self._build_model_instance()
             self.model.fit(X, y, sample_weight=sample_weight)
 
-            # Get optimal alpha if using CV
             optimal_alpha = getattr(self.model, "alpha_", self.alpha)
-
-            # Calculate comprehensive metrics
             y_pred = self.model.predict(X)
             residuals = y - y_pred
 
-            # Basic metrics
             r2 = r2_score(y, y_pred)
             mse = mean_squared_error(y, y_pred)
             mae = mean_absolute_error(y, y_pred)
             rmse = np.sqrt(mse)
-
-            # Adjusted R²
             n_samples, n_features = X.shape
             adjusted_r2 = 1 - (1 - r2) * (n_samples - 1) / (n_samples - n_features - 1)
 
-            # Cross-validation scores
-            cv_scores = None
-            cv_mean = None
-            cv_std = None
-            if self.alpha == "auto":
-                # For CV models, get cross-validation R² scores
-                cv_scores = cross_val_score(self.model, X, y, cv=self.cv, scoring="r2")
-                cv_mean = np.mean(cv_scores)
-                cv_std = np.std(cv_scores)
+            cv_scores, cv_mean, cv_std = self._compute_cv_scores(X, y)
+            selected_features, feature_importance = self._extract_feature_info(
+                feature_names
+            )
+            convergence_info = self._build_convergence_info(optimal_alpha)
 
-            # Feature selection analysis
-            selected_features = None
-            feature_importance = None
-            if hasattr(self.model, "coef_"):
-                # For Lasso, identify selected features (non-zero coefficients)
-                if self.method == "lasso":
-                    selected_mask = np.abs(self.model.coef_) > 1e-10
-                    selected_features = [
-                        feature_names[i]
-                        for i, selected in enumerate(selected_mask)
-                        if selected
-                    ]
-
-                # Feature importance based on absolute coefficient values
-                feature_importance = np.abs(self.model.coef_)
-
-            # Convergence information
-            convergence_info = {}
-            n_iter = getattr(self.model, "n_iter_", None)
-            if n_iter is not None:
-                convergence_info["n_iterations"] = n_iter
-                convergence_info["converged"] = n_iter < self.max_iter
-
-            if self.alpha == "auto":
-                convergence_info["optimal_alpha"] = optimal_alpha
-                if hasattr(self.model, "alphas_"):
-                    convergence_info["alphas_tested"] = len(self.model.alphas_)
-
-            # Create result object
             self.result_ = RegressionModelResult(
                 model_type=f"{self.method.title()} Regression",
                 model_params={
@@ -210,7 +195,8 @@ class RegularizedRegressionTransformer(BaseEstimator, TransformerMixin, Regresso
 
             fit_time = time.time() - start_time
             logger.info(
-                f"{self.method.title()} regression fit completed in {fit_time:.3f}s - R² = {r2:.4f}, α = {optimal_alpha:.6f}"
+                f"{self.method.title()} regression fit completed in {fit_time:.3f}s"
+                f" - R² = {r2:.4f}, α = {optimal_alpha:.6f}"
             )
 
         except Exception as e:

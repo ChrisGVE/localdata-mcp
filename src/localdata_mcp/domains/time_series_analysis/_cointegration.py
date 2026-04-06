@@ -92,92 +92,69 @@ class CointegrationAnalyzer(MultivariateTimeSeriesTransformer):
         if significance_level <= 0 or significance_level >= 1:
             raise ValueError("significance_level must be between 0 and 1")
 
+    def _count_cointegrating_relationships(self, coint_result, n_series: int):
+        """Count cointegrating relationships using trace and max-eigenvalue tests."""
+        n_coint_trace = sum(
+            1 for i in range(n_series) if coint_result.lr1[i] > coint_result.cvt[i, 1]
+        )
+        n_coint_max_eigen = sum(
+            1 for i in range(n_series) if coint_result.lr2[i] > coint_result.cvm[i, 1]
+        )
+        return n_coint_trace, n_coint_max_eigen, min(n_coint_trace, n_coint_max_eigen)
+
+    def _extract_coint_vectors(self, coint_result, n_coint: int, X: pd.DataFrame):
+        """Extract cointegrating vectors, adjustment coefficients and their DataFrames."""
+        coint_vectors = coint_result.evec[:, :n_coint] if n_coint > 0 else None
+        adjustment_coeffs = None
+        if n_coint > 0:
+            try:
+                beta = coint_result.evec[:, :n_coint]
+                rkt_beta = coint_result.rkt @ beta
+                adjustment_coeffs = (
+                    coint_result.r0t.T @ rkt_beta
+                ) / coint_result.r0t.shape[0]
+                adjustment_coeffs = adjustment_coeffs.T
+            except Exception:
+                pass
+
+        coint_relationships = None
+        if n_coint > 0 and coint_vectors is not None:
+            coint_relationships = pd.DataFrame(
+                coint_vectors,
+                index=X.columns,
+                columns=[f"Coint_Relationship_{i + 1}" for i in range(n_coint)],
+            )
+
+        adjustment_df = None
+        if n_coint > 0 and adjustment_coeffs is not None:
+            adjustment_df = pd.DataFrame(
+                adjustment_coeffs,
+                index=[f"Coint_Relationship_{i + 1}" for i in range(n_coint)],
+                columns=X.columns,
+            )
+
+        return coint_vectors, adjustment_coeffs, coint_relationships, adjustment_df
+
     def _analysis_logic(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
-        """
-        Core cointegration analysis logic.
-
-        Parameters:
-        -----------
-        X : pd.DataFrame
-            Input multivariate time series data
-
-        Returns:
-        --------
-        result : TimeSeriesAnalysisResult
-            Cointegration analysis results
-        """
+        """Core cointegration analysis logic."""
         start_time = time.time()
 
         try:
-            # Validate multivariate data
             X = self._validate_multivariate_data(X)
-
-            # Perform Johansen cointegration test
             coint_result = coint_johansen(
                 X.values, det_order=self.det_order, k_ar_diff=self.k_ar_diff
             )
-
             n_series = X.shape[1]
 
-            # Determine number of cointegrating relationships
-            trace_crit_values = coint_result.cvt
-            max_eigen_crit_values = coint_result.cvm
-
-            # Count cointegrating relationships using trace test
-            n_coint_trace = 0
-            for i in range(n_series):
-                if coint_result.lr1[i] > trace_crit_values[i, 1]:  # 5% critical value
-                    n_coint_trace += 1
-
-            # Count cointegrating relationships using max eigenvalue test
-            n_coint_max_eigen = 0
-            for i in range(n_series):
-                if (
-                    coint_result.lr2[i] > max_eigen_crit_values[i, 1]
-                ):  # 5% critical value
-                    n_coint_max_eigen += 1
-
-            # Use the more conservative estimate
-            n_coint = min(n_coint_trace, n_coint_max_eigen)
-
+            n_coint_trace, n_coint_max_eigen, n_coint = (
+                self._count_cointegrating_relationships(coint_result, n_series)
+            )
             logger.info(f"Detected {n_coint} cointegrating relationships")
 
-            # Extract cointegrating vectors and adjustment coefficients
-            coint_vectors = coint_result.evec[:, :n_coint] if n_coint > 0 else None
-            # Compute adjustment coefficients (loading matrix alpha)
-            # alpha = r0t' * rkt * (rkt' * rkt)^{-1} * evec[:, :n_coint]
-            try:
-                if n_coint > 0:
-                    beta = coint_result.evec[:, :n_coint]
-                    rkt_beta = coint_result.rkt @ beta
-                    adjustment_coeffs = (
-                        coint_result.r0t.T @ rkt_beta
-                    ) / coint_result.r0t.shape[0]
-                    adjustment_coeffs = adjustment_coeffs.T  # shape (n_coint, n_series)
-                else:
-                    adjustment_coeffs = None
-            except Exception:
-                adjustment_coeffs = None
+            coint_vectors, adjustment_coeffs, coint_relationships, adjustment_df = (
+                self._extract_coint_vectors(coint_result, n_coint, X)
+            )
 
-            # Create cointegrating relationships DataFrame
-            coint_relationships = None
-            if n_coint > 0 and coint_vectors is not None:
-                coint_relationships = pd.DataFrame(
-                    coint_vectors,
-                    index=X.columns,
-                    columns=[f"Coint_Relationship_{i + 1}" for i in range(n_coint)],
-                )
-
-            # Create adjustment coefficients DataFrame
-            adjustment_df = None
-            if n_coint > 0 and adjustment_coeffs is not None:
-                adjustment_df = pd.DataFrame(
-                    adjustment_coeffs,
-                    index=[f"Coint_Relationship_{i + 1}" for i in range(n_coint)],
-                    columns=X.columns,
-                )
-
-            # Model diagnostics
             model_diagnostics = {
                 "n_cointegrating_relationships_trace": n_coint_trace,
                 "n_cointegrating_relationships_max_eigen": n_coint_max_eigen,
@@ -186,12 +163,10 @@ class CointegrationAnalyzer(MultivariateTimeSeriesTransformer):
                 "vecm_lags": self.k_ar_diff,
                 "trace_statistics": coint_result.lr1.tolist(),
                 "max_eigen_statistics": coint_result.lr2.tolist(),
-                "trace_critical_values": trace_crit_values.tolist(),
-                "max_eigen_critical_values": max_eigen_crit_values.tolist(),
+                "trace_critical_values": coint_result.cvt.tolist(),
+                "max_eigen_critical_values": coint_result.cvm.tolist(),
                 "eigenvalues": coint_result.eig.tolist(),
             }
-
-            # Model parameters
             model_parameters = {
                 "n_coint": n_coint,
                 "det_order": self.det_order,
@@ -205,16 +180,12 @@ class CointegrationAnalyzer(MultivariateTimeSeriesTransformer):
                 "adjustment_coefficients_df": adjustment_df,
             }
 
-            # Generate interpretation
             interpretation = self._generate_cointegration_interpretation(
                 n_coint, n_series, coint_result, X.columns
             )
-
-            # Generate recommendations
             recommendations = self._generate_cointegration_recommendations(
                 n_coint, n_series, coint_result, X
             )
-
             processing_time = time.time() - start_time
 
             return self._prepare_multivariate_result(
@@ -222,7 +193,7 @@ class CointegrationAnalyzer(MultivariateTimeSeriesTransformer):
                 statistic=float(coint_result.lr1[0])
                 if len(coint_result.lr1) > 0
                 else None,
-                p_value=None,  # Johansen test doesn't provide explicit p-values
+                p_value=None,
                 model_parameters=model_parameters,
                 model_diagnostics=model_diagnostics,
                 interpretation=interpretation,
