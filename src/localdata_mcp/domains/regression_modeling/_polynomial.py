@@ -8,12 +8,12 @@ relationships with comprehensive evaluation and overfitting detection.
 import time
 
 import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin
-from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
+from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import cross_val_score
-from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
 from sklearn.preprocessing import PolynomialFeatures
+from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 from ._base import RegressionModelResult, logger
 

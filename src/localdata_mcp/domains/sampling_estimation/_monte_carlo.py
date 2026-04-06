@@ -152,9 +152,11 @@ class MonteCarloTransformer(BaseEstimator, TransformerMixin):
 
         convergence_diagnostic = {
             "batch_variance": np.var(batch_estimates),
-            "relative_std_error": standard_error / abs(integral_estimate)
-            if integral_estimate != 0
-            else float("inf"),
+            "relative_std_error": (
+                standard_error / abs(integral_estimate)
+                if integral_estimate != 0
+                else float("inf")
+            ),
         }
 
         result = MonteCarloResult(

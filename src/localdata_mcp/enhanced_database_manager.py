@@ -18,34 +18,33 @@ import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from .connection_manager import (
+    EnhancedConnectionManager,
+    get_enhanced_connection_manager,
+)
 from .error_handler import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    DatabaseConnectionError,
     ErrorHandler,
     LocalDataError,
-    DatabaseConnectionError,
     QueryExecutionError,
     QueryTimeoutError,
     ResourceExhaustionError,
-    SecurityViolationError,
-    CircuitBreaker,
-    CircuitBreakerConfig,
     RetryPolicy,
     RetryStrategy,
+    SecurityViolationError,
     circuit_breaker_protection,
-    retry_on_failure,
     get_error_handler,
+    retry_on_failure,
 )
-
-from .security import get_security_manager, SecurityManager
-from .connection_manager import (
-    get_enhanced_connection_manager,
-    EnhancedConnectionManager,
-)
-from .timeout_manager import (
-    get_timeout_manager,
-    QueryTimeoutManager,
-    QueryTimeoutError as BaseTimeoutError,
-)
+from .security import SecurityManager, get_security_manager
 from .streaming import StreamingQueryExecutor
+from .timeout_manager import QueryTimeoutError as BaseTimeoutError
+from .timeout_manager import (
+    QueryTimeoutManager,
+    get_timeout_manager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -275,9 +274,11 @@ class EnhancedDatabaseManager:
                             # Build response with error handling metadata
                             response = {
                                 "success": True,
-                                "data": first_chunk.to_dict("records")
-                                if not first_chunk.empty
-                                else [],
+                                "data": (
+                                    first_chunk.to_dict("records")
+                                    if not first_chunk.empty
+                                    else []
+                                ),
                                 "metadata": {
                                     "query_id": query_id,
                                     "database_name": database_name,
@@ -349,20 +350,22 @@ class EnhancedDatabaseManager:
             error_response = {
                 "success": False,
                 "error": {
-                    "type": type(processed_error).__name__
-                    if processed_error
-                    else type(e).__name__,
+                    "type": (
+                        type(processed_error).__name__
+                        if processed_error
+                        else type(e).__name__
+                    ),
                     "message": str(processed_error) if processed_error else str(e),
-                    "category": processed_error.category.value
-                    if processed_error
-                    else "unknown",
-                    "severity": processed_error.severity.value
-                    if processed_error
-                    else "medium",
+                    "category": (
+                        processed_error.category.value if processed_error else "unknown"
+                    ),
+                    "severity": (
+                        processed_error.severity.value if processed_error else "medium"
+                    ),
                     "recovery_attempted": recovered,
-                    "recovery_suggestions": processed_error.recovery_suggestions
-                    if processed_error
-                    else [],
+                    "recovery_suggestions": (
+                        processed_error.recovery_suggestions if processed_error else []
+                    ),
                 },
                 "metadata": {
                     "database_name": database_name,
@@ -463,20 +466,24 @@ class EnhancedDatabaseManager:
             return {
                 "success": False,
                 "error": {
-                    "type": type(processed_error).__name__
-                    if processed_error
-                    else type(e).__name__,
+                    "type": (
+                        type(processed_error).__name__
+                        if processed_error
+                        else type(e).__name__
+                    ),
                     "message": str(processed_error) if processed_error else str(e),
-                    "category": processed_error.category.value
-                    if processed_error
-                    else "connection",
-                    "severity": processed_error.severity.value
-                    if processed_error
-                    else "high",
+                    "category": (
+                        processed_error.category.value
+                        if processed_error
+                        else "connection"
+                    ),
+                    "severity": (
+                        processed_error.severity.value if processed_error else "high"
+                    ),
                     "recovery_attempted": recovered,
-                    "recovery_suggestions": processed_error.recovery_suggestions
-                    if processed_error
-                    else [],
+                    "recovery_suggestions": (
+                        processed_error.recovery_suggestions if processed_error else []
+                    ),
                 },
                 "metadata": {
                     "database_name": name,

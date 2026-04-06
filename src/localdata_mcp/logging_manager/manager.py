@@ -1,16 +1,16 @@
 """Centralized structured logging manager and module-level accessors."""
 
-import uuid
 import threading
-from typing import Any, Dict, Optional
+import uuid
 from contextlib import contextmanager
+from typing import Any, Dict, Optional
 
 import structlog
 
 from ..config_manager import LoggingConfig
+from .config import configure_stdlib_logging, configure_structlog
 from .context import LogContext
 from .metrics import MetricsCollector
-from .config import configure_structlog, configure_stdlib_logging
 
 
 class LoggingManager:

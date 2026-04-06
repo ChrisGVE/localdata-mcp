@@ -7,8 +7,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import OptimizeResult, linprog
 from sklearn.utils.validation import check_is_fitted
-from scipy.optimize import linprog, OptimizeResult
 
 from ...logging_manager import get_logger
 from ...pipeline.base import (
@@ -181,7 +181,7 @@ class LinearProgrammingSolver(AnalysisPipelineBase):
         """Solve integer linear programming problem using scipy.optimize.milp."""
         try:
             # Try using milp if available (scipy >= 1.9.0)
-            from scipy.optimize import milp, Bounds, LinearConstraint
+            from scipy.optimize import Bounds, LinearConstraint, milp
 
             # Convert bounds
             if bounds:

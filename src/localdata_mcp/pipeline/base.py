@@ -20,8 +20,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from ..streaming import MemoryStatus, StreamingDataSource
 from ..logging_manager import get_logger
+from ..streaming import MemoryStatus, StreamingDataSource
 
 logger = get_logger(__name__)
 

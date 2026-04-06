@@ -5,9 +5,9 @@ Factory and utility functions for error recovery system creation.
 import logging
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from ....logging_manager import get_logger
 from ..interfaces import ConversionRequest
 from ..shim_registry import ShimRegistry
-from ....logging_manager import get_logger
 from ._error_handler import ConversionErrorHandler
 from ._pathway_engine import AlternativePathwayEngine
 from ._recovery_engine import RecoveryStrategyEngine

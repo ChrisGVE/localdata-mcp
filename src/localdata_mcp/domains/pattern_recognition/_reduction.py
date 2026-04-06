@@ -5,18 +5,18 @@ Advanced dimensionality reduction with multiple algorithms (PCA, t-SNE, UMAP, IC
 and automatic component selection.
 """
 
+import time
 import warnings
 from typing import Any, Dict, Optional
-import time
 
 import numpy as np
-from sklearn.utils.validation import check_array, check_is_fitted
-from sklearn.preprocessing import StandardScaler
 
 # Dimensionality reduction
 from sklearn.decomposition import PCA, FastICA
-from sklearn.manifold import TSNE
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
+from sklearn.utils.validation import check_array, check_is_fitted
 
 # UMAP import (with fallback if not available)
 try:

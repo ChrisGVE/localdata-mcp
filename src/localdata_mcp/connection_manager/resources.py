@@ -111,9 +111,9 @@ class ResourceManagerMixin:
                 if database_name in self._resource_limits:
                     limits = self._resource_limits[database_name]
                     limits[ResourceType.MEMORY].current_value = memory_mb
-                    limits[
-                        ResourceType.CONNECTIONS
-                    ].current_value = metrics.active_connections
+                    limits[ResourceType.CONNECTIONS].current_value = (
+                        metrics.active_connections
+                    )
                     limits[ResourceType.ERROR_RATE].current_value = metrics.error_rate
 
         except Exception as e:

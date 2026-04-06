@@ -9,6 +9,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
+from ...base import ErrorClassification
 from ..interfaces import (
     ConversionCost,
     ConversionError,
@@ -17,7 +18,6 @@ from ..interfaces import (
     DataFormat,
     ShimAdapter,
 )
-from ...base import ErrorClassification
 
 
 class ErrorSeverity(Enum):

@@ -7,12 +7,12 @@ column-level patterns, temporal patterns, and pattern confidence scoring.
 
 from typing import Any, Dict, List, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from scipy import stats
 
-from ._types import MissingValuePattern
 from ...logging_manager import get_logger
+from ._types import MissingValuePattern
 
 logger = get_logger(__name__)
 
@@ -167,9 +167,9 @@ class PatternAnalysisMixin:
                             missing_by_time = (
                                 data.groupby(pd.Grouper(key=dt_col, freq="D"))[col]
                                 .apply(
-                                    lambda x: x.isnull().sum() / len(x)
-                                    if len(x) > 0
-                                    else 0
+                                    lambda x: (
+                                        x.isnull().sum() / len(x) if len(x) > 0 else 0
+                                    )
                                 )
                                 .fillna(0)
                             )

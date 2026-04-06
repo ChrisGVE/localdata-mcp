@@ -5,16 +5,16 @@ Provides PatternRecognitionShim for bridging pattern recognition with other doma
 converting clustering results, dimensionality reduction outputs, and classification results.
 """
 
-import numpy as np
-import pandas as pd
 from typing import Any, Dict, Optional
 
-from ..shim_registry import AdapterConfig
-from ..interfaces import ConversionRequest, ConversionError
-from ....logging_manager import get_logger
+import numpy as np
+import pandas as pd
 
-from ._types import DomainShimType, DomainMapping, SemanticContext
+from ....logging_manager import get_logger
+from ..interfaces import ConversionError, ConversionRequest
+from ..shim_registry import AdapterConfig
 from ._base import BaseDomainShim
+from ._types import DomainMapping, DomainShimType, SemanticContext
 
 logger = get_logger(__name__)
 
@@ -187,9 +187,11 @@ class PatternRecognitionShim(BaseDomainShim):
                     cluster_stats[f"cluster_{label}"] = {
                         "size": np.sum(cluster_mask),
                         "proportion": np.mean(cluster_mask),
-                        "centroid": centroids[label].tolist()
-                        if label < len(centroids)
-                        else None,
+                        "centroid": (
+                            centroids[label].tolist()
+                            if label < len(centroids)
+                            else None
+                        ),
                     }
 
                 return {
@@ -224,24 +226,27 @@ class PatternRecognitionShim(BaseDomainShim):
                     class_stats[f"class_{cls}"] = {
                         "frequency": np.sum(class_mask),
                         "proportion": np.mean(class_mask),
-                        "avg_confidence": np.mean(class_probs)
-                        if len(class_probs) > 0
-                        else 0.0,
-                        "confidence_std": np.std(class_probs)
-                        if len(class_probs) > 0
-                        else 0.0,
+                        "avg_confidence": (
+                            np.mean(class_probs) if len(class_probs) > 0 else 0.0
+                        ),
+                        "confidence_std": (
+                            np.std(class_probs) if len(class_probs) > 0 else 0.0
+                        ),
                     }
 
                 return {
                     "classification_statistics": class_stats,
                     "prediction_confidence": {
-                        "overall_confidence": np.mean(np.max(probabilities, axis=1))
-                        if len(probabilities.shape) > 1
-                        else np.mean(probabilities),
-                        "uncertainty_measure": 1.0
-                        - np.mean(np.max(probabilities, axis=1))
-                        if len(probabilities.shape) > 1
-                        else 1.0 - np.mean(probabilities),
+                        "overall_confidence": (
+                            np.mean(np.max(probabilities, axis=1))
+                            if len(probabilities.shape) > 1
+                            else np.mean(probabilities)
+                        ),
+                        "uncertainty_measure": (
+                            1.0 - np.mean(np.max(probabilities, axis=1))
+                            if len(probabilities.shape) > 1
+                            else 1.0 - np.mean(probabilities)
+                        ),
                     },
                 }
 
@@ -282,9 +287,11 @@ class PatternRecognitionShim(BaseDomainShim):
                         "feature_importance": importance,
                         "feature_names": data.get("feature_names", []),
                         "selection_method": "pattern_recognition_based",
-                        "importance_threshold": np.percentile(importance, 75)
-                        if isinstance(importance, (list, np.ndarray))
-                        else 0.5,
+                        "importance_threshold": (
+                            np.percentile(importance, 75)
+                            if isinstance(importance, (list, np.ndarray))
+                            else 0.5
+                        ),
                     }
                 }
 
@@ -295,9 +302,11 @@ class PatternRecognitionShim(BaseDomainShim):
                 return {
                     "predictor_variables": {
                         "transformed_features": transformed_data,
-                        "n_components": transformed_data.shape[1]
-                        if len(transformed_data.shape) > 1
-                        else 1,
+                        "n_components": (
+                            transformed_data.shape[1]
+                            if len(transformed_data.shape) > 1
+                            else 1
+                        ),
                         "transformation_method": data.get(
                             "method", "dimensionality_reduction"
                         ),
@@ -408,9 +417,9 @@ class PatternRecognitionShim(BaseDomainShim):
 
                 return {
                     "temporal_pattern_features": pattern_features,
-                    "time_index": data.index.tolist()
-                    if hasattr(data, "index")
-                    else None,
+                    "time_index": (
+                        data.index.tolist() if hasattr(data, "index") else None
+                    ),
                 }
 
         # Fallback

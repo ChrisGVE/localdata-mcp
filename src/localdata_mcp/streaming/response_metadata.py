@@ -91,18 +91,26 @@ def format_response_metadata(estimation, response_meta) -> Dict[str, Any]:
             },
         },
         "chunking_recommendation": {
-            "should_chunk": response_meta.chunking_recommendation.should_chunk
-            if response_meta.chunking_recommendation
-            else False,
-            "recommended_chunk_size": response_meta.chunking_recommendation.recommended_chunk_size
-            if response_meta.chunking_recommendation
-            else None,
-            "strategy": response_meta.chunking_recommendation.strategy
-            if response_meta.chunking_recommendation
-            else None,
-            "rationale": response_meta.chunking_recommendation.chunk_size_rationale
-            if response_meta.chunking_recommendation
-            else None,
+            "should_chunk": (
+                response_meta.chunking_recommendation.should_chunk
+                if response_meta.chunking_recommendation
+                else False
+            ),
+            "recommended_chunk_size": (
+                response_meta.chunking_recommendation.recommended_chunk_size
+                if response_meta.chunking_recommendation
+                else None
+            ),
+            "strategy": (
+                response_meta.chunking_recommendation.strategy
+                if response_meta.chunking_recommendation
+                else None
+            ),
+            "rationale": (
+                response_meta.chunking_recommendation.chunk_size_rationale
+                if response_meta.chunking_recommendation
+                else None
+            ),
         },
         "model_compatibility": {
             model: info["fits_in_context"]

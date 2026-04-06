@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import create_engine
 
 from ..config_manager import PerformanceConfig
-from ..logging_manager import get_logging_manager, get_logger
+from ..logging_manager import get_logger, get_logging_manager
 from ..streaming import StreamingQueryExecutor, create_streaming_source
 from .benchmarks import StreamingBenchmark, TokenBenchmark
 from .comparison import generate_comparisons, run_regression_tests

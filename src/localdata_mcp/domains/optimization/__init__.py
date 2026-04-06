@@ -14,19 +14,19 @@ Key Features:
 - Comprehensive result formatting
 """
 
-from ._types import (
-    OptimizationResult,
-    LinearProgramResult,
-    ConstrainedOptResult,
-    NetworkAnalysisResult,
-    AssignmentResult,
-)
-from ._linear_programming import LinearProgrammingSolver
-from ._constrained import ConstrainedOptimizer
-from ._network import NetworkAnalyzer, NETWORKX_AVAILABLE
 from ._assignment import AssignmentSolver
-from ._tool_functions_lp import solve_linear_program, optimize_constrained
+from ._constrained import ConstrainedOptimizer
+from ._linear_programming import LinearProgrammingSolver
+from ._network import NETWORKX_AVAILABLE, NetworkAnalyzer
+from ._tool_functions_lp import optimize_constrained, solve_linear_program
 from ._tool_functions_network import analyze_network, solve_assignment_problem
+from ._types import (
+    AssignmentResult,
+    ConstrainedOptResult,
+    LinearProgramResult,
+    NetworkAnalysisResult,
+    OptimizationResult,
+)
 
 __all__ = [
     # Result classes

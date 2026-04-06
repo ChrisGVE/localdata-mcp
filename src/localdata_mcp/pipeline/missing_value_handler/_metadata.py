@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from ._types import MissingValuePattern
 from ...logging_manager import get_logger
+from ._types import MissingValuePattern
 
 logger = get_logger(__name__)
 
@@ -28,12 +28,14 @@ class MetadataUtilityMixin:
         # Compile all metadata from the imputation process
         metadata = {
             "imputation_summary": {
-                "missing_pattern": self._missing_pattern.__dict__
-                if self._missing_pattern
-                else {},
-                "total_original_missing": self._original_data.isnull().sum().sum()
-                if self._original_data is not None
-                else 0,
+                "missing_pattern": (
+                    self._missing_pattern.__dict__ if self._missing_pattern else {}
+                ),
+                "total_original_missing": (
+                    self._original_data.isnull().sum().sum()
+                    if self._original_data is not None
+                    else 0
+                ),
                 "total_final_missing": data.isnull().sum().sum(),
                 "imputation_complete": data.isnull().sum().sum() == 0,
             },
@@ -61,20 +63,28 @@ class MetadataUtilityMixin:
                 "cross_validation": self.cross_validation,
             },
             "missing_value_analysis": {
-                "pattern_type": self._missing_pattern.pattern_type
-                if self._missing_pattern
-                else "unknown",
-                "pattern_confidence": self._missing_pattern.confidence_score
-                if self._missing_pattern
-                else 0.0,
-                "recommendations_followed": self._missing_pattern.recommendations
-                if self._missing_pattern
-                else [],
+                "pattern_type": (
+                    self._missing_pattern.pattern_type
+                    if self._missing_pattern
+                    else "unknown"
+                ),
+                "pattern_confidence": (
+                    self._missing_pattern.confidence_score
+                    if self._missing_pattern
+                    else 0.0
+                ),
+                "recommendations_followed": (
+                    self._missing_pattern.recommendations
+                    if self._missing_pattern
+                    else []
+                ),
             },
             "imputation_results": {
-                "original_missing_values": self._original_data.isnull().sum().sum()
-                if self._original_data is not None
-                else 0,
+                "original_missing_values": (
+                    self._original_data.isnull().sum().sum()
+                    if self._original_data is not None
+                    else 0
+                ),
                 "final_missing_values": processed_data.isnull().sum().sum(),
                 "imputation_complete": processed_data.isnull().sum().sum() == 0,
                 "columns_imputed": len(self._fitted_imputers),
@@ -155,9 +165,9 @@ class MetadataUtilityMixin:
         artifacts = {
             "fitted_imputers": self._fitted_imputers,
             "imputation_strategy_used": self.strategy,
-            "missing_value_pattern": self._missing_pattern.__dict__
-            if self._missing_pattern
-            else {},
+            "missing_value_pattern": (
+                self._missing_pattern.__dict__ if self._missing_pattern else {}
+            ),
             "quality_thresholds": self.quality_thresholds,
         }
 

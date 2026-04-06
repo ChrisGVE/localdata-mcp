@@ -12,9 +12,9 @@ Key Features:
 - Comprehensive validation and error handling
 """
 
-from ._core import ConversionContext, BaseShimAdapter
-from ._streaming import StreamingShimAdapter
 from ._caching import CachingShimAdapter
+from ._core import BaseShimAdapter, ConversionContext
+from ._streaming import StreamingShimAdapter
 from ._utility import PassThroughAdapter, ValidationAdapter
 
 __all__ = [

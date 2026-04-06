@@ -2,8 +2,8 @@
 Spatial interpolation (kriging, IDW, variogram modeling) for the geospatial analysis domain.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -41,18 +41,19 @@ class VariogramModel:
     """
 
     VARIOGRAM_MODELS = {
-        "spherical": lambda h, nugget, sill, range_param: nugget
-        + (sill - nugget) * (1.5 * h / range_param - 0.5 * (h / range_param) ** 3)
-        if h <= range_param
-        else sill,
+        "spherical": lambda h, nugget, sill, range_param: (
+            nugget
+            + (sill - nugget) * (1.5 * h / range_param - 0.5 * (h / range_param) ** 3)
+            if h <= range_param
+            else sill
+        ),
         "exponential": lambda h, nugget, sill, range_param: nugget
         + (sill - nugget) * (1 - np.exp(-3 * h / range_param)),
         "gaussian": lambda h, nugget, sill, range_param: nugget
         + (sill - nugget) * (1 - np.exp(-3 * (h / range_param) ** 2)),
-        "linear": lambda h, nugget, sill, range_param: nugget
-        + (sill - nugget) * h / range_param
-        if h <= range_param
-        else sill,
+        "linear": lambda h, nugget, sill, range_param: (
+            nugget + (sill - nugget) * h / range_param if h <= range_param else sill
+        ),
     }
 
     def __init__(self, model_type: str = "spherical"):

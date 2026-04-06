@@ -12,6 +12,11 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from ...logging_manager import get_logger
+from .ab_testing import ABTestAnalyzer
+from .attribution import AttributionAnalyzer
+from .cohort_clv import CLVCalculator, CohortAnalysisTransformer
+from .customer_analytics import RFMAnalysisTransformer
+from .funnel import FunnelAnalyzer
 from .models import (
     ABTestResult,
     AttributionResult,
@@ -20,11 +25,6 @@ from .models import (
     FunnelAnalysisResult,
     RFMResult,
 )
-from .customer_analytics import RFMAnalysisTransformer
-from .cohort_clv import CohortAnalysisTransformer, CLVCalculator
-from .ab_testing import ABTestAnalyzer
-from .attribution import AttributionAnalyzer
-from .funnel import FunnelAnalyzer
 
 logger = get_logger(__name__)
 

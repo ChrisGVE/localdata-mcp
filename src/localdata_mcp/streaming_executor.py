@@ -3,6 +3,9 @@
 Also re-exports internal names so existing mock.patch() targets keep working.
 """
 
+# Re-export internal helpers used as mock.patch() targets in tests
+from .logging_manager import get_logging_manager  # noqa: F401
+from .size_estimator import get_size_estimator  # noqa: F401
 from .streaming import (  # noqa: F401
     ChunkMetrics,
     MemoryStatus,
@@ -13,10 +16,6 @@ from .streaming import (  # noqa: F401
     StreamingSQLSource,
     create_streaming_source,
 )
-
-# Re-export internal helpers used as mock.patch() targets in tests
-from .logging_manager import get_logging_manager  # noqa: F401
-from .size_estimator import get_size_estimator  # noqa: F401
 from .token_manager import get_token_manager  # noqa: F401
 
 __all__ = [

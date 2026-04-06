@@ -6,9 +6,9 @@ intelligence domain including enums for attribution models and experiment
 status, and dataclass result structures for all BI analysis types.
 """
 
-from typing import Any, Dict, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 

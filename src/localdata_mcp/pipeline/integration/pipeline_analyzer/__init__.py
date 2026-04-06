@@ -19,31 +19,27 @@ Design Principles:
 - Modular Domain Integration: Seamless integration with existing infrastructure
 """
 
+from .analyzer import PipelineAnalyzer
+from .factories import (
+    analyze_and_fix_pipeline,
+    create_optimization_criteria,
+    create_pipeline_analyzer,
+    create_pipeline_step,
+    create_pipeline_validator,
+    create_shim_injector,
+)
+from .injector import ShimInjector
 from .types import (
     AnalysisType,
-    InjectionStrategy,
-    PipelineStep,
-    PipelineConnection,
     IncompatibilityIssue,
-    ShimRecommendation,
-    PipelineAnalysisResult,
+    InjectionStrategy,
     OptimizationCriteria,
+    PipelineAnalysisResult,
+    PipelineConnection,
+    PipelineStep,
+    ShimRecommendation,
 )
-
-from .analyzer import PipelineAnalyzer
-
-from .injector import ShimInjector
-
 from .validator import PipelineValidator
-
-from .factories import (
-    create_pipeline_analyzer,
-    create_shim_injector,
-    create_pipeline_validator,
-    create_optimization_criteria,
-    create_pipeline_step,
-    analyze_and_fix_pipeline,
-)
 
 __all__ = [
     # Core pipeline analysis classes

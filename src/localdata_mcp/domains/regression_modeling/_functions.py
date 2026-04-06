@@ -7,16 +7,16 @@ without requiring direct transformer instantiation.
 
 import numpy as np
 from sklearn.metrics import (
-    r2_score,
-    mean_squared_error,
-    mean_absolute_error,
     explained_variance_score,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
 )
 
 from ._base import logger
+from ._feature_selection import FeatureSelectionTransformer
 from ._pipeline import RegressionModelingPipeline
 from ._residuals import ResidualAnalysisTransformer
-from ._feature_selection import FeatureSelectionTransformer
 
 
 # High-level convenience functions

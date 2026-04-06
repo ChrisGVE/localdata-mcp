@@ -2,11 +2,11 @@
 DataSchema class definition.
 """
 
-import json
 import hashlib
-from typing import Any, Dict, List, Set
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, Dict, List, Set
 
 from ..interfaces import DataFormat
 from ._types import SchemaConstraint

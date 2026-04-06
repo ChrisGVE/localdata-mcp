@@ -9,10 +9,10 @@ generation used by PipelineCompatibilityMatrix.
 from typing import Dict, List, Optional, Tuple
 
 from ..interfaces import (
-    DataFormat,
+    ConversionCost,
     ConversionPath,
     ConversionStep,
-    ConversionCost,
+    DataFormat,
 )
 
 

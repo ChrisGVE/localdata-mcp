@@ -8,17 +8,17 @@ import numpy as np
 import pandas as pd
 
 from ...logging_manager import get_logger
+from ._autocorrelation_transformer import SpatialAutocorrelationTransformer
 from ._base import NetworkAnalysisType
 from ._data import SpatialPoint
 from ._distance import SpatialDistanceCalculator
 from ._distance_transformer import SpatialDistanceTransformer
 from ._geometry_transformer import SpatialGeometryTransformer
-from ._statistics import SpatialWeightsMatrix
-from ._spatial_stats import SpatialStatistics
-from ._autocorrelation_transformer import SpatialAutocorrelationTransformer
 from ._interpolator import SpatialInterpolationTransformer
 from ._network import SpatialNetwork
 from ._network_transformer import SpatialNetworkTransformer
+from ._spatial_stats import SpatialStatistics
+from ._statistics import SpatialWeightsMatrix
 
 logger = get_logger(__name__)
 
@@ -174,12 +174,16 @@ def analyze_spatial_autocorrelation(
             "expected_value": transformer.statistics_.expected_value,
             "variance": transformer.statistics_.variance,
             "z_score": transformer.statistics_.z_score,
-            "interpretation": "significant spatial autocorrelation"
-            if transformer.statistics_.p_value < 0.05
-            else "no significant spatial autocorrelation",
-            "local_statistics": transformer.statistics_.local_statistics
-            if hasattr(transformer.statistics_, "local_statistics")
-            else None,
+            "interpretation": (
+                "significant spatial autocorrelation"
+                if transformer.statistics_.p_value < 0.05
+                else "no significant spatial autocorrelation"
+            ),
+            "local_statistics": (
+                transformer.statistics_.local_statistics
+                if hasattr(transformer.statistics_, "local_statistics")
+                else None
+            ),
         }
     else:
         return {"error": "Analysis failed", "method": method}

@@ -7,17 +7,17 @@ ValidationAdapter for adding comprehensive validation layers.
 
 from typing import Any, List, Optional, Tuple
 
+from ....logging_manager import get_logger
 from ..interfaces import (
-    DataFormat,
+    ConversionCost,
+    ConversionError,
     ConversionRequest,
     ConversionResult,
-    ConversionCost,
+    DataFormat,
     ShimAdapter,
-    ConversionError,
     ValidationResult,
 )
 from ._core import BaseShimAdapter, ConversionContext
-from ....logging_manager import get_logger
 
 logger = get_logger(__name__)
 
@@ -157,9 +157,9 @@ class ValidationAdapter(BaseShimAdapter):
             details={
                 "validation_type": "enhanced",
                 "strict_mode": self.strict_validation,
-                "wrapped_adapter": self.wrapped_adapter.adapter_id
-                if self.wrapped_adapter
-                else None,
+                "wrapped_adapter": (
+                    self.wrapped_adapter.adapter_id if self.wrapped_adapter else None
+                ),
             },
         )
 

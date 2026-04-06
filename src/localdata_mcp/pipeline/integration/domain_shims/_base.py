@@ -7,27 +7,27 @@ semantic context preservation.
 """
 
 import time
+from abc import abstractmethod
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
-from typing import Any, Dict, List, Optional, Tuple
-from abc import abstractmethod
 
-from ..shim_registry import EnhancedShimAdapter, AdapterConfig
+from ....logging_manager import get_logger
+from ..converters import NumpyConverter, PandasConverter
 from ..interfaces import (
-    DataFormat,
+    ConversionContext,
+    ConversionCost,
+    ConversionError,
     ConversionRequest,
     ConversionResult,
-    ConversionCost,
-    ConversionContext,
+    DataFormat,
     ValidationResult,
-    ConversionError,
 )
-from ..converters import PandasConverter, NumpyConverter
-from ..type_detection import TypeDetectionEngine
 from ..metadata_manager import MetadataManager
-from ....logging_manager import get_logger
-
-from ._types import DomainShimType, DomainMapping, SemanticContext
+from ..shim_registry import AdapterConfig, EnhancedShimAdapter
+from ..type_detection import TypeDetectionEngine
+from ._types import DomainMapping, DomainShimType, SemanticContext
 
 logger = get_logger(__name__)
 

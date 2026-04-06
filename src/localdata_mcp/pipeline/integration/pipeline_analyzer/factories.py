@@ -7,18 +7,16 @@ PipelineValidator, and related data structures.
 
 from typing import Any, Dict, List
 
-from ..interfaces import DataFormat
 from ..compatibility_matrix import PipelineCompatibilityMatrix
+from ..interfaces import DataFormat
 from ..shim_registry import ShimRegistry
-
-from .types import (
-    PipelineStep,
-    OptimizationCriteria,
-)
 from .analyzer import PipelineAnalyzer
 from .injector import ShimInjector
+from .types import (
+    OptimizationCriteria,
+    PipelineStep,
+)
 from .validator import PipelineValidator
-
 
 # Factory Functions
 

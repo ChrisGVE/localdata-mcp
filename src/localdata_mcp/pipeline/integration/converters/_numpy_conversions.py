@@ -12,8 +12,8 @@ import pandas as pd
 from scipy import sparse
 
 from ..interfaces import (
-    ConversionError,
     ConversionContext,
+    ConversionError,
 )
 
 

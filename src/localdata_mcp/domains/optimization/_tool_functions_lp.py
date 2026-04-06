@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 
 from ...logging_manager import get_logger
-from ._linear_programming import LinearProgrammingSolver
 from ._constrained import ConstrainedOptimizer
+from ._linear_programming import LinearProgrammingSolver
 
 logger = get_logger(__name__)
 
@@ -105,9 +105,9 @@ def solve_linear_program(
             "function_evaluations": result.nfev,
             "is_integer_solution": result.is_integer_solution,
             "sensitivity_analysis": result.sensitivity,
-            "dual_values": result.dual_values.tolist()
-            if result.dual_values is not None
-            else None,
+            "dual_values": (
+                result.dual_values.tolist() if result.dual_values is not None else None
+            ),
         }
 
         # Add constraint analysis if available
@@ -225,12 +225,16 @@ def optimize_constrained(
             "iterations": result.nit,
             "function_evaluations": result.nfev,
             "constraint_analysis": result.constraints,
-            "constraint_violations": result.constraint_violations.tolist()
-            if result.constraint_violations is not None
-            else None,
-            "lagrange_multipliers": result.lagrange_multipliers.tolist()
-            if result.lagrange_multipliers is not None
-            else None,
+            "constraint_violations": (
+                result.constraint_violations.tolist()
+                if result.constraint_violations is not None
+                else None
+            ),
+            "lagrange_multipliers": (
+                result.lagrange_multipliers.tolist()
+                if result.lagrange_multipliers is not None
+                else None
+            ),
         }
 
         return formatted_result

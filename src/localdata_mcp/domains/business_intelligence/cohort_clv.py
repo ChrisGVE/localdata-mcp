@@ -11,7 +11,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from ...logging_manager import get_logger
-from .models import CohortAnalysisResult, CLVResult
+from .models import CLVResult, CohortAnalysisResult
 
 logger = get_logger(__name__)
 

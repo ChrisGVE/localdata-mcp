@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
-from ..logging_manager import get_logging_manager, get_logger
+from ..logging_manager import get_logger, get_logging_manager
 from .exceptions import (
     LocalDataError,
     QueryExecutionError,

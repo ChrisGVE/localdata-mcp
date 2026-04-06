@@ -1,13 +1,13 @@
 """Streaming sub-package for memory-bounded streaming pipeline."""
 
-from .models import MemoryStatus, ChunkMetrics, ResultBuffer
+from .executor import StreamingQueryExecutor
+from .models import ChunkMetrics, MemoryStatus, ResultBuffer
 from .sources import (
     StreamingDataSource,
-    StreamingSQLSource,
     StreamingFileSource,
+    StreamingSQLSource,
     create_streaming_source,
 )
-from .executor import StreamingQueryExecutor
 
 __all__ = [
     "MemoryStatus",

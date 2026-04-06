@@ -14,8 +14,8 @@ from sklearn.utils.validation import check_is_fitted
 
 from ...logging_manager import get_logger
 from ...pipeline.base import (
-    PipelineResult,
     CompositionMetadata,
+    PipelineResult,
 )
 from ._base import TimeSeriesValidationError
 from ._transformer import TimeSeriesTransformer
@@ -104,34 +104,40 @@ class EnsembleForecaster(TimeSeriesTransformer):
             Dictionary of initialized model instances
         """
         # Lazy imports to avoid circular dependencies
-        from ._exponential import ExponentialSmoothingForecaster
         from ._arima import ARIMAForecastTransformer
         from ._auto_arima import AutoARIMATransformer
+        from ._exponential import ExponentialSmoothingForecaster
 
         models = {}
 
         for method in self.methods:
             if method == "exponential_smoothing":
                 models[method] = ExponentialSmoothingForecaster(
-                    forecast_steps=len(self.validation_data_)
-                    if self.validation_data_ is not None
-                    else self.forecast_steps,
+                    forecast_steps=(
+                        len(self.validation_data_)
+                        if self.validation_data_ is not None
+                        else self.forecast_steps
+                    ),
                     confidence_level=self.confidence_level,
                 )
 
             elif method == "arima":
                 models[method] = ARIMAForecastTransformer(
-                    forecast_steps=len(self.validation_data_)
-                    if self.validation_data_ is not None
-                    else self.forecast_steps,
+                    forecast_steps=(
+                        len(self.validation_data_)
+                        if self.validation_data_ is not None
+                        else self.forecast_steps
+                    ),
                     alpha=1.0 - self.confidence_level,
                 )
 
             elif method == "auto_arima":
                 models[method] = AutoARIMATransformer(
-                    forecast_steps=len(self.validation_data_)
-                    if self.validation_data_ is not None
-                    else self.forecast_steps,
+                    forecast_steps=(
+                        len(self.validation_data_)
+                        if self.validation_data_ is not None
+                        else self.forecast_steps
+                    ),
                     stepwise=True,  # Faster for ensemble
                 )
 
@@ -401,9 +407,9 @@ class EnsembleForecaster(TimeSeriesTransformer):
         return {
             "forecast_method": "Ensemble",
             "forecast_values": ensemble_forecast.to_dict(),
-            "confidence_intervals": ensemble_intervals.to_dict()
-            if ensemble_intervals is not None
-            else None,
+            "confidence_intervals": (
+                ensemble_intervals.to_dict() if ensemble_intervals is not None else None
+            ),
             "forecast_horizon": self.forecast_steps,
             "confidence_level": self.confidence_level,
             "ensemble_details": {
@@ -417,9 +423,11 @@ class EnsembleForecaster(TimeSeriesTransformer):
             "ensemble_statistics": {
                 "forecast_agreement": float(forecast_agreement),
                 "method_count": len(individual_forecasts),
-                "forecast_std_dev": forecast_std.tolist()
-                if hasattr(forecast_std, "tolist")
-                else float(forecast_std),
+                "forecast_std_dev": (
+                    forecast_std.tolist()
+                    if hasattr(forecast_std, "tolist")
+                    else float(forecast_std)
+                ),
             },
             "model_performance": self.model_performance_,
             "interpretation": self._generate_interpretation(

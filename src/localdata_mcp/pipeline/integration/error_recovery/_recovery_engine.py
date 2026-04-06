@@ -8,8 +8,8 @@ import time
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..interfaces import ConversionError, ConversionRequest
 from ....logging_manager import get_logger
+from ..interfaces import ConversionError, ConversionRequest
 from ._error_handler import ConversionErrorHandler
 from ._pathway_engine import AlternativePathwayEngine
 from ._rollback_manager import RollbackManager
@@ -414,15 +414,15 @@ class RecoveryStrategyEngine:
 
         # Adapt configurations based on error context
         if error_context.error_type == ConversionError.Type.MEMORY_EXCEEDED:
-            configs[RecoveryStrategy.RETRY]["max_attempts"] = (
-                1  # Don't retry memory errors aggressively
-            )
+            configs[RecoveryStrategy.RETRY][
+                "max_attempts"
+            ] = 1  # Don't retry memory errors aggressively
             configs[RecoveryStrategy.ALTERNATIVE_PATH]["max_alternatives"] = 3
 
         elif error_context.error_type == ConversionError.Type.TIMEOUT:
-            configs[RecoveryStrategy.RETRY]["max_delay"] = (
-                120.0  # Longer delays for timeout
-            )
+            configs[RecoveryStrategy.RETRY][
+                "max_delay"
+            ] = 120.0  # Longer delays for timeout
             configs[RecoveryStrategy.RETRY]["backoff_factor"] = 1.5
 
         return configs
@@ -482,14 +482,17 @@ class RecoveryStrategyEngine:
                     pattern: {
                         strategy.value: {
                             "attempts": len(performances),
-                            "avg_time": sum(abs(p) for p in performances)
-                            / len(performances)
-                            if performances
-                            else 0,
-                            "success_rate": sum(1 for p in performances if p > 0)
-                            / len(performances)
-                            if performances
-                            else 0,
+                            "avg_time": (
+                                sum(abs(p) for p in performances) / len(performances)
+                                if performances
+                                else 0
+                            ),
+                            "success_rate": (
+                                sum(1 for p in performances if p > 0)
+                                / len(performances)
+                                if performances
+                                else 0
+                            ),
                         }
                         for strategy, performances in strategies.items()
                     }

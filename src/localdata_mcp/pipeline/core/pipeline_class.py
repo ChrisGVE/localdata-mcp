@@ -20,27 +20,27 @@ import uuid
 import warnings
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
-import pandas as pd
 import numpy as np
-from sklearn.pipeline import Pipeline
+import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
 
+from ...error_handler import ErrorCategory, ErrorSeverity
+from ...logging_manager import get_logger, get_logging_manager
+from ...streaming import (
+    MemoryStatus,
+    StreamingDataSource,
+    StreamingQueryExecutor,
+)
 from ..base import (
     AnalysisPipelineBase,
     CompositionMetadata,
+    ErrorClassification,
     PipelineError,
     PipelineResult,
     PipelineState,
-    ErrorClassification,
     StreamingConfig,
 )
-from ...streaming import (
-    StreamingQueryExecutor,
-    MemoryStatus,
-    StreamingDataSource,
-)
-from ...logging_manager import get_logging_manager, get_logger
-from ...error_handler import ErrorCategory, ErrorSeverity
 
 logger = get_logger(__name__)
 
@@ -409,9 +409,11 @@ class DataSciencePipeline(Pipeline):
                 # Re-raise with enhanced error information
                 raise PipelineError(
                     f"Pipeline transform failed: {str(e)}",
-                    classification=ErrorClassification.COMPUTATION_TIMEOUT
-                    if "timeout" in str(e).lower()
-                    else ErrorClassification.DATA_QUALITY_FAILURE,
+                    classification=(
+                        ErrorClassification.COMPUTATION_TIMEOUT
+                        if "timeout" in str(e).lower()
+                        else ErrorClassification.DATA_QUALITY_FAILURE
+                    ),
                     pipeline_stage="transform",
                     context=error_info,
                     partial_results=partial_results,

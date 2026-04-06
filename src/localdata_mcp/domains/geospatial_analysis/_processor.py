@@ -3,21 +3,21 @@ Spatial data processor base class for the geospatial analysis domain.
 """
 
 import time
-from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 
 from ...logging_manager import get_logger
 from ...pipeline.base import (
     AnalysisPipelineBase,
-    PipelineResult,
     CompositionMetadata,
-    StreamingConfig,
+    PipelineResult,
     PipelineState,
+    StreamingConfig,
 )
 from ._base import _dependency_status
-from ._data import SpatialPoint, SpatialDataFrame, SpatialDataValidator
+from ._data import SpatialDataFrame, SpatialDataValidator, SpatialPoint
 
 logger = get_logger(__name__)
 

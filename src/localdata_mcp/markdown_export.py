@@ -183,8 +183,11 @@ def _tree_node_to_markdown(
     for child in children:
         lines.extend(
             _tree_node_to_markdown(
-                child, depth + 1, max_heading_depth,
-                include_path=include_path, _path=path,
+                child,
+                depth + 1,
+                max_heading_depth,
+                include_path=include_path,
+                _path=path,
             )
         )
 

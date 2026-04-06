@@ -3,9 +3,9 @@ Base types, enums, and dataclasses for the geospatial analysis domain.
 """
 
 import warnings
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 from ...logging_manager import get_logger
 

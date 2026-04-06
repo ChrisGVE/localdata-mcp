@@ -5,7 +5,7 @@ Defines the built-in domain profiles for Statistical Analysis, Regression & Mode
 Time Series Analysis, and Advanced Pattern Recognition domains.
 """
 
-from ..interfaces import DataFormat, DomainRequirements, DataFormatSpec
+from ..interfaces import DataFormat, DataFormatSpec, DomainRequirements
 from ._types import DomainProfile
 
 

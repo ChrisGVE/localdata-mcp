@@ -2,8 +2,8 @@
 Spatial statistics analysis for the geospatial analysis domain.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd

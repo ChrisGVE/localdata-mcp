@@ -5,9 +5,9 @@ Provides the abstract MetadataTransformer base class and concrete implementation
 for pandas and numpy format conversions.
 """
 
-from typing import Any, Dict, Set
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any, Dict, Set
 
 from ..interfaces import DataFormat
 from ._types import MetadataType

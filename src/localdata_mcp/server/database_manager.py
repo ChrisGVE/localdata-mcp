@@ -18,74 +18,74 @@ import yaml
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.sql import quoted_name
 
-# Internal imports from the parent package
-from ..json_utils import safe_dumps
-from ..query_parser import parse_and_validate_sql, SQLSecurityError, check_readonly
-from ..query_analyzer import analyze_query, QueryAnalysis
-from ..streaming import StreamingQueryExecutor, create_streaming_source
-from ..timeout_manager import QueryTimeoutError, get_timeout_manager
-from ..file_processor import create_streaming_file_engine, FileProcessorFactory
-from ..response_metadata import (
-    get_metadata_generator,
-    EnhancedResponseMetadata,
-    LLMCommunicationProtocol,
-    ResponseMetadataGenerator,
-)
-from ..logging_manager import get_logger
-from ..compatibility_manager import get_compatibility_manager
-from ..error_classification import classify_error
-from ..tree_storage import TreeStorageManager, create_tree_schema
-from ..tree_parsers import parse_toml_to_tree, parse_json_to_tree, parse_yaml_to_tree
-from ..tree_tools import (
-    tool_get_node,
-    tool_get_children,
-    tool_set_node,
-    tool_move_node,
-    tool_delete_node,
-    tool_list_keys,
-    tool_get_value,
-    tool_set_value,
-    tool_delete_key,
-)
-from ..tree_export import tool_export_structured
-from ..graph_tools import (
-    tool_get_node_graph,
-    tool_get_neighbors,
-    tool_get_edges,
-    tool_set_node_graph,
-    tool_delete_node_graph,
-    tool_add_edge,
-    tool_remove_edge,
-    tool_find_path,
-    tool_get_graph_stats,
-    tool_get_value_graph,
-    tool_set_value_graph,
-    tool_delete_key_graph,
-    tool_list_keys_graph,
-    tool_export_graph,
-)
-from ..datascience_tools import (
-    tool_hypothesis_test,
-    tool_anova_analysis,
-    tool_effect_sizes,
-    tool_fit_regression,
-    tool_evaluate_model,
-    tool_clustering,
-    tool_anomaly_detection,
-    tool_dimensionality_reduction,
-    tool_time_series_analysis,
-    tool_time_series_forecast,
-    tool_rfm_analysis,
-    tool_ab_test,
-)
-
 # Access patchable module-level names (feature flags, mcp instance) via the
 # canonical ``localdata_mcp.localdata_mcp`` module so that
 # ``unittest.mock.patch("localdata_mcp.localdata_mcp.XXX")`` works correctly.
 import localdata_mcp.localdata_mcp as _parent  # noqa: E402
 
+from ..compatibility_manager import get_compatibility_manager
+from ..datascience_tools import (
+    tool_ab_test,
+    tool_anomaly_detection,
+    tool_anova_analysis,
+    tool_clustering,
+    tool_dimensionality_reduction,
+    tool_effect_sizes,
+    tool_evaluate_model,
+    tool_fit_regression,
+    tool_hypothesis_test,
+    tool_rfm_analysis,
+    tool_time_series_analysis,
+    tool_time_series_forecast,
+)
+from ..error_classification import classify_error
+from ..file_processor import FileProcessorFactory, create_streaming_file_engine
+from ..graph_tools import (
+    tool_add_edge,
+    tool_delete_key_graph,
+    tool_delete_node_graph,
+    tool_export_graph,
+    tool_find_path,
+    tool_get_edges,
+    tool_get_graph_stats,
+    tool_get_neighbors,
+    tool_get_node_graph,
+    tool_get_value_graph,
+    tool_list_keys_graph,
+    tool_remove_edge,
+    tool_set_node_graph,
+    tool_set_value_graph,
+)
+
+# Internal imports from the parent package
+from ..json_utils import safe_dumps
+
 # Non-patchable singletons can use direct (``from``) imports for convenience.
 from ..logging_manager import get_logger
+from ..query_analyzer import QueryAnalysis, analyze_query
+from ..query_parser import SQLSecurityError, check_readonly, parse_and_validate_sql
+from ..response_metadata import (
+    EnhancedResponseMetadata,
+    LLMCommunicationProtocol,
+    ResponseMetadataGenerator,
+    get_metadata_generator,
+)
+from ..streaming import StreamingQueryExecutor, create_streaming_source
+from ..timeout_manager import QueryTimeoutError, get_timeout_manager
+from ..tree_export import tool_export_structured
+from ..tree_parsers import parse_json_to_tree, parse_toml_to_tree, parse_yaml_to_tree
+from ..tree_storage import TreeStorageManager, create_tree_schema
+from ..tree_tools import (
+    tool_delete_key,
+    tool_delete_node,
+    tool_get_children,
+    tool_get_node,
+    tool_get_value,
+    tool_list_keys,
+    tool_move_node,
+    tool_set_node,
+    tool_set_value,
+)
 
 logger = get_logger(__name__)
 
@@ -497,7 +497,9 @@ class DatabaseManager:
     def _generate_query_id(self, db_name: str, query: str) -> str:
         """Generate a unique query ID in format: {db}_{timestamp}_{4char_hash}."""
         timestamp = int(time.time())
-        query_hash = hashlib.md5(query.encode(), usedforsecurity=False).hexdigest()[:4]  # nosec B324
+        query_hash = hashlib.md5(query.encode(), usedforsecurity=False).hexdigest()[
+            :4
+        ]  # nosec B324
         return f"{db_name}_{timestamp}_{query_hash}"
 
     def _cleanup_expired_buffers(self):
@@ -715,6 +717,7 @@ class DatabaseManager:
     def _create_graph_engine(self, file_path: str, file_type: str):
         """Parse a graph file into a GraphStorageManager backed by SQLite."""
         from sqlalchemy.pool import StaticPool
+
         from ..graph_manager import GraphStorageManager
         from ..graph_parsers import (
             parse_dot_to_graph,
@@ -745,8 +748,9 @@ class DatabaseManager:
     def _create_rdf_engine(self, file_path: str, file_type: str):
         """Parse an RDF file into an RDFStorageManager (no SQL engine needed)."""
         from sqlalchemy.pool import StaticPool
+
+        from ..rdf_parsers import parse_ntriples_to_rdf, parse_turtle_to_rdf
         from ..rdf_storage import RDFStorageManager
-        from ..rdf_parsers import parse_turtle_to_rdf, parse_ntriples_to_rdf
 
         # Create a dummy SQLite engine so connect_database has something to store.
         engine = create_engine(
@@ -824,6 +828,7 @@ class DatabaseManager:
                         "Install with: pip install toml"
                     )
                 import toml
+
                 with open(file_path, "r") as f:
                     toml_data = toml.load(f)
                 data = self._normalize_nested_data(toml_data)
@@ -1159,6 +1164,7 @@ class DatabaseManager:
 
         try:
             from numbers_parser import Document
+
             # Open Numbers document
             doc = Document(file_path)
             logger.info(f"Opened Numbers document with {len(doc.sheets)} sheets")
@@ -2879,10 +2885,10 @@ class DatabaseManager:
 
             # Memory-aware execution decision
             from .query_execution import (
-                get_memory_budget,
-                decide_execution_path,
                 build_refinement_response,
                 calculate_dynamic_chunk_size,
+                decide_execution_path,
+                get_memory_budget,
             )
 
             memory_budget = get_memory_budget()
@@ -3903,9 +3909,11 @@ class DatabaseManager:
                     "enable_query_analysis": self.streaming_executor.config.enable_query_analysis,
                     "auto_cleanup_buffers": self.streaming_executor.config.auto_cleanup_buffers,
                 },
-                "recent_chunk_metrics": self.streaming_executor._chunk_metrics[-10:]
-                if hasattr(self.streaming_executor, "_chunk_metrics")
-                else [],
+                "recent_chunk_metrics": (
+                    self.streaming_executor._chunk_metrics[-10:]
+                    if hasattr(self.streaming_executor, "_chunk_metrics")
+                    else []
+                ),
             }
 
             # Get info for each active buffer
@@ -4180,9 +4188,9 @@ class DatabaseManager:
 
             # Create report
             report = {
-                "compatibility_status": "OK"
-                if not status["legacy_config_detected"]
-                else "LEGACY_DETECTED",
+                "compatibility_status": (
+                    "OK" if not status["legacy_config_detected"] else "LEGACY_DETECTED"
+                ),
                 "version": status["version"],
                 "compatibility_mode": status["compatibility_mode"],
                 "legacy_configuration": status["legacy_config_detected"],

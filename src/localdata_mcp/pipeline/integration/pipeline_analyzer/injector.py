@@ -8,17 +8,16 @@ with cost-based optimization and chained conversion support.
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..interfaces import ConversionRequest, ConversionCost
-from ..compatibility_matrix import PipelineCompatibilityMatrix
-from ..shim_registry import ShimRegistry, EnhancedShimAdapter
 from ....logging_manager import get_logger
-
+from ..compatibility_matrix import PipelineCompatibilityMatrix
+from ..interfaces import ConversionCost, ConversionRequest
+from ..shim_registry import EnhancedShimAdapter, ShimRegistry
 from .types import (
     InjectionStrategy,
-    PipelineStep,
-    PipelineAnalysisResult,
-    ShimRecommendation,
     OptimizationCriteria,
+    PipelineAnalysisResult,
+    PipelineStep,
+    ShimRecommendation,
 )
 
 logger = get_logger(__name__)

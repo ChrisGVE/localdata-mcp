@@ -234,9 +234,11 @@ class ProfileTableTransformer(BaseEstimator, TransformerMixin):
                 "data_type": col_info.get("data_type", "unknown"),
                 "null_percentage": col_info.get("null_percentage", 0),
                 "unique_percentage": col_info.get("unique_percentage", 0),
-                "has_outliers": col_info.get("outliers", {}).get("count", 0) > 0
-                if "outliers" in col_info
-                else False,
+                "has_outliers": (
+                    col_info.get("outliers", {}).get("count", 0) > 0
+                    if "outliers" in col_info
+                    else False
+                ),
             }
 
             # Generate processing hints
@@ -296,11 +298,10 @@ class ProfileTableTransformer(BaseEstimator, TransformerMixin):
                 "total_columns": len(df.columns),
                 "memory_usage_mb": df.memory_usage(deep=True).sum() / (1024 * 1024),
                 "completeness_score": (
-                    (df.notna().sum().sum()) / (len(df) * len(df.columns))
-                )
-                * 100
-                if len(df) > 0
-                else 0,
+                    ((df.notna().sum().sum()) / (len(df) * len(df.columns))) * 100
+                    if len(df) > 0
+                    else 0
+                ),
             },
             "columns": {},
         }
@@ -312,15 +313,17 @@ class ProfileTableTransformer(BaseEstimator, TransformerMixin):
                 "data_type": str(col_data.dtype),
                 "non_null_count": int(col_data.notna().sum()),
                 "null_count": int(col_data.isnull().sum()),
-                "null_percentage": float(
-                    (col_data.isnull().sum() / len(col_data)) * 100
-                )
-                if len(col_data) > 0
-                else 0,
+                "null_percentage": (
+                    float((col_data.isnull().sum() / len(col_data)) * 100)
+                    if len(col_data) > 0
+                    else 0
+                ),
                 "unique_count": int(col_data.nunique()),
-                "unique_percentage": float((col_data.nunique() / len(col_data)) * 100)
-                if len(col_data) > 0
-                else 0,
+                "unique_percentage": (
+                    float((col_data.nunique() / len(col_data)) * 100)
+                    if len(col_data) > 0
+                    else 0
+                ),
                 "memory_usage_bytes": int(col_data.memory_usage(deep=True)),
             }
 
@@ -456,9 +459,9 @@ class ProfileTableTransformer(BaseEstimator, TransformerMixin):
             "min_length": int(str_series.str.len().min()),
             "max_length": int(str_series.str.len().max()),
             "avg_length": float(str_series.str.len().mean()),
-            "std_length": float(str_series.str.len().std())
-            if len(str_series) > 1
-            else 0,
+            "std_length": (
+                float(str_series.str.len().std()) if len(str_series) > 1 else 0
+            ),
         }
 
         # Pattern analysis

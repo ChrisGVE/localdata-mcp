@@ -248,9 +248,11 @@ class DistributionAnalyzerTransformer(BaseEstimator, TransformerMixin):
         # Normality test results
         metadata["normality_tests"][col_name] = {
             "is_normal": shape_metrics.get("is_normal_distributed", False),
-            "recommendation": "parametric_tests"
-            if shape_metrics.get("is_normal_distributed")
-            else "non_parametric_tests",
+            "recommendation": (
+                "parametric_tests"
+                if shape_metrics.get("is_normal_distributed")
+                else "non_parametric_tests"
+            ),
         }
 
         # Outlier information
@@ -442,12 +444,12 @@ class DistributionAnalyzerTransformer(BaseEstimator, TransformerMixin):
             "summary_stats": {
                 "count": len(series),
                 "unique_values": len(value_counts),
-                "most_frequent": str(value_counts.index[0])
-                if len(value_counts) > 0
-                else None,
-                "most_frequent_count": int(value_counts.iloc[0])
-                if len(value_counts) > 0
-                else 0,
+                "most_frequent": (
+                    str(value_counts.index[0]) if len(value_counts) > 0 else None
+                ),
+                "most_frequent_count": (
+                    int(value_counts.iloc[0]) if len(value_counts) > 0 else 0
+                ),
             },
         }
 
@@ -459,9 +461,11 @@ class DistributionAnalyzerTransformer(BaseEstimator, TransformerMixin):
         # Distribution metrics
         analysis["distribution_metrics"] = {
             "entropy": self._calculate_entropy(value_counts),
-            "concentration_ratio": float(value_counts.iloc[0] / len(series))
-            if len(value_counts) > 0
-            else 0,
+            "concentration_ratio": (
+                float(value_counts.iloc[0] / len(series))
+                if len(value_counts) > 0
+                else 0
+            ),
             "uniformity_score": self._calculate_uniformity(value_counts),
         }
 

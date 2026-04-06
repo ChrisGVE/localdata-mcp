@@ -6,7 +6,7 @@ the First Principles Architecture for comprehensive data science capabilities.
 
 Key Components:
 - Input pipelines with streaming compatibility
-- Preprocessing pipelines with progressive disclosure  
+- Preprocessing pipelines with progressive disclosure
 - Analysis pipelines with intention-driven interfaces
 - Output standardization across domains
 - Error handling with graceful degradation
@@ -18,31 +18,22 @@ streaming for large datasets and composition-aware results for tool chaining.
 
 from .base import (
     AnalysisPipelineBase,
+    CompositionMetadata,
     PipelineError,
     PipelineState,
-    CompositionMetadata
 )
-
-from .core import (
-    DataSciencePipeline
-)
-
-from .input import (
-    DataInputPipeline,
-    DataSourceType,
-    StreamingConfig
-)
-
+from .core import DataSciencePipeline
+from .input import DataInputPipeline, DataSourceType, StreamingConfig
 from .phase1_transformers import (
-    ProfileTableTransformer,
     DataTypeDetectorTransformer,
-    DistributionAnalyzerTransformer
+    DistributionAnalyzerTransformer,
+    ProfileTableTransformer,
 )
 
 # Note: Other pipeline modules may require additional dependencies
 # Import them separately when needed
 # from .preprocessing import (
-#     DataPreprocessingPipeline,  
+#     DataPreprocessingPipeline,
 #     PreprocessingIntent,
 #     TransformationStrategy
 # )
@@ -68,26 +59,22 @@ from .phase1_transformers import (
 __all__ = [
     # Base classes
     "AnalysisPipelineBase",
-    "PipelineError", 
+    "PipelineError",
     "PipelineState",
     "CompositionMetadata",
-    
     # Core DataSciencePipeline
     "DataSciencePipeline",
-    
     # Input pipeline
     "DataInputPipeline",
     "DataSourceType",
     "StreamingConfig",
-    
     # Phase 1 sklearn-compatible transformers
     "ProfileTableTransformer",
     "DataTypeDetectorTransformer",
-    "DistributionAnalyzerTransformer"
-    
+    "DistributionAnalyzerTransformer",
     # Additional components available when dependencies are installed
     # "DataPreprocessingPipeline",
-    # "PreprocessingIntent", 
+    # "PreprocessingIntent",
     # "TransformationStrategy",
     # "AnalysisOutputStandardizer",
     # "StandardizedResult",

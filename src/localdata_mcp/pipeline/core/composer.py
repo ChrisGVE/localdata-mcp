@@ -6,25 +6,24 @@ DataSciencePipeline instances for complex multi-stage workflows with
 dependency resolution, parallel execution, and metadata enrichment.
 """
 
+import concurrent.futures
 import time
 import uuid
-import concurrent.futures
 from collections import defaultdict, deque
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 
+from ...logging_manager import get_logger, get_logging_manager
+from ...streaming import MemoryStatus, StreamingQueryExecutor
 from ..base import (
     CompositionMetadata,
+    ErrorClassification,
     PipelineError,
     PipelineResult,
     PipelineState,
-    ErrorClassification,
     StreamingConfig,
 )
-from ...streaming import StreamingQueryExecutor, MemoryStatus
-from ...logging_manager import get_logging_manager, get_logger
-
 from .pipeline_class import DataSciencePipeline
 
 logger = get_logger(__name__)
@@ -563,12 +562,16 @@ class PipelineComposer:
                         },
                         execution_time_seconds=time.time() - pipeline_start_time,
                         memory_used_mb=self._calculate_pipeline_memory_usage(pipeline),
-                        pipeline_stage=pipeline.state.value
-                        if hasattr(pipeline, "state")
-                        else "completed",
-                        composition_metadata=pipeline.composition_metadata
-                        if hasattr(pipeline, "composition_metadata")
-                        else None,
+                        pipeline_stage=(
+                            pipeline.state.value
+                            if hasattr(pipeline, "state")
+                            else "completed"
+                        ),
+                        composition_metadata=(
+                            pipeline.composition_metadata
+                            if hasattr(pipeline, "composition_metadata")
+                            else None
+                        ),
                     )
 
                 results[pipeline_name] = pipeline_result
@@ -731,12 +734,16 @@ class PipelineComposer:
                     metadata={"pipeline_name": pipeline_name, "single_execution": True},
                     execution_time_seconds=time.time() - pipeline_start_time,
                     memory_used_mb=self._calculate_pipeline_memory_usage(pipeline),
-                    pipeline_stage=pipeline.state.value
-                    if hasattr(pipeline, "state")
-                    else "completed",
-                    composition_metadata=pipeline.composition_metadata
-                    if hasattr(pipeline, "composition_metadata")
-                    else None,
+                    pipeline_stage=(
+                        pipeline.state.value
+                        if hasattr(pipeline, "state")
+                        else "completed"
+                    ),
+                    composition_metadata=(
+                        pipeline.composition_metadata
+                        if hasattr(pipeline, "composition_metadata")
+                        else None
+                    ),
                 )
 
         except Exception as e:

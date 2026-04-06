@@ -9,19 +9,19 @@ import time
 import warnings
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 
-from ..base import AnalysisPipelineBase, StreamingConfig
-from ._types import MissingValuePattern, ImputationMetadata
-from ._pattern_analysis import PatternAnalysisMixin
-from ._strategies import StrategySelectionMixin
-from ._imputation import ImputationStrategyMixin
-from ._quality import QualityAssessmentMixin
-from ._comprehensive import ComprehensiveAssessmentMixin
-from ._metadata import MetadataUtilityMixin
 from ...logging_manager import get_logger
+from ..base import AnalysisPipelineBase, StreamingConfig
+from ._comprehensive import ComprehensiveAssessmentMixin
+from ._imputation import ImputationStrategyMixin
+from ._metadata import MetadataUtilityMixin
+from ._pattern_analysis import PatternAnalysisMixin
+from ._quality import QualityAssessmentMixin
+from ._strategies import StrategySelectionMixin
+from ._types import ImputationMetadata, MissingValuePattern
 
 logger = get_logger(__name__)
 

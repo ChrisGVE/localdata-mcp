@@ -6,11 +6,11 @@ shim injector, and pipeline validator components.
 """
 
 import time
-from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
 
-from ..interfaces import DataFormat, ConversionCost, ConversionPath
+from ..interfaces import ConversionCost, ConversionPath, DataFormat
 from ..shim_registry import EnhancedShimAdapter
 
 

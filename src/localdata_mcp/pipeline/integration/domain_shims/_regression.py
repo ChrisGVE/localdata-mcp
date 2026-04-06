@@ -5,16 +5,16 @@ Provides RegressionShim for connecting regression modeling with other domains,
 handling model coefficients, predictions, residuals, and diagnostic tests.
 """
 
-import numpy as np
-import pandas as pd
 from typing import Any, Dict, Optional
 
-from ..shim_registry import AdapterConfig
-from ..interfaces import ConversionRequest, ConversionError
-from ....logging_manager import get_logger
+import numpy as np
+import pandas as pd
 
-from ._types import DomainShimType, DomainMapping, SemanticContext
+from ....logging_manager import get_logger
+from ..interfaces import ConversionError, ConversionRequest
+from ..shim_registry import AdapterConfig
 from ._base import BaseDomainShim
+from ._types import DomainMapping, DomainShimType, SemanticContext
 
 logger = get_logger(__name__)
 
@@ -177,9 +177,11 @@ class RegressionShim(BaseDomainShim):
                         "model_type": "linear_trend",
                     },
                     "forecast_info": {
-                        "trend_strength": abs(data["coefficients"][0])
-                        if len(data["coefficients"]) > 0
-                        else 0,
+                        "trend_strength": (
+                            abs(data["coefficients"][0])
+                            if len(data["coefficients"]) > 0
+                            else 0
+                        ),
                         "model_r2": data.get("r2_score", 0),
                         "forecast_reliability": data.get("r2_score", 0),
                     },
@@ -192,9 +194,9 @@ class RegressionShim(BaseDomainShim):
                     "forecasted_values": predictions,
                     "forecast_intervals": data.get("confidence_intervals"),
                     "forecast_method": "regression_based",
-                    "forecast_horizon": len(predictions)
-                    if hasattr(predictions, "__len__")
-                    else 1,
+                    "forecast_horizon": (
+                        len(predictions) if hasattr(predictions, "__len__") else 1
+                    ),
                 }
 
         elif isinstance(data, pd.DataFrame):
@@ -203,9 +205,9 @@ class RegressionShim(BaseDomainShim):
                 fitted_col = "fitted" if "fitted" in data.columns else "predicted"
                 result = {
                     "fitted_values": data[fitted_col].values,
-                    "time_index": data.index.tolist()
-                    if hasattr(data, "index")
-                    else None,
+                    "time_index": (
+                        data.index.tolist() if hasattr(data, "index") else None
+                    ),
                 }
 
                 if "residuals" in data.columns:
@@ -278,11 +280,11 @@ class RegressionShim(BaseDomainShim):
                         "test_statistics": data["coefficients"],
                         "p_values": data["p_values"],
                         "significance_level": 0.05,
-                        "significant_features": [
-                            i for i, p in enumerate(data["p_values"]) if p <= 0.05
-                        ]
-                        if isinstance(data["p_values"], (list, np.ndarray))
-                        else [],
+                        "significant_features": (
+                            [i for i, p in enumerate(data["p_values"]) if p <= 0.05]
+                            if isinstance(data["p_values"], (list, np.ndarray))
+                            else []
+                        ),
                     }
                 }
 
@@ -317,7 +319,7 @@ class RegressionShim(BaseDomainShim):
 
     def _test_normality(self, residuals: np.ndarray) -> Dict[str, Any]:
         """Test normality of residuals."""
-        from scipy.stats import shapiro, jarque_bera
+        from scipy.stats import jarque_bera, shapiro
 
         try:
             # Shapiro-Wilk test (for small samples)

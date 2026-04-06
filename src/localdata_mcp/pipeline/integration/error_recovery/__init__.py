@@ -12,6 +12,26 @@ Key Components:
 - Recovery Strategy Framework: Configurable recovery policies and patterns
 """
 
+# Circuit breaker
+from ._circuit_breaker import CircuitBreaker
+
+# Core classes
+from ._error_handler import ConversionErrorHandler
+
+# Factory and utility functions
+from ._factories import (
+    create_alternative_pathway_engine,
+    create_complete_error_recovery_system,
+    create_conversion_error_handler,
+    create_error_recovery_framework,
+    create_recovery_strategy_engine,
+    create_rollback_manager,
+    handle_pipeline_error_with_recovery,
+)
+from ._pathway_engine import AlternativePathwayEngine
+from ._recovery_engine import RecoveryStrategyEngine
+from ._rollback_manager import RollbackManager
+
 # Type definitions: enums and dataclasses
 from ._types import (
     AlternativePathway,
@@ -33,26 +53,6 @@ from ._types import (
     RecoveryStrategy,
     RetryPolicy,
     RollbackPath,
-)
-
-# Circuit breaker
-from ._circuit_breaker import CircuitBreaker
-
-# Core classes
-from ._error_handler import ConversionErrorHandler
-from ._pathway_engine import AlternativePathwayEngine
-from ._rollback_manager import RollbackManager
-from ._recovery_engine import RecoveryStrategyEngine
-
-# Factory and utility functions
-from ._factories import (
-    create_alternative_pathway_engine,
-    create_complete_error_recovery_system,
-    create_conversion_error_handler,
-    create_error_recovery_framework,
-    create_recovery_strategy_engine,
-    create_rollback_manager,
-    handle_pipeline_error_with_recovery,
 )
 
 # Alias for compatibility with test framework

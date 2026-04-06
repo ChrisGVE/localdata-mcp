@@ -5,8 +5,8 @@ and debugging capabilities using structlog and prometheus_client.
 """
 
 from .context import LogContext
+from .manager import LoggingManager, get_logger, get_logging_manager
 from .metrics import MetricsCollector, _get_or_create_metric
-from .manager import LoggingManager, get_logging_manager, get_logger
 
 __all__ = [
     "LogContext",

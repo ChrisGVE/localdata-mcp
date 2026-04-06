@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple, Type
 
-from ..logging_manager import get_logging_manager, get_logger
+from ..logging_manager import get_logger, get_logging_manager
 from .exceptions import (
     CircuitState,
     DatabaseConnectionError,

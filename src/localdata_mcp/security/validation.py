@@ -8,7 +8,7 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..logging_manager import get_logging_manager, get_logger
+from ..logging_manager import get_logger, get_logging_manager
 from ..query_parser import SQLSecurityError
 from .models import (
     AttackPattern,

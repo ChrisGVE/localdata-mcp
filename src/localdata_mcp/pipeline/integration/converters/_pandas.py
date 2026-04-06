@@ -8,16 +8,16 @@ index information, column names, data types, and categorical data.
 import time
 from typing import Any, Dict, Optional
 
+from ....logging_manager import get_logger
 from ..base_adapters import BaseShimAdapter
 from ..interfaces import (
-    DataFormat,
+    ConversionError,
     ConversionRequest,
     ConversionResult,
-    ConversionError,
+    DataFormat,
 )
-from ..type_detection import TypeDetectionEngine
 from ..metadata_manager import MetadataManager
-from ....logging_manager import get_logger
+from ..type_detection import TypeDetectionEngine
 from ._common import ConversionContextInternal, ConversionOptions
 from ._pandas_conversions import PandasConversionsMixin
 

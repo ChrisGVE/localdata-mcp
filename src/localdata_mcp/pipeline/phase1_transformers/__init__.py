@@ -12,9 +12,9 @@ Key Features:
 - Backward compatible interfaces
 """
 
-from .profile_table import ProfileTableTransformer
 from .data_type_detector import DataTypeDetectorTransformer
 from .distribution_analyzer import DistributionAnalyzerTransformer
+from .profile_table import ProfileTableTransformer
 
 __all__ = [
     "ProfileTableTransformer",

@@ -12,9 +12,9 @@ import pandas as pd
 from scipy import sparse
 
 from ..interfaces import (
-    DataFormat,
-    ConversionError,
     ConversionContext,
+    ConversionError,
+    DataFormat,
 )
 
 

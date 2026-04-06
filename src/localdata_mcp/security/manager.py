@@ -13,11 +13,19 @@ from collections import defaultdict, deque
 from contextlib import contextmanager
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
-from ..query_parser import QueryParser, SQLSecurityError, get_query_parser
-from ..timeout_manager import get_timeout_manager, TimeoutReason
 from ..connection_manager import get_enhanced_connection_manager
-from ..logging_manager import get_logging_manager, get_logger
-
+from ..logging_manager import get_logger, get_logging_manager
+from ..query_parser import QueryParser, SQLSecurityError, get_query_parser
+from ..timeout_manager import TimeoutReason, get_timeout_manager
+from .detection import (
+    analyze_query_complexity,
+    compile_attack_patterns,
+    create_query_fingerprint,
+    detect_attack_patterns,
+)
+from .events import get_security_events as _get_security_events
+from .events import get_security_statistics as _get_security_statistics
+from .events import log_security_event as _log_security_event
 from .models import (
     AttackPattern,
     QueryComplexity,
@@ -27,26 +35,13 @@ from .models import (
     SecurityEventType,
     SecurityThreatLevel,
 )
-from .detection import (
-    compile_attack_patterns,
-    detect_attack_patterns,
-    create_query_fingerprint,
-    analyze_query_complexity,
-)
 from .rate_limiter import check_rate_limits as _check_rate_limits
+from .resources import check_resource_limits as _check_resource_limits
 from .resources import (
-    check_resource_limits as _check_resource_limits,
     start_resource_monitoring,
 )
-from .events import (
-    log_security_event as _log_security_event,
-    get_security_events as _get_security_events,
-    get_security_statistics as _get_security_statistics,
-)
-from .validation import (
-    validate_query_security as _validate_query_security,
-    secure_query_execution as _secure_query_execution,
-)
+from .validation import secure_query_execution as _secure_query_execution
+from .validation import validate_query_security as _validate_query_security
 
 # Get structured logger
 logger = get_logger(__name__)

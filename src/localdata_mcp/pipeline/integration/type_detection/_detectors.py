@@ -1,13 +1,13 @@
 """Type detection - Format-specific detectors."""
 
-from typing import Any, Dict, Optional, Tuple
 from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-from ..interfaces import DataFormat
 from ...type_conversion import TypeInferenceEngine
+from ..interfaces import DataFormat
 from ._types import SchemaInfo
 
 
@@ -168,12 +168,16 @@ class NumpyArrayDetector(FormatSpecificDetector):
                 "memory_bytes": data.nbytes,
             },
             null_info={
-                "nan_count": np.isnan(data).sum()
-                if np.issubdtype(data.dtype, np.floating)
-                else 0,
-                "inf_count": np.isinf(data).sum()
-                if np.issubdtype(data.dtype, np.floating)
-                else 0,
+                "nan_count": (
+                    np.isnan(data).sum()
+                    if np.issubdtype(data.dtype, np.floating)
+                    else 0
+                ),
+                "inf_count": (
+                    np.isinf(data).sum()
+                    if np.issubdtype(data.dtype, np.floating)
+                    else 0
+                ),
             },
             quality_metrics=quality_metrics,
             inference_confidence=1.0,
@@ -234,9 +238,9 @@ class TimeSeriesDetector(FormatSpecificDetector):
                 "datetime_columns": datetime_columns,
                 "temporal_columns": temporal_columns,
                 "index_type": type(data.index).__name__,
-                "potential_frequency": self._infer_frequency(data)
-                if has_datetime_index
-                else None,
+                "potential_frequency": (
+                    self._infer_frequency(data) if has_datetime_index else None
+                ),
             }
 
         return confidence, details
@@ -253,9 +257,11 @@ class TimeSeriesDetector(FormatSpecificDetector):
             {
                 "temporal_index": isinstance(data.index, pd.DatetimeIndex),
                 "frequency": self._infer_frequency(data),
-                "time_range": (data.index.min(), data.index.max())
-                if isinstance(data.index, pd.DatetimeIndex)
-                else None,
+                "time_range": (
+                    (data.index.min(), data.index.max())
+                    if isinstance(data.index, pd.DatetimeIndex)
+                    else None
+                ),
                 "missing_time_periods": self._detect_missing_periods(data),
             }
         )
@@ -321,9 +327,9 @@ class CategoricalDetector(FormatSpecificDetector):
             confidence = 1.0
             details = {
                 "unique_values": len(data.categories),
-                "unique_ratio": len(data.categories) / len(data)
-                if len(data) > 0
-                else 0,
+                "unique_ratio": (
+                    len(data.categories) / len(data) if len(data) > 0 else 0
+                ),
                 "sample_values": list(data.categories[:10]),
             }
 
@@ -337,9 +343,11 @@ class CategoricalDetector(FormatSpecificDetector):
 
             details = {
                 "unique_values": data.nunique(),
-                "unique_ratio": unique_ratio
-                if data.dtype.name != "category"
-                else (data.nunique() / len(data) if len(data) > 0 else 0),
+                "unique_ratio": (
+                    unique_ratio
+                    if data.dtype.name != "category"
+                    else (data.nunique() / len(data) if len(data) > 0 else 0)
+                ),
                 "sample_values": data.unique()[:10].tolist(),
             }
 

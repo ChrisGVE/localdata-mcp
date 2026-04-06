@@ -12,9 +12,9 @@ import pandas as pd
 from scipy import sparse
 
 from ..interfaces import (
-    DataFormat,
-    ConversionError,
     ConversionContext,
+    ConversionError,
+    DataFormat,
 )
 
 
@@ -157,9 +157,9 @@ class PandasFromDataFrameMixin:
             metadata_dict = {
                 "data": dict_data,
                 "columns": list(df.columns),
-                "index": list(df.index)
-                if self.conversion_options.preserve_index
-                else None,
+                "index": (
+                    list(df.index) if self.conversion_options.preserve_index else None
+                ),
                 "dtypes": df.dtypes.to_dict(),
                 "shape": df.shape,
             }

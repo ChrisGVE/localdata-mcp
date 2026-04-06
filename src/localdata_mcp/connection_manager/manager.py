@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.engine import Engine
 
-from ..config_manager import get_config_manager, DatabaseConfig
+from ..config_manager import DatabaseConfig, get_config_manager
 from ..timeout_manager import get_timeout_manager
 from .engine_factory import EngineFactoryMixin
 from .health import HealthMonitorMixin

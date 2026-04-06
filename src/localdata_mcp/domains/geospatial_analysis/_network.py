@@ -3,8 +3,8 @@ Spatial network analysis for the geospatial analysis domain.
 """
 
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -55,12 +55,14 @@ class AccessibilityResult:
         return {
             "total_locations_analyzed": len(self.accessibility_scores),
             "reachable_count": len(self.reachable_locations),
-            "average_accessibility": np.mean(list(self.accessibility_scores.values()))
-            if self.accessibility_scores
-            else 0,
-            "max_travel_time": max(self.travel_times.values())
-            if self.travel_times
-            else 0,
+            "average_accessibility": (
+                np.mean(list(self.accessibility_scores.values()))
+                if self.accessibility_scores
+                else 0
+            ),
+            "max_travel_time": (
+                max(self.travel_times.values()) if self.travel_times else 0
+            ),
             "analysis_parameters": self.analysis_parameters,
             "execution_time_seconds": self.execution_time,
         }

@@ -111,9 +111,9 @@ class SecurityEvent:
             "connection_id": self.connection_id,
             "query_fingerprint": self.query_fingerprint,
             "query_text": self.query_text,
-            "attack_pattern": self.attack_pattern.value
-            if self.attack_pattern
-            else None,
+            "attack_pattern": (
+                self.attack_pattern.value if self.attack_pattern else None
+            ),
             "message": self.message,
             "metadata": self.metadata,
         }

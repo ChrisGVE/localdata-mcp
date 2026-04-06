@@ -4,8 +4,8 @@ Standalone functions extracted from SecurityManager to keep module sizes
 within the 300-line project limit.
 """
 
-import time
 import threading
+import time
 from collections import defaultdict
 from typing import Callable, Dict, Optional, Tuple
 

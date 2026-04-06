@@ -114,9 +114,9 @@ class StreamingJSONProcessor(StreamingFileProcessor):
             "estimated_rows": estimated_rows,
             "estimated_memory_mb": estimated_memory_mb,
             "file_size_mb": file_size_mb,
-            "processing_approach": "streaming_with_ijson"
-            if IJSON_AVAILABLE
-            else "chunked_fallback",
+            "processing_approach": (
+                "streaming_with_ijson" if IJSON_AVAILABLE else "chunked_fallback"
+            ),
         }
 
 

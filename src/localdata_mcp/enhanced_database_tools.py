@@ -11,16 +11,16 @@ from typing import Any, Dict, List, Optional
 
 from fastmcp import FastMCP
 
-from .connection_manager import (
-    get_enhanced_connection_manager,
-    EnhancedConnectionManager,
-)
 from .config_manager import get_config_manager
-from .query_parser import parse_and_validate_sql, SQLSecurityError
+from .connection_manager import (
+    EnhancedConnectionManager,
+    get_enhanced_connection_manager,
+)
 from .query_analyzer import analyze_query
+from .query_parser import SQLSecurityError, parse_and_validate_sql
+from .security import SecurityManager, get_security_manager
 from .streaming import StreamingQueryExecutor, create_streaming_source
-from .timeout_manager import get_timeout_manager, QueryTimeoutError
-from .security import get_security_manager, SecurityManager
+from .timeout_manager import QueryTimeoutError, get_timeout_manager
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +89,13 @@ class EnhancedDatabaseTools:
                 "detailed_health": {
                     "state": health_result.state.value if health_result else "unknown",
                     "is_healthy": health_result.is_healthy if health_result else False,
-                    "response_time_ms": health_result.response_time_ms
-                    if health_result
-                    else 0,
+                    "response_time_ms": (
+                        health_result.response_time_ms if health_result else 0
+                    ),
                     "last_check": health_result.timestamp if health_result else 0,
-                    "error_message": health_result.error_message
-                    if health_result
-                    else None,
+                    "error_message": (
+                        health_result.error_message if health_result else None
+                    ),
                 },
                 "resource_status": resource_status,
             }

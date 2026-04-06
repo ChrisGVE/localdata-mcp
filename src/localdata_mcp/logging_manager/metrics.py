@@ -3,11 +3,11 @@
 from typing import Optional
 
 from prometheus_client import (
+    REGISTRY,
     CollectorRegistry,
     Counter,
     Gauge,
     Histogram,
-    REGISTRY,
     generate_latest,
 )
 

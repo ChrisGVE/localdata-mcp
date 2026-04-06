@@ -5,27 +5,27 @@ Advanced clustering with multiple algorithms (K-means, hierarchical, DBSCAN, GMM
 and automatic parameter selection.
 """
 
+import time
 import warnings
 from typing import Any, Dict, Optional, Tuple
-import time
 
 import numpy as np
-from sklearn.utils.validation import check_array, check_is_fitted
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import (
-    silhouette_score,
-    calinski_harabasz_score,
-    davies_bouldin_score,
-    adjusted_rand_score,
-    normalized_mutual_info_score,
-    homogeneity_score,
-    completeness_score,
-    v_measure_score,
-)
 
 # Clustering algorithms
-from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN, SpectralClustering
+from sklearn.cluster import DBSCAN, AgglomerativeClustering, KMeans, SpectralClustering
+from sklearn.metrics import (
+    adjusted_rand_score,
+    calinski_harabasz_score,
+    completeness_score,
+    davies_bouldin_score,
+    homogeneity_score,
+    normalized_mutual_info_score,
+    silhouette_score,
+    v_measure_score,
+)
 from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
+from sklearn.utils.validation import check_array, check_is_fitted
 
 from ...logging_manager import get_logger
 from ...pipeline.base import AnalysisPipelineBase

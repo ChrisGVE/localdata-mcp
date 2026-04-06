@@ -5,24 +5,24 @@ Contains the StatisticalTestResult dataclass and common imports used
 across all statistical analysis sub-modules.
 """
 
-import warnings
-from typing import Any, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass
-import time
 import json
+import time
+import warnings
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
 from scipy import stats
-from scipy.stats import chi2_contingency, pearsonr, spearmanr, kendalltau
+from scipy.stats import chi2_contingency, kendalltau, pearsonr, spearmanr
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_array, check_is_fitted
-import statsmodels.api as sm
-from statsmodels.stats.power import ttest_power, tt_solve_power
+from statsmodels.formula.api import ols
+from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.contingency_tables import mcnemar
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
-from statsmodels.stats.anova import anova_lm
-from statsmodels.formula.api import ols
+from statsmodels.stats.power import tt_solve_power, ttest_power
 
 from ...logging_manager import get_logger
 

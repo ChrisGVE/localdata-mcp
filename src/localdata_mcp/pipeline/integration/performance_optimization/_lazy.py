@@ -12,8 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from ..interfaces import ConversionRequest, ShimAdapter
 from ....logging_manager import get_logger
+from ..interfaces import ConversionRequest, ShimAdapter
 
 logger = get_logger(__name__)
 

@@ -7,9 +7,9 @@ import threading
 import time
 from typing import Any, Dict
 
+from ....logging_manager import get_logger
 from ..interfaces import ConversionError
 from ._types import CircuitBreakerState
-from ....logging_manager import get_logger
 
 logger = get_logger(__name__)
 

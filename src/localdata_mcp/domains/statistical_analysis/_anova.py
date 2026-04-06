@@ -12,9 +12,9 @@ import pandas as pd
 from scipy import stats
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
-from statsmodels.stats.multicomp import pairwise_tukeyhsd
-from statsmodels.stats.anova import anova_lm
 from statsmodels.formula.api import ols
+from statsmodels.stats.anova import anova_lm
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 from ...logging_manager import get_logger
 

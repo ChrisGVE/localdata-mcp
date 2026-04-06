@@ -10,8 +10,8 @@ in ``localdata_mcp.localdata_mcp`` so that existing ``unittest.mock.patch``
 targets continue to work.
 """
 
+from .cli import _get_version, _parse_cli_args, main  # noqa: F401
 from .database_manager import DatabaseManager, QueryBuffer  # noqa: F401
-from .cli import main, _get_version, _parse_cli_args  # noqa: F401
 
 __all__ = [
     "DatabaseManager",

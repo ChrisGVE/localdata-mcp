@@ -5,11 +5,10 @@ and YAML files (complex multi-database configurations) with validation,
 environment variable substitution, and hot-reload capabilities.
 """
 
-from .types import (
-    DatabaseType,
-    LogLevel,
-    OutputDestination,
-    OutputFormat,
+from .manager import (
+    ConfigManager,
+    get_config_manager,
+    initialize_config,
 )
 from .models import (
     DatabaseConfig,
@@ -17,10 +16,11 @@ from .models import (
     LoggingConfig,
     PerformanceConfig,
 )
-from .manager import (
-    ConfigManager,
-    get_config_manager,
-    initialize_config,
+from .types import (
+    DatabaseType,
+    LogLevel,
+    OutputDestination,
+    OutputFormat,
 )
 
 __all__ = [

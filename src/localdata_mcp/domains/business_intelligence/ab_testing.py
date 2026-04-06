@@ -9,11 +9,11 @@ experiment design planning.
 import numpy as np
 import pandas as pd
 from scipy import stats
-from scipy.stats import chi2_contingency, ttest_ind, mannwhitneyu
+from scipy.stats import chi2_contingency, mannwhitneyu, ttest_ind
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
-from statsmodels.stats.power import ttest_power, tt_solve_power
-from statsmodels.stats.proportion import proportions_ztest, proportion_confint
+from statsmodels.stats.power import tt_solve_power, ttest_power
+from statsmodels.stats.proportion import proportion_confint, proportions_ztest
 
 from ...logging_manager import get_logger
 from .models import ABTestResult

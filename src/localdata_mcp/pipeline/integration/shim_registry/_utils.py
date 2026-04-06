@@ -8,12 +8,11 @@ for shim adapters and registries.
 import time
 from typing import Any, Dict, List, Optional, Set
 
-from ..interfaces import ValidationResult, DataFormat
 from ..compatibility_matrix import PipelineCompatibilityMatrix
-from ._types import AdapterConfig, AdapterMetrics
+from ..interfaces import DataFormat, ValidationResult
 from ._enhanced_adapter import EnhancedShimAdapter
 from ._registry import ShimRegistry
-
+from ._types import AdapterConfig, AdapterMetrics
 
 # Factory Functions
 

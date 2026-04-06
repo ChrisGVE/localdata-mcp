@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 
 from ...logging_manager import get_logger
-from ._network import NetworkAnalyzer, NETWORKX_AVAILABLE
 from ._assignment import AssignmentSolver
+from ._network import NETWORKX_AVAILABLE, NetworkAnalyzer
 
 logger = get_logger(__name__)
 

@@ -19,21 +19,21 @@ from typing import Any, Dict, Optional, Tuple, Union
 import pandas as pd
 from sqlalchemy.engine import Engine
 
-from .base import (
-    AnalysisPipelineBase,
-    DataSourceType,
-    StreamingConfig,
-    CompositionMetadata,
-    PipelineError,
-    ErrorClassification,
-)
-from ..streaming import (
-    StreamingQueryExecutor,
-    create_streaming_source,
-    StreamingDataSource,
-)
 from ..enhanced_database_manager import get_enhanced_database_manager
 from ..logging_manager import get_logger
+from ..streaming import (
+    StreamingDataSource,
+    StreamingQueryExecutor,
+    create_streaming_source,
+)
+from .base import (
+    AnalysisPipelineBase,
+    CompositionMetadata,
+    DataSourceType,
+    ErrorClassification,
+    PipelineError,
+    StreamingConfig,
+)
 
 logger = get_logger(__name__)
 
@@ -178,9 +178,9 @@ class DataInputPipeline(AnalysisPipelineBase):
 
         # Build metadata
         metadata = {
-            "data_source_type": self._data_source_type.value
-            if self._data_source_type
-            else "unknown",
+            "data_source_type": (
+                self._data_source_type.value if self._data_source_type else "unknown"
+            ),
             "execution_time": execution_time,
             "streaming_enabled": False,
             "rows_loaded": len(result_data),

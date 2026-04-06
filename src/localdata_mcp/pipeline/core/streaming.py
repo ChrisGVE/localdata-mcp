@@ -13,28 +13,27 @@ import uuid
 import warnings
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
-import pandas as pd
 import numpy as np
-from sklearn.pipeline import Pipeline
+import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
 
+from ...logging_manager import get_logger, get_logging_manager
+from ...streaming import (
+    MemoryStatus,
+    StreamingDataSource,
+    StreamingQueryExecutor,
+)
 from ..base import (
     AnalysisPipelineBase,
     CompositionMetadata,
+    ErrorClassification,
     PipelineError,
     PipelineResult,
     PipelineState,
-    ErrorClassification,
     StreamingConfig,
 )
-from ...streaming import (
-    StreamingQueryExecutor,
-    MemoryStatus,
-    StreamingDataSource,
-)
-from ...logging_manager import get_logging_manager, get_logger
-
-from .pipeline_class import DataSciencePipeline, DataFrameStreamingSource
+from .pipeline_class import DataFrameStreamingSource, DataSciencePipeline
 
 logger = get_logger(__name__)
 
@@ -396,9 +395,11 @@ class StreamingDataPipeline(DataSciencePipeline):
                 # Re-raise with enhanced error information
                 raise PipelineError(
                     f"StreamingDataPipeline transform failed: {str(e)}",
-                    classification=ErrorClassification.COMPUTATION_TIMEOUT
-                    if "timeout" in str(e).lower()
-                    else ErrorClassification.DATA_QUALITY_FAILURE,
+                    classification=(
+                        ErrorClassification.COMPUTATION_TIMEOUT
+                        if "timeout" in str(e).lower()
+                        else ErrorClassification.DATA_QUALITY_FAILURE
+                    ),
                     pipeline_stage="streaming_transform",
                     context=error_info,
                     partial_results=partial_results,
@@ -759,9 +760,11 @@ class StreamingDataPipeline(DataSciencePipeline):
             "failed_chunks": len(failed_chunks),
             "total_samples": total_samples,
             "total_processing_time": total_time,
-            "average_chunk_time": total_time / len(self._chunk_fit_results)
-            if self._chunk_fit_results
-            else 0,
+            "average_chunk_time": (
+                total_time / len(self._chunk_fit_results)
+                if self._chunk_fit_results
+                else 0
+            ),
         }
 
     def _aggregate_chunk_transform_results(self) -> Any:
@@ -940,12 +943,16 @@ class StreamingDataPipeline(DataSciencePipeline):
             "final_chunk_size": self._adaptive_chunk_size,
             "fit_aggregation": self._execution_context.get("fit_aggregation", {}),
             "memory_efficiency": {
-                "initial_memory_gb": self._memory_snapshots[0].available_gb
-                if self._memory_snapshots
-                else None,
-                "final_memory_gb": self._memory_snapshots[-1].available_gb
-                if self._memory_snapshots
-                else None,
+                "initial_memory_gb": (
+                    self._memory_snapshots[0].available_gb
+                    if self._memory_snapshots
+                    else None
+                ),
+                "final_memory_gb": (
+                    self._memory_snapshots[-1].available_gb
+                    if self._memory_snapshots
+                    else None
+                ),
                 "peak_memory_usage_percent": max(
                     (m.used_percent for m in self._memory_snapshots), default=0
                 ),
@@ -1549,36 +1556,37 @@ class SklearnStreamingAdapter:
                 "total_chunks": total_chunks,
                 "successful_chunks": successful_chunks,
                 "failed_chunks": chunk_metadata.get("failed_chunks", 0),
-                "success_rate": successful_chunks / total_chunks
-                if total_chunks > 0
-                else 0,
-                "average_chunk_processing_time": sum(processing_times)
-                / len(processing_times)
-                if processing_times
-                else 0,
+                "success_rate": (
+                    successful_chunks / total_chunks if total_chunks > 0 else 0
+                ),
+                "average_chunk_processing_time": (
+                    sum(processing_times) / len(processing_times)
+                    if processing_times
+                    else 0
+                ),
                 "total_samples_processed": sum(chunk_sizes),
-                "average_chunk_size": sum(chunk_sizes) / len(chunk_sizes)
-                if chunk_sizes
-                else 0,
+                "average_chunk_size": (
+                    sum(chunk_sizes) / len(chunk_sizes) if chunk_sizes else 0
+                ),
             },
             # Performance metrics
             "performance_metrics": {
-                "samples_per_second": sum(chunk_sizes) / execution_time
-                if execution_time > 0
-                else 0,
-                "chunks_per_second": total_chunks / execution_time
-                if execution_time > 0
-                else 0,
+                "samples_per_second": (
+                    sum(chunk_sizes) / execution_time if execution_time > 0 else 0
+                ),
+                "chunks_per_second": (
+                    total_chunks / execution_time if execution_time > 0 else 0
+                ),
                 "memory_efficiency": self._calculate_memory_efficiency(chunk_metadata),
             },
             # Pipeline information
             "pipeline_info": {
                 "pipeline_type": type(self.sklearn_pipeline).__name__,
-                "pipeline_steps": [
-                    step_name for step_name, _ in self.sklearn_pipeline.steps
-                ]
-                if hasattr(self.sklearn_pipeline, "steps")
-                else [],
+                "pipeline_steps": (
+                    [step_name for step_name, _ in self.sklearn_pipeline.steps]
+                    if hasattr(self.sklearn_pipeline, "steps")
+                    else []
+                ),
                 "supports_partial_fit": self._check_partial_fit_support(),
             },
         }
@@ -1608,21 +1616,23 @@ class SklearnStreamingAdapter:
 
         return {
             "memory_monitoring_enabled": True,
-            "peak_memory_usage_percent": max(memory_usage_percentages)
-            if memory_usage_percentages
-            else 0,
-            "average_memory_usage_percent": sum(memory_usage_percentages)
-            / len(memory_usage_percentages)
-            if memory_usage_percentages
-            else 0,
-            "minimum_available_gb": min(available_gb_values)
-            if available_gb_values
-            else 0,
+            "peak_memory_usage_percent": (
+                max(memory_usage_percentages) if memory_usage_percentages else 0
+            ),
+            "average_memory_usage_percent": (
+                sum(memory_usage_percentages) / len(memory_usage_percentages)
+                if memory_usage_percentages
+                else 0
+            ),
+            "minimum_available_gb": (
+                min(available_gb_values) if available_gb_values else 0
+            ),
             "memory_pressure_chunks": low_memory_count,
-            "memory_stability": (len(memory_snapshots) - low_memory_count)
-            / len(memory_snapshots)
-            if memory_snapshots
-            else 1.0,
+            "memory_stability": (
+                (len(memory_snapshots) - low_memory_count) / len(memory_snapshots)
+                if memory_snapshots
+                else 1.0
+            ),
         }
 
     def _check_partial_fit_support(self) -> bool:

@@ -21,12 +21,12 @@ Design Principles:
 - Modular Integration: Easy addition of new domains and formats
 """
 
-from ._types import CompatibilityLevel, DomainProfile
 from ._matrix import PipelineCompatibilityMatrix
+from ._types import CompatibilityLevel, DomainProfile
 from ._utilities import (
+    assess_pipeline_compatibility,
     create_compatibility_matrix,
     create_minimal_compatibility_matrix,
-    assess_pipeline_compatibility,
     find_optimal_format_for_domains,
     suggest_pipeline_improvements,
 )

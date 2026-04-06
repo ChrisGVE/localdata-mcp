@@ -5,51 +5,51 @@ Contains shared imports, result dataclasses, and common utilities
 used across all regression modeling sub-modules.
 """
 
-import warnings
-from typing import Any, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass, field
-import time
 import json
+import time
+import warnings
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
 from scipy import stats
-from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin
-from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
-from sklearn.model_selection import cross_val_score, validation_curve, learning_curve
-from sklearn.metrics import (
-    r2_score,
-    mean_squared_error,
-    mean_absolute_error,
-    explained_variance_score,
-    max_error,
-    mean_squared_log_error,
-)
+from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
+from sklearn.feature_selection import RFE, RFECV, SelectFromModel
+from sklearn.kernel_ridge import KernelRidge
 from sklearn.linear_model import (
-    LinearRegression,
-    Ridge,
-    Lasso,
     ElasticNet,
-    LogisticRegression,
-    RidgeCV,
-    LassoCV,
     ElasticNetCV,
+    Lasso,
+    LassoCV,
+    LinearRegression,
+    LogisticRegression,
+    Ridge,
+    RidgeCV,
     TweedieRegressor,
 )
+from sklearn.metrics import (
+    explained_variance_score,
+    max_error,
+    mean_absolute_error,
+    mean_squared_error,
+    mean_squared_log_error,
+    r2_score,
+)
+from sklearn.model_selection import cross_val_score, learning_curve, validation_curve
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
-from sklearn.feature_selection import SelectFromModel, RFE, RFECV
-from sklearn.kernel_ridge import KernelRidge
-import statsmodels.api as sm
+from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 from statsmodels.stats.diagnostic import het_breuschpagan, het_white, normal_ad
 from statsmodels.stats.outliers_influence import OLSInfluence
 
 from ...logging_manager import get_logger
 from ...pipeline.base import (
     AnalysisPipelineBase,
-    PipelineResult,
     CompositionMetadata,
-    StreamingConfig,
+    PipelineResult,
     PipelineState,
+    StreamingConfig,
 )
 
 logger = get_logger(__name__)
@@ -134,9 +134,11 @@ class RegressionModelResult:
         if self.coefficients is not None:
             result_dict["feature_analysis"] = {
                 "feature_names": self.feature_names,
-                "coefficients": self.coefficients.tolist()
-                if hasattr(self.coefficients, "tolist")
-                else self.coefficients,
+                "coefficients": (
+                    self.coefficients.tolist()
+                    if hasattr(self.coefficients, "tolist")
+                    else self.coefficients
+                ),
                 "selected_features": self.selected_features,
             }
 

@@ -1,23 +1,23 @@
 """Type detection - Main detection engine."""
 
-import time
 import hashlib
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-from ..interfaces import DataFormat, ValidationResult, TypeDetector
-from ...type_conversion import TypeInferenceEngine
 from ....logging_manager import get_logger
-from ._types import FormatDetectionResult, SchemaInfo
+from ...type_conversion import TypeInferenceEngine
+from ..interfaces import DataFormat, TypeDetector, ValidationResult
 from ._detectors import (
-    FormatSpecificDetector,
-    PandasDataFrameDetector,
-    NumpyArrayDetector,
-    TimeSeriesDetector,
     CategoricalDetector,
+    FormatSpecificDetector,
+    NumpyArrayDetector,
+    PandasDataFrameDetector,
+    TimeSeriesDetector,
 )
+from ._types import FormatDetectionResult, SchemaInfo
 
 logger = get_logger(__name__)
 
@@ -211,9 +211,11 @@ class TypeDetectionEngine(TypeDetector):
                     return data[indices]
                 else:
                     max_rows = min(
-                        self.max_sample_size // data.shape[1]
-                        if data.ndim > 1
-                        else self.max_sample_size,
+                        (
+                            self.max_sample_size // data.shape[1]
+                            if data.ndim > 1
+                            else self.max_sample_size
+                        ),
                         data.shape[0],
                     )
                     indices = np.random.choice(data.shape[0], max_rows, replace=False)

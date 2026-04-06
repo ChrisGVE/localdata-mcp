@@ -13,23 +13,23 @@ import pandas as pd
 from ...logging_manager import get_logger
 from ...pipeline.base import (
     AnalysisPipelineBase,
-    PipelineResult,
     CompositionMetadata,
-    StreamingConfig,
+    PipelineResult,
     PipelineState,
+    StreamingConfig,
 )
-from .customer_analytics import RFMAnalysisTransformer
-from .cohort_clv import CohortAnalysisTransformer, CLVCalculator
 from .ab_testing import ABTestAnalyzer, PowerAnalysisTransformer
 from .attribution import AttributionAnalyzer
-from .funnel import FunnelAnalyzer
+from .cohort_clv import CLVCalculator, CohortAnalysisTransformer
 from .convenience import (
-    analyze_rfm,
-    perform_cohort_analysis,
-    calculate_clv,
     analyze_attribution,
     analyze_funnel,
+    analyze_rfm,
+    calculate_clv,
+    perform_cohort_analysis,
 )
+from .customer_analytics import RFMAnalysisTransformer
+from .funnel import FunnelAnalyzer
 
 logger = get_logger(__name__)
 

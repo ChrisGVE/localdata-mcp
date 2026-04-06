@@ -190,9 +190,9 @@ class CointegrationAnalyzer(MultivariateTimeSeriesTransformer):
 
             return self._prepare_multivariate_result(
                 analysis_type="cointegration_analysis",
-                statistic=float(coint_result.lr1[0])
-                if len(coint_result.lr1) > 0
-                else None,
+                statistic=(
+                    float(coint_result.lr1[0]) if len(coint_result.lr1) > 0 else None
+                ),
                 p_value=None,
                 model_parameters=model_parameters,
                 model_diagnostics=model_diagnostics,

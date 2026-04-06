@@ -182,9 +182,11 @@ def main():
                 "LocalData MCP ready to accept connections",
                 transport="stdio",
                 logging_level=_parent.logging_config.level.value,
-                metrics_endpoint=f"http://localhost:{_parent.logging_config.metrics_port}{_parent.logging_config.metrics_endpoint}"
-                if _parent.logging_config.enable_metrics
-                else None,
+                metrics_endpoint=(
+                    f"http://localhost:{_parent.logging_config.metrics_port}{_parent.logging_config.metrics_endpoint}"
+                    if _parent.logging_config.enable_metrics
+                    else None
+                ),
             )
 
         _parent.mcp.run(transport="stdio")

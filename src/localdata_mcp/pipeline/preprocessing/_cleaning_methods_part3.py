@@ -71,8 +71,8 @@ def _comprehensive_data_validation(
             elif rule_type == "pattern_validation" and column in result_data.columns:
                 pattern = parameters.get("pattern")
                 if pattern:
-                    violation_mask = ~result_data[column].astype(str).str.match(
-                        pattern, na=False
+                    violation_mask = (
+                        ~result_data[column].astype(str).str.match(pattern, na=False)
                     )
                     if violation_mask.sum() > 0:
                         action = parameters.get("action", "set_to_null")

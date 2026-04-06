@@ -9,13 +9,13 @@ import time
 
 from sklearn.utils.validation import check_is_fitted, check_X_y
 
-from ._base import CompositionMetadata, AnalysisPipelineBase, PipelineState, logger
+from ._base import AnalysisPipelineBase, CompositionMetadata, PipelineState, logger
+from ._feature_selection import FeatureSelectionTransformer
 from ._linear import LinearRegressionTransformer
-from ._regularized import RegularizedRegressionTransformer
 from ._logistic import LogisticRegressionTransformer
 from ._polynomial import PolynomialRegressionTransformer
+from ._regularized import RegularizedRegressionTransformer
 from ._residuals import ResidualAnalysisTransformer
-from ._feature_selection import FeatureSelectionTransformer
 
 
 class RegressionModelingPipeline(AnalysisPipelineBase):
@@ -284,10 +284,10 @@ class RegressionModelingPipeline(AnalysisPipelineBase):
                 "feature_importance": getattr(
                     self.regression_result_, "feature_importance", None
                 ),
-                "selected_features": self.feature_selection_result_.get(
-                    "selected_features"
-                )
-                if self.feature_selection_result_
-                else None,
+                "selected_features": (
+                    self.feature_selection_result_.get("selected_features")
+                    if self.feature_selection_result_
+                    else None
+                ),
             },
         )
