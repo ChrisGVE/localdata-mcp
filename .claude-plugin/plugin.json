@@ -1,0 +1,31 @@
+{
+  "name": "localdata-mcp",
+  "version": "2.0.0a1",
+  "description": "Data science plugin for LLM agents. Connects to 13 database types, 20+ file formats, graph/RDF sources, and provides 8 analytical domains with 52 MCP tools.",
+  "author": {
+    "name": "Christian C. Berclaz",
+    "email": "christian.berclaz@mac.com"
+  },
+  "homepage": "https://github.com/ChrisGVE/localdata-mcp",
+  "repository": "https://github.com/ChrisGVE/localdata-mcp",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "data-science",
+    "database",
+    "statistics",
+    "time-series",
+    "regression",
+    "clustering",
+    "graph",
+    "rdf",
+    "sparql"
+  ],
+  "mcpServers": {
+    "localdata": {
+      "command": "uvx",
+      "args": ["localdata-mcp"],
+      "env": {}
+    }
+  }
+}
