@@ -308,6 +308,52 @@ class ExponentialSmoothingForecaster(TimeSeriesTransformer):
 
         return self
 
+    def _get_confidence_intervals(
+        self, forecast_result: pd.Series, logger
+    ) -> pd.DataFrame:
+        """Compute prediction intervals, falling back to residual-based estimates."""
+        alpha = 1 - self.confidence_level
+        try:
+            forecast_summary = self.fitted_model_.get_forecast(
+                steps=self.forecast_steps
+            )
+            ci = forecast_summary.conf_int(alpha=alpha)
+            ci.columns = ["lower", "upper"]
+            return ci
+        except Exception as e:
+            logger.warning(f"Could not generate prediction intervals: {e}")
+            residuals = self.fitted_model_.resid
+            std_residual = np.std(residuals)
+            z_score = stats.norm.ppf(1 - alpha / 2)
+            return pd.DataFrame(
+                {
+                    "lower": forecast_result - z_score * std_residual,
+                    "upper": forecast_result + z_score * std_residual,
+                },
+                index=forecast_result.index,
+            )
+
+    def _build_model_parameters(self) -> dict:
+        """Build the model_parameters dict from the fitted model."""
+        params = {
+            "smoothing_level": float(self.fitted_model_.params["smoothing_level"]),
+            "aic": float(self.fitted_model_.aic),
+            "bic": float(self.fitted_model_.bic),
+            "sse": float(self.fitted_model_.sse),
+        }
+        if self.selected_trend_ and "smoothing_trend" in self.fitted_model_.params:
+            params["smoothing_trend"] = float(
+                self.fitted_model_.params["smoothing_trend"]
+            )
+        if (
+            self.selected_seasonal_
+            and "smoothing_seasonal" in self.fitted_model_.params
+        ):
+            params["smoothing_seasonal"] = float(
+                self.fitted_model_.params["smoothing_seasonal"]
+            )
+        return params
+
     def transform(self, X: pd.DataFrame) -> PipelineResult:
         """Generate forecasts using the fitted Exponential Smoothing model."""
         check_is_fitted(self, ["fitted_model_", "training_data_"])
@@ -316,42 +362,15 @@ class ExponentialSmoothingForecaster(TimeSeriesTransformer):
         logger = get_logger(__name__)
 
         try:
-            # Generate forecast
             forecast_result = self.fitted_model_.forecast(steps=self.forecast_steps)
+            confidence_intervals = self._get_confidence_intervals(
+                forecast_result, logger
+            )
+            interval_width = float(
+                (confidence_intervals["upper"] - confidence_intervals["lower"]).mean()
+            )
+            model_parameters = self._build_model_parameters()
 
-            # Generate prediction intervals if possible
-            try:
-                # Try to get prediction intervals
-                alpha = 1 - self.confidence_level
-                forecast_summary = self.fitted_model_.get_forecast(
-                    steps=self.forecast_steps
-                )
-                confidence_intervals = forecast_summary.conf_int(alpha=alpha)
-
-                # Convert to DataFrame with proper column names
-                confidence_intervals.columns = ["lower", "upper"]
-
-            except Exception as e:
-                logger.warning(f"Could not generate prediction intervals: {e}")
-                # Create dummy intervals based on historical residuals
-                residuals = self.fitted_model_.resid
-                std_residual = np.std(residuals)
-                z_score = stats.norm.ppf(1 - alpha / 2) if "stats" in locals() else 1.96
-
-                confidence_intervals = pd.DataFrame(
-                    {
-                        "lower": forecast_result - z_score * std_residual,
-                        "upper": forecast_result + z_score * std_residual,
-                    },
-                    index=forecast_result.index,
-                )
-
-            # Calculate prediction intervals width
-            interval_width = (
-                confidence_intervals["upper"] - confidence_intervals["lower"]
-            ).mean()
-
-            # Prepare result data
             result_data = {
                 "forecast_method": "Exponential Smoothing (Holt-Winters)",
                 "forecast_values": forecast_result.to_dict(),
@@ -364,45 +383,19 @@ class ExponentialSmoothingForecaster(TimeSeriesTransformer):
                     "seasonal_periods": self.selected_seasonal_periods_,
                     "damped_trend": self.damped_trend,
                 },
-                "model_parameters": {
-                    "smoothing_level": float(
-                        self.fitted_model_.params["smoothing_level"]
-                    ),
-                    "aic": float(self.fitted_model_.aic),
-                    "bic": float(self.fitted_model_.bic),
-                    "sse": float(self.fitted_model_.sse),
-                },
+                "model_parameters": model_parameters,
                 "diagnostics": {
-                    "mean_interval_width": float(interval_width),
+                    "mean_interval_width": interval_width,
                     "training_data_points": len(self.training_data_),
                     "model_fit_quality": "good"
                     if self.fitted_model_.aic < len(self.training_data_) * 2
                     else "moderate",
                 },
+                "interpretation": self._generate_interpretation(
+                    forecast_result, confidence_intervals
+                ),
+                "recommendations": self._generate_recommendations(),
             }
-
-            # Add trend and seasonal smoothing parameters if available
-            if self.selected_trend_ and "smoothing_trend" in self.fitted_model_.params:
-                result_data["model_parameters"]["smoothing_trend"] = float(
-                    self.fitted_model_.params["smoothing_trend"]
-                )
-            if (
-                self.selected_seasonal_
-                and "smoothing_seasonal" in self.fitted_model_.params
-            ):
-                result_data["model_parameters"]["smoothing_seasonal"] = float(
-                    self.fitted_model_.params["smoothing_seasonal"]
-                )
-
-            # Add interpretation
-            interpretation = self._generate_interpretation(
-                forecast_result, confidence_intervals
-            )
-            result_data["interpretation"] = interpretation
-
-            # Add recommendations
-            recommendations = self._generate_recommendations()
-            result_data["recommendations"] = recommendations
 
             return PipelineResult(
                 success=True,

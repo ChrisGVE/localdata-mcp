@@ -111,15 +111,43 @@ class ARIMAForecastTransformer(TimeSeriesTransformer):
 
         return self
 
-    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
-        """
-        Generate ARIMA forecasts and model diagnostics.
+    def _build_forecast_index(self):
+        """Build a forecast index based on the training data's time index."""
+        if hasattr(self.training_data_, "index") and isinstance(
+            self.training_data_.index, pd.DatetimeIndex
+        ):
+            last_date = self.training_data_.index[-1]
+            freq = self.training_data_.index.freq or pd.infer_freq(
+                self.training_data_.index
+            )
+            if freq is not None:
+                return pd.date_range(
+                    start=last_date + pd.Timedelta(freq),
+                    periods=self.forecast_steps,
+                    freq=freq,
+                )
+        return range(
+            len(self.training_data_), len(self.training_data_) + self.forecast_steps
+        )
 
-        Returns:
-        --------
-        result : TimeSeriesAnalysisResult
-            ARIMA model results with forecasts, confidence intervals, and diagnostics
-        """
+    def _compute_residual_diagnostics(self, residuals):
+        """Run Ljung-Box test and return (diagnostics_dict, last_pvalue)."""
+        ljung_box = acorr_ljungbox(
+            residuals, lags=min(10, len(residuals) // 5), return_df=True
+        )
+        last_row = ljung_box.iloc[-1]
+        return {
+            "ljung_box_stat": float(last_row["lb_stat"]),
+            "ljung_box_pvalue": float(last_row["lb_pvalue"]),
+            "residual_autocorrelation": (
+                "No significant autocorrelation"
+                if last_row["lb_pvalue"] > 0.05
+                else "Significant autocorrelation detected"
+            ),
+        }, float(last_row["lb_pvalue"])
+
+    def transform(self, X: pd.DataFrame) -> TimeSeriesAnalysisResult:
+        """Generate ARIMA forecasts and model diagnostics."""
         start_time = time.time()
         logger = get_logger(__name__)
 
@@ -129,49 +157,25 @@ class ARIMAForecastTransformer(TimeSeriesTransformer):
             if self.validate_input:
                 X, _ = self._validate_time_series(X)
 
-            # Generate forecasts
             forecast_result = self.fitted_model_.get_forecast(steps=self.forecast_steps)
             forecast_values = forecast_result.predicted_mean
             forecast_ci = forecast_result.conf_int(alpha=self.alpha)
+            forecast_index = self._build_forecast_index()
 
-            # Create forecast index
-            if hasattr(self.training_data_, "index") and isinstance(
-                self.training_data_.index, pd.DatetimeIndex
-            ):
-                last_date = self.training_data_.index[-1]
-                freq = self.training_data_.index.freq or pd.infer_freq(
-                    self.training_data_.index
-                )
-                if freq is not None:
-                    forecast_index = pd.date_range(
-                        start=last_date + pd.Timedelta(freq),
-                        periods=self.forecast_steps,
-                        freq=freq,
-                    )
-                else:
-                    forecast_index = range(
-                        len(self.training_data_),
-                        len(self.training_data_) + self.forecast_steps,
-                    )
-            else:
-                forecast_index = range(
-                    len(self.training_data_),
-                    len(self.training_data_) + self.forecast_steps,
-                )
-
-            # Model diagnostics
-            aic = self.fitted_model_.aic
-            bic = self.fitted_model_.bic
-            loglikelihood = self.fitted_model_.llf
-
-            # Residual diagnostics
             residuals = self.fitted_model_.resid
-            ljung_box = acorr_ljungbox(
-                residuals, lags=min(10, len(residuals) // 5), return_df=True
+            residual_diagnostics, ljung_pvalue = self._compute_residual_diagnostics(
+                residuals
             )
-
-            # In-sample predictions for evaluation
             in_sample_pred = self.fitted_model_.fittedvalues
+
+            aic = self.fitted_model_.aic
+            recommendations = []
+            if ljung_pvalue <= 0.05:
+                recommendations.append(
+                    "Residuals show significant autocorrelation - consider adjusting model parameters"
+                )
+            if aic > 1000:
+                recommendations.append("High AIC value - model may be overfitting")
 
             result_data = {
                 "model_type": "ARIMA",
@@ -188,33 +192,17 @@ class ARIMAForecastTransformer(TimeSeriesTransformer):
                 "residuals": residuals.tolist(),
                 "model_fit": {
                     "aic": float(aic),
-                    "bic": float(bic),
-                    "log_likelihood": float(loglikelihood),
+                    "bic": float(self.fitted_model_.bic),
+                    "log_likelihood": float(self.fitted_model_.llf),
                     "num_params": self.fitted_model_.params.shape[0],
                 },
-                "residual_diagnostics": {
-                    "ljung_box_stat": float(ljung_box.iloc[-1]["lb_stat"]),
-                    "ljung_box_pvalue": float(ljung_box.iloc[-1]["lb_pvalue"]),
-                    "residual_autocorrelation": "No significant autocorrelation"
-                    if ljung_box.iloc[-1]["lb_pvalue"] > 0.05
-                    else "Significant autocorrelation detected",
-                },
+                "residual_diagnostics": residual_diagnostics,
                 "model_params": {
                     param: float(value)
                     for param, value in self.fitted_model_.params.items()
                 },
+                "recommendations": recommendations,
             }
-
-            # Add recommendations
-            recommendations = []
-            if ljung_box.iloc[-1]["lb_pvalue"] <= 0.05:
-                recommendations.append(
-                    "Residuals show significant autocorrelation - consider adjusting model parameters"
-                )
-            if aic > 1000:  # Arbitrary threshold for demonstration
-                recommendations.append("High AIC value - model may be overfitting")
-
-            result_data["recommendations"] = recommendations
 
             return PipelineResult(
                 success=True,

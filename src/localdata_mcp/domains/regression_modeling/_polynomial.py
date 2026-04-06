@@ -70,6 +70,43 @@ class PolynomialRegressionTransformer(BaseEstimator, TransformerMixin, Regressor
 
         self.result_ = None
 
+    def _compute_poly_metrics(self, X, X_poly, y, y_pred):
+        """Compute regression metrics and overfitting diagnostics for polynomial model."""
+        residuals = y - y_pred
+        r2 = r2_score(y, y_pred)
+        mse = mean_squared_error(y, y_pred)
+        mae = mean_absolute_error(y, y_pred)
+        rmse = np.sqrt(mse)
+        n_samples, n_features = X_poly.shape
+        adjusted_r2 = 1 - (1 - r2) * (X.shape[0] - 1) / (X.shape[0] - n_features - 1)
+        cv_scores = cross_val_score(self.regressor, X_poly, y, cv=5, scoring="r2")
+        cv_mean = np.mean(cv_scores)
+        overfitting_gap = r2 - cv_mean
+        return (
+            residuals,
+            r2,
+            mse,
+            mae,
+            rmse,
+            adjusted_r2,
+            cv_scores,
+            cv_mean,
+            overfitting_gap,
+        )
+
+    def _build_complexity_info(self, X, X_poly, overfitting_gap):
+        """Build a complexity info dict for the polynomial model."""
+        is_overfitting = overfitting_gap > 0.1
+        return is_overfitting, {
+            "original_features": X.shape[1],
+            "polynomial_features": X_poly.shape[1],
+            "degree": self.degree,
+            "feature_expansion_ratio": X_poly.shape[1] / X.shape[1],
+            "overfitting_detected": is_overfitting,
+            "overfitting_gap": overfitting_gap,
+            "regularization_used": self.regularization is not None,
+        }
+
     def fit(self, X, y, sample_weight=None, feature_names=None):
         """
         Fit polynomial regression model.
@@ -93,69 +130,39 @@ class PolynomialRegressionTransformer(BaseEstimator, TransformerMixin, Regressor
         start_time = time.time()
         logger.info(f"Starting polynomial regression fit (degree={self.degree})")
 
-        # Validate inputs
         X, y = check_X_y(X, y, accept_sparse=False, y_numeric=True)
 
-        # Store original feature names
         if feature_names is None:
             feature_names = [f"feature_{i}" for i in range(X.shape[1])]
         self.original_feature_names_ = feature_names
 
         try:
-            # Create polynomial features
             X_poly = self.poly_features.fit_transform(X)
-
-            # Get polynomial feature names
             poly_feature_names = self.poly_features.get_feature_names_out(feature_names)
-
-            # Fit the regression model
             self.regressor.fit(X_poly, y, sample_weight=sample_weight)
 
-            # Make predictions
             y_pred = self.regressor.predict(X_poly)
-            residuals = y - y_pred
-
-            # Calculate metrics
-            r2 = r2_score(y, y_pred)
-            mse = mean_squared_error(y, y_pred)
-            mae = mean_absolute_error(y, y_pred)
-            rmse = np.sqrt(mse)
-
-            # Adjusted R² (accounting for increased features)
-            n_samples, n_features = X_poly.shape
-            adjusted_r2 = 1 - (1 - r2) * (X.shape[0] - 1) / (
-                X.shape[0] - n_features - 1
+            (
+                residuals,
+                r2,
+                mse,
+                mae,
+                rmse,
+                adjusted_r2,
+                cv_scores,
+                cv_mean,
+                overfitting_gap,
+            ) = self._compute_poly_metrics(X, X_poly, y, y_pred)
+            is_overfitting, complexity_info = self._build_complexity_info(
+                X, X_poly, overfitting_gap
             )
 
-            # Cross-validation to detect overfitting
-            cv_scores = cross_val_score(self.regressor, X_poly, y, cv=5, scoring="r2")
+            n_samples, n_features = X_poly.shape
+            coefficients = getattr(self.regressor, "coef_", None)
+            feature_importance = (
+                np.abs(coefficients) if coefficients is not None else None
+            )
 
-            # Overfitting detection
-            training_r2 = r2
-            cv_mean = np.mean(cv_scores)
-            overfitting_gap = training_r2 - cv_mean
-            is_overfitting = overfitting_gap > 0.1  # Threshold for overfitting
-
-            # Feature importance (based on absolute coefficient values)
-            if hasattr(self.regressor, "coef_"):
-                feature_importance = np.abs(self.regressor.coef_)
-                coefficients = self.regressor.coef_
-            else:
-                feature_importance = None
-                coefficients = None
-
-            # Model complexity analysis
-            complexity_info = {
-                "original_features": X.shape[1],
-                "polynomial_features": X_poly.shape[1],
-                "degree": self.degree,
-                "feature_expansion_ratio": X_poly.shape[1] / X.shape[1],
-                "overfitting_detected": is_overfitting,
-                "overfitting_gap": overfitting_gap,
-                "regularization_used": self.regularization is not None,
-            }
-
-            # Create result object
             self.result_ = RegressionModelResult(
                 model_type=f"Polynomial Regression (degree={self.degree})",
                 model_params={
@@ -187,9 +194,9 @@ class PolynomialRegressionTransformer(BaseEstimator, TransformerMixin, Regressor
 
             fit_time = time.time() - start_time
             logger.info(
-                f"Polynomial regression fit completed in {fit_time:.3f}s - R² = {r2:.4f} (CV = {cv_mean:.4f})"
+                f"Polynomial regression fit completed in {fit_time:.3f}s"
+                f" - R² = {r2:.4f} (CV = {cv_mean:.4f})"
             )
-
             if is_overfitting:
                 logger.warning(
                     f"Potential overfitting detected - gap = {overfitting_gap:.3f}"
