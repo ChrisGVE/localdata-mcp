@@ -1,8 +1,9 @@
 """Tests for the enhanced database manager with integrated error handling."""
 
-import pytest
 import time
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import MagicMock, Mock, call, patch
+
+import pytest
 
 from localdata_mcp.enhanced_database_manager import (
     EnhancedDatabaseManager,
@@ -10,11 +11,11 @@ from localdata_mcp.enhanced_database_manager import (
     initialize_enhanced_database_manager,
 )
 from localdata_mcp.error_handler import (
+    CircuitState,
     DatabaseConnectionError,
     QueryExecutionError,
-    SecurityViolationError,
     QueryTimeoutError,
-    CircuitState,
+    SecurityViolationError,
 )
 
 

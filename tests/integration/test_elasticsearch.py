@@ -93,9 +93,9 @@ class TestElasticsearchConnection:
         try:
             result = _connect(name)
             result_str = str(result)
-            assert "success" in result_str.lower() or name in result_str, (
-                f"Connect did not indicate success: {result_str}"
-            )
+            assert (
+                "success" in result_str.lower() or name in result_str
+            ), f"Connect did not indicate success: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": name})
 
@@ -106,12 +106,12 @@ class TestElasticsearchConnection:
         try:
             result = call_tool("list_databases", {})
             result_str = str(result)
-            assert name in result_str, (
-                f"Connection '{name}' not found in list_databases: {result_str}"
-            )
-            assert "elasticsearch" in result_str.lower(), (
-                f"db_type 'elasticsearch' not shown in list_databases: {result_str}"
-            )
+            assert (
+                name in result_str
+            ), f"Connection '{name}' not found in list_databases: {result_str}"
+            assert (
+                "elasticsearch" in result_str.lower()
+            ), f"db_type 'elasticsearch' not shown in list_databases: {result_str}"
         finally:
             call_tool("disconnect_database", {"name": name})
 
@@ -126,9 +126,9 @@ class TestElasticsearchConnection:
         # internal error (e.g. .dispose() not available on ES client) the
         # name may still be present; that is acceptable server behaviour and
         # we simply verify the call did not crash the server.
-        assert isinstance(result_str, str), (
-            f"list_databases returned unexpected type after disconnect: {type(result)}"
-        )
+        assert isinstance(
+            result_str, str
+        ), f"list_databases returned unexpected type after disconnect: {type(result)}"
 
     def test_connect_returns_success_true(self):
         """The connect response contains success: True."""
@@ -137,9 +137,9 @@ class TestElasticsearchConnection:
             result = _connect(name)
             # Result may be a dict or a JSON string
             if isinstance(result, dict):
-                assert result.get("success") is True, (
-                    f"Expected success=True in dict result: {result}"
-                )
+                assert (
+                    result.get("success") is True
+                ), f"Expected success=True in dict result: {result}"
             else:
                 assert (
                     '"success": true' in str(result).lower()
@@ -155,9 +155,9 @@ class TestElasticsearchConnection:
         try:
             result = _connect(name)
             result_str = str(result).lower()
-            assert "error" in result_str or "already" in result_str, (
-                f"Expected error for duplicate connection: {result}"
-            )
+            assert (
+                "error" in result_str or "already" in result_str
+            ), f"Expected error for duplicate connection: {result}"
         finally:
             call_tool("disconnect_database", {"name": name})
 
@@ -228,9 +228,9 @@ class TestElasticsearchErrors:
             {"name": "es_nonexistent", "query": "SELECT 1"},
         )
         result_str = str(result).lower()
-        assert "error" in result_str or "not connected" in result_str, (
-            f"Expected error for nonexistent connection: {result}"
-        )
+        assert (
+            "error" in result_str or "not connected" in result_str
+        ), f"Expected error for nonexistent connection: {result}"
 
     def test_describe_nonexistent_connection(self):
         """Describing a non-existent connection returns an error."""
@@ -239,9 +239,9 @@ class TestElasticsearchErrors:
             {"name": "es_no_such"},
         )
         result_str = str(result).lower()
-        assert "error" in result_str or "not connected" in result_str, (
-            f"Expected error for nonexistent connection: {result}"
-        )
+        assert (
+            "error" in result_str or "not connected" in result_str
+        ), f"Expected error for nonexistent connection: {result}"
 
     def test_connect_bad_url(self):
         """Connecting with a bad URL returns an error or success with issues."""
@@ -274,9 +274,9 @@ class TestElasticsearchDirectVerification:
 
         es = Elasticsearch(ES_URL)
         try:
-            assert es.indices.exists(index="test_data"), (
-                "test_data index does not exist"
-            )
+            assert es.indices.exists(
+                index="test_data"
+            ), "test_data index does not exist"
         finally:
             es.close()
 
@@ -319,8 +319,8 @@ class TestElasticsearchDirectVerification:
             hits = result["hits"]["hits"]
             assert len(hits) > 0, "Expected at least one hit for category X"
             for hit in hits:
-                assert hit["_source"]["category"] == "X", (
-                    f"Expected category X, got {hit['_source']['category']}"
-                )
+                assert (
+                    hit["_source"]["category"] == "X"
+                ), f"Expected category X, got {hit['_source']['category']}"
         finally:
             es.close()

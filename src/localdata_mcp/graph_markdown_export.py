@@ -141,10 +141,7 @@ def generate_hierarchy_markdown(
             return
         annotation = ""
         if len(other_parents) > 1:
-            names = [
-                node_lookup.get(p, {}).get("label", p)
-                for p in other_parents[1:]
-            ]
+            names = [node_lookup.get(p, {}).get("label", p) for p in other_parents[1:]]
             annotation = f" *(also child of: {', '.join(names[:3])})*"
         lines.append(f"{indent}- **{label}**{annotation}")
         rendered.add(nid)

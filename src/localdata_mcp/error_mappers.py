@@ -8,14 +8,13 @@ error numbers, or exception class names).
 import re
 from typing import Dict, List, Optional, Tuple
 
-from .error_handler import ErrorCategory
 from .error_classification import (
     DatabaseErrorMapper,
     ErrorMapperRegistry,
     GenericDatabaseErrorMapper,
     StructuredErrorResponse,
 )
-
+from .error_handler import ErrorCategory
 
 # ---------------------------------------------------------------------------
 # SQLite

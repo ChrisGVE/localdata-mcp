@@ -4,12 +4,6 @@ import threading
 
 import pytest
 
-from localdata_mcp.error_handler import (
-    ErrorCategory,
-    ErrorHandler,
-    ErrorSeverity,
-    LocalDataError,
-)
 from localdata_mcp.error_classification import (
     DatabaseErrorMapper,
     ErrorMapperRegistry,
@@ -19,7 +13,12 @@ from localdata_mcp.error_classification import (
     get_error_suggestion,
     is_error_retryable,
 )
-
+from localdata_mcp.error_handler import (
+    ErrorCategory,
+    ErrorHandler,
+    ErrorSeverity,
+    LocalDataError,
+)
 
 # ---------------------------------------------------------------------------
 # 132.1 — New ErrorCategory values exist

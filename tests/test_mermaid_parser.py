@@ -4,7 +4,6 @@ import pytest
 
 from localdata_mcp.mermaid_parser import MermaidFlowchartParser
 
-
 # -- Header detection ---------------------------------------------------------
 
 
@@ -193,10 +192,8 @@ class TestCommentsAndSemicolons:
 
 class TestReExport:
     def test_import_from_graph_parsers(self):
-        from localdata_mcp.graph_parsers import (
-            MermaidFlowchartParser as ReExported,
-            parse_mermaid_to_graph as re_exported_fn,
-        )
+        from localdata_mcp.graph_parsers import MermaidFlowchartParser as ReExported
+        from localdata_mcp.graph_parsers import parse_mermaid_to_graph as re_exported_fn
         from localdata_mcp.mermaid_parser import (
             parse_mermaid_to_graph,
         )

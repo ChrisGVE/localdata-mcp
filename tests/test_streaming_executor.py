@@ -1,22 +1,23 @@
 """Test streaming executor functionality."""
 
 import os
+import sqlite3
 import tempfile
+from unittest.mock import Mock, patch
+
 import pandas as pd
 import pytest
-from unittest.mock import Mock, patch
-import sqlite3
+from sqlalchemy import create_engine
 
-from localdata_mcp.streaming_executor import (
-    StreamingQueryExecutor,
-    StreamingSQLSource,
-    StreamingFileSource,
-    create_streaming_source,
+from localdata_mcp.config_manager import PerformanceConfig
+from localdata_mcp.streaming import (
     MemoryStatus,
     ResultBuffer,
+    StreamingFileSource,
+    StreamingQueryExecutor,
+    StreamingSQLSource,
+    create_streaming_source,
 )
-from localdata_mcp.config_manager import PerformanceConfig
-from sqlalchemy import create_engine
 
 
 class TestResultBuffer:
@@ -181,7 +182,7 @@ class TestStreamingQueryExecutor:
         assert memory_status.recommended_chunk_size > 0
         assert memory_status.max_safe_chunk_size > 0
 
-    @patch("src.localdata_mcp.streaming_executor.create_streaming_source")
+    @patch("localdata_mcp.streaming_executor.create_streaming_source")
     def test_streaming_execution_basic(self, mock_create_source):
         """Test basic streaming execution."""
         config = PerformanceConfig(chunk_size=50)

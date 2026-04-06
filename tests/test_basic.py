@@ -19,5 +19,3 @@ def test_database_manager_initialization():
     assert manager.query_buffers == {}
     assert hasattr(manager, "connection_semaphore")
     assert hasattr(manager, "connection_lock")
-
-

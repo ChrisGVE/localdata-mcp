@@ -80,57 +80,57 @@ class TestRedisConnection:
     def test_connect_redis(self):
         result = _connect("r_conn")
         result_str = str(result)
-        assert "success" in result_str.lower() or "redis" in result_str.lower(), (
-            f"Unexpected connect result: {result_str}"
-        )
+        assert (
+            "success" in result_str.lower() or "redis" in result_str.lower()
+        ), f"Unexpected connect result: {result_str}"
 
     def test_connect_returns_success_true(self):
         result = _connect("r_succ")
         if isinstance(result, dict):
-            assert result.get("success") is True, (
-                f"Expected success=True, got: {result}"
-            )
+            assert (
+                result.get("success") is True
+            ), f"Expected success=True, got: {result}"
         else:
             result_str = str(result)
-            assert "success" in result_str.lower(), (
-                f"Expected success in result: {result_str}"
-            )
+            assert (
+                "success" in result_str.lower()
+            ), f"Expected success in result: {result_str}"
 
     def test_connection_info_contains_redis_type(self):
         result = _connect("r_info")
         if isinstance(result, dict):
             conn_info = result.get("connection_info", {})
-            assert conn_info.get("db_type") == "redis", (
-                f"Expected db_type=redis, got: {conn_info}"
-            )
-            assert conn_info.get("sql_flavor") == "Redis", (
-                f"Expected sql_flavor=Redis, got: {conn_info}"
-            )
+            assert (
+                conn_info.get("db_type") == "redis"
+            ), f"Expected db_type=redis, got: {conn_info}"
+            assert (
+                conn_info.get("sql_flavor") == "Redis"
+            ), f"Expected sql_flavor=Redis, got: {conn_info}"
 
     def test_list_databases_shows_redis(self):
         _connect("r_listed")
         result = call_tool("list_databases", {})
         result_str = str(result)
-        assert "r_listed" in result_str, (
-            f"r_listed not found in list_databases: {result_str}"
-        )
+        assert (
+            "r_listed" in result_str
+        ), f"r_listed not found in list_databases: {result_str}"
 
     def test_disconnect_redis(self):
         """Disconnect should succeed for Redis connections."""
         _connect("r_dc")
         result = call_tool("disconnect_database", {"name": "r_dc"})
         result_str = str(result)
-        assert "disconnect" in result_str.lower() or "success" in result_str.lower(), (
-            f"Expected successful disconnect, got: {result_str}"
-        )
+        assert (
+            "disconnect" in result_str.lower() or "success" in result_str.lower()
+        ), f"Expected successful disconnect, got: {result_str}"
 
     def test_duplicate_connection_rejected(self):
         _connect("r_dup")
         result = _connect("r_dup")
         result_str = str(result)
-        assert "already" in result_str.lower() or "error" in result_str.lower(), (
-            f"Expected duplicate error, got: {result_str}"
-        )
+        assert (
+            "already" in result_str.lower() or "error" in result_str.lower()
+        ), f"Expected duplicate error, got: {result_str}"
 
 
 class TestRedisDescribe:
@@ -143,9 +143,9 @@ class TestRedisDescribe:
         # Should return something (error or info), not empty
         assert result_str, "describe_database returned empty result"
         # The error message typically mentions the inspection failure
-        assert "error" in result_str.lower() or "redis" in result_str.lower(), (
-            f"Unexpected describe result: {result_str}"
-        )
+        assert (
+            "error" in result_str.lower() or "redis" in result_str.lower()
+        ), f"Unexpected describe result: {result_str}"
 
 
 class TestRedisQuery:
@@ -196,6 +196,6 @@ class TestRedisErrors:
         """Disconnecting a non-existent connection returns an error."""
         result = call_tool("disconnect_database", {"name": "r_nonexistent_xyz"})
         result_str = str(result)
-        assert "not connected" in result_str.lower() or "error" in result_str.lower(), (
-            f"Expected not-connected error, got: {result_str}"
-        )
+        assert (
+            "not connected" in result_str.lower() or "error" in result_str.lower()
+        ), f"Expected not-connected error, got: {result_str}"

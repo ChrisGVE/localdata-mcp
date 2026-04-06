@@ -1,0 +1,82 @@
+"""
+Business Intelligence Domain - Comprehensive business analytics and KPI analysis.
+
+This package implements advanced business intelligence tools including customer analytics,
+A/B testing, attribution modeling, and marketing metrics using sklearn integration and
+specialized business analytics libraries.
+
+Key Features:
+- Customer Analytics (RFM analysis, cohort analysis, CLV calculation, churn prediction)
+- A/B Testing & Experimental Design (power analysis, significance testing, multi-armed bandit)
+- Attribution Modeling (first-touch, last-touch, multi-touch, Markov chains)
+- Marketing Metrics (funnel analysis, CAC, ROAS, market basket analysis)
+- Full sklearn pipeline compatibility
+- Streaming-compatible processing
+- Business-focused KPI calculations
+"""
+
+from .ab_testing import ABTestAnalyzer, PowerAnalysisTransformer
+from .attribution import AttributionAnalyzer
+from .cohort_clv import CLVCalculator, CohortAnalysisTransformer
+
+# High-level functions
+from .convenience import (
+    analyze_attribution,
+    analyze_funnel,
+    analyze_rfm,
+    calculate_clv,
+    enhanced_ab_test,
+    perform_ab_test,
+    perform_cohort_analysis,
+)
+
+# Core transformers
+from .customer_analytics import RFMAnalysisTransformer
+from .funnel import FunnelAnalyzer
+
+# Result classes
+# Enums
+from .models import (
+    ABTestResult,
+    AttributionModel,
+    AttributionResult,
+    CLVResult,
+    CohortAnalysisResult,
+    ExperimentStatus,
+    FunnelAnalysisResult,
+    RFMResult,
+)
+
+# Pipeline
+from .pipeline import BusinessIntelligencePipeline
+
+__all__ = [
+    # Enums
+    "AttributionModel",
+    "ExperimentStatus",
+    # Result classes
+    "RFMResult",
+    "CohortAnalysisResult",
+    "CLVResult",
+    "ABTestResult",
+    "AttributionResult",
+    "FunnelAnalysisResult",
+    # Core transformers
+    "RFMAnalysisTransformer",
+    "CohortAnalysisTransformer",
+    "CLVCalculator",
+    "ABTestAnalyzer",
+    "PowerAnalysisTransformer",
+    "AttributionAnalyzer",
+    "FunnelAnalyzer",
+    # Pipeline
+    "BusinessIntelligencePipeline",
+    # High-level functions
+    "analyze_rfm",
+    "perform_cohort_analysis",
+    "calculate_clv",
+    "perform_ab_test",
+    "analyze_attribution",
+    "analyze_funnel",
+    "enhanced_ab_test",
+]

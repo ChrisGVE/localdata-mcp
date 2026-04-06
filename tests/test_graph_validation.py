@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from localdata_mcp.graph_algorithms import _storage_to_networkx
 from localdata_mcp.graph_manager import GraphStorageManager
 from localdata_mcp.graph_storage import create_graph_schema
 from localdata_mcp.graph_validation import (
@@ -24,7 +25,6 @@ from localdata_mcp.graph_validation_nx import (
     check_disconnected_components,
     check_redundant_transitive,
 )
-from localdata_mcp.graph_algorithms import _storage_to_networkx
 
 
 @pytest.fixture

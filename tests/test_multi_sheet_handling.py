@@ -1,11 +1,12 @@
 """Tests for multi-sheet handling in Excel and ODS files."""
 
 import os
-import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
+import pytest
 
 from localdata_mcp import DatabaseManager
 
@@ -230,9 +231,9 @@ class TestMultiSheetHandling:
             # Check that result is valid SQL identifier
             import re
 
-            assert re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", result), (
-                f"Invalid SQL identifier: {result}"
-            )
+            assert re.match(
+                r"^[a-zA-Z_][a-zA-Z0-9_]*$", result
+            ), f"Invalid SQL identifier: {result}"
 
             # Check uniqueness (the method adds to used_names internally)
             assert result in used_names

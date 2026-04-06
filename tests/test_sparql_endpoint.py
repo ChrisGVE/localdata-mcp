@@ -5,12 +5,11 @@ All tests use mocked SPARQLWrapper to avoid real HTTP calls.
 
 import json
 import threading
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from localdata_mcp.sparql_endpoint import SPARQLEndpointConnection
-
 
 # ---------------------------------------------------------------------------
 # SPARQLEndpointConnection unit tests

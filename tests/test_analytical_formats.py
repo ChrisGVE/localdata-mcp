@@ -1,11 +1,12 @@
 """Tests for analytical format support (Parquet, Feather, Arrow) in localdata-mcp."""
 
 import os
-import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
+import pytest
 
 from localdata_mcp import DatabaseManager
 
