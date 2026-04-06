@@ -263,20 +263,23 @@ class DataCleaningPipeline(AnalysisPipelineBase):
     # IMPORT CLEANING METHOD IMPLEMENTATIONS
     # ===========================================
 
-    # Import method implementations from separate files
-    from ..data_cleaning_methods import (
+    # Import method implementations from preprocessing sub-package modules
+    from ._cleaning_methods import (
         _assess_initial_quality,
         _basic_type_inference,
         _comprehensive_type_inference,
         _handle_basic_missing_values,
         _intelligent_missing_value_handling,
-        _advanced_outlier_detection,
     )
 
-    from ..data_cleaning_methods_part2 import (
+    from ._cleaning_methods_part2 import (
+        _advanced_outlier_detection,
         _remove_exact_duplicates,
         _sophisticated_duplicate_detection,
         _basic_data_validation,
+    )
+
+    from ._cleaning_methods_part3 import (
         _comprehensive_data_validation,
         _data_consistency_enhancement,
         _feature_engineering_cleanup,
@@ -342,7 +345,7 @@ class DataCleaningPipeline(AnalysisPipelineBase):
                     metrics.accuracy_score = 95  # Default for small datasets
             else:
                 metrics.accuracy_score = 100  # No numeric columns
-        except:
+        except Exception:
             metrics.accuracy_score = 90  # Default fallback
 
         # Business rules compliance (default 100 if no rules specified)
