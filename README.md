@@ -15,6 +15,8 @@
 ![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
 ![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
 
+<!-- mcp-name: io.github.chrisgve/localdata-mcp -->
+
 LocalData MCP gives LLM agents access to local and remote data — databases, files, graphs, and structured documents — along with a full data science toolkit for analysis and modeling. It exposes 52 MCP tools across 13 database types and 20+ file formats, with memory-bounded streaming so agents can work safely on large datasets without exceeding available RAM.
 
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
