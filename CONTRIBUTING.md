@@ -1,382 +1,209 @@
-# Contributing to LocalData MCP Server
+# Contributing to LocalData MCP
 
-Thank you for your interest in contributing to LocalData MCP Server! This guide will help you get started with contributing to our project.
+Thank you for your interest in contributing. This guide covers how to set up a development environment, run tests, and submit changes.
 
-## 🌟 Ways to Contribute
+## Ways to contribute
 
-- **🐛 Bug Reports**: Help us identify and fix issues
-- **✨ Feature Requests**: Suggest new features and improvements
-- **🔧 Code Contributions**: Submit bug fixes and new features
-- **📚 Documentation**: Improve documentation and examples
-- **🧪 Testing**: Help expand test coverage and find edge cases
-- **🔒 Security**: Report security vulnerabilities responsibly
+- **Bug reports**: Open an issue with reproduction steps and error output
+- **Feature requests**: Describe the use case and expected behavior
+- **Code**: Bug fixes, new features, performance improvements
+- **Documentation**: Fix typos, improve examples, expand guides
+- **Testing**: Expand test coverage, report edge cases
+- **Security**: Report vulnerabilities responsibly (see below)
 
-## 📋 Before You Start
+## Prerequisites
 
-### Prerequisites
+- **Python 3.10+**
+- **uv** (recommended) or pip
+- **Git**
+- Basic familiarity with MCP (Model Context Protocol)
 
-- **Python 3.8+** installed on your system
-- **Git** for version control
-- **Basic understanding** of MCP (Model Context Protocol)
-- **Familiarity** with database concepts (SQL, NoSQL)
+## Getting started
 
-### Understanding the Codebase
-
-LocalData MCP Server is structured as follows:
-
-```
-localdata-mcp/
-├── src/localdata_mcp/           # Main package
-│   ├── localdata_mcp.py         # Core MCP server implementation
-│   └── __init__.py              # Package initialization
-├── tests/                       # Test suite
-│   └── test_basic.py           # Basic functionality tests  
-├── .github/                     # GitHub templates and workflows
-│   └── ISSUE_TEMPLATE/         # Issue templates
-├── README.md                   # Project documentation
-├── CONTRIBUTING.md             # This file
-├── pyproject.toml              # Project configuration
-└── LICENSE                     # MIT License
-```
-
-## 🚀 Getting Started
-
-### 1. Fork and Clone
+### Fork and clone
 
 ```bash
-# Fork the repository on GitHub, then clone your fork
 git clone https://github.com/YOUR_USERNAME/localdata-mcp.git
 cd localdata-mcp
-
-# Add the original repository as upstream
 git remote add upstream https://github.com/ChrisGVE/localdata-mcp.git
 ```
 
-### 2. Set Up Development Environment
+### Set up the development environment
 
 ```bash
-# Create virtual environment
+# Using uv (recommended)
+uv sync --dev
+
+# Or using pip
 python -m venv venv
-
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-# On Windows:
-# venv\Scripts\activate
-
-# Install development dependencies
+source venv/bin/activate   # macOS/Linux
 pip install -e ".[dev]"
 ```
 
-### 3. Verify Setup
+### Verify the setup
 
 ```bash
-# Run basic tests
-python -m pytest tests/
+# Run unit tests
+pytest tests/ -v --ignore=tests/integration
 
-# Run the MCP server locally
-python -m localdata_mcp.localdata_mcp
+# Check that the server starts
+localdata-mcp --version
 ```
 
-## 🔧 Development Workflow
+## Project structure
 
-### 1. Create a Feature Branch
+```
+localdata-mcp/
+├── src/localdata_mcp/            # Main package
+│   ├── localdata_mcp.py          # Entry point and MCP tool registration
+│   ├── server/                   # CLI, database manager, query execution
+│   ├── config_manager/           # Configuration loading and validation
+│   ├── connection_manager/       # Database connections and pooling
+│   ├── streaming/                # Memory-bounded query streaming
+│   ├── security/                 # Path restrictions, SQL validation
+│   ├── error_handler/            # Circuit breaker, retry, recovery
+│   ├── file_processor/           # Tabular, Excel, JSON file processors
+│   ├── tree_storage/             # JSON/YAML/TOML tree operations
+│   ├── domains/                  # 8 data science domain modules
+│   ├── pipeline/                 # Data preprocessing and transforms
+│   └── ...                       # Additional modules
+├── tests/                        # Test suite
+│   ├── domains/                  # Domain-specific tests
+│   ├── integration/              # Integration tests (databases, formats)
+│   ├── pipeline/                 # Pipeline tests
+│   └── assets/                   # Test data files
+├── docs/                         # Sphinx documentation (Markdown)
+├── .github/                      # CI workflows and issue templates
+├── pyproject.toml                # Project metadata and dependencies
+├── Dockerfile                    # Container build
+├── docker-compose.yml            # Dev stack with databases
+└── LICENSE                       # MIT License
+```
+
+## Development workflow
+
+### Create a branch
 
 ```bash
-# Sync with upstream
 git fetch upstream
 git checkout main
 git merge upstream/main
-
-# Create feature branch
 git checkout -b feature/your-feature-name
-# or
-git checkout -b fix/your-bug-fix
 ```
 
-### 2. Make Your Changes
+### Make changes
 
-- **Write clear, readable code** following existing patterns
-- **Add comprehensive tests** for new functionality
-- **Update documentation** as needed
-- **Follow security best practices**
+- Follow existing code patterns and module structure
+- Add tests for new functionality
+- Keep functions and files within the project's size limits (see `CLAUDE.md`)
+- Update documentation when adding user-facing features
 
-### 3. Testing Your Changes
+### Run tests
 
 ```bash
-# Run all tests
-python -m pytest tests/ -v
+# Unit tests only (fast)
+pytest tests/ -v --ignore=tests/integration
 
-# Run specific test file
-python -m pytest tests/test_basic.py -v
+# Include integration tests (requires database services)
+pytest tests/ -v
 
-# Test with different Python versions (if available)
-python3.8 -m pytest tests/
-python3.9 -m pytest tests/
-python3.12 -m pytest tests/
+# Run a specific test file
+pytest tests/test_config_manager.py -v
+
+# Run tests matching a keyword
+pytest tests/ -v -k "security"
+
+# With coverage
+pytest tests/ --cov=localdata_mcp --cov-report=html --ignore=tests/integration
 ```
 
-### 4. Security Testing
+### Integration test setup
 
-For security-related changes:
+Integration tests require running database services. The simplest approach is Docker Compose:
 
 ```bash
-# Run comprehensive security tests
-python test_security_validation.py
+# Start database services
+docker-compose up -d postgres mysql mongodb redis elasticsearch
 
-# Test with malicious inputs
-python test_comprehensive.py
+# Run integration tests
+pytest tests/integration/ -v
+
+# Stop services when done
+docker-compose down
 ```
 
-## 📝 Code Standards
+## Code standards
 
-### Code Style
+### Style
 
-- **Follow PEP 8** Python style guidelines
-- **Use type hints** where possible
-- **Write descriptive variable and function names**
-- **Keep functions focused and modular**
-- **Add docstrings** to all public functions
+- Follow PEP 8
+- Use type hints on all public function signatures
+- Write clear docstrings for public APIs
+- Keep functions focused and within size limits
 
-### Example Code Style
+### Security
 
-```python
-def connect_database(name: str, db_type: str, conn_string: str) -> Dict[str, Any]:
-    """
-    Connect to a database or structured file.
-    
-    Args:
-        name: Unique identifier for the connection
-        db_type: Database type (sqlite, postgresql, mysql, csv, json, yaml, toml)  
-        conn_string: Connection string or file path
-        
-    Returns:
-        Dict containing connection status and metadata
-        
-    Raises:
-        ValueError: If parameters are invalid
-        ConnectionError: If connection fails
-        SecurityError: If path is not allowed
-    """
-    # Implementation here
-    pass
-```
+- Validate all inputs at system boundaries
+- Use parameterized queries for SQL
+- Restrict file access to allowed directories
+- Handle errors without exposing sensitive information
 
-### Security Guidelines
+### Testing
 
-- **Validate all inputs** thoroughly
-- **Use parameterized queries** to prevent SQL injection
-- **Restrict file access** to current working directory and subdirectories
-- **Limit resource usage** (connections, memory, file sizes)
-- **Handle errors gracefully** without exposing sensitive information
+- Every new function or method needs at least one test
+- Cover edge cases and error conditions
+- Use mocks for filesystem scenarios (permissions, missing files)
+- Test security boundaries (path traversal, injection)
 
-### Testing Standards
+## Pull request process
 
-- **Write tests for all new functionality**
-- **Include edge cases and error conditions**
-- **Test security boundaries**
-- **Maintain high test coverage**
+### Before submitting
 
-```python
-def test_connect_database_security():
-    """Test that path traversal attempts are blocked."""
-    with pytest.raises(SecurityError):
-        connect_database("test", "sqlite", "../../../etc/passwd")
-```
+- Ensure all tests pass
+- Update documentation for user-facing changes
+- Rebase on the latest `main` if needed:
+  ```bash
+  git fetch upstream
+  git rebase upstream/main
+  ```
 
-## 🧪 Testing Guidelines
+### PR guidelines
 
-### Test Categories
+- Use a descriptive title following conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`, `perf:`)
+- Fill out the PR template
+- Reference related issues with `#issue_number`
+- One feature, one bug fix, or one improvement per PR
 
-1. **Unit Tests**: Test individual functions and methods
-2. **Integration Tests**: Test database connections and operations  
-3. **Security Tests**: Test security boundaries and validation
-4. **Performance Tests**: Test large dataset handling and buffering
+### Review process
 
-### Running Tests
+- Maintainers review code and provide feedback
+- Address requested changes promptly
+- Keep discussions constructive
 
-```bash
-# Run all tests with coverage
-python -m pytest tests/ --cov=localdata_mcp --cov-report=html
+## Security vulnerabilities
 
-# Run specific test categories
-python -m pytest tests/ -k "security"
-python -m pytest tests/ -k "integration"
-
-# Run tests for specific database types
-python -m pytest tests/ -k "sqlite"
-python -m pytest tests/ -k "postgresql"
-```
-
-### Test Database Setup
-
-For database integration tests:
-
-```bash
-# SQLite (no setup required)
-
-# PostgreSQL (requires local installation)
-createdb test_localdata_mcp
-
-# MySQL (requires local installation)  
-mysql -u root -e "CREATE DATABASE test_localdata_mcp;"
-```
-
-## 📋 Pull Request Process
-
-### 1. Prepare Your PR
-
-- **Ensure all tests pass**
-- **Update documentation** if needed
-- **Write clear commit messages**
-- **Rebase on latest main** if needed
-
-```bash
-# Rebase on latest main
-git fetch upstream
-git rebase upstream/main
-
-# Run final tests
-python -m pytest tests/
-```
-
-### 2. Submit Pull Request
-
-- **Use descriptive PR title** following conventional commits
-- **Fill out the PR template** completely  
-- **Reference related issues** using `#issue_number`
-- **Request review** from maintainers
-
-### PR Title Examples
-
-```
-feat: Add support for TOML file connections
-fix: Resolve SQL injection vulnerability in table queries
-docs: Update README with new security features  
-test: Add comprehensive CSV file handling tests
-chore: Update dependencies to latest versions
-```
-
-### 3. PR Review Process
-
-- **Maintainers will review** your code and provide feedback
-- **Address requested changes** promptly
-- **Keep discussions respectful** and constructive
-- **Be patient** - reviews take time to ensure quality
-
-## 🔒 Security Contributions
-
-### Reporting Vulnerabilities
-
-- **Critical vulnerabilities**: Email privately to `christian@berclaz.org`
+- **Critical vulnerabilities**: Email `christian@berclaz.org` directly
 - **Non-critical security issues**: Use the Security Report issue template
-- **Include detailed reproduction steps** and impact assessment
-- **We follow responsible disclosure** practices
+- Include reproduction steps and impact assessment
+- We follow responsible disclosure practices
 
-### Security Development
+## Documentation
 
-- **Understand the threat model**: LocalData MCP is designed for trusted local environments
-- **Test security boundaries**: Path traversal, SQL injection, resource exhaustion  
-- **Document security implications** of new features
-- **Follow principle of least privilege**
+The main documentation lives under `docs/` and is built with Sphinx using Markdown (MyST). When adding features:
 
-## 📚 Documentation
+- Update the relevant page under `docs/`
+- Add connection examples to `docs/data-sources/` for new data sources
+- Add domain documentation to `docs/domains/` for new analytical tools
+- Test code examples to ensure they work
 
-### What to Document
+## Versioning
 
-- **New features and tools** with usage examples
-- **Configuration changes** and their implications
-- **Security considerations** for new functionality
-- **Breaking changes** and migration guides
-- **Performance characteristics** of new features
+We follow semantic versioning:
 
-### Documentation Style
+- **Major**: Breaking changes to the MCP tool API
+- **Minor**: New features, backward compatible
+- **Patch**: Bug fixes, backward compatible
 
-- **Use clear, concise language**
-- **Provide practical examples**
-- **Include security warnings** where appropriate
-- **Test all code examples** to ensure they work
+## License
 
-## 🤝 Community Guidelines
-
-### Code of Conduct
-
-- **Be respectful** and inclusive in all interactions
-- **Provide constructive feedback** and accept criticism gracefully
-- **Help newcomers** learn and contribute
-- **Focus on technical merit** in discussions
-- **Report inappropriate behavior** to maintainers
-
-### Communication
-
-- **Use GitHub issues** for bug reports and feature requests
-- **Use GitHub discussions** for questions and ideas
-- **Be patient** and understanding with response times
-- **Search existing issues** before creating new ones
-
-## 📊 Release Process
-
-### Versioning
-
-We follow **Semantic Versioning** (semver):
-
-- **Major (X.0.0)**: Breaking changes to API
-- **Minor (0.X.0)**: New features, backward compatible  
-- **Patch (0.0.X)**: Bug fixes, backward compatible
-
-### Release Criteria
-
-- **All tests passing** on supported Python versions
-- **Security review** completed for security-related changes
-- **Documentation updated** for user-facing changes
-- **Changelog updated** with release notes
-
-## 🏆 Recognition
-
-### Contributors
-
-All contributors are recognized in:
-
-- **GitHub Contributors** section
-- **Release notes** for significant contributions
-- **Documentation credits** for documentation improvements
-- **Security advisories** for security researchers (with permission)
-
-### Types of Recognition
-
-- **Code contributors**: Features, bug fixes, improvements
-- **Documentation contributors**: README, examples, guides
-- **Security researchers**: Responsible vulnerability disclosure
-- **Community contributors**: Issue triage, user support
-
-## ❓ Getting Help
-
-### Where to Get Help
-
-1. **📚 Read the README**: Comprehensive documentation and examples
-2. **🔍 Search existing issues**: Your question might already be answered
-3. **💬 GitHub Discussions**: Ask questions and discuss ideas
-4. **📧 Email maintainers**: For private matters or security issues
-
-### What Information to Include
-
-When asking for help:
-
-- **LocalData MCP version** you're using
-- **Python version** and operating system
-- **Database type** and configuration (sanitized)
-- **Exact error messages** or unexpected behavior
-- **Minimal reproduction steps**
-- **What you've already tried**
-
-## 📜 License
-
-By contributing to LocalData MCP Server, you agree that your contributions will be licensed under the [MIT License](LICENSE).
-
----
-
-**Thank you for contributing to LocalData MCP Server!** 
-
-Your contributions help make secure database access available to the entire MCP community. Whether you're fixing bugs, adding features, improving documentation, or reporting issues, every contribution matters.
-
-**Questions?** Don't hesitate to ask - we're here to help you succeed! 🚀
+By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
