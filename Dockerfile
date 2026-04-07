@@ -6,7 +6,7 @@ FROM python:3.11-slim-bullseye
 # Set metadata
 LABEL maintainer="Christian C. Berclaz <christian.berclaz@mac.com>"
 LABEL description="LocalData MCP Server - Comprehensive database and file format support"
-LABEL version="1.3.0"
+LABEL version="2.0.0"
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
