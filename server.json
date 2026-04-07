@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chrisgve/localdata-mcp",
+  "title": "LocalData MCP",
+  "description": "MCP server giving LLM agents access to databases, files, graphs, and a full data science toolkit — 52 tools across 13 database types and 20+ file formats.",
+  "version": "2.0.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "localdata-mcp",
+      "version": "2.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "repository": {
+    "url": "https://github.com/ChrisGVE/localdata-mcp",
+    "source": "github"
+  }
+}
