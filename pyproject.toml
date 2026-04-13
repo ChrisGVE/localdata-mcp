@@ -73,7 +73,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=6.0.0",
+  "pytest>=9.0.3",
   "pytest-cov",
   "black",
   "isort",
