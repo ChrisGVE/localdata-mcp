@@ -28,9 +28,14 @@ Connect to a dataset, profile its structure and quality, and recommend what anal
    - Key relationships between tables (shared column names)
 
 7. **Recommend next analyses.** Based on data characteristics, suggest specific next steps:
+   - Data quality concerns: run `/localdata-mcp:data-quality` for a thorough audit
    - Numeric pairs with potential relationships: suggest `/localdata-mcp:analyze-correlations`
    - Datetime column with a metric: suggest `/localdata-mcp:forecast`
-   - Many numeric features: suggest `/localdata-mcp:cluster-analysis`
+   - Many numeric features: suggest `/localdata-mcp:cluster-analysis` or `/localdata-mcp:dimensionality-reduction`
    - Target variable present: suggest `/localdata-mcp:regression`
    - Treatment/control groups: suggest `/localdata-mcp:ab-test`
-   - Graph or network file: suggest `/localdata-mcp:graph-explore`
+   - Coordinate or location columns: suggest `/localdata-mcp:geospatial`
+   - Graph or network file: suggest `/localdata-mcp:graph-data-explore`
+   - Needs external context (benchmarks, demographics): suggest `/localdata-mcp:find-reference-data`
+   - Process or quality monitoring data: suggest `/localdata-mcp:process-control`
+   - Unusual observations suspected: suggest `/localdata-mcp:anomaly-detection`
