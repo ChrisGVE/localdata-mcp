@@ -1,13 +1,13 @@
 ---
-name: graph-explore
-description: Explore a graph or network dataset — structure, statistics, paths, and visualization. Use when working with DOT, GML, GraphML, or Mermaid files.
+name: graph-data-explore
+description: Explore a graph data structure — nodes, edges, statistics, paths, and visualization. Use when working with DOT, GML, GraphML, or Mermaid files.
 allowed-tools: mcp__localdata__connect_database mcp__localdata__get_graph_stats mcp__localdata__get_edges mcp__localdata__get_neighbors mcp__localdata__get_node mcp__localdata__find_path mcp__localdata__export_graph
 argument-hint: "<file-path>"
 ---
 
-# Graph Explore
+# Graph Data Explore
 
-Connect to a graph file, analyze its structure and key nodes, find paths, and export visualizations.
+Connect to a graph data file, analyze its structure and key nodes, find paths, and export visualizations.
 
 ## Steps
 
