@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 
 
 def analyze_network(
-    connection_name: str,
+    engine,
     table_name: str,
     source_column: str,
     target_column: str,
@@ -29,8 +29,8 @@ def analyze_network(
 
     Parameters:
     -----------
-    connection_name : str
-        Database connection name
+    engine : sqlalchemy.engine.Engine
+        Engine for an active connection, supplied by the caller
     table_name : str
         Table containing edge data
     source_column : str
@@ -52,18 +52,12 @@ def analyze_network(
         Network analysis results
     """
     try:
-        from ... import DatabaseManager
-
         if not NETWORKX_AVAILABLE:
             return {
                 "success": False,
                 "error": "NetworkX not available",
                 "message": "NetworkX is required for network analysis. Please install with: pip install networkx",
             }
-
-        # Get database manager and connection
-        db_manager = DatabaseManager()
-        engine = db_manager._get_connection(connection_name)
 
         # Load edge data
         columns = [source_column, target_column]
@@ -126,7 +120,7 @@ def analyze_network(
 
 
 def solve_assignment_problem(
-    connection_name: str,
+    engine,
     table_name: str,
     cost_matrix_columns: List[str],
     agent_id_column: Optional[str] = None,
@@ -140,8 +134,8 @@ def solve_assignment_problem(
 
     Parameters:
     -----------
-    connection_name : str
-        Database connection name
+    engine : sqlalchemy.engine.Engine
+        Engine for an active connection, supplied by the caller
     table_name : str
         Table containing cost matrix data
     cost_matrix_columns : list of str
@@ -163,11 +157,6 @@ def solve_assignment_problem(
         Assignment problem results
     """
     try:
-        from ... import DatabaseManager
-
-        # Get database manager and connection
-        db_manager = DatabaseManager()
-        engine = db_manager._get_connection(connection_name)
 
         # Load cost matrix data
         all_columns = cost_matrix_columns.copy()

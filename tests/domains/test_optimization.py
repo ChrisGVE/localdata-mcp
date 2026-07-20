@@ -594,14 +594,9 @@ class TestOptimizationResults:
 class TestOptimizationTools:
     """Test optimization tool functions."""
 
-    @patch("localdata_mcp.DatabaseManager")
-    def test_solve_linear_program_tool(self, mock_db_manager):
+    def test_solve_linear_program_tool(self):
         """Test solve_linear_program tool function."""
-        # Mock database setup
         mock_engine = Mock()
-        mock_db_instance = Mock()
-        mock_db_instance._get_connection.return_value = mock_engine
-        mock_db_manager.return_value = mock_db_instance
 
         # Mock pandas read_sql
         with patch("pandas.read_sql") as mock_read_sql:
@@ -609,7 +604,7 @@ class TestOptimizationTools:
             mock_read_sql.return_value = pd.DataFrame({"cost": [1, 2, 3]})
 
             result = solve_linear_program(
-                connection_name="test_db",
+                engine=mock_engine,
                 table_name="optimization_data",
                 objective_column="cost",
             )
@@ -617,16 +612,9 @@ class TestOptimizationTools:
             assert isinstance(result, dict)
             assert "success" in result
 
-            # Verify database calls
-            mock_db_instance._get_connection.assert_called_once_with("test_db")
-
-    @patch("localdata_mcp.DatabaseManager")
-    def test_solve_linear_program_with_constraints(self, mock_db_manager):
+    def test_solve_linear_program_with_constraints(self):
         """Test solve_linear_program with constraints."""
         mock_engine = Mock()
-        mock_db_instance = Mock()
-        mock_db_instance._get_connection.return_value = mock_engine
-        mock_db_manager.return_value = mock_db_instance
 
         with patch("pandas.read_sql") as mock_read_sql:
             # Mock different calls to read_sql
@@ -639,7 +627,7 @@ class TestOptimizationTools:
             mock_read_sql.side_effect = side_effect
 
             result = solve_linear_program(
-                connection_name="test_db",
+                engine=mock_engine,
                 table_name="data",
                 objective_column="cost",
                 constraint_columns=["x1", "x2"],
@@ -650,13 +638,9 @@ class TestOptimizationTools:
             assert isinstance(result, dict)
             assert "success" in result
 
-    @patch("localdata_mcp.DatabaseManager")
-    def test_optimize_constrained_tool(self, mock_db_manager):
+    def test_optimize_constrained_tool(self):
         """Test optimize_constrained tool function."""
         mock_engine = Mock()
-        mock_db_instance = Mock()
-        mock_db_instance._get_connection.return_value = mock_engine
-        mock_db_manager.return_value = mock_db_instance
 
         with patch("pandas.read_sql") as mock_read_sql:
             mock_read_sql.return_value = pd.DataFrame(
@@ -664,7 +648,7 @@ class TestOptimizationTools:
             )
 
             result = optimize_constrained(
-                connection_name="test_db",
+                engine=mock_engine,
                 table_name="data",
                 objective_function="np.sum(x**2)",
                 initial_guess_column="initial",
@@ -673,14 +657,10 @@ class TestOptimizationTools:
             assert isinstance(result, dict)
             assert "success" in result
 
-    @patch("localdata_mcp.DatabaseManager")
     @pytest.mark.skipif(not NETWORKX_AVAILABLE, reason="NetworkX not available")
-    def test_analyze_network_tool(self, mock_db_manager):
+    def test_analyze_network_tool(self):
         """Test analyze_network tool function."""
         mock_engine = Mock()
-        mock_db_instance = Mock()
-        mock_db_instance._get_connection.return_value = mock_engine
-        mock_db_manager.return_value = mock_db_instance
 
         with patch("pandas.read_sql") as mock_read_sql:
             mock_read_sql.return_value = pd.DataFrame(
@@ -688,7 +668,7 @@ class TestOptimizationTools:
             )
 
             result = analyze_network(
-                connection_name="test_db",
+                engine=mock_engine,
                 table_name="edges",
                 source_column="source",
                 target_column="target",
@@ -700,13 +680,9 @@ class TestOptimizationTools:
             if result["success"]:
                 assert "graph_properties" in result
 
-    @patch("localdata_mcp.DatabaseManager")
-    def test_solve_assignment_problem_tool(self, mock_db_manager):
+    def test_solve_assignment_problem_tool(self):
         """Test solve_assignment_problem tool function."""
         mock_engine = Mock()
-        mock_db_instance = Mock()
-        mock_db_instance._get_connection.return_value = mock_engine
-        mock_db_manager.return_value = mock_db_instance
 
         with patch("pandas.read_sql") as mock_read_sql:
             mock_read_sql.return_value = pd.DataFrame(
@@ -719,7 +695,7 @@ class TestOptimizationTools:
             )
 
             result = solve_assignment_problem(
-                connection_name="test_db",
+                engine=mock_engine,
                 table_name="costs",
                 cost_matrix_columns=["task1", "task2", "task3"],
                 agent_id_column="agent",
@@ -732,13 +708,14 @@ class TestOptimizationTools:
                 assert "total_cost" in result
 
     def test_tool_error_handling(self):
-        """Test error handling in optimization tools."""
-        # Test with invalid connection
-        result = solve_linear_program(
-            connection_name="invalid_connection",
-            table_name="data",
-            objective_column="cost",
-        )
+        """A failing query is reported as a structured error, not raised."""
+        failing_engine = Mock()
+        with patch("pandas.read_sql", side_effect=RuntimeError("no such table: data")):
+            result = solve_linear_program(
+                engine=failing_engine,
+                table_name="data",
+                objective_column="cost",
+            )
 
         assert isinstance(result, dict)
         assert result["success"] is False
@@ -748,7 +725,7 @@ class TestOptimizationTools:
     def test_analyze_network_without_networkx(self):
         """Test analyze_network when NetworkX is not available."""
         result = analyze_network(
-            connection_name="test_db",
+            engine=Mock(),
             table_name="edges",
             source_column="source",
             target_column="target",

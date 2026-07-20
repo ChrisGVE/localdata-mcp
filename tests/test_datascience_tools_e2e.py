@@ -148,6 +148,29 @@ def datascience_fixtures() -> None:
             )
     pd.DataFrame(rows).to_csv(_fp("ds_transactions.csv"), index=False)
 
+    # A 4-node cycle plus one chord, for network analysis. Node identifiers are
+    # numeric because the analyzer builds a numeric array from the edge list.
+    pd.DataFrame(
+        {
+            "source": [0, 1, 2, 3, 0],
+            "target": [1, 2, 3, 0, 2],
+            "weight": [1.0, 2.0, 1.5, 3.0, 2.5],
+        }
+    ).to_csv(_fp("ds_network.csv"), index=False)
+
+    # Linear program and assignment problem. The assignment costs are chosen so
+    # the optimum is unambiguous: agent i is cheapest on task i.
+    pd.DataFrame(
+        {
+            "cost": [3.0, 5.0, 2.0],
+            "cap1": [1.0, 2.0, 1.5],
+            "cap2": [2.0, 1.0, 1.5],
+            "task1": [1.0, 9.0, 9.0],
+            "task2": [9.0, 1.0, 9.0],
+            "task3": [9.0, 9.0, 1.0],
+        }
+    ).to_csv(_fp("ds_optimization.csv"), index=False)
+
 
 def _json(raw: str) -> Dict[str, Any]:
     return json.loads(raw)
@@ -592,3 +615,98 @@ class TestSamplingTools:
         assert result["estimation_type"] == "posterior"
         assert result["prior_distribution"] == "normal"
         assert result["bayesian_results"], "estimation returned no results"
+
+
+# ---------------------------------------------------------------------------
+# Optimization
+# ---------------------------------------------------------------------------
+
+
+class TestOptimizationTools:
+    """The optimization tools read a table directly rather than taking a query."""
+
+    def test_linear_program_finds_an_optimum(self, db: DatabaseManager) -> None:
+        """Minimising non-negative costs under upper-bound constraints."""
+        _connect(db, "lp", "ds_optimization.csv")
+        result = _json(
+            db.solve_linear_program(
+                "lp",
+                "data_table",
+                objective_column="cost",
+                constraint_columns=["cap1", "cap2"],
+                constraint_values=[10.0, 10.0],
+                constraint_types=["<=", "<="],
+            )
+        )
+
+        assert result["success"] is True
+        solution = result["optimal_solution"]
+        assert len(solution) == 3, f"one value per variable, got {solution}"
+        assert all(v >= -1e-9 for v in solution), f"bounds violated: {solution}"
+        assert isinstance(result["optimal_value"], float)
+
+    def test_assignment_picks_the_cheapest_pairing(self, db: DatabaseManager) -> None:
+        """Costs are 1 on the diagonal and 9 elsewhere, so the optimum is the diagonal."""
+        _connect(db, "asg", "ds_optimization.csv")
+        result = _json(
+            db.solve_assignment_problem(
+                "asg",
+                "data_table",
+                cost_matrix_columns=["task1", "task2", "task3"],
+            )
+        )
+
+        assert result["success"] is True
+        assert result["total_cost"] == pytest.approx(
+            3.0
+        ), f"the diagonal assignment costs 3.0, got {result['total_cost']}"
+        assert result["is_perfect_matching"] is True
+        pairs = result["assignment_pairs"]
+        assert [p["task_index"] for p in pairs] == [
+            0,
+            1,
+            2,
+        ], f"not the diagonal: {pairs}"
+        assert all(p["cost"] == pytest.approx(1.0) for p in pairs)
+
+    def test_network_analysis_describes_the_graph(self, db: DatabaseManager) -> None:
+        """A 4-node cycle plus one chord: 4 nodes, 5 edges, connected."""
+        _connect(db, "net", "ds_network.csv")
+        result = _json(
+            db.analyze_network(
+                "net",
+                "data_table",
+                source_column="source",
+                target_column="target",
+                weight_column="weight",
+            )
+        )
+
+        assert result["success"] is True
+        properties = result["graph_properties"]
+        assert properties["num_nodes"] == 4
+        assert properties["num_edges"] == 5
+        assert properties["is_connected"] is True
+        assert properties["is_directed"] is False
+        assert "centrality_measures" in result
+
+    def test_unknown_column_is_named_in_the_error(self, db: DatabaseManager) -> None:
+        """A bad column must say which one, not fail inside the SQL string."""
+        _connect(db, "bad", "ds_optimization.csv")
+        with pytest.raises(ValueError, match="no_such_column"):
+            db.solve_linear_program(
+                "bad", "data_table", objective_column="no_such_column"
+            )
+
+    def test_non_numeric_node_ids_are_rejected_clearly(
+        self, db: DatabaseManager
+    ) -> None:
+        """Text node identifiers fail with a readable message, not a float cast error."""
+        _connect(db, "txt", "ds_transactions.csv")
+        with pytest.raises(ValueError, match="not numeric"):
+            db.analyze_network(
+                "txt",
+                "data_table",
+                source_column="customer_id",
+                target_column="order_date",
+            )

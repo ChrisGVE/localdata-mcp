@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 
 
 def solve_linear_program(
-    connection_name: str,
+    engine,
     table_name: str,
     objective_column: str,
     constraint_columns: Optional[List[str]] = None,
@@ -30,8 +30,8 @@ def solve_linear_program(
 
     Parameters:
     -----------
-    connection_name : str
-        Database connection name
+    engine : sqlalchemy.engine.Engine
+        Engine for an active connection, supplied by the caller
     table_name : str
         Table containing optimization data
     objective_column : str
@@ -55,11 +55,6 @@ def solve_linear_program(
         Linear programming results with solution and analysis
     """
     try:
-        from ... import DatabaseManager
-
-        # Get database manager and connection
-        db_manager = DatabaseManager()
-        engine = db_manager._get_connection(connection_name)
 
         # Load objective coefficients
         objective_query = f"SELECT {objective_column} FROM {table_name}"
@@ -126,7 +121,7 @@ def solve_linear_program(
 
 
 def optimize_constrained(
-    connection_name: str,
+    engine,
     table_name: str,
     objective_function: str,
     initial_guess_column: str,
@@ -141,8 +136,8 @@ def optimize_constrained(
 
     Parameters:
     -----------
-    connection_name : str
-        Database connection name
+    engine : sqlalchemy.engine.Engine
+        Engine for an active connection, supplied by the caller
     table_name : str
         Table containing optimization data
     objective_function : str
@@ -166,11 +161,6 @@ def optimize_constrained(
         Constrained optimization results
     """
     try:
-        from ... import DatabaseManager
-
-        # Get database manager and connection
-        db_manager = DatabaseManager()
-        engine = db_manager._get_connection(connection_name)
 
         # Load data
         data = pd.read_sql(f"SELECT * FROM {table_name}", engine)
