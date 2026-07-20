@@ -155,38 +155,50 @@ def analyze_spatial_autocorrelation(
     method: str = "moran",
     k_neighbors: int = 8,
 ) -> Dict[str, Any]:
-    """Analyze spatial autocorrelation in dataset."""
-    transformer = SpatialAutocorrelationTransformer(
-        coordinate_columns=coordinate_columns,
-        value_column=value_column,
-        test_type=method,
-        k_neighbors=k_neighbors,
+    """Analyze spatial autocorrelation in dataset.
+
+    Returns Moran's I or Geary's C for ``value_column`` together with the
+    significance test that decides whether nearby observations really do
+    resemble each other more than distant ones.
+    """
+    missing = [c for c in [*coordinate_columns, value_column] if c not in data.columns]
+    if missing:
+        raise ValueError(
+            f"Column(s) {missing} not found. Available columns: {list(data.columns)}"
+        )
+
+    points = list(
+        zip(
+            data[coordinate_columns[0]].to_numpy(),
+            data[coordinate_columns[1]].to_numpy(),
+        )
     )
+    values = data[value_column].to_numpy(dtype=float)
 
-    transformer.fit(data)
-    result = transformer.transform(data)
-
-    if hasattr(transformer, "statistics_"):
-        return {
-            "method": method,
-            "statistic": transformer.statistics_.statistic,
-            "p_value": transformer.statistics_.p_value,
-            "expected_value": transformer.statistics_.expected_value,
-            "variance": transformer.statistics_.variance,
-            "z_score": transformer.statistics_.z_score,
-            "interpretation": (
-                "significant spatial autocorrelation"
-                if transformer.statistics_.p_value < 0.05
-                else "no significant spatial autocorrelation"
-            ),
-            "local_statistics": (
-                transformer.statistics_.local_statistics
-                if hasattr(transformer.statistics_, "local_statistics")
-                else None
-            ),
-        }
+    stats = SpatialStatistics()
+    if method in ("moran", "morans_i"):
+        result = stats.morans_i(values, points, weights_method="knn", k=k_neighbors)
+    elif method in ("geary", "gearys_c"):
+        result = stats.gearys_c(values, points, weights_method="knn", k=k_neighbors)
     else:
-        return {"error": "Analysis failed", "method": method}
+        raise ValueError(
+            f"Unsupported autocorrelation method '{method}'. "
+            "Use 'moran' (Moran's I) or 'geary' (Geary's C)."
+        )
+
+    return {
+        "method": method,
+        "statistic": result.statistic,
+        "value": result.value,
+        "p_value": result.p_value,
+        "expected_value": result.expected_value,
+        "variance": result.variance,
+        "z_score": result.z_score,
+        "is_significant": result.is_significant,
+        "interpretation": result.interpretation,
+        "n_observations": len(values),
+        "k_neighbors": k_neighbors,
+    }
 
 
 def perform_spatial_clustering(
@@ -195,56 +207,68 @@ def perform_spatial_clustering(
     method: str = "hotspot",
     significance_level: float = 0.05,
 ) -> pd.DataFrame:
-    """Identify spatial clusters and hot spots in data."""
-    stats = SpatialStatistics()
+    """Identify spatial clusters and hot spots in data.
 
-    coordinates = [
-        (row[coordinate_columns[0]], row[coordinate_columns[1]])
-        for _, row in data.iterrows()
-    ]
-    spatial_weights = SpatialWeightsMatrix(method="knn", k=8)
-    weights_matrix = spatial_weights.build_weights(coordinates)
+    Runs a Getis-Ord Gi* hot-spot analysis over the first numeric non-coordinate
+    column and returns the input frame with the per-point statistic, its p-value
+    and a ``cluster_id`` of 1 (hot spot), -1 (cold spot) or 0 (not significant).
+    """
+    missing = [c for c in coordinate_columns if c not in data.columns]
+    if missing:
+        raise ValueError(
+            f"Coordinate column(s) {missing} not found. "
+            f"Available columns: {list(data.columns)}"
+        )
+
+    coordinates = list(
+        zip(
+            data[coordinate_columns[0]].to_numpy(),
+            data[coordinate_columns[1]].to_numpy(),
+        )
+    )
 
     value_columns = [
         col
         for col in data.columns
-        if col not in coordinate_columns and data[col].dtype in [np.float64, np.int64]
+        if col not in coordinate_columns
+        and pd.api.types.is_numeric_dtype(data[col])
+        and not pd.api.types.is_bool_dtype(data[col])
     ]
 
     if not value_columns:
-        logger.warning("No numeric value columns found for clustering analysis")
-        result_data = data.copy()
-        result_data["cluster_id"] = 0
-        result_data["is_hotspot"] = False
-        return result_data
-
-    value_column = value_columns[0]
-    values = data[value_column].values
-
-    try:
-        hotspot_result = stats.getis_ord_gi_star(coordinates, values, weights_matrix)
-
-        result_data = data.copy()
-        result_data["gi_star_statistic"] = hotspot_result.gi_star_values
-        result_data["gi_star_p_value"] = hotspot_result.p_values
-        result_data["is_hotspot"] = hotspot_result.p_values < significance_level
-        result_data["is_coldspot"] = (hotspot_result.gi_star_values < 0) & (
-            hotspot_result.p_values < significance_level
+        raise ValueError(
+            "Spatial clustering needs a numeric value column besides the "
+            f"coordinates {coordinate_columns}. Available columns: {list(data.columns)}"
         )
 
-        cluster_ids = np.zeros(len(data))
-        cluster_ids[result_data["is_hotspot"]] = 1
-        cluster_ids[result_data["is_coldspot"]] = -1
-        result_data["cluster_id"] = cluster_ids
+    values = data[value_columns[0]].to_numpy(dtype=float)
 
-        return result_data
+    # `method` selects the clustering statistic; 'hotspot' and 'getis_ord' are
+    # the two names for Gi*. An unknown name raises rather than silently
+    # producing a hot-spot analysis the caller did not ask for.
+    hotspot = SpatialStatistics().spatial_clustering_analysis(
+        values,
+        coordinates,
+        method=method,
+        weights_method="knn",
+        k=8,
+        significance_level=significance_level,
+    )
 
-    except Exception as e:
-        logger.warning(f"Spatial clustering failed: {e}")
-        result_data = data.copy()
-        result_data["cluster_id"] = 0
-        result_data["is_hotspot"] = False
-        return result_data
+    result_data = data.copy()
+    result_data["gi_star_statistic"] = hotspot["gi_star"]
+    result_data["gi_star_z_score"] = hotspot["z_scores"]
+    result_data["gi_star_p_value"] = hotspot["p_values"]
+    result_data["is_hotspot"] = hotspot["hotspots"]
+    result_data["is_coldspot"] = hotspot["coldspots"]
+    result_data["cluster_label"] = hotspot["cluster_labels"]
+
+    cluster_ids = np.zeros(len(data), dtype=int)
+    cluster_ids[hotspot["hotspots"]] = 1
+    cluster_ids[hotspot["coldspots"]] = -1
+    result_data["cluster_id"] = cluster_ids
+
+    return result_data
 
 
 def calculate_spatial_distance(
@@ -254,54 +278,43 @@ def calculate_spatial_distance(
     distance_type: str = "euclidean",
     output_format: str = "matrix",
 ) -> Union[np.ndarray, pd.DataFrame]:
-    """Calculate spatial distances between points."""
-    if data2 is not None:
-        coords1 = [
-            (row[coordinate_columns[0]], row[coordinate_columns[1]])
-            for _, row in data1.iterrows()
-        ]
-        coords2 = [
-            (row[coordinate_columns[0]], row[coordinate_columns[1]])
-            for _, row in data2.iterrows()
-        ]
+    """Calculate spatial distances between points.
 
-        distance_calc = SpatialDistanceCalculator()
-        distances = distance_calc.distance_matrix(
-            coords1, coords2, method=distance_type
+    With ``data2`` omitted the points in ``data1`` are compared against
+    themselves, so ``output_format='matrix'`` yields the full symmetric pairwise
+    matrix. Previously the one-frame path delegated to a transformer whose
+    output columns are named ``distance_to_ref_*``, looked for columns named
+    after the *metric* instead, matched none, and returned an empty array.
+    """
+
+    def _coords(frame: pd.DataFrame):
+        missing = [c for c in coordinate_columns if c not in frame.columns]
+        if missing:
+            raise ValueError(
+                f"Coordinate column(s) {missing} not found. "
+                f"Available columns: {list(frame.columns)}"
+            )
+        return list(
+            zip(
+                frame[coordinate_columns[0]].to_numpy(),
+                frame[coordinate_columns[1]].to_numpy(),
+            )
         )
 
-        if output_format == "matrix":
-            return distances
-        elif output_format == "pairs":
-            pairs = []
-            for i, coord1 in enumerate(coords1):
-                for j, coord2 in enumerate(coords2):
-                    pairs.append(
-                        {
-                            "point1_index": i,
-                            "point2_index": j,
-                            "distance": distances[i, j],
-                        }
-                    )
-            return pd.DataFrame(pairs)
-        else:
-            return distances
-    else:
-        distance_transformer = SpatialDistanceTransformer(
-            method=distance_type,
-            coordinate_columns=coordinate_columns,
-            output_format="dataframe",
-        )
-        distance_transformer.fit(data1)
-        result = distance_transformer.transform(data1)
+    coords1 = _coords(data1)
+    coords2 = coords1 if data2 is None else _coords(data2)
 
-        if output_format == "matrix":
-            distance_columns = [
-                col for col in result.columns if col.startswith(distance_type)
+    distances = SpatialDistanceCalculator().distance_matrix(
+        coords1, coords2, method=distance_type
+    )
+
+    if output_format == "pairs":
+        return pd.DataFrame(
+            [
+                {"point1_index": i, "point2_index": j, "distance": distances[i, j]}
+                for i in range(len(coords1))
+                for j in range(len(coords2))
             ]
-            if distance_columns:
-                return result[distance_columns].values
-            else:
-                return np.array([])
-        else:
-            return result
+        )
+
+    return distances
