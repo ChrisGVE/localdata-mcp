@@ -13,30 +13,34 @@ Use this domain when you need to:
 - Simulate outcomes or propagate uncertainty through a model using Monte Carlo methods
 - Update prior beliefs with observed data and obtain posterior credible intervals
 
-All transformers are sklearn-compatible (`BaseEstimator`, `TransformerMixin`). High-level
-functions accept a DataFrame or a file path and return JSON-serializable dictionaries.
+The transformers underneath are sklearn-compatible (`BaseEstimator`,
+`TransformerMixin`), but an MCP client does not reach them: it calls the four
+tools below, each of which takes a connection name and a SQL query.
 
 ---
 
 ## Available Analyses
 
-| Analysis | Function | Description |
+Every value in this table was checked against the running server. A token not
+listed here raises rather than falling back to a default.
+
+| Analysis | Call | Description |
 |---|---|---|
-| Simple random sampling | `generate_sample` with `method="simple_random"` | Uniform random selection without replacement |
-| Stratified sampling | `generate_sample` with `method="stratified"` | Proportional allocation across strata |
-| Cluster sampling | `generate_sample` with `method="cluster"` | Select random clusters, take all members |
-| Systematic sampling | `generate_sample` with `method="systematic"` | Regular interval selection with random start |
-| Weighted sampling | `generate_sample` with `method="weighted"` | Probability-proportional-to-size sampling |
-| Percentile bootstrap CI | `bootstrap_statistic` with `method="percentile"` | Distribution-free confidence intervals |
-| BCa bootstrap CI | `bootstrap_statistic` with `method="bca"` | Bias-corrected and accelerated intervals |
-| Basic bootstrap | `bootstrap_statistic` with `method="basic"` | Pivotal confidence intervals |
-| Studentised bootstrap | `bootstrap_statistic` with `method="studentized"` | Bootstrap-t intervals |
-| Monte Carlo integration | `monte_carlo_simulate` with `type="integration"` | Numerical integration by random sampling |
-| Monte Carlo simulation | `monte_carlo_simulate` with `type="simulation"` | Forward uncertainty propagation |
-| Importance sampling | `monte_carlo_simulate` with `type="importance_sampling"` | Variance reduction for rare events |
-| Posterior estimation | `bayesian_estimate` with `type="posterior"` | Bayesian parameter estimation |
-| Bayesian updating | `bayesian_estimate` with `type="updating"` | Sequential belief update |
-| Credible intervals | `bayesian_estimate` | Highest density interval (HDI) or equal-tailed CI |
+| Simple random sampling | `generate_sample` with `sampling_method="simple_random"` | Uniform random selection |
+| Stratified sampling | `generate_sample` with `sampling_method="stratified"` | Proportional allocation across strata; needs `stratify_column` |
+| Systematic sampling | `generate_sample` with `sampling_method="systematic"` | Regular interval selection with a random start |
+| Cluster sampling | `generate_sample` with `sampling_method="cluster"` | Select random clusters, take all members |
+| Percentile bootstrap CI | `bootstrap_statistic` | Distribution-free confidence interval for `mean`, `median`, `std` or `var` |
+| Monte Carlo integration | `monte_carlo_simulate` with `simulation_type="integration"` | Numerical integration by random sampling |
+| Uncertainty propagation | `monte_carlo_simulate` with `simulation_type="uncertainty"` | Forward propagation of input uncertainty |
+| Importance sampling | `monte_carlo_simulate` with `simulation_type="importance"` | Variance reduction for rare events |
+| MCMC | `monte_carlo_simulate` with `simulation_type="mcmc"` | Markov chain Monte Carlo sampling |
+| Posterior estimation | `bayesian_estimate` with `estimation_type="posterior"` | Bayesian parameter estimation |
+| Credible intervals | `bayesian_estimate` with `estimation_type="credible_interval"` | Equal-tailed interval at `confidence_level` |
+| Model comparison | `bayesian_estimate` with `estimation_type="model_comparison"` | Compare candidate models |
+
+The bootstrap reports a percentile interval. There is no BCa, basic or
+studentised variant, and no parameter selects one.
 
 ---
 
@@ -60,14 +64,12 @@ Draw a sample from a dataset using a chosen sampling method.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `data` | DataFrame or str | required | Input DataFrame or path to CSV/JSON file |
-| `sampling_method` | str | `"simple_random"` | Sampling method (see table above) |
-| `sample_size` | int or float | `0.1` | Absolute count (int) or fraction of population (float 0–1) |
-| `random_state` | int | None | Seed for reproducibility |
-| `stratify_column` | str | None | Column to stratify by (required for `stratified`) |
-| `cluster_column` | str | None | Column with cluster labels (optional for `cluster`) |
-| `weights_column` | str | None | Column with sampling weights (required for `weighted`) |
-| `replacement` | bool | `False` | Sample with replacement |
+| `connection_name` | str | required | Name of the connected database |
+| `query` | str | required | SQL query returning the population to sample from |
+| `sampling_method` | str | `"simple_random"` | `simple_random`, `stratified`, `systematic`, or `cluster` |
+| `sample_size` | float | `0.1` | Row count when 1 or greater, fraction of the population when below 1 |
+| `columns` | list[str] | None | Restrict the sample to these columns (default: all) |
+| `stratify_column` | str | `""` | Column defining strata. Required for `stratified`, which raises without it |
 
 **Return format**
 
@@ -81,7 +83,7 @@ Draw a sample from a dataset using a chosen sampling method.
     "sampling_method": "stratified",
     "sample_size": 500,
     "population_size": 5000,
-    "sampling_params": {"stratify_column": "region", "replacement": false},
+    "sampling_params": {"stratify_column": "region"},
     "quality_metrics": {
       "representativeness_score": 0.97,
       "mean_absolute_difference": 0.03,
@@ -105,30 +107,34 @@ Estimate confidence intervals for a statistic via bootstrap resampling.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `data` | DataFrame or str | required | Input DataFrame or file path |
-| `statistic_func` | callable or str | `"mean"` | Statistic to bootstrap; string names: `mean`, `median`, `std`, `var`, `sum` |
+| `connection_name` | str | required | Name of the connected database |
+| `query` | str | required | SQL query returning the data to resample |
+| `column` | str | `""` | Numeric column to bootstrap |
+| `statistic` | str | `"mean"` | `mean`, `median`, `std`, or `var`. Any other name raises |
 | `n_bootstrap` | int | `1000` | Number of bootstrap resamples |
-| `confidence_level` | float | `0.95` | Confidence level (e.g., 0.95 for 95% CI) |
-| `method` | str | `"percentile"` | Interval method: `percentile`, `bca`, `basic`, `studentized` |
-| `random_state` | int | None | Seed for reproducibility |
+| `confidence_level` | float | `0.95` | Confidence level, e.g. 0.95 for a 95% interval |
 
 **Return format**
 
 ```json
 {
-  "statistic_name": "mean",
-  "original_statistic": 42.7,
-  "bootstrap_method": "percentile",
+  "bootstrap_results": [
+    {
+      "statistic_name": "mean_value",
+      "original_statistic": 10.97,
+      "bootstrap_method": "percentile",
+      "n_bootstrap": 1000,
+      "bias_estimate": 0.013,
+      "bias_corrected_estimate": 10.956,
+      "variance_estimate": 0.040,
+      "standard_error": 0.201,
+      "confidence_intervals": {"percentile": [10.67, 11.37]},
+      "bootstrap_params": {}
+    }
+  ],
   "n_bootstrap": 1000,
-  "bias_estimate": 0.03,
-  "bias_corrected_estimate": 42.67,
-  "variance_estimate": 1.24,
-  "standard_error": 1.11,
-  "confidence_intervals": {
-    "percentile": [40.5, 44.9],
-    "bca": [40.3, 44.7]
-  },
-  "convergence_info": {"bootstrap_se_stability": 0.02}
+  "confidence_level": 0.95,
+  "method": "percentile"
 }
 ```
 
@@ -142,25 +148,34 @@ Run a Monte Carlo simulation or numerical integration.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `data` | DataFrame or str | required | Input data for simulation parameters |
-| `simulation_type` | str | `"integration"` | Type: `integration`, `simulation`, `importance_sampling` |
+| `connection_name` | str | required | Name of the connected database |
+| `query` | str | required | SQL query supplying the simulation parameters |
+| `simulation_type` | str | `"integration"` | `integration`, `uncertainty`, `importance`, or `mcmc`. Any other value raises |
 | `n_simulations` | int | `10000` | Number of simulation draws |
-| `random_state` | int | None | Seed for reproducibility |
+| `columns` | list[str] | None | Restrict the input to these columns (default: all) |
 
 **Return format**
 
-```text
+```json
 {
-  "simulation_type": "simulation",
+  "monte_carlo_results": [
+    {
+      "simulation_type": "integration",
+      "n_simulations": 10000,
+      "estimated_value": 0.9187,
+      "confidence_interval": [0.8083, 1.0291],
+      "standard_error": 0.0563,
+      "convergence_diagnostic": {
+        "batch_variance": 0.0371,
+        "relative_std_error": 0.0613
+      },
+      "simulation_params": {"random_state": null},
+      "integration_bounds": [-3, 3]
+    }
+  ],
+  "simulation_type": "integration",
   "n_simulations": 10000,
-  "estimated_value": 18.4,
-  "confidence_interval": [17.1, 19.7],
-  "standard_error": 0.66,
-  "convergence_diagnostic": {
-    "relative_error": 0.004,
-    "effective_sample_size": 9800
-  },
-  "simulation_params": {...}
+  "confidence_level": 0.95
 }
 ```
 
@@ -174,30 +189,44 @@ Perform Bayesian parameter estimation with credible intervals.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `data` | DataFrame or str | required | Input DataFrame or file path |
-| `estimation_type` | str | `"posterior"` | Type: `posterior`, `updating` |
-| `prior_distribution` | str | `"normal"` | Prior: `normal`, `beta`, `gamma`, `uniform` |
+| `connection_name` | str | required | Name of the connected database |
+| `query` | str | required | SQL query returning the observations |
+| `column` | str | `""` | Numeric column to estimate from |
+| `estimation_type` | str | `"posterior"` | `posterior`, `credible_interval`, or `model_comparison`. Any other value raises |
+| `prior_distribution` | str | `"normal"` | `normal`, `beta`, `gamma`, or `uniform` |
 | `confidence_level` | float | `0.95` | Credible interval level |
-| `random_state` | int | None | Seed for reproducibility |
 
 **Return format**
 
 ```json
 {
-  "parameter_name": "mu",
-  "estimation_method": "posterior",
-  "posterior_mean": 5.23,
-  "posterior_mode": 5.19,
-  "posterior_median": 5.21,
-  "credible_intervals": {
-    "equal_tailed": [4.81, 5.65],
-    "hdi": [4.79, 5.62]
-  },
-  "prior_info": {"distribution": "normal", "params": {"loc": 0, "scale": 10}},
-  "bayes_factor": 12.4,
-  "mcmc_diagnostics": {"r_hat": 1.002, "ess": 3200}
+  "bayesian_results": [
+    {
+      "parameter_name": "mean_value",
+      "estimation_method": "normal_conjugate",
+      "posterior_mean": 10.964,
+      "posterior_median": 10.963,
+      "credible_intervals": {"95%": [10.568, 11.361]},
+      "prior_info": {
+        "distribution": "normal",
+        "prior_mu": 0.0,
+        "prior_sigma2": 100.0,
+        "posterior_mu": 10.964,
+        "posterior_sigma2": 0.0409
+      }
+    }
+  ],
+  "estimation_type": "posterior",
+  "prior_distribution": "normal",
+  "prior_params": {},
+  "confidence_level": 0.95
 }
 ```
+
+The credible interval is keyed by its level, and there is no separate
+highest-density entry: `credible_intervals["95%"]` is the equal-tailed interval
+at `confidence_level`. A normal prior takes the conjugate path, which is what
+`estimation_method` reports.
 
 ---
 
@@ -210,8 +239,8 @@ Perform Bayesian parameter estimation with credible intervals.
 Selects rows uniformly at random. The default and simplest method. Use when the population is
 homogeneous or when no auxiliary information is available to guide allocation.
 
-With `replacement=False` (default), each row appears at most once. With `replacement=True`,
-the same row can appear multiple times (needed for bootstrap-style samples).
+Each row appears at most once. The tool exposes no with-replacement option; use
+`bootstrap_statistic` when you need resampling with replacement.
 
 #### Stratified Sampling
 
@@ -248,13 +277,9 @@ The result includes `sampling_interval` and `starting_point` in `sampling_params
 **When to use:** Quality control sampling on ordered production lines, time-series subsampling,
 sorted database tables where a uniform spread is needed.
 
-#### Weighted Sampling
-
-Samples rows with probability proportional to values in `weights_column`. Weights are normalised
-to sum to 1 internally. Use with `replacement=True` for importance sampling applications.
-
-**When to use:** Oversampling rare events, inverse-probability-of-treatment weighting (IPTW),
-upweighting recent records.
+There is no weighted sampling tool. To oversample rare events, express the
+weighting in the SQL query itself -- filter, or `ORDER BY` a computed weight --
+and sample the result.
 
 ---
 
@@ -266,23 +291,18 @@ replacement from the observed data. No parametric distributional assumptions are
 **n_bootstrap recommendations:**
 
 - 1000 for exploratory work and interval width estimation
-- 5000–10000 for stable BCa intervals or tail probabilities
-- 10000+ for p-values and when the statistic has high variability
+- 5000-10000 when the interval itself is the deliverable
+- 10000+ for tail probabilities and when the statistic has high variability
 
-**CI methods comparison:**
-
-| Method | When to prefer |
-|---|---|
-| `percentile` | Symmetric distributions; large samples; quick results |
-| `bca` | Default recommendation; corrects for bias and skewness automatically |
-| `basic` | Alternative when distribution is approximately symmetric |
-| `studentized` | When studentisation (dividing by bootstrap SE) is feasible; more accurate for small samples |
+**Interval method:** the percentile interval, always. There is no parameter that
+selects BCa, basic or studentised intervals, and no code path that produces one.
 
 **Bias correction:** When `bias_estimate` is non-negligible relative to `standard_error`, use
 `bias_corrected_estimate` as the point estimate instead of `original_statistic`.
 
-**Statistic functions:** Pass a string name (`mean`, `median`, `std`, `var`, `sum`) or a Python
-callable `f(x) -> float` that operates on a 1D NumPy array.
+**Statistic:** one of `mean`, `median`, `std`, `var`. Any other name raises
+`Unknown statistic function`, including `sum`. A custom callable cannot cross the
+MCP boundary; compute the quantity in SQL and bootstrap the resulting column.
 
 ---
 
@@ -302,7 +322,7 @@ Monte Carlo methods approximate quantities by averaging over random draws. The k
 |---|---|
 | `integration` | Estimate the integral of a function over a domain by uniform random sampling |
 | `simulation` | Forward propagation: draw uncertain inputs, compute output distribution |
-| `importance_sampling` | Reduce variance for rare-event probabilities by sampling from a proposal distribution |
+| `importance` | Reduce variance for rare-event probabilities by sampling from a proposal distribution |
 
 **n_simulations guidance:** Start with 1000 to verify setup, then increase to 10,000–100,000
 for stable estimates. Check `convergence_diagnostic.relative_error < 0.01` for 1% accuracy.
@@ -332,7 +352,7 @@ to frequentist confidence intervals.
 Two credible interval types are reported:
 
 - `equal_tailed` — 2.5th to 97.5th percentile of the posterior
-- `hdi` — Highest Density Interval; the narrowest interval containing the specified probability
+- The interval is equal-tailed and keyed by its level, e.g. `credible_intervals["95%"]`. No highest-density interval is computed.
   mass; preferred for skewed posteriors
 
 **Bayes factor:** When available, summarises the evidence ratio between hypotheses. BF > 10
@@ -360,95 +380,91 @@ is considered strong evidence; BF > 100 is decisive.
 
 ## Examples
 
+Each call names a live connection and a SQL query. The query selects the
+population; there is no data-frame parameter and no separate load step.
+
 ### Draw a stratified sample for a survey
 
 ```python
-result = generate_sample(
-    data=customer_df,
+generate_sample(
+    "crm",
+    "SELECT customer_id, region, spend FROM customers",
     sampling_method="stratified",
     sample_size=1000,
     stratify_column="region",
-    random_state=42,
 )
-sample = pd.DataFrame(result["sample_data"])
-print(result["sampling_results"]["strata_info"])
 ```
 
-### Bootstrap a median with BCa intervals
+`sample_size` is a row count at 1 or above and a fraction below it, so `0.2`
+would draw a fifth of the population instead. `stratified` raises without
+`stratify_column`.
+
+### Bootstrap a median without assuming a distribution
 
 ```python
-result = bootstrap_statistic(
-    data=revenue_df,
-    statistic_func="median",
+bootstrap_statistic(
+    "sales",
+    "SELECT revenue FROM orders WHERE year = 2026",
+    column="revenue",
+    statistic="median",
     n_bootstrap=5000,
     confidence_level=0.95,
-    method="bca",
-    random_state=0,
-)
-print(f"Median: {result['original_statistic']:.2f}")
-print(f"95% BCa CI: {result['confidence_intervals']['bca']}")
-```
-
-### Custom statistic: interquartile range
-
-```python
-import numpy as np
-
-result = bootstrap_statistic(
-    data=df,
-    statistic_func=lambda x: np.percentile(x, 75) - np.percentile(x, 25),
-    n_bootstrap=2000,
-    confidence_level=0.90,
 )
 ```
 
-### Monte Carlo uncertainty propagation
+`statistic` accepts `mean`, `median`, `std` and `var`. There is no hook for a
+custom statistic and no interval-method parameter: the result reports the
+percentile interval along with the bias estimate and standard error.
+
+### Propagate uncertainty through a Monte Carlo simulation
 
 ```python
-result = monte_carlo_simulate(
-    data=model_params_df,
-    simulation_type="simulation",
+monte_carlo_simulate(
+    "model",
+    "SELECT rate, volume, margin FROM parameters",
+    simulation_type="uncertainty",
     n_simulations=50000,
-    random_state=1,
 )
-print(f"Expected output: {result['estimated_value']:.3f} ± {result['standard_error']:.3f}")
-print(f"90% CI: {result['confidence_interval']}")
 ```
 
-### Bayesian estimation of a conversion rate
+`simulation_type` accepts `integration`, `uncertainty`, `importance` and `mcmc`.
+Any other value raises rather than falling back to a default.
+
+### Estimate a conversion rate with a Beta prior
 
 ```python
-# Prior: Beta(2, 20) — weak prior of ~9% conversion
-result = bayesian_estimate(
-    data=experiment_df,
+bayesian_estimate(
+    "experiment",
+    "SELECT converted FROM trials",
+    column="converted",
     estimation_type="posterior",
     prior_distribution="beta",
     confidence_level=0.95,
 )
-print(f"Posterior mean: {result['posterior_mean']:.3f}")
-print(f"95% HDI: {result['credible_intervals']['hdi']}")
 ```
 
-### Full workflow: sample then analyse
+`estimation_type` accepts `posterior`, `credible_interval` and
+`model_comparison`.
+
+### Sample first, then estimate on the sample
+
+The two steps do not chain automatically — a result carries no handle the next
+tool consumes. Narrow the second query to the population the first described:
 
 ```python
-# 1. Draw a stratified 20% sample
-sample_result = generate_sample(
-    data=large_df,
+generate_sample(
+    "warehouse",
+    "SELECT order_value, product_category FROM orders",
     sampling_method="stratified",
     sample_size=0.2,
     stratify_column="product_category",
-    random_state=7,
 )
-sample_df = pd.DataFrame(sample_result["sample_data"])
 
-# 2. Bootstrap the mean order value on the sample
-ci_result = bootstrap_statistic(
-    data=sample_df[["order_value"]],
-    statistic_func="mean",
+bootstrap_statistic(
+    "warehouse",
+    "SELECT order_value FROM orders WHERE product_category = 'hardware'",
+    column="order_value",
+    statistic="mean",
     n_bootstrap=2000,
-    method="bca",
 )
-print(f"Mean order value: {ci_result['original_statistic']:.2f}")
-print(f"95% CI: {ci_result['confidence_intervals']['bca']}")
 ```
