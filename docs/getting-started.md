@@ -38,7 +38,9 @@ The dev tools are declared as a project extra, not a uv dependency group, so `uv
 
 ### What's included
 
-The base install covers all supported functionality: SQL databases (SQLite, PostgreSQL, MySQL, DuckDB), all spreadsheet formats, flat files (CSV, TSV, Parquet, Feather, Arrow, HDF5), structured data (JSON, YAML, TOML, XML, INI), directed graphs (DOT, GML, GraphML, Mermaid), and the full data science suite (statistical analysis, regression, pattern recognition, time series, geospatial, optimization).
+The base install covers SQL databases (SQLite, PostgreSQL, MySQL), all spreadsheet formats, flat files (CSV, TSV, Parquet, Feather, Arrow, HDF5), structured data (JSON, YAML, TOML, XML, INI), directed graphs (DOT, GML, GraphML, Mermaid), and the full data science suite (statistical analysis, regression, pattern recognition, time series, geospatial, optimization).
+
+DuckDB is not included — it needs `pip install duckdb duckdb-engine`. Oracle and SQL Server are likewise optional; see [Databases](data-sources/databases.md).
 
 ### Additional database drivers
 
@@ -129,7 +131,9 @@ export_graph("g", "mermaid")
 
 File access is confined to the paths in `security.allowed_paths`, which defaults to `["."]` — the process working directory and its subdirectories. Parent-directory traversal (`../`) out of that tree is rejected. Set `LOCALDATA_SECURITY_RESTRICT_PATHS=false` to lift the restriction.
 
-Every SQL statement passes a whitelist validator before it reaches a driver: only `SELECT` and `WITH` are accepted, and `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `ATTACH`, `PRAGMA`, `EXEC` and 16 other operations are rejected with a `SQLSecurityError`. Setting `security.readonly: true` additionally blocks writes disguised as reads — `SELECT ... INTO`, `CREATE TABLE ... AS SELECT`, `COPY ... TO`, `MERGE INTO`.
+Statements sent to `execute_query` and `analyze_query_preview` pass a whitelist validator before reaching a driver: only `SELECT` and `WITH` are accepted, and `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `ATTACH`, `PRAGMA`, `EXEC` and 16 other operations are rejected with a `SQLSecurityError`.
+
+The analytical tools do not go through that gate — they hand their query to pandas directly, so a statement refused by `execute_query` reaches the driver through `analyze_clusters` (issue #25). Treat the query you give an analytical tool as you would any other statement against that database. Setting `security.readonly: true` additionally blocks writes disguised as reads — `SELECT ... INTO`, `CREATE TABLE ... AS SELECT`, `COPY ... TO`, `MERGE INTO`.
 
 Note what this is not: your agent writes the SQL, so the server cannot parameterize it for you. The validator constrains the *operation*, not the values inside it. Treat any query built from untrusted input as your responsibility.
 

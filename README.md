@@ -338,7 +338,7 @@ uv sync --all-extras
 uv run pytest tests/ --ignore=tests/integration
 ```
 
-That command collects 2,312 unit tests. A further 357 integration tests live under `tests/integration/` and need live database services — start them with `docker-compose up -d`, then run `uv run pytest tests/integration/`. The enterprise-scale suite inside that set loads 100K rows into each of 7 database engines and is by far the slowest part.
+That command collects the whole unit suite — over 2,400 tests, and growing. A further 357 integration tests live under `tests/integration/` and need live database services — start them with `docker-compose up -d`, then run `uv run pytest tests/integration/`. The enterprise-scale suite inside that set loads 100K rows into each of 7 database engines and is by far the slowest part.
 
 ## Contributing
 

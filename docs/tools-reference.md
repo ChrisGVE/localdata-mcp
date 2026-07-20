@@ -1152,7 +1152,7 @@ Group rows by similarity across numeric columns.
 | `connection_name` | string | Yes | Database connection name |
 | `query` | string | Yes | SQL query returning the columns to cluster on |
 | `columns` | list of strings | No | Columns to cluster on. Omit to use every numeric column |
-| `method` | string | No | `kmeans`, `dbscan`, `hierarchical`, `gaussian_mixture` (default: `kmeans`) |
+| `method` | string | No | `kmeans`, `dbscan`, `hierarchical`, `gmm`, `spectral` (default: `kmeans`). Any other value raises |
 | `n_clusters` | integer | No | Number of clusters. Omit to let the method choose |
 
 **Returns:** Cluster assignments, centroids, and a silhouette score (JSON)
@@ -1178,7 +1178,7 @@ Flag rows that do not fit the rest of the data.
 | `connection_name` | string | Yes | Database connection name |
 | `query` | string | Yes | SQL query returning the columns to examine |
 | `columns` | list of strings | No | Columns to examine. Omit to use every numeric column |
-| `method` | string | No | `isolation_forest`, `local_outlier_factor`, `one_class_svm` (default: `isolation_forest`) |
+| `method` | string | No | `isolation_forest`, `lof`, `one_class_svm`, `statistical` (default: `isolation_forest`). Any other value raises |
 | `contamination` | number | No | Expected proportion of anomalies, 0.0 to 0.5 (default: 0.1) |
 
 These are multivariate detectors over a set of columns. There is no single
@@ -1207,7 +1207,7 @@ Project numeric columns onto fewer dimensions.
 | `connection_name` | string | Yes | Database connection name |
 | `query` | string | Yes | SQL query returning the columns to reduce |
 | `columns` | list of strings | No | Columns to include. Omit to use every numeric column |
-| `method` | string | No | `pca`, `tsne`, `umap` (default: `pca`) |
+| `method` | string | No | `pca`, `tsne`, `ica` (default: `pca`). `umap` needs the optional `umap-learn` package and raises `ImportError` without it |
 | `n_components` | integer | No | Target number of dimensions (default: 2) |
 
 **Returns:** The reduced components and, for PCA, explained variance (JSON)
@@ -1408,7 +1408,7 @@ Run a Monte Carlo simulation parameterised by query results.
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
 | `query` | string | Yes | SQL query supplying the simulation's parameters |
-| `simulation_type` | string | No | `integration`, `optimization`, `risk_analysis` (default: `integration`) |
+| `simulation_type` | string | No | `integration`, `uncertainty`, `importance`, `mcmc` (default: `integration`). Any other value raises |
 | `n_simulations` | integer | No | Iterations to run (default: 10000) |
 | `columns` | list | No | Columns to draw parameters from (default: all numeric) |
 

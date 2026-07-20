@@ -72,6 +72,43 @@ def example_fixtures() -> None:
         }
     ).to_csv(_fp("ex_regression.csv"), index=False)
 
+    # Three treatments at 20 / 23.5 / 27, so every pairwise post-hoc comparison
+    # is genuinely significant and can be named.
+    per_group = 45
+    pd.DataFrame(
+        {
+            "treatment": np.repeat(["ctrl", "low", "high"], per_group),
+            "response": np.round(
+                np.concatenate(
+                    [
+                        rng.normal(20.0, 3.0, per_group),
+                        rng.normal(23.5, 3.0, per_group),
+                        rng.normal(27.0, 3.0, per_group),
+                    ]
+                ),
+                4,
+            ),
+        }
+    ).to_csv(_fp("ex_anova.csv"), index=False)
+
+    # A transaction log: 30 customers, repeat orders, spread over a year, so RFM
+    # has a real recency spread to score rather than one purchase each.
+    customers = [f"C{i:03d}" for i in range(1, 31)]
+    rows = []
+    for customer in customers:
+        for _ in range(int(rng.integers(3, 10))):
+            rows.append(
+                {
+                    "customer_id": customer,
+                    "order_date": (
+                        pd.Timestamp("2026-01-01")
+                        + pd.Timedelta(days=int(rng.integers(0, 360)))
+                    ).date(),
+                    "amount": round(float(rng.uniform(20, 400)), 2),
+                }
+            )
+    pd.DataFrame(rows).to_csv(_fp("ex_transactions.csv"), index=False)
+
 
 @pytest.fixture
 def manager() -> DatabaseManager:
@@ -384,3 +421,205 @@ class TestCompositionLimits:
         )
 
         assert "error" in result.lower()
+
+
+class TestSegmentationWorkflow:
+    """ "Segmenting customers, then acting on the segments"."""
+
+    @pytest.fixture
+    def sales(self, manager):
+        manager.connect_database("sales", "csv", _fp("ex_transactions.csv"))
+        return manager
+
+    def test_rfm_scores_every_customer_on_three_axes(self, sales):
+        result = json.loads(
+            sales.analyze_rfm(
+                "sales",
+                "SELECT * FROM data_table",
+                customer_column="customer_id",
+                date_column="order_date",
+                value_column="amount",
+            )
+        )
+        first = result["rfm_scores"][0]
+
+        # The page's point is that R separates customers who spent alike.
+        for axis in ("recency", "frequency", "monetary", "R", "F", "M"):
+            assert axis in first
+
+    def test_clustering_finds_the_requested_number_of_segments(self, sales):
+        result = json.loads(
+            sales.analyze_clusters(
+                "sales",
+                "SELECT amount FROM data_table",
+                n_clusters=4,
+            )
+        )
+
+        assert result["n_clusters"] == 4
+        assert len(set(result["labels"])) == 4
+
+
+class TestMoreThanTwoGroups:
+    """The ANOVA example under "From a raw file to a defensible answer"."""
+
+    @pytest.fixture
+    def trials(self, manager):
+        manager.connect_database("trials", "csv", _fp("ex_anova.csv"))
+        return manager
+
+    def test_anova_separates_three_treatments(self, trials):
+        result = json.loads(
+            trials.analyze_anova(
+                "trials",
+                "SELECT * FROM data_table",
+                dependent_var="response",
+                group_var="treatment",
+            )
+        )
+        anova = result["anova_results"]["one_way_response_by_treatment"]
+
+        # The fixture's three means are genuinely apart.
+        assert anova["p_value"] < 0.001
+        assert anova["df_between"] == 2
+
+    def test_post_hoc_names_every_pair(self, trials):
+        """Post-hoc was silently empty for every call before this release."""
+        result = json.loads(
+            trials.analyze_anova(
+                "trials",
+                "SELECT * FROM data_table",
+                dependent_var="response",
+                group_var="treatment",
+            )
+        )
+        post_hoc = result["post_hoc_results"]["one_way_response_by_treatment"]
+        pairs = {frozenset((c["group1"], c["group2"])) for c in post_hoc["comparisons"]}
+
+        assert pairs == {
+            frozenset(("ctrl", "low")),
+            frozenset(("ctrl", "high")),
+            frozenset(("low", "high")),
+        }
+
+
+class TestModelCheckingWorkflow:
+    """`evaluate_model_performance`, from "Modelling and checking the model"."""
+
+    def test_evaluation_reports_bias_next_to_fit(self, manager):
+        manager.connect_database("housing", "csv", _fp("ex_regression.csv"))
+
+        result = json.loads(
+            manager.evaluate_model_performance(
+                "housing",
+                "SELECT * FROM data_table",
+                target_column="target",
+                prediction_column="predicted",
+            )
+        )
+
+        assert result["metrics"]["r2"] > 0.9
+        assert "mean_residual" in result["metrics"]
+
+
+class TestSpatialWorkflow:
+    """ "Spatial analysis" — test for clustering before hunting for clusters."""
+
+    @pytest.fixture
+    def sensors(self, manager):
+        manager.connect_database("sensors", "sqlite", _fp("geo_spatial.sqlite"))
+        return manager
+
+    def test_autocorrelation_detects_the_clustered_field(self, sensors):
+        result = json.loads(
+            sensors.analyze_spatial_autocorrelation(
+                "sensors",
+                "SELECT x, y, value FROM sensors",
+                value_column="value",
+                method="moran",
+            )
+        )
+
+        # The fixture is three well-separated blobs, so this must be significant.
+        assert result["is_significant"] is True
+        assert result["value"] > 0
+
+    def test_autocorrelation_does_not_fire_on_the_shuffled_field(self, sensors):
+        """The contrast the page relies on: random values must not read clustered."""
+        result = json.loads(
+            sensors.analyze_spatial_autocorrelation(
+                "sensors",
+                "SELECT x, y, value FROM noise",
+                value_column="value",
+                method="moran",
+            )
+        )
+
+        assert result["is_significant"] is False
+
+    def test_hotspots_label_each_point(self, sensors):
+        result = json.loads(
+            sensors.find_spatial_hotspots(
+                "sensors",
+                "SELECT x, y, value FROM sensors",
+                value_column="value",
+            )
+        )
+
+        assert result["n_points"] == 60
+        for point in result["points"]:
+            assert "gi_star_z_score" in point
+            assert "is_hotspot" in point
+
+    def test_route_optimization_visits_the_waypoints(self, sensors):
+        result = json.loads(
+            sensors.optimize_route(
+                "sensors",
+                nodes_query="SELECT id, x, y FROM net_nodes",
+                edges_query="SELECT source, target, weight FROM net_edges",
+                waypoints=[0, 8],
+            )
+        )
+
+        assert "error" not in result
+
+
+class TestChunkPagingWorkflow:
+    """`request_data_chunk` and `request_multiple_chunks` from the paging section."""
+
+    @pytest.fixture
+    def buffered(self, experiment):
+        response = json.loads(
+            experiment.execute_query("experiment", "SELECT * FROM data_table")
+        )
+        return experiment, response["metadata"]["query_id"]
+
+    def test_a_chunk_can_be_fetched_by_id(self, buffered):
+        manager, query_id = buffered
+
+        chunk = json.loads(manager.request_data_chunk(query_id, 0))
+
+        assert chunk["data"]
+        assert chunk["metadata"]["rows"] == len(chunk["data"])
+
+    def test_several_chunks_can_be_fetched_at_once(self, buffered):
+        manager, query_id = buffered
+
+        chunks = json.loads(manager.request_multiple_chunks(query_id, "0,1"))
+
+        assert sorted(chunks) == ["0", "1"]
+
+
+class TestQueryLogWorkflow:
+    """`get_query_log` from "When a workflow goes wrong"."""
+
+    def test_query_log_records_a_successful_query(self, experiment):
+        from localdata_mcp.query_audit import get_query_audit_buffer
+
+        get_query_audit_buffer().clear()
+        experiment.execute_query("experiment", "SELECT value FROM data_table")
+
+        log = json.loads(experiment.get_query_log(database="experiment"))
+
+        assert log["total_entries"] >= 1
+        get_query_audit_buffer().clear()
