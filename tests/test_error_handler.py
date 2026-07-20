@@ -3,6 +3,7 @@
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -116,6 +117,35 @@ class TestCustomExceptions:
         assert error.query == "SELECT * FROM large_table"
 
 
+@contextmanager
+def patched_sleep():
+    """Patch time.sleep and record only the calls made by the calling thread.
+
+    Several managers in this package start daemon threads from their
+    constructors, and those threads call time.sleep in a loop. A plain
+    patch("time.sleep") replaces the function process-wide, so those threads
+    stop blocking, spin at full speed, and inflate the call count that a test
+    asserts on -- producing failures like `assert 330 == 1` whose number
+    depends on which other tests ran first.
+
+    Calls from other threads are forwarded to the real sleep so they keep
+    blocking as usual; only the test's own calls are recorded.
+    """
+    owner = threading.get_ident()
+    real_sleep = time.sleep
+    calls = []
+
+    def fake_sleep(seconds=0):
+        if threading.get_ident() == owner:
+            calls.append(seconds)
+        else:
+            real_sleep(seconds)
+
+    with patch("time.sleep", side_effect=fake_sleep) as mock_sleep:
+        mock_sleep.test_thread_calls = calls
+        yield mock_sleep
+
+
 class TestRetryMechanism:
     """Test retry mechanism and policies."""
 
@@ -174,23 +204,22 @@ class TestRetryMechanism:
         value_error = ValueError("Invalid value")
         assert policy.should_retry(value_error, 1) is False
 
-    @patch("time.sleep")  # Mock sleep to speed up tests
-    def test_retryable_operation_success(self, mock_sleep):
+    def test_retryable_operation_success(self):
         """Test successful operation execution."""
         mock_operation = Mock(return_value="success")
 
         policy = RetryPolicy(max_attempts=3, base_delay=0.1)
         retryable_op = RetryableOperation(mock_operation, policy, "test_op")
 
-        result = retryable_op.execute("arg1", kwarg1="value1")
+        with patched_sleep() as mock_sleep:
+            result = retryable_op.execute("arg1", kwarg1="value1")
 
         assert result == "success"
         assert mock_operation.call_count == 1
-        assert mock_sleep.call_count == 0
+        assert len(mock_sleep.test_thread_calls) == 0
         assert len(retryable_op.attempt_history) == 0  # No failures recorded
 
-    @patch("time.sleep")
-    def test_retryable_operation_retry_and_succeed(self, mock_sleep):
+    def test_retryable_operation_retry_and_succeed(self):
         """Test operation that fails first then succeeds."""
         mock_operation = Mock(
             side_effect=[DatabaseConnectionError("Connection failed"), "success"]
@@ -204,15 +233,15 @@ class TestRetryMechanism:
         )
         retryable_op = RetryableOperation(mock_operation, policy, "test_op")
 
-        result = retryable_op.execute()
+        with patched_sleep() as mock_sleep:
+            result = retryable_op.execute()
 
         assert result == "success"
         assert mock_operation.call_count == 2
-        assert mock_sleep.call_count == 1
+        assert len(mock_sleep.test_thread_calls) == 1
         assert len(retryable_op.attempt_history) == 1  # One failure recorded
 
-    @patch("time.sleep")
-    def test_retryable_operation_max_attempts_exceeded(self, mock_sleep):
+    def test_retryable_operation_max_attempts_exceeded(self):
         """Test operation that fails all retry attempts."""
         mock_operation = Mock(side_effect=DatabaseConnectionError("Connection failed"))
 
@@ -224,11 +253,12 @@ class TestRetryMechanism:
         )
         retryable_op = RetryableOperation(mock_operation, policy, "test_op")
 
-        with pytest.raises(DatabaseConnectionError):
-            retryable_op.execute()
+        with patched_sleep() as mock_sleep:
+            with pytest.raises(DatabaseConnectionError):
+                retryable_op.execute()
 
         assert mock_operation.call_count == 2
-        assert mock_sleep.call_count == 1
+        assert len(mock_sleep.test_thread_calls) == 1
         assert len(retryable_op.attempt_history) == 2
 
     def test_retry_decorator(self):
