@@ -77,7 +77,7 @@ localdata-mcp/
 ├── pyproject.toml                # Project metadata and dependencies
 ├── Dockerfile                    # Container build
 ├── docker-compose.yml            # Dev stack with databases
-└── LICENSE                       # MIT License
+└── LICENSE                       # Apache License 2.0
 ```
 
 ## Development workflow
@@ -206,4 +206,4 @@ We follow semantic versioning:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
