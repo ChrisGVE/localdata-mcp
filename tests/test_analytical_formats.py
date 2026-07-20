@@ -19,6 +19,10 @@ def _patch_security_for_tempdir(temp_dir):
 
     mock_cfg_mgr = MagicMock()
     mock_cfg_mgr.get_security_config.return_value = mock_sec_cfg
+    # None means "not configured", so consumers keep their own defaults.
+    mock_cfg_mgr.get_configured_max_concurrent_connections.return_value = None
+    mock_cfg_mgr.get_configured_buffer_timeout.return_value = None
+    mock_cfg_mgr.get_configured_chunk_size.return_value = None
 
     return patch(
         "localdata_mcp.localdata_mcp.get_config_manager",

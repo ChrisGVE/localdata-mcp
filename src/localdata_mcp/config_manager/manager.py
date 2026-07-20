@@ -5,7 +5,7 @@ import threading
 import time
 from dataclasses import fields
 from enum import Enum
-from typing import Any, Dict, Optional, Type
+from typing import Any, Callable, Dict, Optional, Type
 
 from dotenv import load_dotenv
 
@@ -79,6 +79,11 @@ class ConfigManager:
         """Reload configuration from all sources with proper precedence."""
         with self._lock:
             self._config_data = {}
+            # (section, key) pairs the user actually supplied, as opposed
+            # to those _apply_defaults seeded. Needed because several
+            # settings have a current and a legacy home, and "present in
+            # the merged data" cannot tell a default from a choice.
+            self._explicit_keys: set = set()
 
             # 1. Load defaults
             self._apply_defaults()
@@ -89,11 +94,13 @@ class ConfigManager:
             )
             if yaml_data:
                 self._merge_config(yaml_data)
+                self._record_explicit_keys(yaml_data)
 
             # 3. Override with environment variables
             env_data = load_env_config()
             if env_data:
                 self._merge_config(env_data)
+                self._record_explicit_keys(env_data)
 
             # 4. Validate final configuration
             self._validate_config()
@@ -207,6 +214,86 @@ class ConfigManager:
         data = self._config_data.get("connections", {})
         return ConnectionsConfig(**data) if data else ConnectionsConfig()
 
+    def _configured_setting(
+        self,
+        preferred: tuple,
+        legacy: tuple,
+        read_preferred: Callable[[], Any],
+        read_legacy: Callable[[], Any],
+    ) -> Optional[Any]:
+        """Read a setting that has both a current and a legacy home.
+
+        Several values can be written in two sections. The newer sections
+        (``query``, ``connections``) are the documented surface and own
+        the environment variables, so they win; the older ``performance``
+        keys stay honoured when the newer one is absent, so upgrading
+        does not silently drop a working configuration.
+
+        Returns ``None`` when the user set neither, so each caller keeps
+        its own documented default rather than having one imposed here.
+        The two homes carry different historical defaults for the same
+        idea, and quietly picking one would change behaviour for every
+        installation that never configured anything.
+
+        Args:
+            preferred: (section, key) for the current location.
+            legacy: (section, key) for the older location.
+            read_preferred: Reads the value from its validated dataclass.
+            read_legacy: Reads the legacy value from its dataclass.
+
+        Returns:
+            The configured value, or None if neither section sets it.
+        """
+        if preferred in self._explicit_keys:
+            return read_preferred()
+
+        if legacy in self._explicit_keys:
+            return read_legacy()
+
+        return None
+
+    def get_configured_chunk_size(self) -> Optional[int]:
+        """Configured rows per chunk, or None if unset.
+
+        Reads ``query.default_chunk_size`` in preference to the older
+        ``performance.chunk_size``. Set by
+        ``LOCALDATA_QUERY_CHUNK_SIZE``.
+        """
+        return self._configured_setting(
+            ("query", "default_chunk_size"),
+            ("performance", "chunk_size"),
+            lambda: self.get_query_config().default_chunk_size,
+            lambda: self.get_performance_config().chunk_size,
+        )
+
+    def get_configured_buffer_timeout(self) -> Optional[int]:
+        """Configured buffer lifetime in seconds, or None if unset.
+
+        Reads ``query.buffer_timeout_seconds`` in preference to the older
+        ``performance.query_buffer_timeout``. Set by
+        ``LOCALDATA_QUERY_BUFFER_TIMEOUT``.
+        """
+        return self._configured_setting(
+            ("query", "buffer_timeout_seconds"),
+            ("performance", "query_buffer_timeout"),
+            lambda: self.get_query_config().buffer_timeout_seconds,
+            lambda: self.get_performance_config().query_buffer_timeout,
+        )
+
+    def get_configured_max_concurrent_connections(self) -> Optional[int]:
+        """Configured cap on open connections, or None if unset.
+
+        Reads ``connections.max_concurrent`` in preference to the older
+        ``performance.max_concurrent_connections``. Set by
+        ``LOCALDATA_CONNECTIONS_MAX_CONCURRENT``.
+        """
+        return self._configured_setting(
+            ("connections", "max_concurrent"),
+            ("performance", "max_concurrent_connections"),
+            lambda: self.get_connections_config().max_concurrent,
+            lambda: self.get_performance_config().max_concurrent_connections,
+        )
+
     def get_security_config(self):
         """Get security configuration."""
         from ..config_schemas import SecurityConfig
@@ -247,6 +334,13 @@ class ConfigManager:
                 "memory_warning_threshold": 0.85,
             },
         }
+
+    def _record_explicit_keys(self, source: Dict[str, Any]) -> None:
+        """Record which (section, key) pairs a config source supplied."""
+        for section, values in source.items():
+            if isinstance(values, dict):
+                for key in values:
+                    self._explicit_keys.add((section, key))
 
     def _merge_config(self, new_config: Dict[str, Any]) -> None:
         """Deep merge new configuration into existing configuration."""

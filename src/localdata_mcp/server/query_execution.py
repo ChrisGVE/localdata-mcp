@@ -187,7 +187,7 @@ def build_refinement_response(
 def calculate_dynamic_chunk_size(
     memory_budget: MemoryBudget,
     query_analysis: Optional[QueryAnalysis],
-    fallback: int = 1000,
+    fallback: Optional[int] = None,
 ) -> int:
     """Calculate chunk size from memory budget and estimated row size.
 
@@ -196,12 +196,21 @@ def calculate_dynamic_chunk_size(
     Args:
         memory_budget: Current RAM budget.
         query_analysis: Analysis with row size estimate.
-        fallback: Returned when no analysis is available.
+        fallback: Rows per chunk when no analysis is available. Defaults
+            to the configured chunk size (``query.default_chunk_size``,
+            or ``LOCALDATA_QUERY_CHUNK_SIZE``) and to 1000 when nothing
+            is configured — with the row size unknown, a generous chunk
+            beats many small round trips.
 
     Returns:
         Number of rows per chunk (at least 10).
     """
     if query_analysis is None or query_analysis.estimated_row_size_bytes <= 0:
+        if fallback is None:
+            from ..config_manager import get_config_manager
+
+            configured = get_config_manager().get_configured_chunk_size()
+            return configured if configured is not None else 1000
         return fallback
 
     chunk_budget = memory_budget.budget_bytes * 0.10
