@@ -224,16 +224,35 @@ class LLMCommunicationProtocol:
     def _load_chunk_from_source(self, chunk_id: int) -> Optional[pd.DataFrame]:
         """Load a chunk from the data source.
 
-        This is a placeholder implementation. In practice, this would:
-        - Load from QueryBuffer if data is cached
-        - Execute chunked query if loading from database
-        - Read chunk from file if data source is a file
+        ``data_source`` is the row-range reader supplied by whoever built this
+        protocol — a callable taking a zero-based start row and a row count and
+        returning that slice. ``DatabaseManager`` passes one backed by the same
+        streaming buffer that ``next_chunk`` reads, so both tools serve the whole
+        result rather than only the rows held in memory.
 
         Args:
             chunk_id: ID of chunk to load
 
         Returns:
-            DataFrame chunk or None if loading failed
+            DataFrame chunk, or None when no reader was supplied or the range is
+            past the end of the result.
         """
-        logger.debug(f"Loading chunk {chunk_id} from data source")
-        return None
+        if not callable(self.data_source):
+            logger.debug(
+                f"Cannot load chunk {chunk_id}: no row-range reader was supplied"
+            )
+            return None
+
+        chunk_size = self.metadata.chunk_availability.chunk_size
+        if chunk_size <= 0:
+            return None
+
+        start_row = chunk_id * chunk_size
+        logger.debug(
+            f"Loading chunk {chunk_id}: rows {start_row}-{start_row + chunk_size - 1}"
+        )
+
+        chunk = self.data_source(start_row, chunk_size)
+        if chunk is None or chunk.empty:
+            return None
+        return chunk

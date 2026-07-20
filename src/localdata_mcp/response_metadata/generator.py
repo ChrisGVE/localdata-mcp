@@ -43,6 +43,7 @@ class ResponseMetadataGenerator:
         query: str,
         query_analysis: Optional[QueryAnalysis] = None,
         db_name: Optional[str] = None,
+        total_rows: Optional[int] = None,
     ) -> EnhancedResponseMetadata:
         """Generate comprehensive response metadata for a dataset.
 
@@ -52,6 +53,9 @@ class ResponseMetadataGenerator:
             query: Original SQL query
             query_analysis: Pre-computed query analysis
             db_name: Database name
+            total_rows: Rows in the whole result, when ``df`` is only its first
+                chunk. Only the chunk count depends on it; every other measure
+                here describes the sample in ``df``.
 
         Returns:
             Comprehensive response metadata
@@ -77,7 +81,9 @@ class ResponseMetadataGenerator:
             df, complexity_level, token_estimation
         )
         memory_footprint = calculate_memory_footprint(df, token_estimation)
-        chunk_availability = generate_chunk_availability(df, token_estimation)
+        chunk_availability = generate_chunk_availability(
+            df, token_estimation, total_rows
+        )
 
         recommended_action, action_rationale = determine_recommended_action(
             token_estimation, data_quality, complexity_level, len(df)

@@ -212,19 +212,26 @@ def calculate_memory_footprint(
 
 
 def generate_chunk_availability(
-    df: pd.DataFrame, token_estimation: TokenEstimation
+    df: pd.DataFrame,
+    token_estimation: TokenEstimation,
+    total_rows: Optional[int] = None,
 ) -> ChunkAvailability:
     """Generate chunk availability information.
 
     Args:
         df: Result DataFrame.
         token_estimation: Token estimation from the token manager.
+        total_rows: Rows in the whole result. ``df`` is often only the first
+            chunk of a streamed result, and sizing the chunk count from it
+            advertises a fraction of the data as the whole of it. Defaults to
+            ``len(df)`` when the caller does not know better.
 
     Returns:
         Chunk availability dataclass.
     """
     chunk_size = token_estimation.recommended_chunk_size or 1000
-    total_chunks = math.ceil(len(df) / chunk_size) if chunk_size > 0 else 1
+    row_count = len(df) if total_rows is None else max(total_rows, len(df))
+    total_chunks = math.ceil(row_count / chunk_size) if chunk_size > 0 else 1
     available_chunks = list(range(total_chunks))
 
     return ChunkAvailability(

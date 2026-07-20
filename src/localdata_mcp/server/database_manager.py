@@ -2766,6 +2766,26 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
             logger.error(f"Error disconnecting from database '{name}': {e}")
             return f"An error occurred while disconnecting: {e}"
 
+    def _buffered_row_reader(self, query_id: str):
+        """Return a reader for any row range of a buffered result.
+
+        ``LLMCommunicationProtocol`` needs to fetch arbitrary chunks but has no
+        route to the streaming buffer, so it is handed this closure. It reads the
+        same buffer ``next_chunk`` reads, which holds the whole result rather
+        than the first chunk kept on the ``QueryBuffer``.
+        """
+
+        def read(start_row: int, row_count: int):
+            iterator = self.streaming_executor.get_chunk_iterator(
+                query_id, start_row, row_count
+            )
+            try:
+                return next(iterator)
+            except StopIteration:
+                return None
+
+        return read
+
     def execute_query(
         self,
         name: str,
@@ -3007,12 +3027,17 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
 
                 # Generate enhanced response metadata
                 metadata_generator = get_metadata_generator()
+                # first_chunk is the head of a streamed result, so the chunk
+                # count has to be sized from the whole result rather than from
+                # the sample in hand.
                 enhanced_metadata = metadata_generator.generate_metadata(
                     query_id=query_id,
                     df=first_chunk,
                     query=validated_query,
                     query_analysis=query_analysis,
                     db_name=name,
+                    total_rows=streaming_metadata.get("total_rows_processed")
+                    or streaming_metadata.get("estimated_total_rows"),
                 )
 
                 # Check if we should use streaming approach based on data size
@@ -3032,7 +3057,10 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
                     )
 
                     # Create LLM communication protocol
-                    llm_protocol = LLMCommunicationProtocol(enhanced_metadata)
+                    llm_protocol = LLMCommunicationProtocol(
+                        enhanced_metadata,
+                        data_source=self._buffered_row_reader(query_id),
+                    )
 
                     # Store enhanced QueryBuffer with metadata
                     enhanced_query_buffer = QueryBuffer(
@@ -3124,7 +3152,10 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
                 else:
                     # Small result set - return all results
                     # Create LLM communication protocol for small results too
-                    llm_protocol = LLMCommunicationProtocol(enhanced_metadata)
+                    llm_protocol = LLMCommunicationProtocol(
+                        enhanced_metadata,
+                        data_source=self._buffered_row_reader(query_id),
+                    )
 
                     # Store enhanced QueryBuffer with metadata
                     enhanced_query_buffer = QueryBuffer(
@@ -4039,7 +4070,10 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
                     },
                 }
 
-                return json.dumps(metadata_response, indent=2)
+                # The quality report and schema details come back carrying numpy
+                # scalars, which the stdlib encoder refuses. This tool returned
+                # nothing but that refusal for every query it was ever asked about.
+                return safe_dumps(metadata_response, indent=2)
 
         except Exception as e:
             logger.error(f"Error getting query metadata for {query_id}: {e}")
@@ -4073,7 +4107,7 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
                 if chunk_data is None:
                     return f"Chunk {chunk_id} not available for query {query_id}."
 
-                return json.dumps(chunk_data, indent=2)
+                return safe_dumps(chunk_data, indent=2)
 
         except Exception as e:
             logger.error(f"Error requesting chunk {chunk_id} for query {query_id}: {e}")
@@ -4111,7 +4145,7 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
                     chunk_id_list
                 )
 
-                return json.dumps(chunks_data, indent=2)
+                return safe_dumps(chunks_data, indent=2)
 
         except Exception as e:
             logger.error(
