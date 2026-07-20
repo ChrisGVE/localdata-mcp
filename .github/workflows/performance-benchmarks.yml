@@ -6,14 +6,14 @@ on:
     paths:
       - 'src/localdata_mcp/**'
       - 'scripts/**'
-      - 'requirements*.txt'
+      - 'pyproject.toml'
       - '.github/workflows/performance-benchmarks.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'src/localdata_mcp/**'
       - 'scripts/**'
-      - 'requirements*.txt'
+      - 'pyproject.toml'
   schedule:
     # Run weekly performance regression tests on Sundays at 2 AM UTC
     - cron: '0 2 * * 0'
@@ -59,7 +59,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-pip-
     
@@ -72,8 +72,7 @@ jobs:
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
+        pip install -e .[dev]
         # Install additional benchmarking dependencies
         pip install memory_profiler psutil
     
@@ -197,15 +196,15 @@ jobs:
           echo "### Summary Statistics" >> benchmark_report.md
           echo "" >> benchmark_report.md
           python -c "
-import json
-with open('benchmark_results/benchmark_summary.json', 'r') as f:
-    data = json.load(f)
-print(f'- **Total Tests:** {data.get(\"total_tests\", 0)}')
-print(f'- **Success Rate:** {data.get(\"success_rate\", 0):.1%}')
-print(f'- **Avg Processing Rate:** {data.get(\"average_processing_rate\", 0):.0f} rows/sec')
-print(f'- **Avg Memory Usage:** {data.get(\"average_memory_usage_mb\", 0):.1f} MB')
-print(f'- **Performance Improvements:** {data.get(\"performance_improvements\", 0)}')
-print(f'- **Performance Regressions:** {data.get(\"performance_regressions\", 0)}')
+        import json
+        with open('benchmark_results/benchmark_summary.json', 'r') as f:
+            data = json.load(f)
+        print(f'- **Total Tests:** {data.get(\"total_tests\", 0)}')
+        print(f'- **Success Rate:** {data.get(\"success_rate\", 0):.1%}')
+        print(f'- **Avg Processing Rate:** {data.get(\"average_processing_rate\", 0):.0f} rows/sec')
+        print(f'- **Avg Memory Usage:** {data.get(\"average_memory_usage_mb\", 0):.1f} MB')
+        print(f'- **Performance Improvements:** {data.get(\"performance_improvements\", 0)}')
+        print(f'- **Performance Regressions:** {data.get(\"performance_regressions\", 0)}')
           " >> benchmark_report.md 2>/dev/null || echo "Failed to parse summary statistics" >> benchmark_report.md
         else
           echo "❌ **No benchmark results available**" >> benchmark_report.md
@@ -234,27 +233,27 @@ print(f'- **Performance Regressions:** {data.get(\"performance_regressions\", 0)
       run: |
         if [ -f "benchmark_results/benchmark_summary.json" ]; then
           python -c "
-import json
-import sys
-with open('benchmark_results/benchmark_summary.json', 'r') as f:
-    data = json.load(f)
+        import json
+        import sys
+        with open('benchmark_results/benchmark_summary.json', 'r') as f:
+            data = json.load(f)
 
-success_rate = data.get('success_rate', 0)
-regressions = data.get('performance_regressions', 0)
-improvements = data.get('performance_improvements', 0)
+        success_rate = data.get('success_rate', 0)
+        regressions = data.get('performance_regressions', 0)
+        improvements = data.get('performance_improvements', 0)
 
-print(f'Success rate: {success_rate:.1%}')
-print(f'Regressions: {regressions}, Improvements: {improvements}')
+        print(f'Success rate: {success_rate:.1%}')
+        print(f'Regressions: {regressions}, Improvements: {improvements}')
 
-if success_rate < 0.8:
-    print('❌ Low success rate detected!')
-    sys.exit(1)
-elif regressions > improvements and regressions > 0:
-    print('⚠️  Performance regressions detected!')
-    sys.exit(2)
-else:
-    print('✅ Performance benchmarks passed!')
-    sys.exit(0)
+        if success_rate < 0.8:
+            print('❌ Low success rate detected!')
+            sys.exit(1)
+        elif regressions > improvements and regressions > 0:
+            print('⚠️  Performance regressions detected!')
+            sys.exit(2)
+        else:
+            print('✅ Performance benchmarks passed!')
+            sys.exit(0)
           "
         else
           echo "No benchmark summary found - treating as failure"
@@ -308,20 +307,20 @@ else:
         
         if [ -f "results/benchmark_results/benchmark_summary.json" ]; then
           python3 -c "
-import json
-with open('results/benchmark_results/benchmark_summary.json', 'r') as f:
-    data = json.load(f)
+        import json
+        with open('results/benchmark_results/benchmark_summary.json', 'r') as f:
+            data = json.load(f)
 
-regressions = data.get('performance_regressions', 0)
-success_rate = data.get('success_rate', 1.0)
+        regressions = data.get('performance_regressions', 0)
+        success_rate = data.get('success_rate', 1.0)
 
-if success_rate < 0.7 or regressions > 3:
-    print('🚨 ALERT: Significant performance issues detected!')
-    print(f'Success Rate: {success_rate:.1%}')
-    print(f'Regressions: {regressions}')
-    # In production, this could trigger alerts to Slack, email, etc.
-else:
-    print('✅ Performance metrics within acceptable range')
+        if success_rate < 0.7 or regressions > 3:
+            print('🚨 ALERT: Significant performance issues detected!')
+            print(f'Success Rate: {success_rate:.1%}')
+            print(f'Regressions: {regressions}')
+            # In production, this could trigger alerts to Slack, email, etc.
+        else:
+            print('✅ Performance metrics within acceptable range')
           "
         else
           echo "⚠️ No benchmark data available for regression analysis"
