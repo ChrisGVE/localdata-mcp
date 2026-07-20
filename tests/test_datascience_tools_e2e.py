@@ -500,3 +500,95 @@ class TestBusinessIntelligenceTools:
         assert (
             p_value < 0.05
         ), f"a 25-point conversion gap must be significant, got p={p_value}"
+
+
+# ---------------------------------------------------------------------------
+# Sampling and estimation
+# ---------------------------------------------------------------------------
+
+
+class TestSamplingTools:
+    def test_sample_is_drawn_from_the_population(self, db: DatabaseManager) -> None:
+        """A simple random sample of 30 from 120 rows, with the design recorded."""
+        _connect(db, "smp", "ds_experiment.csv")
+        result = _json(
+            db.generate_sample(
+                "smp", ALL_ROWS, sampling_method="simple_random", sample_size=30
+            )
+        )
+
+        assert len(result["sample_data"]) == 30
+        summary = result["sampling_results"]
+        assert summary["sampling_method"] == "simple_random"
+        assert summary["population_size"] == 120
+        assert len(set(summary["sample_indices"])) == 30, "sample must not repeat a row"
+
+    def test_stratified_sample_preserves_the_strata(self, db: DatabaseManager) -> None:
+        """Groups A and B are equal halves, so a stratified sample must stay balanced."""
+        _connect(db, "str", "ds_experiment.csv")
+        result = _json(
+            db.generate_sample(
+                "str",
+                ALL_ROWS,
+                sampling_method="stratified",
+                sample_size=20,
+                stratify_column="group",
+            )
+        )
+
+        assert result["sampling_results"]["sampling_method"] == "stratified"
+        groups = [row["group"] for row in result["sample_data"]]
+        assert len(groups) == 20
+        assert set(groups) == {"A", "B"}, "both strata must be represented"
+        assert abs(groups.count("A") - groups.count("B")) <= 2, (
+            f"equal strata must sample evenly, got A={groups.count('A')} "
+            f"B={groups.count('B')}"
+        )
+
+    def test_bootstrap_brackets_the_sample_mean(self, db: DatabaseManager) -> None:
+        """The bootstrap CI must contain the statistic it resampled."""
+        _connect(db, "bst", "ds_experiment.csv")
+        result = _json(
+            db.bootstrap_statistic(
+                "bst", ALL_ROWS, column="value", statistic="mean", n_bootstrap=300
+            )
+        )
+
+        assert result["n_bootstrap"] == 300
+        estimate = result["bootstrap_results"][0]
+        observed = estimate["original_statistic"]
+
+        # The pooled mean of the two groups (10.0 and 12.5) sits near 11.25.
+        assert 10.0 < observed < 12.5, f"unexpected sample mean: {observed}"
+
+        low, high = estimate["confidence_intervals"]["percentile"]
+        assert (
+            low < observed < high
+        ), f"CI [{low}, {high}] excludes the estimate {observed}"
+        assert estimate["standard_error"] > 0
+
+    def test_monte_carlo_runs_the_requested_draws(self, db: DatabaseManager) -> None:
+        """The simulation must report the design it actually ran."""
+        _connect(db, "mc", "ds_experiment.csv")
+        result = _json(
+            db.monte_carlo_simulate(
+                "mc", ALL_ROWS, n_simulations=500, columns=["value"]
+            )
+        )
+
+        assert result["n_simulations"] == 500
+        assert result["simulation_type"] == "integration"
+        assert result["monte_carlo_results"], "simulation returned no results"
+
+    def test_bayesian_estimate_reports_a_posterior(self, db: DatabaseManager) -> None:
+        """A normal prior over the value column must yield a posterior estimate."""
+        _connect(db, "bay", "ds_experiment.csv")
+        result = _json(
+            db.bayesian_estimate(
+                "bay", ALL_ROWS, column="value", prior_distribution="normal"
+            )
+        )
+
+        assert result["estimation_type"] == "posterior"
+        assert result["prior_distribution"] == "normal"
+        assert result["bayesian_results"], "estimation returned no results"
