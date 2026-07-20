@@ -59,7 +59,6 @@ Solve a linear programming problem from database data.
 | `constraint_columns` | list[str] | None | Columns defining the constraint matrix rows |
 | `constraint_values` | list[float] | None | Right-hand side values for each constraint |
 | `constraint_types` | list[str] | None | Constraint directions: `"<="`, `">="`, `"="` |
-| `bounds` | list[tuple] | None | Variable bounds as `[(lb, ub), ...]`; use `None` for unbounded |
 | `method` | str | `"highs"` | Solver: `highs`, `highs-ds`, `highs-ipm`, `interior-point`, `revised simplex` |
 | `integer_variables` | list[int] | None | Indices of variables that must be integers (MIP) |
 
@@ -99,8 +98,7 @@ Solve a nonlinear constrained optimisation problem.
 | `constraint_functions` | list[str] | None | Python expressions for constraint functions |
 | `constraint_types` | list[str] | None | Constraint types: `"eq"` (equality) or `"ineq"` (inequality ≥ 0) |
 | `bounds_columns` | list[str] | None | Two columns providing lower and upper bounds `[lb_col, ub_col]` |
-| `method` | str | `"SLSQP"` | scipy.optimize method: `SLSQP`, `COBYLA`, `trust-constr` |
-| `multi_objective` | bool | `False` | Enable multi-objective mode |
+| `method` | str | `"SLSQP"` | scipy.optimize method: `SLSQP` or `COBYLA` |
 
 **Return format**
 
@@ -137,7 +135,6 @@ Perform comprehensive network analysis on graph edge data.
 | `weight_column` | str | None | Column with edge weights (omit for unweighted) |
 | `directed` | bool | `False` | Whether the graph is directed |
 | `include_centrality` | bool | `True` | Compute centrality measures for all nodes |
-| `algorithms` | list[str] | None | Restrict to specific algorithms (e.g., `["shortest_path", "mst"]`) |
 
 **Return format**
 
@@ -153,7 +150,6 @@ Perform comprehensive network analysis on graph edge data.
   },
   "shortest_paths": {"A": {"B": {"distance": 4.2, "path": ["A", "C", "B"]}}},
   "minimum_spanning_tree": {"edges": [...], "total_weight": 28.3},
-  "max_flow": {"value": 15.0, "details": {...}},
   "tsp_solution": {"tour": [...], "total_distance": 94.1},
   "centrality_measures": {
     "degree": {"node1": 0.4, ...},
@@ -182,7 +178,6 @@ Solve a minimum-cost assignment (matching) problem.
 | `task_id_column` | str | None | Column with task identifiers (uses column names if omitted) |
 | `method` | str | `"hungarian"` | Algorithm: `"hungarian"` (scipy linear_sum_assignment) |
 | `maximize` | bool | `False` | Maximise total value instead of minimising cost |
-| `allow_partial` | bool | `False` | Allow some agents/tasks to go unassigned |
 
 **Return format**
 
@@ -270,7 +265,6 @@ constraint_types = ["eq"]
 |---|---|
 | `SLSQP` | Smooth objectives with equality and inequality constraints (default) |
 | `COBYLA` | Derivative-free; inequality constraints only; noisy objectives |
-| `trust-constr` | Robust for large-scale problems; supports equality and inequality |
 
 **Lagrange multipliers** in the result show the sensitivity of the optimal objective to each
 constraint — a large multiplier indicates the constraint is binding and relaxing it would
@@ -287,9 +281,9 @@ minimise total cost. The `solve_assignment_problem` tool uses the Hungarian algo
 The cost matrix is read from the database: one row per agent, one column per task, with each
 cell containing the cost of assigning that agent to that task.
 
-**Rectangular matrices:** When M ≠ N, the solver handles the imbalance. With `allow_partial=True`,
-agents or tasks may be left unassigned; unassigned items appear in `unassigned_agents` and
-`unassigned_tasks`.
+**Rectangular matrices:** When M != N the solver handles the imbalance, and the
+surplus agents or tasks are left unassigned. They come back in
+`unassigned_agents` and `unassigned_tasks`.
 
 **Maximisation:** Set `maximize=True` to convert to a profit-maximisation problem (internally
 negates the cost matrix).
@@ -303,7 +297,9 @@ negates the cost matrix).
 
 ### Network Optimisation
 
-NetworkX must be installed. Check `NETWORKX_AVAILABLE` before calling.
+NetworkX must be installed. It is a required dependency rather than an optional
+extra, so it is present in a normal install; `check_geospatial_capabilities`
+reports its version if you want to confirm.
 
 **Supported algorithms:**
 
@@ -315,7 +311,7 @@ NetworkX must be installed. Check `NETWORKX_AVAILABLE` before calling.
 | TSP heuristic | Near-optimal tour visiting every node once | Delivery route optimisation |
 | Centrality measures | Degree, betweenness, closeness, eigenvector | Network importance ranking |
 
-Pass `algorithms` to run only a subset; omitting it runs all applicable algorithms, which may be
+Every applicable algorithm runs; there is no parameter to select a subset, which may be
 slow on large graphs (>1000 nodes).
 
 **Graph properties** in the result include node count, edge count, density, connectivity status,

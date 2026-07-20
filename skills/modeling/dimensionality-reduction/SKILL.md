@@ -22,12 +22,14 @@ Reduce data to fewer dimensions for visualization, pattern discovery, or feature
 
 4. **Interpret PCA components.** Describe each component by its top-loading features. Name the components in domain terms when possible (e.g., "size factor" if height, weight, and volume all load heavily on PC1).
 
-5. **Try t-SNE or UMAP for visualization.** If PCA explains less than 50% of variance in 2D (data has complex nonlinear structure), call `reduce_dimensions` with "tsne" or "umap". These methods preserve local structure better but:
+5. **Try t-SNE for visualization.** If PCA explains less than 50% of variance in 2D (data has complex nonlinear structure), call `reduce_dimensions` with `"tsne"`. It preserves local structure better, but:
    - Distances between distant points are not meaningful
-   - Results depend on hyperparameters (perplexity for t-SNE, n_neighbors for UMAP)
+   - Results depend on hyperparameters (perplexity)
    - Not suitable for downstream modeling, only for visualization
 
-6. **Compare methods.** Assess which reduction best reveals structure: clusters, gradients, or outliers in the 2D view. PCA is interpretable; t-SNE/UMAP reveal groupings.
+   `"umap"` raises `ImportError` unless the optional `umap-learn` package is installed, so do not reach for it as a default. `"ica"` is the other method the tool accepts.
+
+6. **Compare methods.** Assess which reduction best reveals structure: clusters, gradients, or outliers in the 2D view. PCA is interpretable; t-SNE reveals groupings.
 
 7. **Present results.** Provide:
    - Method selected and rationale

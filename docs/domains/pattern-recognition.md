@@ -85,7 +85,7 @@ problems. Query the flagged indices back and look at them.
 ### `reduce_dimensions`
 
 Answers "can these many correlated columns be summarised in a few?" `method`
-selects `pca` (default), `tsne` or `umap`, and `n_components` sets the output
+selects `pca` (default), `tsne` or `ica`, and `n_components` sets the output
 width (default 2). PCA additionally reports explained variance, which says how
 much information survived the projection. The ICA and LDA transformers listed
 under *Available Analyses* have no MCP tool in this release.
@@ -196,7 +196,7 @@ Non-linear manifold learning that is faster than t-SNE and preserves both local 
 | `min_dist` | `0.1` | Minimum distance between embedded points |
 | `metric` | `"euclidean"` | Distance metric |
 
-**Dependency note:** UMAP requires the `umap-learn` package. The transformer falls back gracefully if it is not installed.
+**Dependency note:** `umap` requires the optional `umap-learn` package. Without it the call raises `ImportError` -- there is no graceful fallback, so treat UMAP as unavailable unless you have installed it yourself.
 
 ---
 
