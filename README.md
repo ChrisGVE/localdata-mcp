@@ -241,7 +241,7 @@ Agents in `agents/` take on longer analyses that span several tools:
 | `data-scientist` | Composes multi-step pipelines across domains when the right approach is not obvious |
 | `statistical-analyst` | Hypothesis tests, ANOVA, effect sizes, sampling design, bootstrap estimation |
 | `ml-analyst` | Clustering, anomaly detection, dimensionality reduction, regression modeling |
-| `forecaster` | Decomposition, stationarity testing, model selection, ensemble forecasts |
+| `forecaster` | Decomposition, stationarity testing, ARIMA/ETS choice, forecasts with uncertainty bounds |
 | `bi-analyst` | A/B tests, cohort analysis, CLV, attribution, funnels |
 | `graph-data-analyst` | Centrality, community detection, path finding, graph export |
 | `geospatial-analyst` | Coordinate systems, distances, spatial clustering, accessibility |

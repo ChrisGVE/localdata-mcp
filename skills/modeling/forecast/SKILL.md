@@ -27,12 +27,14 @@ Decompose a time series, test for stationarity, and generate forecasts with conf
    - Volatility and any structural breaks
    - Whether differencing is needed (non-stationary series)
 
-5. **Generate forecasts.** Call `forecast_time_series` with the database name, column, and desired forecast horizon. The tool will select an appropriate model (ARIMA, ETS, or SARIMA) based on the series characteristics. Request confidence intervals at the 80% and 95% levels.
+5. **Choose the model and forecast.** Call `forecast_time_series` with the database name, the date and value columns, a `horizon`, and a `method`. There is no automatic selection: `method` accepts `"arima"` (the default) or `"ets"`, and nothing else — `"sarima"` and `"prophet"` are rejected with `ValueError: Unknown forecast method`. Decide from step 4: pick `"arima"` when the series is stationary or becomes so after differencing, `"ets"` when a smooth trend and seasonality dominate and the residuals are not autocorrelated. If neither is clearly better, run both and compare.
+
+   Confidence intervals come back with the forecast at a single level set by the model's `alpha`; the tool does not accept a level argument, so do not promise the user a choice of 80% and 95%.
 
 6. **Present the forecast.** Display results in a structured format:
    - Forecast values for each future period
-   - 80% and 95% confidence interval bounds
-   - Model selected and why
+   - The `forecast_lower_ci` and `forecast_upper_ci` bounds, labelled with the `confidence_level` the response reports
+   - Which method you chose and what in step 4 led you to it
    - Key assumptions and limitations
 
 7. **Assess forecast reliability.** Comment on:
