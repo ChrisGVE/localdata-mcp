@@ -26,6 +26,7 @@ tools-reference
 configuration
 data-sources/index
 domains/index
+architecture/index
 plugin
 error-classification
 changelog
