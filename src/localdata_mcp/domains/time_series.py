@@ -25,6 +25,7 @@ import json
 import time
 import warnings
 from dataclasses import dataclass
+from dataclasses import fields as dataclass_fields
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -49,13 +50,6 @@ from statsmodels.tsa.vector_ar.var_model import VAR
 from statsmodels.tsa.vector_ar.vecm import VECM
 
 from ..logging_manager import get_logger
-from ..pipeline.base import (
-    AnalysisPipelineBase,
-    CompositionMetadata,
-    PipelineResult,
-    PipelineState,
-    StreamingConfig,
-)
 
 logger = get_logger(__name__)
 
@@ -74,12 +68,26 @@ class TimeSeriesResult:
     metadata: Dict[str, Any]
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert result to dictionary for JSON serialization."""
+        """Convert result to dictionary for JSON serialization.
+
+        Derived from the dataclass fields of the *concrete* result type, so every
+        subclass exports its own payload. Listing the base fields by hand instead
+        silently dropped everything a subclass added — forecasts came back
+        carrying only the four base keys and no forecast values (issue #23).
+        """
+
+        def _jsonable(value: Any) -> Any:
+            if isinstance(value, np.ndarray):
+                return value.tolist()
+            if isinstance(value, dict):
+                return {k: _jsonable(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [_jsonable(item) for item in value]
+            return value
+
         return {
-            "analysis_type": self.analysis_type,
-            "series_info": self.series_info,
-            "execution_time": self.execution_time,
-            "metadata": self.metadata,
+            field.name: _jsonable(getattr(self, field.name))
+            for field in dataclass_fields(self)
         }
 
 
@@ -129,8 +137,15 @@ class ChangePointResult(TimeSeriesResult):
     segments_analysis: List[Dict[str, Any]]
 
 
-class TimeSeriesAnalyzer(AnalysisPipelineBase):
-    """Comprehensive time series analysis transformer with multiple analysis types."""
+class TimeSeriesAnalyzer(BaseEstimator, TransformerMixin):
+    """Comprehensive time series analysis transformer with multiple analysis types.
+
+    This is a scikit-learn style transformer: it implements its own ``fit`` and
+    ``transform`` and drives analysis through ``analyze``/``fit_forecast``. It
+    deliberately does *not* extend ``AnalysisPipelineBase`` — that base declares
+    five abstract pipeline hooks none of these analyzers implement or use, which
+    made every subclass impossible to instantiate (issue #23).
+    """
 
     def __init__(
         self,
@@ -470,12 +485,13 @@ class ARIMAForecaster(TimeSeriesAnalyzer):
             ).fit()
 
         # Generate forecasts
-        forecast_result = self.model_.forecast(steps=self.forecast_steps, alpha=0.05)
-        forecast_values = (
-            forecast_result
-            if isinstance(forecast_result, np.ndarray)
-            else np.array([forecast_result])
-        )
+        # `alpha` is not a parameter of forecast() — it belongs to get_forecast(),
+        # which supplies the confidence intervals below. statsmodels warns now and
+        # will raise from 0.15.
+        forecast_result = self.model_.forecast(steps=self.forecast_steps)
+        # statsmodels returns a Series here, which is array-like: wrapping it in a
+        # list would nest the forecast one level deeper than callers expect.
+        forecast_values = np.asarray(forecast_result).reshape(-1)
 
         # Get confidence intervals
         forecast_ci = self.model_.get_forecast(steps=self.forecast_steps).conf_int()
