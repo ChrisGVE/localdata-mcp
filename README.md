@@ -17,7 +17,7 @@
 
 <!-- mcp-name: io.github.chrisgve/localdata-mcp -->
 
-LocalData MCP gives LLM agents access to local and remote data — databases, files, graphs, and structured documents — along with a full data science toolkit for analysis and modeling. It exposes 52 MCP tools across 13 database types and 20+ file formats, with memory-bounded streaming so agents can work safely on large datasets without exceeding available RAM.
+LocalData MCP gives LLM agents access to local and remote data — databases, files, graphs, and structured documents — along with a full data science toolkit for analysis and modeling. It exposes 53 MCP tools across 13 database types and 20+ file formats, with memory-bounded streaming so agents can work safely on large datasets without exceeding available RAM.
 
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
 
@@ -110,21 +110,21 @@ Navigate and edit TOML, JSON, and YAML files as navigable trees. Supports full C
 | `get_value` / `set_value` / `delete_key` | Read and write properties |
 | `list_keys` | List key-value pairs at a node |
 | `move_node` | Relocate a node within the tree |
-| `export_structured` | Export as TOML, JSON, or YAML |
+| `export_structured` | Export as TOML, JSON, YAML, or Markdown |
 
-### Graph (14 tools)
+### Graph (7 tools)
 
 Work with DOT, GML, GraphML, and Mermaid files as directed multigraphs. Supports full CRUD on nodes and edges, shortest-path and all-paths queries, structural statistics, and multi-format export.
 
 | Tool | Description |
 | --- | --- |
-| `get_node_graph` / `get_neighbors` / `get_edges` | Navigate the graph |
-| `set_node_graph` / `delete_node_graph` | Create or remove nodes |
+| `get_neighbors` / `get_edges` | Traverse from a node |
 | `add_edge` / `remove_edge` | Manage edges |
-| `get_value_graph` / `set_value_graph` / `delete_key_graph` / `list_keys_graph` | Node properties |
-| `find_path` | Shortest or all paths between two nodes |
+| `find_path` | Shortest path or all paths between two nodes |
 | `get_graph_stats` | Node/edge counts, density, DAG validation |
-| `export_graph` | Export as DOT, GML, GraphML, or Mermaid |
+| `export_graph` | Export as DOT, GML, GraphML, Mermaid, or Markdown |
+
+Node-level operations reuse the tree tools above: `get_node`, `set_node`, `delete_node`, `list_keys`, `get_value`, `set_value`, and `delete_key` detect a graph connection and treat their `path` argument as a node ID. `get_children` and `move_node` are tree-only.
 
 ### Search and Transform (2 tools)
 
@@ -137,7 +137,7 @@ Work with DOT, GML, GraphML, and Mermaid files as directed multigraphs. Supports
 
 | Tool | Description |
 | --- | --- |
-| `export_schema` | Export full schema as JSON |
+| `export_schema` | Export schema as JSON Schema, Python dataclasses, TypeScript interfaces, or SQL DDL |
 | `get_query_log` | Recent query execution history |
 | `get_error_log` | Recent error log |
 
@@ -146,7 +146,7 @@ Work with DOT, GML, GraphML, and Mermaid files as directed multigraphs. Supports
 | Tool | Description |
 | --- | --- |
 | `check_compatibility` | Verify API backward compatibility |
-| `get_metrics` | Server performance and resource metrics |
+| `get_metrics` | Prometheus metrics text. Registered only when metrics collection is enabled, which is the default |
 
 ### Data Science (12 tools)
 
@@ -213,6 +213,36 @@ Multi-sheet spreadsheets are fully supported: each sheet becomes a separately qu
 
 **Sampling and Estimation** — bootstrap confidence intervals, Bayesian estimation, Monte Carlo simulation, and stratified sampling.
 
+## Claude Code plugin
+
+The repository doubles as a Claude Code plugin. Its manifest (`.claude-plugin/plugin.json`) registers the `localdata` MCP server via `uvx localdata-mcp` and ships 18 skills and 11 agents that drive the tools above.
+
+Skills are grouped by domain under `skills/`:
+
+| Group | Skills |
+| --- | --- |
+| `exploration/` | `explore-data`, `data-quality`, `find-reference-data` |
+| `statistical/` | `hypothesis-test`, `ab-test`, `analyze-correlations`, `sampling-estimation` |
+| `modeling/` | `regression`, `cluster-analysis`, `anomaly-detection`, `dimensionality-reduction`, `forecast`, `geospatial`, `optimization` |
+| `graph-data/` | `graph-data-explore` |
+| `workflow/` | `data-pipeline`, `research-pipeline`, `process-control` |
+
+Agents in `agents/` take on longer analyses that span several tools:
+
+| Agent | Scope |
+| --- | --- |
+| `data-explorer` | Profiles an unfamiliar dataset and reports schema, quality, and candidate analyses |
+| `data-scientist` | Composes multi-step pipelines across domains when the right approach is not obvious |
+| `statistical-analyst` | Hypothesis tests, ANOVA, effect sizes, sampling design, bootstrap estimation |
+| `ml-analyst` | Clustering, anomaly detection, dimensionality reduction, regression modeling |
+| `forecaster` | Decomposition, stationarity testing, model selection, ensemble forecasts |
+| `bi-analyst` | A/B tests, cohort analysis, CLV, attribution, funnels |
+| `graph-data-analyst` | Centrality, community detection, path finding, graph export |
+| `geospatial-analyst` | Coordinate systems, distances, spatial clustering, accessibility |
+| `operations-analyst` | Statistical process control, optimization, capacity planning |
+| `research-analyst` | Power analysis, assumption documentation, reproducible reporting |
+| `data-researcher` | Finds and prepares public reference datasets to enrich your data |
+
 ## Architecture
 
 - **Intention-driven interface** — tools accept semantic parameters ("find strong correlations") rather than requiring statistical procedure names or threshold values
@@ -222,26 +252,30 @@ Multi-sheet spreadsheets are fully supported: each sheet becomes a separately qu
 
 ## Configuration
 
-LocalData MCP uses environment variables for optional settings. The defaults work for most cases.
+LocalData MCP reads settings from a YAML config file, from environment variables, or from both; environment variables win. The defaults work for most cases. The most frequently changed variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `LOCALDATA_MEMORY_LIMIT_MB` | `2048` | Maximum memory per query result (MB) |
-| `LOCALDATA_MAX_CONNECTIONS` | `10` | Maximum concurrent database connections |
-| `LOCALDATA_CHUNK_SIZE` | `500` | Default rows per streaming chunk |
-| `LOCALDATA_BUFFER_TTL` | `600` | Streaming buffer expiry in seconds |
-| `LOCALDATA_WORKING_DIR` | process cwd | Root directory for file access (file paths are restricted to this tree) |
+| `LOCALDATA_MEMORY_LIMIT_MB` | `2048` | Memory ceiling for query results, in MB |
+| `LOCALDATA_CONNECTIONS_MAX_CONCURRENT` | `10` | Maximum simultaneous database connections |
+| `LOCALDATA_QUERY_CHUNK_SIZE` | `100` | Rows per streaming chunk |
+| `LOCALDATA_QUERY_BUFFER_TIMEOUT` | `600` | Seconds a streaming buffer is kept before expiry |
+| `LOCALDATA_SECURITY_RESTRICT_PATHS` | `true` | Confine file access to the configured `security.allowed_paths` (default `["."]`, the process working directory) |
+| `LOCALDATA_CONFIG` | unset | Path to a YAML config file, bypassing config-file discovery |
 
-Set in your MCP server configuration under `"env"`, or in a `.env` file in the working directory.
+Set them in your MCP server configuration under `"env"`, or in a `.env` file in the working directory. The full set — staging, memory budget, disk budget, per-database `LOCALDATA_DB_<NAME>_*` definitions — is documented in the [configuration reference](docs/configuration.md).
 
 ## Documentation
 
-- [Database Connection Guide](DATABASE_CONNECTIONS.md) — connection strings, driver setup, and security practices
-- [Docker Usage Guide](DOCKER_USAGE.md) — container deployment and configuration
-- [Advanced Examples](ADVANCED_EXAMPLES.md) — production-ready usage patterns
-- [Troubleshooting Guide](TROUBLESHOOTING.md) — common issues and solutions
-- [FAQ](FAQ.md) — frequently asked questions
-- [API Reference](https://localdata-mcp.readthedocs.io) — full tool and parameter reference
+- [Getting started](docs/getting-started.md) — install, configure an MCP client, run the first queries
+- [Tools reference](docs/tools-reference.md) — every tool with parameters, return shape, and composition hints
+- [Configuration reference](docs/configuration.md) — config file discovery, every environment variable, every default
+- [Data sources](docs/data-sources/index.md) — connection strings and quirks per database and file format
+- [Data science domains](docs/domains/index.md) — what each of the eight analytical domains does
+- [Error classification](docs/error-classification.md) — structured error types, retryability, and suggested recovery
+- [Docker usage](DOCKER_USAGE.md) — container deployment and configuration
+- [Troubleshooting](TROUBLESHOOTING.md) — common failures and their fixes
+- [Rendered documentation](https://localdata-mcp.readthedocs.io) — the same pages, searchable
 
 ## Development
 
@@ -249,10 +283,10 @@ Set in your MCP server configuration under `"env"`, or in a `.env` file in the w
 git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
 uv sync --all-extras
-uv run pytest
+uv run pytest tests/ --ignore=tests/integration
 ```
 
-The test suite includes 1,600+ unit tests, 234+ integration tests, and 62 enterprise-scale tests across 7 database types with 100K rows each.
+That command collects 2,312 unit tests. A further 357 integration tests live under `tests/integration/` and need live database services — start them with `docker-compose up -d`, then run `uv run pytest tests/integration/`. The enterprise-scale suite inside that set loads 100K rows into each of 7 database engines and is by far the slowest part.
 
 ## Contributing
 

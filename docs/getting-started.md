@@ -31,8 +31,10 @@ uvx localdata-mcp
 ```bash
 git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
-uv sync --dev
+uv sync --extra dev
 ```
+
+The dev tools are declared as a project extra, not a uv dependency group, so `uv sync --dev` will not install them.
 
 ### What's included
 
@@ -121,7 +123,13 @@ export_graph("g", "mermaid")
 
 ## Security
 
-LocalData MCP restricts file access to the current working directory and its subdirectories. Parent directory traversal (`../`) is blocked. SQL queries are parameterized to prevent injection. A maximum of 10 concurrent connections are allowed.
+File access is confined to the paths in `security.allowed_paths`, which defaults to `["."]` — the process working directory and its subdirectories. Parent-directory traversal (`../`) out of that tree is rejected. Set `LOCALDATA_SECURITY_RESTRICT_PATHS=false` to lift the restriction.
+
+Every SQL statement passes a whitelist validator before it reaches a driver: only `SELECT` and `WITH` are accepted, and `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `ATTACH`, `PRAGMA`, `EXEC` and 16 other operations are rejected with a `SQLSecurityError`. Setting `security.readonly: true` additionally blocks writes disguised as reads — `SELECT ... INTO`, `CREATE TABLE ... AS SELECT`, `COPY ... TO`, `MERGE INTO`.
+
+Note what this is not: your agent writes the SQL, so the server cannot parameterize it for you. The validator constrains the *operation*, not the values inside it. Treat any query built from untrusted input as your responsibility.
+
+Concurrent connections are capped at 10 (`LOCALDATA_CONNECTIONS_MAX_CONCURRENT`).
 
 ## Next steps
 

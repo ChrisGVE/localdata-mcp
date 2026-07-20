@@ -31,14 +31,17 @@ git remote add upstream https://github.com/ChrisGVE/localdata-mcp.git
 ### Set up the development environment
 
 ```bash
-# Using uv (recommended)
-uv sync --dev
+# Using uv (recommended). The dev tools are an extra, not a uv dependency group,
+# so `uv sync --dev` will not install them — use --extra dev or --all-extras.
+uv sync --extra dev
 
 # Or using pip
 python -m venv venv
 source venv/bin/activate   # macOS/Linux
 pip install -e ".[dev]"
 ```
+
+`uv sync --all-extras` additionally installs the `modern-databases` and `enterprise` drivers, which the integration tests need.
 
 ### Verify the setup
 
@@ -72,13 +75,27 @@ localdata-mcp/
 │   ├── integration/              # Integration tests (databases, formats)
 │   ├── pipeline/                 # Pipeline tests
 │   └── assets/                   # Test data files
-├── docs/                         # Sphinx documentation (Markdown)
+├── docs/                         # Sphinx documentation (Markdown/MyST)
+├── skills/                       # Claude Code skills, grouped by domain
+│   ├── exploration/              # explore-data, data-quality, find-reference-data
+│   ├── statistical/              # hypothesis-test, ab-test, analyze-correlations, sampling-estimation
+│   ├── modeling/                 # regression, cluster-analysis, forecast, geospatial, optimization, ...
+│   ├── graph-data/               # graph-data-explore
+│   └── workflow/                 # data-pipeline, research-pipeline, process-control
+├── agents/                       # Claude Code agent definitions (one .md per agent)
+├── .claude-plugin/plugin.json    # Claude Code plugin manifest
+├── server.json                   # MCP registry entry
+├── examples/                     # Runnable examples and sample config files
+├── scripts/                      # Test-data generation and integration-test runners
 ├── .github/                      # CI workflows and issue templates
 ├── pyproject.toml                # Project metadata and dependencies
 ├── Dockerfile                    # Container build
 ├── docker-compose.yml            # Dev stack with databases
-└── LICENSE                       # Apache License 2.0
+├── LICENSE                       # Apache License 2.0
+└── NOTICE                        # Attribution notice required by Apache 2.0
 ```
+
+Each skill is a directory holding a single `SKILL.md`; the directory name is the skill name and must match the `name` field in the file's frontmatter. Place a new skill in the domain directory it belongs to rather than at the top of `skills/`. Version bumps must stay in step across `pyproject.toml`, `.claude-plugin/plugin.json`, and `server.json`.
 
 ## Development workflow
 
