@@ -19,6 +19,7 @@ def run_hypothesis_test(
     test_type: str = "auto",
     alpha: float = 0.05,
     alternative: str = "two-sided",
+    group_column: Optional[str] = None,
     **kwargs,
 ) -> Dict[str, Any]:
     """
@@ -29,6 +30,8 @@ def run_hypothesis_test(
         test_type: Type of hypothesis test to perform
         alpha: Significance level
         alternative: Alternative hypothesis direction
+        group_column: Column defining the groups to compare. Naming it makes
+            automatic selection ('auto') run a group comparison.
         **kwargs: Additional parameters for specific tests
 
     Returns:
@@ -45,7 +48,11 @@ def run_hypothesis_test(
 
     # Initialize and run hypothesis testing transformer
     transformer = HypothesisTestingTransformer(
-        test_type=test_type, alpha=alpha, alternative=alternative, **kwargs
+        test_type=test_type,
+        alpha=alpha,
+        alternative=alternative,
+        group_column=group_column,
+        **kwargs,
     )
 
     # Fit and transform

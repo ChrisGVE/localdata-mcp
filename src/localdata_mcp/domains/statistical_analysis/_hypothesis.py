@@ -17,6 +17,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from ...logging_manager import get_logger
 from ._base import StatisticalTestResult
+from ._group_comparison import compare_groups, independent_ttest_result
 
 logger = get_logger(__name__)
 
@@ -46,6 +47,10 @@ class HypothesisTestingTransformer(BaseEstimator, TransformerMixin):
         Whether to calculate effect sizes (Cohen's d, Cramer's V, etc.)
     check_assumptions : bool, default=True
         Whether to check statistical assumptions
+    group_column : str, default=None
+        Column whose values define the groups to compare. When set, automatic
+        selection ('auto') answers the two-sample question the caller asked
+        instead of only profiling the columns.
 
     Attributes:
     -----------
@@ -66,6 +71,7 @@ class HypothesisTestingTransformer(BaseEstimator, TransformerMixin):
         correction: Optional[str] = None,
         calculate_effect_size: bool = True,
         check_assumptions: bool = True,
+        group_column: Optional[str] = None,
     ):
         self.test_type = test_type
         self.alpha = alpha
@@ -74,6 +80,7 @@ class HypothesisTestingTransformer(BaseEstimator, TransformerMixin):
         self.correction = correction
         self.calculate_effect_size = calculate_effect_size
         self.check_assumptions = check_assumptions
+        self.group_column = group_column
         self._validate_parameters()
 
     def fit(self, X, y=None):
@@ -133,9 +140,17 @@ class HypothesisTestingTransformer(BaseEstimator, TransformerMixin):
             raise ValueError("alternative must be 'two-sided', 'less', or 'greater'")
 
     def _perform_automatic_testing(self, data: pd.DataFrame):
-        """Automatically select and perform appropriate tests."""
+        """Automatically select and perform appropriate tests.
+
+        When the caller named a grouping column, the question is "do these
+        groups differ?" — so the comparison is run first and reported first.
+        The column profile (normality, correlation, association) follows as
+        supporting context.
+        """
         numeric_cols = data.select_dtypes(include=[np.number]).columns
         categorical_cols = data.select_dtypes(include=["object", "category"]).columns
+
+        self._compare_named_groups(data, numeric_cols)
 
         # Normality tests for numeric columns
         for col in numeric_cols:
@@ -151,6 +166,29 @@ class HypothesisTestingTransformer(BaseEstimator, TransformerMixin):
             for i, col1 in enumerate(categorical_cols):
                 for col2 in categorical_cols[i + 1 :]:
                     self._test_chi_square(data, col1, col2)
+
+    def _compare_named_groups(self, data: pd.DataFrame, numeric_cols) -> None:
+        """Compare each numeric column across the caller's grouping column.
+
+        A no-op when no grouping column was named, which keeps automatic
+        selection unchanged for callers that only hand over a frame.
+        """
+        group_column = self.group_column
+        if not group_column or group_column not in data.columns:
+            return
+
+        for value_column in numeric_cols:
+            if value_column == group_column:
+                continue
+            self.test_results_.extend(
+                compare_groups(
+                    data,
+                    value_column=value_column,
+                    group_column=group_column,
+                    alpha=self.alpha,
+                    alternative=self.alternative,
+                )
+            )
 
     def _perform_specific_test(self, data: pd.DataFrame, test_type: str):
         """Perform a specific type of test."""
@@ -421,67 +459,28 @@ class HypothesisTestingTransformer(BaseEstimator, TransformerMixin):
             logger.warning(f"One-sample t-test failed for {col_name}: {e}")
 
     def _independent_ttest(self, data: pd.DataFrame, num_col: str, cat_col: str):
-        """Perform independent samples t-test."""
-        try:
-            # Get unique categories (limit to 2 for t-test)
-            categories = data[cat_col].value_counts().head(2).index
-            if len(categories) < 2:
-                return
+        """Perform independent samples t-test on the two largest categories."""
+        categories = data[cat_col].value_counts().head(2).index
+        if len(categories) < 2:
+            return
 
-            group1 = data[data[cat_col] == categories[0]][num_col].dropna()
-            group2 = data[data[cat_col] == categories[1]][num_col].dropna()
+        group1 = data[data[cat_col] == categories[0]][num_col].dropna()
+        group2 = data[data[cat_col] == categories[1]][num_col].dropna()
+        if len(group1) < 2 or len(group2) < 2:
+            return
 
-            if len(group1) < 2 or len(group2) < 2:
-                return
-
-            # Perform t-test
-            t_stat, p_value = stats.ttest_ind(group1, group2, equal_var=self.equal_var)
-
-            # Calculate Cohen's d
-            pooled_std = np.sqrt(
-                ((len(group1) - 1) * group1.var() + (len(group2) - 1) * group2.var())
-                / (len(group1) + len(group2) - 2)
-            )
-            cohens_d = (group1.mean() - group2.mean()) / pooled_std
-
-            # Effect size interpretation
-            abs_d = abs(cohens_d)
-            if abs_d >= 0.8:
-                effect_desc = "large"
-            elif abs_d >= 0.5:
-                effect_desc = "medium"
-            elif abs_d >= 0.2:
-                effect_desc = "small"
-            else:
-                effect_desc = "negligible"
-
-            interpretation = f"{'Significant' if p_value <= self.alpha else 'Non-significant'} difference between groups ({effect_desc} effect)"
-
-            result = StatisticalTestResult(
-                test_name=f"Independent t-test ({num_col} by {cat_col})",
-                statistic=t_stat,
-                p_value=p_value,
-                degrees_of_freedom=len(group1) + len(group2) - 2,
-                effect_size=abs_d,
-                interpretation=interpretation,
-                additional_info={
-                    "numeric_column": num_col,
-                    "grouping_column": cat_col,
-                    "group1": str(categories[0]),
-                    "group2": str(categories[1]),
-                    "group1_mean": group1.mean(),
-                    "group2_mean": group2.mean(),
-                    "group1_size": len(group1),
-                    "group2_size": len(group2),
-                    "cohens_d": cohens_d,
-                    "effect_description": effect_desc,
-                    "equal_var_assumed": self.equal_var,
-                },
-            )
+        result = independent_ttest_result(
+            group1=group1,
+            group2=group2,
+            labels=(str(categories[0]), str(categories[1])),
+            value_column=num_col,
+            group_column=cat_col,
+            alpha=self.alpha,
+            equal_var=self.equal_var,
+            alternative=self.alternative,
+        )
+        if result is not None:
             self.test_results_.append(result)
-
-        except Exception as e:
-            logger.warning(f"Independent t-test failed for {num_col} by {cat_col}: {e}")
 
     def _paired_ttest(self, data: pd.DataFrame, col1: str, col2: str):
         """Perform paired samples t-test."""

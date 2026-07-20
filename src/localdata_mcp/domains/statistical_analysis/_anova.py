@@ -160,9 +160,12 @@ class ANOVAAnalysisTransformer(BaseEstimator, TransformerMixin):
             for cat_col in categorical_cols:
                 try:
                     self._one_way_anova_single(data, num_col, cat_col)
-                except Exception as e:
+                except ValueError as exc:
+                    # Only unusable data is tolerated here: a column pair that
+                    # scipy/statsmodels refuses. Anything else is a defect and
+                    # must surface rather than leave an empty result behind.
                     logger.warning(
-                        f"One-way ANOVA failed for {num_col} by {cat_col}: {e}"
+                        f"One-way ANOVA failed for {num_col} by {cat_col}: {exc}"
                     )
 
     def _one_way_anova_single(self, data: pd.DataFrame, num_col: str, cat_col: str):
@@ -342,51 +345,60 @@ class ANOVAAnalysisTransformer(BaseEstimator, TransformerMixin):
     def _perform_post_hoc_analysis(
         self, data: pd.DataFrame, num_col: str, cat_col: str, anova_key: str
     ):
-        """Perform post-hoc pairwise comparisons."""
-        if self.post_hoc == "tukey":
-            try:
-                # Tukey HSD test
-                tukey_result = pairwise_tukeyhsd(
-                    data[num_col], data[cat_col], alpha=self.alpha
-                )
+        """Perform post-hoc pairwise comparisons.
 
-                # Convert to structured format
-                post_hoc_summary = {
-                    "method": "Tukey HSD",
-                    "alpha": self.alpha,
-                    "comparisons": [],
+        ``pairwise_tukeyhsd`` returns a results object whose ``data`` attribute
+        is the raw observation array, not a table of comparisons. The
+        comparisons live in the row-aligned ``meandiffs`` / ``pvalues`` /
+        ``confint`` / ``reject`` arrays, with the group labels of each row
+        given by the summary table.
+        """
+        if self.post_hoc != "tukey":
+            return
+
+        try:
+            tukey_result = pairwise_tukeyhsd(
+                data[num_col], data[cat_col], alpha=self.alpha
+            )
+        except ValueError as exc:
+            # Degenerate input — a single group, or a group with no spread.
+            logger.warning(f"Tukey post-hoc test could not be run: {exc}")
+            return
+
+        self.post_hoc_results_[anova_key] = {
+            "method": "Tukey HSD",
+            "alpha": self.alpha,
+            "comparisons": self._tukey_comparisons(tukey_result),
+        }
+
+    @staticmethod
+    def _tukey_comparisons(tukey_result) -> List[Dict[str, Any]]:
+        """Turn a Tukey HSD result into one dict per pairwise comparison."""
+        # summary().data is [header, *rows]; each row starts with the two
+        # group labels, in the same order as the numeric arrays below.
+        labelled_rows = tukey_result.summary().data[1:]
+        mean_diffs = tukey_result.meandiffs
+        p_values = tukey_result.pvalues
+        confidence_intervals = tukey_result.confint
+        rejected = tukey_result.reject
+
+        if len(labelled_rows) != len(mean_diffs):
+            raise ValueError(
+                f"Tukey summary has {len(labelled_rows)} rows but "
+                f"{len(mean_diffs)} mean differences — cannot pair them"
+            )
+
+        comparisons: List[Dict[str, Any]] = []
+        for index, row in enumerate(labelled_rows):
+            comparisons.append(
+                {
+                    "group1": str(row[0]),
+                    "group2": str(row[1]),
+                    "mean_diff": float(mean_diffs[index]),
+                    "p_value": float(p_values[index]),
+                    "significant": bool(rejected[index]),
+                    "lower_ci": float(confidence_intervals[index][0]),
+                    "upper_ci": float(confidence_intervals[index][1]),
                 }
-
-                # Extract pairwise comparisons
-                for i in range(len(tukey_result.groupsunique)):
-                    for j in range(i + 1, len(tukey_result.groupsunique)):
-                        group1 = tukey_result.groupsunique[i]
-                        group2 = tukey_result.groupsunique[j]
-
-                        # Find the corresponding result
-                        mask = (
-                            (tukey_result.data["group1"] == group1)
-                            & (tukey_result.data["group2"] == group2)
-                        ) | (
-                            (tukey_result.data["group1"] == group2)
-                            & (tukey_result.data["group2"] == group1)
-                        )
-
-                        if mask.any():
-                            row = tukey_result.data[mask].iloc[0]
-                            post_hoc_summary["comparisons"].append(
-                                {
-                                    "group1": str(group1),
-                                    "group2": str(group2),
-                                    "mean_diff": row["meandiff"],
-                                    "p_value": row["p-adj"],
-                                    "significant": row["reject"],
-                                    "lower_ci": row["lower"],
-                                    "upper_ci": row["upper"],
-                                }
-                            )
-
-                self.post_hoc_results_[anova_key] = post_hoc_summary
-
-            except Exception as e:
-                logger.warning(f"Tukey post-hoc test failed: {e}")
+            )
+        return comparisons

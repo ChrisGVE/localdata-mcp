@@ -153,6 +153,50 @@ def export_yaml(
 # ---------------------------------------------------------------------------
 
 
+def _is_branch(value: Any) -> bool:
+    """Whether a reconstructed value deserves a heading of its own.
+
+    Mappings always do. A list does when it holds structure; a list of plain
+    scalars reads better as a single bullet on its parent.
+    """
+    if isinstance(value, dict):
+        return True
+    return isinstance(value, list) and any(
+        isinstance(item, (dict, list)) for item in value
+    )
+
+
+def _as_markdown_node(name: str, value: Any) -> Dict[str, Any]:
+    """Convert one reconstructed (name, value) pair into a markdown node.
+
+    ``reconstruct_tree`` returns the plain nested dict a caller would write to
+    JSON or YAML, whereas the markdown renderer works on nodes carrying
+    "name" / "properties" / "children" / "value". This is the translation
+    between the two; without it every node renders as an empty heading.
+    """
+    if isinstance(value, dict):
+        properties: Dict[str, Any] = {}
+        children: List[Dict[str, Any]] = []
+        for key, item in value.items():
+            if _is_branch(item):
+                children.append(_as_markdown_node(str(key), item))
+            else:
+                properties[str(key)] = item
+        return {"name": name, "properties": properties, "children": children}
+
+    if isinstance(value, list):
+        return {
+            "name": name,
+            "properties": {},
+            "children": [
+                _as_markdown_node(f"{name}[{index}]", item)
+                for index, item in enumerate(value)
+            ],
+        }
+
+    return {"name": name, "value": value, "properties": {}, "children": []}
+
+
 def _export_markdown(
     manager: TreeStorageManager,
     path: Optional[str] = None,
@@ -161,7 +205,8 @@ def _export_markdown(
     from .markdown_export import export_tree_markdown
 
     tree = reconstruct_tree(manager, path)
-    result = export_tree_markdown(tree)
+    nodes = [_as_markdown_node(str(name), value) for name, value in tree.items()]
+    result = export_tree_markdown(nodes)
     return result["content"]
 
 

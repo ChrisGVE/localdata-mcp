@@ -147,6 +147,7 @@ def tool_hypothesis_test(
         test_type=test_type,
         alpha=alpha,
         alternative=alternative,
+        group_column=group_column,
     )
 
 
