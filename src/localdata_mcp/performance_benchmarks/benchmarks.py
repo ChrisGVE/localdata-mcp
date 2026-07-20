@@ -51,7 +51,7 @@ class TokenBenchmark:
             try:
                 # Estimate tokens for the DataFrame result
                 estimation = self.token_manager.estimate_tokens_for_query_result(
-                    total_rows=len(df), sample_df=df.head(min(100, len(df)))
+                    row_count=len(df), sample_df=df.head(min(100, len(df)))
                 )
 
                 execution_time = time.time() - start_time
