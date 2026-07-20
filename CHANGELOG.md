@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- sphinx-start -->
 
+## [2.0.1] - 2026-07-20
+
+### Fixed
+- Performance benchmarks workflow was invalid YAML and had never executed. Embedded
+  Python scripts written at column 0 terminated the enclosing `run:` block scalar,
+  so GitHub could not parse the file and every run completed with zero jobs.
+- Performance benchmarks workflow installed dependencies from `requirements.txt` and
+  `requirements-dev.txt`, which no longer exist; it now installs from `pyproject.toml`.
+- Plugin manifest and contributing guide still referenced the MIT licence after the
+  migration to Apache 2.0.
+
+### Changed
+- Skills are grouped into five domain directories (exploration, statistical, modeling,
+  graph-data, workflow). Eight skills moved; `graph-explore` is now `graph-data-explore`.
+- Ten skills added: data-quality, find-reference-data, anomaly-detection,
+  dimensionality-reduction, geospatial, optimization, hypothesis-test,
+  sampling-estimation, process-control, research-pipeline.
+- Five agents added: data-researcher, data-scientist, geospatial-analyst,
+  operations-analyst, research-analyst. `graph-analyst` is now `graph-data-analyst`.
+- `statistical-analyst` covers sampling design and estimation alongside hypothesis testing.
+
 ## [2.0.0] - 2026-04-06
 
 ### Added
