@@ -1,6 +1,6 @@
 [project]
 name = "localdata-mcp"
-version = "2.0.0"
+version = "2.0.1"
 description = "MCP server giving LLM agents access to databases, files, graphs, and a full data science toolkit — 52 tools across 13 database types and 20+ file formats."
 readme = "README.md"
 authors = [
