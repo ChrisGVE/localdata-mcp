@@ -106,11 +106,31 @@ jobs:
         echo "Selected benchmark type: ${BENCHMARK_TYPE}"
         echo "Dataset sizes: ${DATASET_SIZES}"
     
+    # Regression detection is only meaningful against a baseline recorded by
+    # an earlier run. Without this restore the results directory is fresh
+    # every time, run_regression_tests finds no baseline_results.json, and
+    # the gate has nothing to compare against.
+    - name: Restore benchmark baseline
+      uses: actions/cache/restore@v4
+      with:
+        path: benchmark_baseline
+        key: benchmark-baseline-py${{ matrix.python-version }}-${{ github.run_id }}
+        restore-keys: |
+          benchmark-baseline-py${{ matrix.python-version }}-
+
     - name: Run performance benchmarks
       run: |
         # Create results directory
         mkdir -p benchmark_results
-        
+
+        # Seed the run with the restored baseline, if there is one.
+        if [ -f "benchmark_baseline/baseline_results.json" ]; then
+          cp benchmark_baseline/baseline_results.json benchmark_results/
+          echo "Restored performance baseline from a previous run"
+        else
+          echo "No previous baseline; this run will record one"
+        fi
+
         # Set benchmark parameters based on type
         case "${{ steps.config.outputs.benchmark_type }}" in
           "quick")
@@ -217,6 +237,27 @@ jobs:
           echo "- \`$file\`" >> benchmark_report.md
         done || echo "No result files found" >> benchmark_report.md
     
+    # The baseline tracks main: a push to main records the new reference
+    # point, and pull-request runs compare against it without moving it.
+    - name: Refresh benchmark baseline (main only)
+      if: github.ref == 'refs/heads/main' && success()
+      run: |
+        mkdir -p benchmark_baseline
+        latest=$(ls -t benchmark_results/benchmark_results_*.json 2>/dev/null | head -1)
+        if [ -n "$latest" ]; then
+          cp "$latest" benchmark_baseline/baseline_results.json
+          echo "Recorded new performance baseline from $latest"
+        else
+          echo "No results file produced; keeping the previous baseline"
+        fi
+
+    - name: Save benchmark baseline (main only)
+      if: github.ref == 'refs/heads/main' && success()
+      uses: actions/cache/save@v4
+      with:
+        path: benchmark_baseline
+        key: benchmark-baseline-py${{ matrix.python-version }}-${{ github.run_id }}
+
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
       if: always()
@@ -241,19 +282,37 @@ jobs:
         success_rate = data.get('success_rate', 0)
         regressions = data.get('performance_regressions', 0)
         improvements = data.get('performance_improvements', 0)
+        baseline_comparisons = data.get('baseline_comparisons', 0)
 
         print(f'Success rate: {success_rate:.1%}')
-        print(f'Regressions: {regressions}, Improvements: {improvements}')
+
+        # Streaming is designed to be slower than batch in exchange for
+        # bounded memory, so streaming-vs-batch never gates the build.
+        for entry in data.get('streaming_vs_batch', []):
+            print(
+                f'ℹ️  {entry[\"scenario\"]}: streaming '
+                f'{entry[\"streaming_slower_percent\"]:.1f}% slower than batch '
+                '(informational)'
+            )
 
         if success_rate < 0.8:
             print('❌ Low success rate detected!')
             sys.exit(1)
-        elif regressions > improvements and regressions > 0:
-            print('⚠️  Performance regressions detected!')
-            sys.exit(2)
-        else:
+
+        if baseline_comparisons == 0:
+            print('ℹ️  No baseline available - regression gate not evaluated')
             print('✅ Performance benchmarks passed!')
             sys.exit(0)
+
+        print(f'Regressions: {regressions}, Improvements: {improvements} '
+              f'(from {baseline_comparisons} baseline comparisons)')
+
+        if regressions > improvements and regressions > 0:
+            print('⚠️  Performance regressions detected against baseline!')
+            sys.exit(2)
+
+        print('✅ Performance benchmarks passed!')
+        sys.exit(0)
           "
         else
           echo "No benchmark summary found - treating as failure"
@@ -302,9 +361,10 @@ jobs:
       run: |
         echo "Analyzing performance trends..."
         
-        # This is a placeholder for more sophisticated regression analysis
-        # In a real implementation, you would compare against historical data
-        
+        # performance_regressions counts only comparisons against the cached
+        # baseline from an earlier run; streaming-vs-batch is excluded by
+        # design (streaming trades throughput for bounded memory).
+
         if [ -f "results/benchmark_results/benchmark_summary.json" ]; then
           python3 -c "
         import json

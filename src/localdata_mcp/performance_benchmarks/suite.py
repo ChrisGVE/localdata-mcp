@@ -20,7 +20,7 @@ from ..config_manager import PerformanceConfig
 from ..logging_manager import get_logger, get_logging_manager
 from ..streaming import StreamingQueryExecutor, create_streaming_source
 from .benchmarks import StreamingBenchmark, TokenBenchmark
-from .comparison import generate_comparisons, run_regression_tests
+from .comparison import generate_mode_comparisons, run_regression_tests
 from .generators import DatasetGenerator
 from .models import BenchmarkConfig, BenchmarkResult, ComparisonResult
 from .monitoring import PerformanceMonitor
@@ -45,7 +45,10 @@ class PerformanceBenchmarkSuite:
         """
         self.config = config or BenchmarkConfig()
         self.results: List[BenchmarkResult] = []
+        # Comparisons against the recorded baseline — these gate the build.
         self.comparisons: List[ComparisonResult] = []
+        # Streaming-vs-batch comparisons — informational only, never a gate.
+        self.mode_comparisons: List[ComparisonResult] = []
 
         # Initialize benchmarking components
         self.streaming_benchmark = StreamingBenchmark()
@@ -81,14 +84,24 @@ class PerformanceBenchmarkSuite:
             self._run_token_benchmarks()
             self._run_streaming_benchmarks()
             self._run_memory_benchmarks()
-            run_regression_tests(self.config, self.results, self.comparisons)
-            generate_comparisons(self.results, self.comparisons)
+            self._run_regression_tests()
+            generate_mode_comparisons(self.results, self.mode_comparisons)
 
             if self.config.save_detailed_metrics:
-                save_detailed_results(self.config, self.results, self.comparisons)
+                save_detailed_results(
+                    self.config,
+                    self.results,
+                    self.comparisons,
+                    self.mode_comparisons,
+                )
 
             if self.config.generate_reports:
-                generate_reports(self.config, self.results, self.comparisons)
+                generate_reports(
+                    self.config,
+                    self.results,
+                    self.comparisons,
+                    self.mode_comparisons,
+                )
 
             execution_time = time.time() - start_time
 
@@ -99,12 +112,23 @@ class PerformanceBenchmarkSuite:
                 success_rate=calculate_success_rate(self.results),
             )
 
-            return generate_summary(self.results, self.comparisons, self.config)
+            return generate_summary(
+                self.results, self.comparisons, self.config, self.mode_comparisons
+            )
 
         except Exception as e:
             logger.error(f"Comprehensive benchmark failed: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
+
+    def _run_regression_tests(self):
+        """Compare this run against the recorded baseline.
+
+        A method rather than a direct call so that callers selecting a
+        subset of phases can disable it the same way they disable the
+        other `_run_*` phases (see scripts/run_benchmarks.py).
+        """
+        run_regression_tests(self.config, self.results, self.comparisons)
 
     def _run_token_benchmarks(self):
         """Run token counting and estimation benchmarks."""
