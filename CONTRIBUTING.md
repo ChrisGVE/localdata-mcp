@@ -161,7 +161,15 @@ docker-compose down
 ### Security
 
 - Validate all inputs at system boundaries
-- Use parameterized queries for SQL
+- Route every agent-supplied query through `SQLQueryParser`
+  (`src/localdata_mcp/query_parser.py`). The agent writes the SQL, so there is
+  nothing to parameterize; what protects the database is a whitelist that admits
+  `SELECT` and `WITH` and rejects the other 25 named operations, plus a check
+  that refuses multiple statements in one call. Never open a query path that
+  bypasses it
+- Parameterize any SQL the server itself composes from a value it did not write —
+  a table name, a filter, a limit. That is a different case from the agent's
+  query, and binding is the right tool for it
 - Restrict file access to allowed directories
 - Handle errors without exposing sensitive information
 

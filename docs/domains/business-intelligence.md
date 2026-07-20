@@ -16,8 +16,9 @@ Use this domain when you need to:
 - Identify bottlenecks in a multi-step user funnel
 
 All tools accept a SQL query, execute it against the named connection, and return a
-JSON-serializable result. Row loading is capped at 500,000 rows by default; pass `max_rows`
-to override.
+JSON-serializable result. Row loading is capped at 500,000 rows
+(`MAX_ANALYSIS_ROWS`, `datascience_tools.py:22`). No MCP tool exposes a way to
+raise that cap — narrow the query instead.
 
 ---
 
@@ -309,16 +310,37 @@ Via MCP tool call:
 
 ### Multi-step workflow: RFM then CLV
 
+This one is the Python domain API, not the MCP surface. `analyze_rfm` here is
+`localdata_mcp.domains.business_intelligence.analyze_rfm`, which takes a
+DataFrame and an `amount_column`; the MCP tool of the same name takes a
+connection and a query and calls its parameter `value_column`. `calculate_clv`
+has no MCP tool at all.
+
 ```python
+import pandas as pd
+from localdata_mcp.domains.business_intelligence import analyze_rfm, calculate_clv
+
+# df has columns customer_id, date, amount; date must be datetime, not string
+df["date"] = pd.to_datetime(df["date"])
+
 # Step 1: Segment customers
-rfm = analyze_rfm(data=df, customer_column="cid", date_column="dt", amount_column="amt")
+rfm = analyze_rfm(df, customer_column="customer_id", date_column="date", amount_column="amount")
 
 # Step 2: Calculate CLV and compare across RFM segments
-clv = calculate_clv(data=df, customer_column="cid", date_column="dt", amount_column="amt")
+clv = calculate_clv(df, customer_column="customer_id", date_column="date", amount_column="amount")
 
 # Step 3: Join and analyse — Champions should have highest CLV
-import pandas as pd
 merged = pd.DataFrame(rfm.rfm_scores).merge(
     pd.DataFrame(clv.clv_scores), on="customer_id"
 )
 ```
+
+Two constraints this example depends on:
+
+- `calculate_clv` accepts `customer_column` but does not honour it — it groups on
+  a column literally named `customer_id` and raises `KeyError: 'customer_id'`
+  otherwise. Rename the column before calling it.
+- `analyze_rfm` keeps whatever the customer column was called, so the merge key
+  above is `customer_id` only because the input column is. It also needs enough
+  spread in the monetary values to form quartiles; a near-constant column fails
+  with `ValueError: Bin edges must be unique`.
