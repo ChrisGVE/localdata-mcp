@@ -100,8 +100,12 @@ execute_query("mydb", "SELECT * FROM users LIMIT 10")
 
 ```python
 connect_database("sales", "csv", "./sales_data.csv")
-execute_query("sales", "SELECT product, SUM(amount) FROM data GROUP BY product")
+execute_query("sales", "SELECT product, SUM(amount) FROM data_table GROUP BY product")
 ```
+
+A single-table file is loaded into a table named `data_table` regardless of the
+file name or the connection name. `describe_database("sales")` lists what a
+connection actually exposes.
 
 ### Navigate a JSON config file
 

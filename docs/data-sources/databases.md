@@ -61,6 +61,15 @@ mysql://user:password@host:3306/dbname?ssl=true
 
 DuckDB is an embedded analytical database well-suited to columnar workloads and large aggregations. It runs in-process, so no server is required.
 
+DuckDB support is not part of the base install or any extra. Install both the
+engine and its SQLAlchemy dialect first, or `connect_database` fails:
+
+```bash
+pip install duckdb duckdb-engine
+```
+
+Pass a plain path — the server adds the `duckdb:///` scheme itself.
+
 ```python
 connect_database("analytics", "duckdb", "./analytics.duckdb")
 execute_query("analytics", "SELECT year, SUM(revenue) FROM sales GROUP BY year ORDER BY year")
@@ -77,11 +86,11 @@ DuckDB supports a wide SQL dialect including window functions, list aggregates, 
 | `list_databases()` | Show all active connections and their types |
 | `describe_database(name)` | List tables and views with row counts |
 | `describe_table(name, table)` | Show column names, types, and constraints |
-| `find_table(name, pattern)` | Search table names by substring or pattern |
+| `find_table(table_name)` | Report which connections hold a table of that name. It searches every active connection and takes no connection argument |
 | `execute_query(name, sql)` | Run a SQL SELECT statement |
-| `next_chunk(name, buffer_id)` | Retrieve the next chunk from a buffered result |
+| `next_chunk(query_id, start_row, chunk_size)` | Retrieve a further slice of a buffered result |
 
-Results larger than 100 rows are automatically buffered. Use `next_chunk` to retrieve subsequent pages. See the [flat files documentation](flat-files.md) for the full chunking pattern.
+Large results are chunked and buffered, and `next_chunk` is keyed by the `query_id` the first response returns rather than by the connection. See the [flat files documentation](flat-files.md) for the full chunking pattern.
 
 ## Security considerations
 

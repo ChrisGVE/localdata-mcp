@@ -24,26 +24,32 @@ Complete reference for connecting to all supported data sources with connection 
 File-based SQL database, ideal for local development and embedded use.
 
 **Connection String Format:**
+
+A plain filesystem path, or `:memory:`. The server prepends the `sqlite:///`
+scheme itself, so do not include it — `"sqlite:///data/mydata.db"` becomes
+`sqlite:///sqlite:///data/mydata.db`, which connects to a new empty database
+named after the string rather than to your file.
+
 ```
-sqlite:///path/to/database.db
+path/to/database.db
 ```
 
 **MCP Tool Call:**
 ```python
-connect_database("local_db", "sqlite", "sqlite:///data/mydata.db")
+connect_database("local_db", "sqlite", "data/mydata.db")
 ```
 
 **Examples:**
 
 ```python
 # In-memory database (for testing)
-connect_database("test", "sqlite", "sqlite:///:memory:")
+connect_database("test", "sqlite", ":memory:")
 
-# Local file
-connect_database("myapp", "sqlite", "sqlite:////var/data/app.db")
+# Absolute path
+connect_database("myapp", "sqlite", "/var/data/app.db")
 
 # Relative path
-connect_database("project", "sqlite", "sqlite:///./data.db")
+connect_database("project", "sqlite", "./data.db")
 ```
 
 **Special Notes:**
@@ -139,28 +145,44 @@ connect_database("mariadb_server", "mysql", "mysql+pymysql://user:pass@mariadb.s
 
 Fast analytical SQL engine, great for interactive analysis.
 
-**Connection String Format:**
+DuckDB support is not installed by any dependency set, including the extras.
+Install it alongside LocalData MCP before connecting:
+
+```bash
+pip install duckdb duckdb-engine
 ```
-duckdb:///path/to/database.db
-duckdb:///:memory:
+
+Both packages are needed: `duckdb` is the engine, `duckdb-engine` is the
+SQLAlchemy dialect that lets the server open a `duckdb://` URL. Without
+`duckdb`, `connect_database` reports "duckdb library is required for DuckDB
+connections"; that message does not mention the dialect, so installing only
+`duckdb` moves the failure rather than fixing it.
+
+**Connection String Format:**
+
+A plain filesystem path, or `:memory:`. As with SQLite, the server prepends the
+`duckdb:///` scheme itself — do not include it.
+
+```
+path/to/database.db
 ```
 
 **MCP Tool Call:**
 ```python
-connect_database("analytics", "duckdb", "duckdb:///data/analytics.db")
+connect_database("analytics", "duckdb", "data/analytics.db")
 ```
 
 **Examples:**
 
 ```python
 # In-memory for fast analysis
-connect_database("temp", "duckdb", "duckdb:///:memory:")
+connect_database("temp", "duckdb", ":memory:")
 
 # Persistent file
-connect_database("warehouse", "duckdb", "duckdb:////data/warehouse.db")
+connect_database("warehouse", "duckdb", "/data/warehouse.db")
 
-# Read Parquet directly
-connect_database("parquet_src", "duckdb", "duckdb:///data/")
+# A directory DuckDB can read Parquet from
+connect_database("parquet_src", "duckdb", "data/")
 ```
 
 **Special Notes:**
@@ -569,32 +591,29 @@ connect_database("hierarchy", "json", "/data/taxonomy.json")
 
 ---
 
-### JSONL (JSON Lines)
+### JSONL (JSON Lines) — not supported
 
-One JSON object per line, ideal for streaming and large files.
+There is no `jsonl` connection type. `connect_database(..., "jsonl", ...)` is
+rejected with `Unsupported db_type: jsonl`, and pointing the `json` type at a
+newline-delimited file fails while parsing the second line
+(`Extra data: line 2 column 1`), because that loader expects one JSON document
+per file.
 
-**Connection String:** Path to JSONL file
+Convert the file before connecting. Both of these produce something LocalData MCP
+reads:
 
-**MCP Tool Call:**
-```python
-connect_database("logs", "jsonl", "/path/to/file.jsonl")
+```bash
+# To CSV
+python -c "import pandas as pd; pd.read_json('app.jsonl', lines=True).to_csv('app.csv', index=False)"
+
+# To Parquet, if the records are large or numerous
+python -c "import pandas as pd; pd.read_json('app.jsonl', lines=True).to_parquet('app.parquet')"
 ```
 
-**Examples:**
-
 ```python
-# Log file with JSON events
-connect_database("events", "jsonl", "/logs/application.jsonl")
-
-# Newline-delimited objects
-connect_database("stream", "jsonl", "/data/stream.ndjson")
+connect_database("events", "csv", "./app.csv")
+execute_query("events", "SELECT * FROM data_table LIMIT 10")
 ```
-
-**Special Notes:**
-- One complete JSON object per line
-- Excellent for append-only logs
-- Efficient streaming and chunking
-- Each line parsed independently
 
 ---
 
@@ -1316,10 +1335,10 @@ For large files, use memory-aware settings:
 ```python
 # CSV with chunking
 connect_database("large_csv", "csv", "/data/huge_file.csv")
-results = execute_query("large_csv", "SELECT * FROM data")
+results = execute_query("large_csv", "SELECT * FROM data_table")
 
-# Then use next_chunk for pagination
-next_chunk(query_id, 1, "1000")  # 1000 rows at a time
+# Then use next_chunk, keyed by the query id the first call returned
+next_chunk(results["metadata"]["query_id"], 2001, "1000")  # 1000 rows at a time
 ```
 
 ### 7. Remote Data Sources
@@ -1367,7 +1386,7 @@ Match database features to workload:
 
 ```python
 # OLAP analysis: use DuckDB or analytical database
-connect_database("warehouse", "duckdb", "duckdb:///data/warehouse.db")
+connect_database("warehouse", "duckdb", "data/warehouse.db")
 
 # Real-time: use PostgreSQL or MongoDB
 connect_database("app_db", "postgresql", "postgresql://localhost/app")
@@ -1398,7 +1417,7 @@ connect_database("search", "elasticsearch", "elasticsearch://localhost:9200")
 | Neo4j | Graph | Networks | User/pass |
 | CouchDB | Document | Sync | User/pass |
 | CSV/TSV | File | Bulk | None |
-| JSON/JSONL | File | Hierarchical | None |
+| JSON | File | Hierarchical | None |
 | YAML/TOML | File | Config | None |
 | XML | File | Markup | None |
 | Excel/ODS | Sheet | Spreadsheets | None |
