@@ -40,6 +40,7 @@ from ..datascience_tools import (
 )
 from ..error_classification import classify_error
 from ..file_processor import FileProcessorFactory, create_streaming_file_engine
+from .sampling_mixin import SamplingToolsMixin
 from ..graph_tools import (
     tool_add_edge,
     tool_delete_key_graph,
@@ -109,7 +110,7 @@ class QueryBuffer:
     llm_protocol: Optional["LLMCommunicationProtocol"] = None
 
 
-class DatabaseManager:
+class DatabaseManager(SamplingToolsMixin):
     def __init__(self):
         self.connections: Dict[str, Any] = {}
         self.db_types: Dict[str, str] = {}  # Track database type for each connection
@@ -254,6 +255,12 @@ class DatabaseManager:
         mcp_server.add_tool(self.forecast_time_series)
         mcp_server.add_tool(self.analyze_rfm)
         mcp_server.add_tool(self.analyze_ab_test)
+
+        # Sampling and estimation tools
+        mcp_server.add_tool(self.generate_sample)
+        mcp_server.add_tool(self.bootstrap_statistic)
+        mcp_server.add_tool(self.monte_carlo_simulate)
+        mcp_server.add_tool(self.bayesian_estimate)
 
     def _get_connection(self, name: str):
         if name not in self.connections:
