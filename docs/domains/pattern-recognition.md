@@ -60,7 +60,7 @@ what each tool is for and when to reach for it.
 ### `analyze_clusters`
 
 Answers "what natural groups are in this data?" `method` selects `kmeans`
-(default), `dbscan`, `hierarchical` or `gaussian_mixture`. Leave `n_clusters`
+(default), `dbscan`, `hierarchical`, `gmm` or `spectral`. Leave `n_clusters`
 unset and k is chosen by searching 2 through 10 for the best silhouette score,
 which is what you want when the number of segments is the question rather than
 an input. Returns the label per row, the centroids and a silhouette score.
@@ -72,7 +72,7 @@ nearest group.
 ### `detect_anomalies`
 
 Answers "which rows do not belong?" `method` selects `isolation_forest`
-(default), `local_outlier_factor` or `one_class_svm`. These are multivariate
+(default), `lof`, `one_class_svm` or `statistical`. These are multivariate
 detectors over a set of columns: there is no single-column mode, no threshold
 parameter, and no z-score or IQR method. `contamination` is the
 expected anomaly rate and defaults to 0.1 — a tenth of the rows will be flagged

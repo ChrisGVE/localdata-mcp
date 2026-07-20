@@ -100,7 +100,7 @@ Define databases with the pattern `LOCALDATA_DB_<NAME>_<PROPERTY>`:
 | Variable | Maps to | Type | Default |
 |----------|---------|------|---------|
 | `LOCALDATA_SECURITY_RESTRICT_PATHS` | `security.restrict_paths` | `bool` | `true` |
-| `LOCALDATA_SECURITY_MAX_QUERY_LENGTH` | `security.max_query_length` | `int` | `10000` |
+| `LOCALDATA_SECURITY_MAX_QUERY_LENGTH` | `security.max_query_length` | `int` | `10000` (inert, issue #33) |
 
 ### Disk budget
 
@@ -216,9 +216,9 @@ Controls query and path security.
 |-----|------|---------|-------------|
 | `restrict_paths` | `bool` | `true` | When enabled, file access is limited to `allowed_paths` |
 | `allowed_paths` | `list[str]` | `["."]` | Directories the server can access (only enforced when `restrict_paths` is true) |
-| `readonly` | `bool` | `false` | Block all write-oriented SQL operations (see Readonly mode section below) |
-| `max_query_length` | `int` | `10000` | Maximum allowed SQL query length in characters |
-| `blocked_keywords` | `list[str]` | `[]` | SQL keywords to reject (e.g., `["DROP", "TRUNCATE"]`) |
+| `readonly` | `bool` | `false` | Block write-oriented SQL on `execute_query` and `analyze_query_preview` only — see Readonly mode below |
+| `max_query_length` | `int` | `10000` | Parsed and validated, then never applied (issue #33) |
+| `blocked_keywords` | `list[str]` | `[]` | Read by nothing; setting it has no effect (issue #33) |
 
 ### `logging`
 
@@ -572,7 +572,9 @@ performance:
 
 ## Readonly mode
 
-When `security.readonly` is set to `true`, the server rejects any SQL statement that would write data as a side effect. This goes beyond the standard `blocked_keywords` list and catches patterns that embed writes inside otherwise valid `SELECT` statements:
+When `security.readonly` is set to `true`, `execute_query` and
+`analyze_query_preview` reject SQL that would write data as a side effect,
+catching patterns that embed a write inside an otherwise valid `SELECT`:
 
 | Blocked pattern | Example |
 |---|---|
@@ -585,6 +587,19 @@ When `security.readonly` is set to `true`, the server rejects any SQL statement 
 | `SELECT INTO #temp` | `SELECT id INTO #tmp FROM orders` |
 
 Standard DML (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `TRUNCATE`) is already blocked by the query validator regardless of this setting.
+
+**The analytical tools do not honour this setting.** They hand their query
+straight to pandas, so a `CREATE TABLE ... AS SELECT` refused by `execute_query`
+is executed by `analyze_clusters` under the same configuration, and because that
+statement is DDL it commits and persists. Do not rely on `readonly` to protect a
+database an agent can reach through an analytical tool; grant the connection
+read-only rights at the database instead. Tracked as issue #33, alongside #25.
+
+**Two further keys in this section are inert.** `max_query_length` is parsed and
+validated at startup and then never applied -- a query far longer than the limit
+executes normally. `blocked_keywords` is read by nothing at all. Both are
+documented here because they appear in the generated default config and a reader
+will meet them; neither has any effect today (issue #33).
 
 ## Tool documentation
 
