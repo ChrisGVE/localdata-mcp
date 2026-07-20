@@ -1,6 +1,6 @@
 # LocalData MCP Tools Reference
 
-Complete reference documentation for all 70 MCP tools. Organized by category for quick navigation.
+Complete reference documentation for all 71 MCP tools. Organized by category for quick navigation.
 
 ## Table of Contents
 
@@ -10,7 +10,7 @@ Complete reference documentation for all 70 MCP tools. Organized by category for
 4. Graph Operations (7 tools)
 5. Search & Transform (2 tools)
 6. Schema & Audit (3 tools)
-7. System (1 tool)
+7. System (2 tools)
 8. Data Science (12 tools)
 9. Sampling & Estimation (4 tools)
 10. Optimization (4 tools)
@@ -939,7 +939,7 @@ get_error_log(database="mydb", since_minutes=60)
 
 ---
 
-## System (1 tool)
+## System (2 tools)
 
 ### check_compatibility
 
@@ -959,6 +959,31 @@ check_compatibility(generate_migration_script=True)
 ```
 
 **Composition hints:** Use during upgrades or configuration migrations.
+
+---
+
+### get_metrics
+
+Get Prometheus metrics for monitoring dashboards.
+
+This is the one tool whose presence depends on configuration. It is registered
+at server start only when `logging.enable_metrics` is on, which is the default,
+so a stock install exposes it. Turning metrics off — in the config file, or with
+`LOCALDATA_LOGGING_ENABLE_METRICS=false` — removes the tool from the server
+entirely, leaving seventy.
+
+**Parameters:** none
+
+**Returns:** Prometheus text-format metrics (process, GC, and query counters)
+
+**Example:**
+```python
+get_metrics()
+```
+
+**Composition hints:** Scrape target for a monitoring dashboard, not an input to
+other tools. Use `get_query_log` instead when you want per-query history for a
+specific database.
 
 ---
 
@@ -1821,14 +1846,16 @@ the resulting per-polygon table.
 | Graph | 7 | Network analysis and manipulation |
 | Search & Transform | 2 | Pattern matching and text replacement |
 | Schema & Audit | 3 | Introspection and query history |
-| System | 1 | Compatibility and migration check |
+| System | 2 | Compatibility check and metrics export |
 | Data Science | 12 | Statistical analysis, modeling and forecasting |
 | Sampling & Estimation | 4 | Sampling, bootstrap, simulation, Bayesian inference |
 | Optimization | 4 | Linear and nonlinear programming, networks, assignment |
 | Geospatial | 10 | Spatial statistics, distance, routing, geometry |
-| **Total** | **70** | Complete LLM-native data platform |
+| **Total** | **71** | Complete LLM-native data platform |
 
-All seventy tools are registered unconditionally.
+Seventy of these are registered unconditionally when the server starts. The
+seventy-first, `get_metrics`, is registered only while `logging.enable_metrics`
+is on — the default, so the stock server exposes all seventy-one.
 
 ## Parameter Type Reference
 

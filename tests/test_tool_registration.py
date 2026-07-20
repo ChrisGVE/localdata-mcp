@@ -137,22 +137,38 @@ class TestToolCountClaims:
 
     The tool count appeared in six places — the package metadata, the plugin
     manifest, the README, the docs index and the tools reference — and drifted
-    from reality as domains were added. Worse, the reference documented a
-    `get_metrics` tool that was never registered at all, so a reader could not
-    tell a real tool from a fictional one. These tests make the documentation
+    from reality as domains were added. These tests make the documentation
     answerable to the registry rather than to whoever edited it last.
+
+    The registry has two feeders, and asking only one of them is how the count
+    went wrong in both directions. `DatabaseManager._register_tools` binds the
+    seventy instance methods; `localdata_mcp` registers `get_metrics` at import
+    time, guarded by `logging.enable_metrics`. Counting only the first path made
+    a real, callable tool look fictional and understated the shipped surface by
+    one, so these tests read the assembled server instead.
     """
+
+    @pytest.fixture(autouse=True)
+    def mock_mcp_framework(self):
+        """Shadow the suite-wide mock of the MCP singleton.
+
+        Every other test wants the framework mocked so it can call tools as
+        plain methods. This class is the one that must see the real assembled
+        server — a mock registry would answer whatever it was asked and prove
+        nothing about what ships.
+        """
+        yield None
 
     @staticmethod
     def _registered_tool_names(manager: DatabaseManager) -> set:
-        names = set()
+        """Names the MCP server actually exposes, from both registration paths."""
+        import asyncio
 
-        class _Recorder:
-            def add_tool(self, func):
-                names.add(func.__name__)
+        from localdata_mcp.localdata_mcp import mcp
 
-        manager._register_tools(_Recorder())
-        return names
+        # Constructing the manager is what registers the instance methods.
+        assert manager is not None
+        return {tool.name for tool in asyncio.run(mcp.list_tools())}
 
     @staticmethod
     def _documented_tool_names() -> set:
@@ -201,3 +217,27 @@ class TestToolCountClaims:
             assert (
                 f"{count} tools" in text or f"{count} MCP tools" in text
             ), f"{relative} does not state the true tool count of {count}"
+
+    def test_the_registry_is_more_than_the_bound_methods(self, manager):
+        """Name every tool that reaches the registry by a path other than
+        `_register_tools`, so a second such tool cannot arrive unnoticed."""
+        bound = set()
+
+        class _Recorder:
+            def add_tool(self, func):
+                bound.add(func.__name__)
+
+        manager._register_tools(_Recorder())
+
+        assert self._registered_tool_names(manager) - bound == {
+            "get_metrics"
+        }, "a tool is registered outside _register_tools and is unaccounted for"
+
+    def test_the_metrics_tool_follows_its_config_flag(self, manager):
+        """`get_metrics` exists only while metrics are enabled — the one tool
+        whose presence the documentation must qualify rather than assert."""
+        from localdata_mcp.localdata_mcp import logging_config
+
+        present = "get_metrics" in self._registered_tool_names(manager)
+
+        assert present is bool(logging_config.enable_metrics)
