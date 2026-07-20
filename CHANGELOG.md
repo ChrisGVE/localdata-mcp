@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- sphinx-start -->
 
-## [2.0.1] - 2026-07-20
+## [2.1.0] - unreleased
 
 ### Added
 - Ten skills: data-quality, find-reference-data, anomaly-detection,
@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `graph-analyst` is now `graph-data-analyst`.
 - `statistical-analyst` covers sampling design and estimation alongside hypothesis testing.
 - PyPI metadata: added AI and data-science classifiers and cross-platform keywords.
-- Version raised to 2.0.1 in `pyproject.toml`, `.claude-plugin/plugin.json`, and `server.json`.
+- Version raised to 2.1.0 in `pyproject.toml`, `.claude-plugin/plugin.json`, and `server.json`.
 
 ### Fixed
 - Performance benchmarks workflow was invalid YAML and had never executed. Embedded
