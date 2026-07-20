@@ -40,6 +40,7 @@ from ..datascience_tools import (
 )
 from ..error_classification import classify_error
 from ..file_processor import FileProcessorFactory, create_streaming_file_engine
+from .geospatial_mixin import GeospatialToolsMixin
 from .optimization_mixin import OptimizationToolsMixin
 from .sampling_mixin import SamplingToolsMixin
 from ..graph_tools import (
@@ -111,7 +112,7 @@ class QueryBuffer:
     llm_protocol: Optional["LLMCommunicationProtocol"] = None
 
 
-class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin):
+class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialToolsMixin):
     def __init__(self):
         self.connections: Dict[str, Any] = {}
         self.db_types: Dict[str, str] = {}  # Track database type for each connection
@@ -268,6 +269,18 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin):
         mcp_server.add_tool(self.optimize_constrained)
         mcp_server.add_tool(self.analyze_network)
         mcp_server.add_tool(self.solve_assignment_problem)
+
+        # Geospatial domain
+        mcp_server.add_tool(self.check_geospatial_capabilities)
+        mcp_server.add_tool(self.analyze_spatial_autocorrelation)
+        mcp_server.add_tool(self.find_spatial_hotspots)
+        mcp_server.add_tool(self.calculate_spatial_distances)
+        mcp_server.add_tool(self.optimize_route)
+        mcp_server.add_tool(self.analyze_accessibility)
+        mcp_server.add_tool(self.generate_service_isochrones)
+        mcp_server.add_tool(self.perform_spatial_join)
+        mcp_server.add_tool(self.perform_spatial_overlay)
+        mcp_server.add_tool(self.aggregate_points_in_polygons)
 
     def _get_connection(self, name: str):
         if name not in self.connections:
