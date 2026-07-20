@@ -1,5 +1,12 @@
 # LocalData MCP Architecture v1.7.0
 
+> **This document describes v1.7.0 and is no longer maintained.**
+> It documents seven tools that no longer exist (`get_node_graph`, `set_node_graph`,
+> `delete_node_graph`, `get_value_graph`, `set_value_graph`, `delete_key_graph`,
+> `list_keys_graph`), and its examples call them, so most no longer run.
+> For current documentation see the architecture notes under [docs/architecture/](docs/architecture/).
+
+
 ## Overview
 
 LocalData MCP v1.7.0 introduces a fundamentally new architecture designed around **memory-safe, streaming-first principles**. This document explains the core architectural decisions, component interactions, and design patterns that enable predictable performance with datasets of any size.

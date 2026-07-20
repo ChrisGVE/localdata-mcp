@@ -1,5 +1,12 @@
 # LocalData MCP Configuration Guide
 
+> **This document describes v1.7.0 and is no longer maintained.**
+> It documents seven tools that no longer exist (`get_node_graph`, `set_node_graph`,
+> `delete_node_graph`, `get_value_graph`, `set_value_graph`, `delete_key_graph`,
+> `list_keys_graph`), and its examples call them, so most no longer run.
+> For current documentation see the configuration guide at [docs/configuration.md](docs/configuration.md).
+
+
 ## Overview
 
 LocalData MCP v1.7.0 introduces a powerful dual configuration system that supports both simple environment variables for basic setups and comprehensive YAML configuration files for complex multi-database environments. This guide covers all configuration options, best practices, and advanced scenarios.
