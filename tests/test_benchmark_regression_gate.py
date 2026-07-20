@@ -73,9 +73,9 @@ class TestModeComparisonsAreInformational:
         mode_comparisons = []
         generate_mode_comparisons(results, mode_comparisons)
         assert len(mode_comparisons) == 1, "expected one streaming-vs-batch comparison"
-        assert mode_comparisons[0].execution_time_improvement_percent < -5, (
-            "precondition: streaming is more than 5% slower than batch"
-        )
+        assert (
+            mode_comparisons[0].execution_time_improvement_percent < -5
+        ), "precondition: streaming is more than 5% slower than batch"
 
         summary = generate_summary(
             results, [], BenchmarkConfig(), mode_comparisons=mode_comparisons

@@ -502,7 +502,9 @@ class DatabaseManager:
     def _generate_query_id(self, db_name: str, query: str) -> str:
         """Generate a unique query ID in format: {db}_{timestamp}_{4char_hash}."""
         timestamp = int(time.time())
-        query_hash = hashlib.md5(query.encode(), usedforsecurity=False).hexdigest()[:4]  # nosec B324
+        query_hash = hashlib.md5(query.encode(), usedforsecurity=False).hexdigest()[
+            :4
+        ]  # nosec B324
         return f"{db_name}_{timestamp}_{query_hash}"
 
     def _cleanup_expired_buffers(self):

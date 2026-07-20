@@ -178,9 +178,9 @@ class TestMetricsToolRegistration:
         enabled = self.run_count({"LOCALDATA_LOGGING_ENABLE_METRICS": "true"})
         disabled = self.run_count({"LOCALDATA_LOGGING_ENABLE_METRICS": "false"})
 
-        assert disabled == enabled - 1, (
-            "disabling metrics must remove exactly one tool (get_metrics)"
-        )
+        assert (
+            disabled == enabled - 1
+        ), "disabling metrics must remove exactly one tool (get_metrics)"
 
     def test_metrics_tool_is_present_by_default(self):
         listing = subprocess.run(
