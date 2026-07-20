@@ -17,6 +17,7 @@ are stable rather than lucky.
 
 import json
 import os
+import sqlite3
 from typing import Any, Dict
 
 import numpy as np
@@ -709,4 +710,532 @@ class TestOptimizationTools:
                 "data_table",
                 source_column="customer_id",
                 target_column="order_date",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Geospatial analysis
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def geo_db_path(datascience_fixtures: None) -> str:
+    """Write the multi-table SQLite fixture the geospatial tools analyze.
+
+    Geospatial work needs several related tables at once — nodes with edges,
+    points with polygons — and a CSV connection exposes exactly one table, so
+    this domain gets a small SQLite file instead.
+
+    The layout is deliberate, so the assertions can check a *true* finding:
+
+    - ``sensors`` holds three well-separated blobs whose values rise from ~10 to
+      ~50 to ~90, so the high blob must come back a hot spot, the low blob a
+      cold spot, and the middle neither.
+    - ``noise`` holds the same coordinates with values shuffled independently of
+      position, so autocorrelation must come back *not* significant. Without
+      this contrast a test only shows the tool answers, not that it discriminates.
+    - ``net_nodes``/``net_edges`` form a 3x3 unit grid, so shortest-path
+      distances are known by hand: node 0 to node 8 is 4 hops of weight 1.
+    - ``readings``/``zones`` place two points in zone A (values 10 and 30) and
+      one in zone B (value 20), with a fourth point outside both.
+    """
+    path = _fp("geo_spatial.sqlite")
+    if os.path.exists(path):
+        os.remove(path)
+
+    rng = np.random.default_rng(SEED)
+    con = sqlite3.connect(path)
+
+    x = np.concatenate(
+        [rng.normal(0, 1, 20), rng.normal(20, 1, 20), rng.normal(40, 1, 20)]
+    )
+    y = np.concatenate(
+        [rng.normal(0, 1, 20), rng.normal(20, 1, 20), rng.normal(40, 1, 20)]
+    )
+    value = np.concatenate(
+        [rng.normal(10, 1, 20), rng.normal(50, 1, 20), rng.normal(90, 1, 20)]
+    )
+    pd.DataFrame({"x": x, "y": y, "value": value}).to_sql("sensors", con, index=False)
+    pd.DataFrame({"x": x, "y": y, "value": rng.permutation(value)}).to_sql(
+        "noise", con, index=False
+    )
+
+    node_ids = {}
+    nodes = []
+    for i in range(3):
+        for j in range(3):
+            node_ids[(i, j)] = len(nodes)
+            nodes.append({"id": len(nodes), "x": float(i), "y": float(j)})
+    edges = []
+    for i in range(3):
+        for j in range(3):
+            if i < 2:
+                edges.append(
+                    {
+                        "source": node_ids[(i, j)],
+                        "target": node_ids[(i + 1, j)],
+                        "weight": 1.0,
+                    }
+                )
+            if j < 2:
+                edges.append(
+                    {
+                        "source": node_ids[(i, j)],
+                        "target": node_ids[(i, j + 1)],
+                        "weight": 1.0,
+                    }
+                )
+    pd.DataFrame(nodes).to_sql("net_nodes", con, index=False)
+    pd.DataFrame(edges).to_sql("net_edges", con, index=False)
+
+    pd.DataFrame(
+        {
+            "zone": ["A", "B"],
+            "geometry": [
+                "POLYGON((0 0,1 0,1 1,0 1,0 0))",
+                "POLYGON((1 1,2 1,2 2,1 2,1 1))",
+            ],
+        }
+    ).to_sql("zones", con, index=False)
+    pd.DataFrame(
+        {
+            "z2": ["X"],
+            "geometry": ["POLYGON((0.5 0.5,1.5 0.5,1.5 1.5,0.5 1.5,0.5 0.5))"],
+        }
+    ).to_sql("overlap_zone", con, index=False)
+    pd.DataFrame(
+        {
+            "pid": [1, 2, 3, 4],
+            "val": [10.0, 20.0, 30.0, 40.0],
+            "x": [0.5, 1.5, 0.2, 5.0],
+            "y": [0.5, 1.5, 0.7, 5.0],
+        }
+    ).to_sql("readings", con, index=False)
+
+    con.commit()
+    con.close()
+    return path
+
+
+@pytest.fixture
+def geo(db: DatabaseManager, geo_db_path: str) -> DatabaseManager:
+    """A DatabaseManager with the geospatial fixture connected as 'geo'."""
+    db.connect_database("geo", "sqlite", geo_db_path)
+    return db
+
+
+class TestGeospatialCapabilities:
+    def test_core_backends_are_reported_available(self, db: DatabaseManager) -> None:
+        """Capability discovery must name the backends, not just say 'ok'."""
+        result = _json(db.check_geospatial_capabilities())
+
+        assert result["has_core_geospatial"] is True
+        for library in ("geopandas", "shapely", "pyproj"):
+            assert result["available_libraries"][library] is True
+            assert result["versions"][library]
+        assert isinstance(result["missing_libraries"], list)
+
+
+class TestSpatialAutocorrelation:
+    def test_morans_i_detects_planted_clustering(self, geo: DatabaseManager) -> None:
+        """Values that rise blob by blob must register as strongly clustered."""
+        result = _json(
+            geo.analyze_spatial_autocorrelation(
+                "geo", "SELECT * FROM sensors", value_column="value"
+            )
+        )
+
+        assert result["statistic"] == "morans_i"
+        assert result["value"] > 0.9, "near-perfect clustering should approach I=1"
+        assert result["value"] > result["expected_value"]
+        assert result["p_value"] < 0.01
+        assert result["is_significant"] is True
+        assert result["z_score"] > 3
+        assert "positive spatial autocorrelation" in result["interpretation"]
+        assert result["n_observations"] == 60
+
+    def test_gearys_c_agrees_with_morans_i(self, geo: DatabaseManager) -> None:
+        """Geary's C must point the same way as Moran's I, from below 1.
+
+        Geary's variance was negative before, so p_value was None on every call
+        and the statistic could never report significance at all.
+        """
+        result = _json(
+            geo.analyze_spatial_autocorrelation(
+                "geo", "SELECT * FROM sensors", value_column="value", method="geary"
+            )
+        )
+
+        assert result["statistic"] == "gearys_c"
+        assert 0.0 <= result["value"] < 1.0, "clustering drives C below its mean of 1"
+        assert result["p_value"] is not None
+        assert result["p_value"] < 0.01
+        assert result["z_score"] < 0
+        assert "positive spatial autocorrelation" in result["interpretation"]
+
+    def test_shuffled_values_are_not_significant(self, geo: DatabaseManager) -> None:
+        """The same coordinates with values shuffled must NOT look clustered.
+
+        This is the half that matters: a test that only checks the clustered
+        case passes for a tool that calls everything clustered.
+        """
+        result = _json(
+            geo.analyze_spatial_autocorrelation(
+                "geo", "SELECT * FROM noise", value_column="value"
+            )
+        )
+
+        assert abs(result["value"]) < 0.3
+        assert result["p_value"] > 0.05
+        assert result["is_significant"] is False
+
+    def test_too_few_points_for_the_neighbourhood_is_rejected(
+        self, geo: DatabaseManager
+    ) -> None:
+        with pytest.raises(ValueError, match="more than"):
+            geo.analyze_spatial_autocorrelation(
+                "geo", "SELECT * FROM sensors LIMIT 5", value_column="value"
+            )
+
+    def test_unknown_method_is_named_in_the_error(self, geo: DatabaseManager) -> None:
+        with pytest.raises(ValueError, match="dbscan"):
+            geo.analyze_spatial_autocorrelation(
+                "geo", "SELECT * FROM sensors", value_column="value", method="dbscan"
+            )
+
+
+class TestSpatialHotspots:
+    def test_hot_and_cold_blobs_are_found_where_they_were_planted(
+        self, geo: DatabaseManager
+    ) -> None:
+        """The high blob must be hot, the low blob cold, and the middle neither."""
+        result = _json(
+            geo.find_spatial_hotspots(
+                "geo", "SELECT * FROM sensors", value_column="value"
+            )
+        )
+
+        assert result["n_points"] == 60
+        assert result["n_hotspots"] == 20
+        assert result["n_coldspots"] == 20
+
+        points = result["points"]
+        assert len(points) == 60
+        # The fixture writes the blobs in order: low, middle, high.
+        low, middle, high = points[:20], points[20:40], points[40:]
+        assert all(p["is_coldspot"] for p in low)
+        assert all(p["cluster_id"] == -1 for p in low)
+        assert not any(p["is_hotspot"] or p["is_coldspot"] for p in middle)
+        assert all(p["is_hotspot"] for p in high)
+        assert all(p["cluster_id"] == 1 for p in high)
+        assert all(p["gi_star_z_score"] > 0 for p in high)
+        assert all(p["gi_star_p_value"] < 0.05 for p in high)
+
+    def test_a_stricter_threshold_cannot_find_more_spots(
+        self, geo: DatabaseManager
+    ) -> None:
+        """Tightening the significance level must never add hot spots."""
+        loose = _json(
+            geo.find_spatial_hotspots(
+                "geo", "SELECT * FROM sensors", value_column="value"
+            )
+        )
+        strict = _json(
+            geo.find_spatial_hotspots(
+                "geo",
+                "SELECT * FROM sensors",
+                value_column="value",
+                significance_level=0.0001,
+            )
+        )
+
+        assert strict["n_hotspots"] <= loose["n_hotspots"]
+        assert strict["significance_level"] == 0.0001
+
+
+class TestSpatialDistances:
+    def test_nearest_neighbour_is_much_closer_than_the_average_point(
+        self, geo: DatabaseManager
+    ) -> None:
+        """With three tight blobs 20 units apart, neighbours are ~1 and means ~26.
+
+        The nearest-neighbour column was masked with ``eye * inf``, which is nan
+        off the diagonal, so every point reported column 0 as its neighbour.
+        """
+        result = _json(geo.calculate_spatial_distances("geo", "SELECT * FROM sensors"))
+
+        assert result["n_points"] == 60
+        summary = result["summary"]
+        assert summary["min"] > 0, "self-distances must not enter the summary"
+        assert summary["max"] > 50, "the outer blobs are ~57 units apart"
+        assert summary["mean_nearest_neighbor_distance"] < 2.0
+        assert summary["mean_nearest_neighbor_distance"] < summary["mean"] / 10
+
+        neighbours = result["nearest_neighbors"]
+        assert len(neighbours) == 60
+        # A point's nearest neighbour must be in its own blob of twenty.
+        assert all(
+            n["point_index"] // 20 == n["nearest_index"] // 20 for n in neighbours
+        )
+        assert all(n["point_index"] != n["nearest_index"] for n in neighbours)
+
+    def test_haversine_reports_kilometres_not_coordinate_units(
+        self, geo: DatabaseManager
+    ) -> None:
+        """Treating the coordinates as degrees must give a far larger number."""
+        plane = _json(geo.calculate_spatial_distances("geo", "SELECT * FROM sensors"))
+        globe = _json(
+            geo.calculate_spatial_distances(
+                "geo", "SELECT * FROM sensors", distance_type="haversine"
+            )
+        )
+
+        assert plane["unit"] == "coordinate units"
+        assert globe["unit"] == "kilometres"
+        assert globe["summary"]["mean"] > plane["summary"]["mean"] * 50
+
+    def test_pairs_are_returned_only_when_asked_for(self, geo: DatabaseManager) -> None:
+        without = _json(
+            geo.calculate_spatial_distances("geo", "SELECT * FROM sensors LIMIT 5")
+        )
+        with_pairs = _json(
+            geo.calculate_spatial_distances(
+                "geo", "SELECT * FROM sensors LIMIT 5", include_pairs=True
+            )
+        )
+
+        assert "pairs" not in without
+        assert len(with_pairs["pairs"]) == 25
+        assert all(
+            p["distance"] == 0
+            for p in with_pairs["pairs"]
+            if p["point1_index"] == p["point2_index"]
+        )
+
+    def test_distances_to_a_reference_set(self, geo: DatabaseManager) -> None:
+        """A second query measures one set against another, not against itself."""
+        result = _json(
+            geo.calculate_spatial_distances(
+                "geo",
+                "SELECT * FROM sensors LIMIT 10",
+                reference_query="SELECT * FROM sensors LIMIT 3",
+            )
+        )
+
+        assert result["n_points"] == 10
+        assert result["n_reference_points"] == 3
+        assert result["summary"]["min"] == 0.0, "the sets share their first rows"
+
+    def test_missing_coordinate_column_is_named(self, geo: DatabaseManager) -> None:
+        with pytest.raises(ValueError, match="longitude"):
+            geo.calculate_spatial_distances(
+                "geo", "SELECT * FROM sensors", x_column="longitude"
+            )
+
+
+class TestSpatialNetworks:
+    def test_route_visits_every_waypoint_at_the_known_cost(
+        self, geo: DatabaseManager
+    ) -> None:
+        """On a 3x3 unit grid, 0 -> 4 -> 8 is four unit steps and no more."""
+        result = _json(
+            geo.optimize_route(
+                "geo",
+                "SELECT * FROM net_nodes",
+                "SELECT * FROM net_edges",
+                waypoints=[0, 4, 8],
+                weight_column="weight",
+            )
+        )
+
+        assert result["total_distance"] == 4.0
+        assert set(result["waypoints"]) == {0, 4, 8}
+        assert result["route_path"][0] == 0
+        assert result["route_path"][-1] == 8
+        assert 4 in result["route_path"]
+        assert len(result["route_coordinates"]) == len(result["route_path"])
+        assert result["path_geometry"].startswith("LINESTRING")
+
+    def test_waypoints_given_as_strings_still_resolve(
+        self, geo: DatabaseManager
+    ) -> None:
+        """MCP arguments arrive as JSON, so an integer node id may come as text."""
+        as_text = _json(
+            geo.optimize_route(
+                "geo",
+                "SELECT * FROM net_nodes",
+                "SELECT * FROM net_edges",
+                waypoints=["0", "8"],
+                weight_column="weight",
+            )
+        )
+        as_int = _json(
+            geo.optimize_route(
+                "geo",
+                "SELECT * FROM net_nodes",
+                "SELECT * FROM net_edges",
+                waypoints=[0, 8],
+                weight_column="weight",
+            )
+        )
+
+        assert as_text["total_distance"] == as_int["total_distance"] == 4.0
+
+    def test_unknown_waypoint_is_rejected_by_name(self, geo: DatabaseManager) -> None:
+        with pytest.raises(ValueError, match="99"):
+            geo.optimize_route(
+                "geo",
+                "SELECT * FROM net_nodes",
+                "SELECT * FROM net_edges",
+                waypoints=[0, 99],
+                weight_column="weight",
+            )
+
+    def test_accessibility_ranks_the_nearer_demand_point_higher(
+        self, geo: DatabaseManager
+    ) -> None:
+        """Node 4 is two steps from node 0 and node 8 is four, so 4 must score better."""
+        result = _json(
+            geo.analyze_accessibility(
+                "geo",
+                "SELECT * FROM net_nodes",
+                "SELECT * FROM net_edges",
+                service_locations=[0],
+                demand_locations=[4, 8],
+                weight_column="weight",
+            )
+        )
+
+        assert result["travel_times"]["4"] == 2.0
+        assert result["travel_times"]["8"] == 4.0
+        assert result["accessibility_scores"]["4"] > result["accessibility_scores"]["8"]
+        assert result["unreachable_locations"] == []
+        assert result["service_coverage"]["coverage_percentage"] == 100.0
+
+    def test_isochrone_bands_grow_with_travel_time(self, geo: DatabaseManager) -> None:
+        """Each band must produce a real polygon covering more ground than the last.
+
+        Every band came back None before: the generator asked the *unweighted*
+        shortest-path function for a weighted cutoff, and swallowed the TypeError.
+        """
+        result = _json(
+            geo.generate_service_isochrones(
+                "geo",
+                "SELECT * FROM net_nodes",
+                "SELECT * FROM net_edges",
+                service_locations=[0],
+                time_bands=[1.0, 2.0],
+                weight_column="weight",
+            )
+        )
+
+        bands = result["isochrones"]
+        assert [b["time_band"] for b in bands] == [1.0, 2.0]
+        assert all(b["geometry"] is not None for b in bands)
+        assert all("POLYGON" in b["geometry"] for b in bands)
+        assert all(b["area"] > 0 for b in bands)
+        assert bands[1]["area"] > bands[0]["area"]
+
+    def test_an_edge_naming_an_absent_node_is_rejected(
+        self, geo: DatabaseManager
+    ) -> None:
+        """A truncated node query must fail by name, not build a broken graph."""
+        with pytest.raises(ValueError, match="absent from the nodes query"):
+            geo.optimize_route(
+                "geo",
+                "SELECT * FROM net_nodes LIMIT 3",
+                "SELECT * FROM net_edges",
+                waypoints=[0, 1],
+                weight_column="weight",
+            )
+
+
+class TestSpatialGeometry:
+    def test_points_are_joined_to_the_zone_that_contains_them(
+        self, geo: DatabaseManager
+    ) -> None:
+        """Three of four readings fall in a zone; the fourth is outside both."""
+        result = _json(
+            geo.perform_spatial_join(
+                "geo", "SELECT * FROM readings", "SELECT * FROM zones"
+            )
+        )
+
+        assert result["match_counts"] == {"matches": 3, "no_matches": 1}
+        assert result["row_count"] == 3
+
+        by_point = {row["pid_left"]: row["zone_right"] for row in result["rows"]}
+        assert by_point == {1: "A", 3: "A", 2: "B"}
+        assert 4 not in by_point, "the point at (5, 5) lies outside every zone"
+
+    def test_overlay_intersection_keeps_only_the_shared_area(
+        self, geo: DatabaseManager
+    ) -> None:
+        """Each unit zone overlaps the offset square in exactly a 0.5 x 0.5 corner."""
+        from shapely import wkt as shapely_wkt
+
+        result = _json(
+            geo.perform_spatial_overlay(
+                "geo", "SELECT * FROM zones", "SELECT * FROM overlap_zone"
+            )
+        )
+
+        assert result["operation"] == "intersection"
+        assert result["output_count"] == 2
+        areas = [shapely_wkt.loads(row["geometry"]).area for row in result["rows"]]
+        assert all(abs(area - 0.25) < 1e-9 for area in areas)
+
+    def test_point_values_are_summarised_per_polygon(
+        self, geo: DatabaseManager
+    ) -> None:
+        """Zone A holds readings 10 and 30; zone B holds 20 alone.
+
+        The aggregation passed its named-aggregation mapping positionally, so
+        pandas raised KeyError on every call before this.
+        """
+        result = _json(
+            geo.aggregate_points_in_polygons(
+                "geo",
+                "SELECT * FROM readings",
+                "SELECT * FROM zones",
+                value_column="val",
+            )
+        )
+
+        assert result["n_points"] == 4
+        assert result["n_polygons"] == 2
+
+        by_zone = {row["zone"]: row for row in result["polygons"]}
+        assert by_zone["A"]["val_count"] == 2
+        assert by_zone["A"]["val_sum"] == 40.0
+        assert by_zone["A"]["val_mean"] == 20.0
+        assert by_zone["B"]["val_count"] == 1
+        assert by_zone["B"]["val_sum"] == 20.0
+
+    def test_custom_aggregation_functions_are_honoured(
+        self, geo: DatabaseManager
+    ) -> None:
+        result = _json(
+            geo.aggregate_points_in_polygons(
+                "geo",
+                "SELECT * FROM readings",
+                "SELECT * FROM zones",
+                value_column="val",
+                aggregation_functions=["min", "max"],
+            )
+        )
+
+        by_zone = {row["zone"]: row for row in result["polygons"]}
+        assert by_zone["A"]["val_min"] == 10.0
+        assert by_zone["A"]["val_max"] == 30.0
+
+    def test_a_query_with_neither_geometry_nor_coordinates_is_rejected(
+        self, geo: DatabaseManager
+    ) -> None:
+        """The error must name both encodings it looked for."""
+        with pytest.raises(ValueError, match="No geometry found"):
+            geo.perform_spatial_join(
+                "geo",
+                "SELECT val FROM readings",
+                "SELECT * FROM zones",
             )
