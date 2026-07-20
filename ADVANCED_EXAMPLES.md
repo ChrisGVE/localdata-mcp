@@ -1,5 +1,12 @@
 # LocalData MCP - Advanced Usage Examples
 
+> **This document describes v1.7.0 and is no longer maintained.**
+> It documents seven tools that no longer exist (`get_node_graph`, `set_node_graph`,
+> `delete_node_graph`, `get_value_graph`, `set_value_graph`, `delete_key_graph`,
+> `list_keys_graph`), and its examples call them, so most no longer run.
+> For current documentation see the guides under [docs/](docs/index.md).
+
+
 ## Table of Contents
 
 1. [Multi-Source Data Pipeline](#multi-source-data-pipeline)
