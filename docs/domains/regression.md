@@ -39,77 +39,45 @@ The regression and modeling domain fits regression models, evaluates their perfo
 
 ## MCP Tool Reference
 
-The domain exposes two primary MCP tools via `src/localdata_mcp/datascience_tools.py`.
+The domain is reached through two MCP tools. Like every other analytical tool,
+each takes the name of a live connection and a SQL query — there is no
+data-frame parameter and no separate load step, and column parameters name
+columns in the query's result set. The classes listed under *Available Analyses*
+above are the internal implementation those tools call; they are not reachable
+from an MCP client.
 
-### `tool_fit_regression`
+Full parameter tables for both live in the
+[tools reference](../tools-reference.md#data-science-12-tools). This page covers
+what each tool is for and when to reach for it.
 
-Fit a regression model on data retrieved from a SQL query, with optional residual analysis and cross-validation.
+### `analyze_regression`
 
-**Parameters:**
+Answers "how does this outcome depend on these predictors?" `target_column` is
+the column being explained; `feature_columns` is a genuine list of column names
+(`["sqft", "bedrooms"]`, not a comma-separated string) and defaults to every
+other numeric column in the result set. `model_type` selects `linear` (default),
+`ridge`, `lasso`, `elastic_net`, `logistic` or `polynomial`, and
+`regularization` takes `l1`, `l2` or `elastic_net` for finer control.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine from an active connection |
-| `query` | `str` | required | SQL query returning features and target column |
-| `target_column` | `str` | required | Name of the numeric outcome column |
-| `feature_columns` | `list[str]` | `None` | Feature columns; all non-target columns used if None |
-| `model_type` | `str` | `"linear"` | `"linear"`, `"ridge"`, `"lasso"`, `"elastic_net"`, `"logistic"`, `"polynomial"` |
-| `regularization` | `str` | `None` | Override regularisation method (alternative to `model_type`) |
-| `max_rows` | `int` | `None` | Row cap (default 500,000) |
+Returns coefficients with their standard errors and p-values, R² and the other
+fit statistics, and — for every model except logistic — a `residual_analysis`
+block with the normality, homoscedasticity and influence diagnostics described
+below. Use `model_type="logistic"` when the target is binary; the tool does not
+infer that from the data.
 
-Underlying `RegressionModelingPipeline` also accepts:
+Fitting and scoring are separate concerns here: the model is not persisted, so
+there is nothing to call `predict` on afterwards.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `cross_validation` | `bool` | `True` | Perform K-fold cross-validation |
-| `residual_analysis` | `bool` | `True` | Run residual diagnostics after fitting |
-| `feature_selection` | `bool` | `False` | Run automatic feature selection before fitting |
-| `preprocessing` | `str` | `"auto"` | Preprocessing level: `"minimal"`, `"auto"`, `"comprehensive"` |
+### `evaluate_model_performance`
 
-**Returns:** `dict` with keys:
+Answers "how good were these predictions?" It scores predictions that already
+sit in the database next to their actual values — `target_column` holds the
+truth, `prediction_column` the estimate — so write your model's output back
+before calling it. `model_type` is `regression` (default) or `classification`
+and decides the metric set; there is no `metric_type` parameter.
 
-- `model_type` — model type fitted
-- `regression_analysis` — coefficients, standard errors, p-values, R², adjusted R², RMSE, MAE, AIC, BIC
-- `residual_analysis` — normality tests, homoscedasticity tests, autocorrelation, outlier indices, Cook's distances
-- `feature_selection` — selected features and importance scores (when enabled)
-- `pipeline_config` — configuration settings used
-
----
-
-### `tool_evaluate_model`
-
-Evaluate a fitted model's performance on held-out data.
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine |
-| `query` | `str` | required | SQL query returning test data |
-| `target_column` | `str` | required | Ground-truth outcome column |
-| `prediction_column` | `str` | required | Column containing model predictions |
-| `model_type` | `str` | `"regression"` | Model type for interpretation context |
-| `max_rows` | `int` | `None` | Row cap |
-
-For direct use of `evaluate_model_performance` from the domain:
-
-```python
-evaluation = evaluate_model_performance(
-    model=fitted_model,
-    X_test=X_test,
-    y_test=y_test,
-    X_train=X_train,   # optional, enables overfitting check
-    y_train=y_train,
-)
-```
-
-**Returns:** `dict` with keys:
-
-- `test_metrics` — R², MSE, RMSE, MAE, explained variance
-- `train_metrics` — same metrics for training data (when provided)
-- `overfitting_check` — R² gap between train and test; `likely_overfitting=True` when gap > 0.1
-- `test_predictions` — model predictions as list
-- `test_residuals` — prediction errors as list
+Because it compares two stored columns, it works on predictions from any source,
+including models fitted outside LocalData.
 
 ---
 
@@ -228,7 +196,12 @@ Three methods are available via `FeatureSelectionTransformer`:
 | AIC | any | Lower (model comparison) |
 | BIC | any | Lower (stronger penalty for complexity) |
 
-The overfitting check in `evaluate_model_performance` flags when the train R² exceeds test R² by more than 0.1. The MSE ratio (test / train) above 1.5 is a secondary signal.
+The MCP tool `evaluate_model_performance` scores one actual/predicted pair at a
+time and reports R², MSE, RMSE, MAE and residuals for a regression target, or
+accuracy, precision, recall and F1 for a classification one. It has no view of
+the training set, so it cannot flag overfitting on its own: run it once over
+training rows and once over held-out rows and compare the two R² values
+yourself. A gap above 0.1 is the usual warning line.
 
 ---
 
@@ -241,115 +214,79 @@ The overfitting check in `evaluate_model_performance` flags when the train R² e
 | `time_series` | Use fitted regression as part of a decomposition or as a feature in forecasting |
 | `business_intelligence` | Translate model coefficients into business impact estimates |
 
-The `regression_analysis` result dict from the pipeline can be passed directly to `statistical_analysis` tools by supplying the residuals array and feature matrix.
+Each step is a separate call. The `regression_analysis` block is JSON returned to
+the caller, not a handle another tool can consume — to test residuals with
+`analyze_hypothesis_test`, write them back to the source as a column first.
 
 ---
 
 ## Examples
 
-### Fit a linear model with diagnostics
+Every example below is an MCP tool call, the way an agent would issue it.
+
+### What drives house prices?
 
 ```python
-result = tool_fit_regression(
-    engine=engine,
-    query="SELECT price, sqft, bedrooms, age, neighborhood FROM housing",
-    target_column="price",
-    model_type="linear",
+analyze_regression(
+    "housing", "SELECT price, sqft, bedrooms, age FROM listings",
+    target_column="price", model_type="linear",
 )
-
-reg = result["regression_analysis"]
-print(f"R² = {reg['r2']:.3f}, Adjusted R² = {reg['adj_r2']:.3f}")
-print(f"RMSE = {reg['rmse']:.1f}")
-
-# Feature coefficients
-for feat, coef in reg["coefficients"].items():
-    print(f"  {feat}: {coef:.3f} (p={reg['p_values'][feat]:.4f})")
-
-# Residual diagnostics
-res = result["residual_analysis"]
-print("Residuals normal?", res["normality_test"]["shapiro_wilk"]["is_normal"])
-print("Homoscedastic?", res["homoscedasticity_test"]["breusch_pagan"]["is_homoscedastic"])
 ```
 
-### Regularised regression with automatic alpha selection
+Read the coefficients with their p-values, then read the `residual_analysis`
+block before believing them: a Breusch-Pagan rejection means the standard errors
+— and therefore those p-values — are understated.
+
+### Too many correlated predictors
 
 ```python
-from localdata_mcp.domains.regression_modeling import RegularizedRegressionTransformer
-import pandas as pd
-
-df = pd.read_sql("SELECT * FROM features", engine)
-X = df.drop(columns=["target"]).values
-y = df["target"].values
-feature_names = df.drop(columns=["target"]).columns.tolist()
-
-transformer = RegularizedRegressionTransformer(method="lasso", alpha="auto", cv=5)
-transformer.fit(X, y, feature_names=feature_names)
-result = transformer.get_result()
-
-print(f"Best alpha: {result['best_alpha']:.5f}")
-print("Non-zero features:", result["non_zero_features"])
+analyze_regression(
+    "housing", "SELECT * FROM listings",
+    target_column="price", model_type="lasso",
+)
 ```
 
-### Feature selection before model fitting
+Lasso drives the coefficients of uninformative features to exactly zero, so the
+surviving non-zero set is itself the answer to "which of these matter?". Use
+`ridge` instead when you want every predictor kept but shrunk, and
+`elastic_net` when predictors come in correlated groups.
+
+### Is a customer going to churn?
 
 ```python
-result = tool_fit_regression(
-    engine=engine,
-    query="SELECT * FROM wide_feature_table",
-    target_column="outcome",
-    model_type="linear",
-    feature_selection=True,  # enable RFECV-based selection
+analyze_regression(
+    "crm", "SELECT churned, tenure_months, support_tickets, plan_tier FROM accounts",
+    target_column="churned", feature_columns=["tenure_months", "support_tickets"],
+    model_type="logistic",
 )
-
-sel = result["feature_selection"]
-print(f"Selected {sel['n_selected']} of {sel['n_original']} features")
-print("Selected:", sel["selected_features"])
-print(f"R² retained: {sel['comparison']['r2_selected']:.3f}")
 ```
 
-### Evaluate overfitting on a hold-out set
+A binary target needs `model_type="logistic"` — nothing infers it from the
+column. Logistic fits skip the residual diagnostics, which assume a continuous
+outcome.
+
+### How good were last quarter's forecasts?
 
 ```python
-# Fit on training data
-train_result = tool_fit_regression(
-    engine=engine,
-    query="SELECT * FROM train_data",
-    target_column="sales",
-    model_type="ridge",
+evaluate_model_performance(
+    "forecasts", "SELECT actual_revenue, predicted_revenue FROM q3_results",
+    target_column="actual_revenue", prediction_column="predicted_revenue",
 )
-
-# Evaluate on test data
-eval_result = tool_evaluate_model(
-    engine=engine,
-    query="SELECT * FROM test_data",
-    target_column="sales",
-    prediction_column="predicted_sales",  # pre-computed or use model directly
-)
-
-check = eval_result["overfitting_check"]
-print(f"R² gap: {check['r2_gap']:.3f}")
-print(f"Likely overfitting: {check['likely_overfitting']}")
 ```
 
-### Full pipeline: feature selection → lasso → residual diagnostics
+Both columns must already exist in the source. To check for overfitting, run
+this twice — once over the rows the model was fitted on, once over held-out rows
+— and compare the two R² values.
+
+### Score a classifier instead
 
 ```python
-from localdata_mcp.domains.regression_modeling import RegressionModelingPipeline
-
-pipeline = RegressionModelingPipeline(
-    model_type="lasso",
-    cross_validation=True,
-    residual_analysis=True,
-    feature_selection=True,
+evaluate_model_performance(
+    "crm", "SELECT churned, churn_prediction FROM accounts",
+    target_column="churned", prediction_column="churn_prediction",
+    model_type="classification",
 )
-pipeline.fit(X_train, y_train, feature_names=feature_names)
-results = pipeline.get_results()
-
-# Report
-print("AIC:", results["regression_analysis"]["aic"])
-outliers = results["residual_analysis"]["outliers"]
-print(f"Potential outliers at indices: {outliers}")
-cooks = results["residual_analysis"]["cooks_distance"]
-high_influence = [i for i, c in enumerate(cooks) if c is not None and c > 4/len(y_train)]
-print(f"High-influence observations: {high_influence}")
 ```
+
+`model_type="classification"` swaps R² and RMSE for accuracy, precision, recall
+and F1. The prediction column must hold class labels, not probabilities.

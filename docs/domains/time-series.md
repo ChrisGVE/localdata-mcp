@@ -44,56 +44,42 @@ The time series domain provides decomposition, stationarity testing, forecasting
 
 ## MCP Tool Reference
 
-The domain exposes two MCP tools via `src/localdata_mcp/datascience_tools.py`.
+The domain is reached through two MCP tools. Like every other analytical tool,
+each takes the name of a live connection and a SQL query — there is no
+data-frame parameter and no separate load step, and column parameters name
+columns in the query's result set. The classes listed under *Available Analyses*
+above are the internal implementation those tools call; they are not reachable
+from an MCP client.
 
-### `tool_time_series_analysis`
+Both tools work on one series at a time: a `date_column` and a `value_column`
+from the same query. Full parameter tables live in the
+[tools reference](../tools-reference.md#data-science-12-tools); this page covers
+what each tool is for and when to reach for it.
 
-Analyse a time series retrieved from a SQL query: decomposition, stationarity, autocorrelation, and feature extraction.
+### `analyze_time_series`
 
-**Parameters:**
+Answers "what is this series made of, and is it stable?" Returns the trend,
+seasonal and residual components of a decomposition together with a stationarity
+test. `frequency` takes a pandas offset alias — `D`, `W`, `M`, `Q`, `Y` — not a
+word like `daily`; leave it empty and the frequency is inferred from the
+timestamps.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine from an active connection |
-| `query` | `str` | required | SQL query returning at minimum a date and value column |
-| `date_column` | `str` | required | Name of the datetime column |
-| `value_column` | `str` | required | Name of the numeric series column |
-| `frequency` | `str` | `None` | Pandas offset alias (e.g. `"D"`, `"M"`, `"H"`); inferred if None |
-| `max_rows` | `int` | `None` | Row cap (default 500,000) |
+Run this before forecasting. A series the stationarity test rejects has a trend
+or a changing variance that a model must difference away first, and the seasonal
+component tells you whether a seasonal period exists at all.
 
-**Returns:** `dict` including:
+### `forecast_time_series`
 
-- `decomposition` — trend, seasonal, and residual arrays
-- `stationarity` — ADF and KPSS test results and recommendations
-- `autocorrelation` — ACF and PACF values with significance lags
-- `features` — statistical features (mean, variance, trend slope, seasonality strength)
-- `quality` — gap detection and continuity diagnostics
+Answers "what comes next?" `horizon` is the number of periods ahead (default 10)
+and `method` is `arima` (default) or `ets` / `exponential_smoothing`. Those are
+the only accepted values: `prophet` and `sarima` raise `ValueError`, and the
+SARIMA, auto-ARIMA and ensemble forecasters listed under *Available Analyses*
+are exposed by no MCP tool in this release.
 
----
-
-### `tool_time_series_forecast`
-
-Generate point forecasts with confidence intervals.
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine |
-| `query` | `str` | required | SQL query |
-| `date_column` | `str` | required | Datetime column name |
-| `value_column` | `str` | required | Numeric series column name |
-| `horizon` | `int` | `10` | Number of periods to forecast ahead |
-| `method` | `str` | `"arima"` | Forecasting method: `"arima"` or `"ets"` / `"exponential_smoothing"` |
-| `max_rows` | `int` | `None` | Row cap |
-
-**Returns:** `dict` including:
-
-- `forecast` — array of point forecasts
-- `confidence_intervals` — lower and upper bounds at the configured level
-- `model_summary` — fitted model parameters and information criteria (AIC, BIC)
-- `diagnostics` — Ljung-Box residual test results
-- `performance` — in-sample metrics (RMSE, MAE, MAPE)
+Returns point forecasts with confidence intervals. Compare `arima` against `ets`
+on a held-out tail of the series rather than trusting either by default — which
+one wins depends on whether the seasonality is additive and how much of the
+signal is trend.
 
 ---
 
@@ -259,110 +245,63 @@ Note: Granger causality is a predictive, not causal, concept. Significant result
 | `pattern_recognition` (anomaly detection) | Cross-validate time series anomalies with multivariate anomaly detection |
 | `business_intelligence` | Feed forecasts into revenue projections or capacity planning |
 
-Decomposition results (trend array, residuals) and forecast outputs (point estimates, confidence intervals) are structured dicts suitable for downstream composition.
+Each step is a separate call. Decomposition components and forecast bounds come
+back as JSON to the caller, not as a handle another tool can consume — write
+them back to the source as columns to carry them into the next analysis.
 
 ---
 
 ## Examples
 
-### Decompose a monthly sales series
+Every example below is an MCP tool call, the way an agent would issue it.
+
+### Does this series have a seasonal pattern?
 
 ```python
-import pandas as pd
-from localdata_mcp.domains.time_series_analysis import TimeSeriesDecompositionTransformer
-
-df = pd.read_sql("SELECT sale_date, revenue FROM monthly_sales ORDER BY sale_date", engine)
-df = df.set_index(pd.to_datetime(df["sale_date"])).drop(columns=["sale_date"])
-
-transformer = TimeSeriesDecompositionTransformer(model="multiplicative", period=12)
-transformer.fit(df)
-result = transformer.transform(df)
-
-# result.metadata contains trend, seasonal, residual arrays
-print(result.metadata["trend"][:5])
-print(result.metadata["seasonal"][:5])
-```
-
-### Check stationarity and difference if needed
-
-```python
-from localdata_mcp.domains.time_series_analysis import StationarityTestTransformer
-
-transformer = StationarityTestTransformer(tests=["adf", "kpss"], auto_differencing=True)
-transformer.fit(df)
-result = transformer.transform(df)
-
-print(result.metadata["overall_stationary"])
-for rec in result.recommendations:
-    print(rec)
-```
-
-### Forecast with ARIMA via MCP tool
-
-```python
-forecast = tool_time_series_forecast(
-    engine=engine,
-    query="SELECT order_date, units_sold FROM orders ORDER BY order_date",
-    date_column="order_date",
-    value_column="units_sold",
-    horizon=12,
-    method="arima",
+analyze_time_series(
+    "sales", "SELECT sale_date, revenue FROM monthly_totals ORDER BY sale_date",
+    date_column="sale_date", value_column="revenue", frequency="M",
 )
-
-print(forecast["forecast"])            # 12-period point forecasts
-print(forecast["confidence_intervals"])  # lower/upper bounds
-print(forecast["model_summary"]["aic"])
 ```
 
-### Ensemble forecast with automatic model weighting
+The seasonal component answers it. A stationarity test that fails at the same
+time means the level is drifting, which is a separate problem from seasonality
+and needs differencing rather than a seasonal term.
+
+### Forecast the next twelve months
 
 ```python
-from localdata_mcp.domains.time_series_analysis import EnsembleForecaster
-
-forecaster = EnsembleForecaster(
-    forecast_steps=12,
-    methods=["exponential_smoothing", "arima"],
-    combination_method="weighted_average",
-    validation_split=0.2,
+forecast_time_series(
+    "sales", "SELECT sale_date, revenue FROM monthly_totals ORDER BY sale_date",
+    date_column="sale_date", value_column="revenue", horizon=12, method="arima",
 )
-forecaster.fit(df)
-result = forecaster.transform(df)
-
-print(result.metadata["ensemble_forecast"])
-print(result.metadata["model_weights"])   # {"exponential_smoothing": 0.6, "arima": 0.4}
 ```
 
-### Granger causality between two economic indicators
+`ORDER BY` the date column: the tools read the series in the order the query
+returns it. Confidence intervals widen with the horizon — a twelve-month band
+that spans zero is telling you the history does not support a twelve-month call.
+
+### Compare ARIMA against exponential smoothing
 
 ```python
-from localdata_mcp.domains.time_series_analysis import GrangerCausalityAnalyzer
-
-# Requires a stationary multivariate DataFrame
-analyzer = GrangerCausalityAnalyzer(max_lags=4, significance_level=0.05)
-analyzer.fit(macro_df)
-result = analyzer.transform(macro_df)
-
-for pair, tests in result.metadata["causality_results"].items():
-    print(f"{pair}: significant={tests['is_significant']}, best_lag={tests['best_lag']}")
-```
-
-### Full pipeline: stationarity → ARIMA order selection → forecast
-
-```python
-from localdata_mcp.domains.time_series_analysis import (
-    StationarityTestTransformer,
-    AutoARIMATransformer,
+forecast_time_series(
+    "sales", "SELECT sale_date, revenue FROM monthly_totals WHERE sale_date < '2026-01-01' ORDER BY sale_date",
+    date_column="sale_date", value_column="revenue", horizon=6, method="ets",
 )
-
-# 1. Test stationarity
-stat_result = StationarityTestTransformer().fit(df).transform(df)
-d = 1 if not stat_result.metadata["overall_stationary"] else 0
-
-# 2. Auto-select ARIMA orders
-auto = AutoARIMATransformer(max_p=5, max_q=5, d=d, forecast_steps=10)
-auto.fit(df)
-forecast_result = auto.transform(df)
-
-print(f"Selected order: {auto.best_order_}")
-print(forecast_result.metadata["forecast"])
 ```
+
+Fit both methods on history that stops short of the last six months, then score
+each against what actually happened with `evaluate_model_performance`. That
+requires writing the two forecasts back next to the actuals first.
+
+### Daily data from a CSV
+
+```python
+analyze_time_series(
+    "readings", "SELECT ts, value FROM data_table ORDER BY ts",
+    date_column="ts", value_column="value", frequency="D",
+)
+```
+
+A CSV connection loads into a single table named `data_table` whatever the
+connection is called.

@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrading from 2.0.0
 
-Two components were renamed and every skill moved. Both renames break callers by
-name, and nothing warns you — an old name simply resolves to nothing.
+Read this section even if you use only the MCP server. Two components were
+renamed, three groups of tools that never worked now do, and the geospatial
+statistics in 2.0.0 returned wrong numbers.
+
+**Renames and moves.** Both renames break callers by name, and nothing warns
+you — an old name simply resolves to nothing.
 
 1. **Rename `graph-explore` to `graph-data-explore`** wherever you invoke it:
    `/graph-explore` becomes `/graph-data-explore`.
@@ -30,18 +34,45 @@ name, and nothing warns you — an old name simply resolves to nothing.
    `claude --plugin-dir <path> plugin details localdata-mcp`, which should
    report 18 skills and 11 agents.
 
-Nothing else in the tool surface changed: all 53 MCP tool names, parameters, and
-return shapes are as they were in 2.0.0. A client that uses only the MCP server,
-without the skills and agents, needs no action.
+**Re-run any geospatial statistic computed on 2.0.0.** Moran's I, Geary's C and
+Getis-Ord Gi* all returned plausible, wrong numbers — inflated z-scores, a
+Geary's C sixty times too small, and a `p_value` of `None` on every Geary call
+ever made. The corrected formulas are described under Fixed below. Any
+conclusion drawn from those statistics needs recomputing, not adjusting.
 
-### Removed
+**Recheck any YAML configuration you wrote for 2.0.0.** Settings the server
+parsed and then ignored now take effect: `query.chunk_size`,
+`query.buffer_timeout`, `connections.max_concurrent` and nineteen of the
+twenty-five logging fields, `enable_metrics` among them. Defaults are unchanged
+when nothing is configured, so an installation that configured nothing behaves
+as before — but a file that set one of those keys will now be obeyed for the
+first time.
 
-- The skill name `graph-explore` and the agent name `graph-analyst`. Both are
-  renames, not deletions of function — see Upgrading above for the replacements.
-- The flat `skills/<name>/SKILL.md` layout, replaced by
-  `skills/<group>/<name>/SKILL.md`.
+**Nothing was removed from the tool surface.** It grew from 53 tools to 71; the
+53 that existed in 2.0.0 keep their names, parameters and return shapes. A
+client that names tools explicitly needs no edit for the new ones to appear.
 
 ### Added
+
+- Eighteen MCP tools, taking the surface from 53 to 71. Seventy are registered
+  by `DatabaseManager`; the seventy-first, `get_metrics`, is registered at import
+  when metrics collection is enabled, which is the default.
+  - **Sampling and estimation (4):** `generate_sample`, `bootstrap_statistic`,
+    `monte_carlo_simulate`, `bayesian_estimate`.
+  - **Optimization (4):** `solve_linear_program`, `optimize_constrained`,
+    `analyze_network`, `solve_assignment_problem`. These four read a whole table
+    rather than a query, since a solver needs the full constraint set.
+  - **Geospatial (10):** `check_geospatial_capabilities`,
+    `analyze_spatial_autocorrelation`, `find_spatial_hotspots`,
+    `calculate_spatial_distances`, `optimize_route`, `analyze_accessibility`,
+    `generate_service_isochrones`, `perform_spatial_join`,
+    `perform_spatial_overlay`, `aggregate_points_in_polygons`. geopandas,
+    shapely and pyproj are required; call `check_geospatial_capabilities` to see
+    which optional backends (scikit-gstat, rasterio) are present.
+- `LOCALDATA_LOGGING_ENABLE_METRICS`, `LOCALDATA_LOGGING_METRICS_PORT` and
+  `LOCALDATA_LOGGING_METRICS_ENDPOINT`. `enable_metrics` had no environment
+  variable and no working YAML path, so the `get_metrics` tool could not be
+  turned off.
 - Ten skills: data-quality, find-reference-data, anomaly-detection,
   dimensionality-reduction, geospatial, optimization, hypothesis-test,
   sampling-estimation, process-control, research-pipeline. The plugin now ships 18.
@@ -56,6 +87,15 @@ without the skills and agents, needs no action.
 - `docs/plugin.md`, documenting every shipped skill and agent.
 
 ### Changed
+
+- Configuration that was parsed and discarded now reaches the code that uses it.
+  `query.chunk_size`, `query.buffer_timeout` and `connections.max_concurrent`
+  had no call sites, so the live paths used hardcoded literals — a
+  `Semaphore(10)`, 600s and 3600s buffer expiries, a 1000-row chunk fallback.
+  `get_logging_config()` built `LoggingConfig` from a hand-written list of six
+  keys and dropped the other nineteen. Where a setting has two homes, the newer
+  `query`/`connections` section wins over the older `performance` keys, which
+  stay honoured. Every existing default is unchanged when nothing is configured.
 - Licence migrated from MIT to Apache 2.0. `LICENSE` carries the Apache 2.0 text,
   `NOTICE` carries the attribution notice Apache 2.0 requires, and `pyproject.toml`
   declares `license = "Apache-2.0"` as a PEP 639 expression.
@@ -67,7 +107,63 @@ without the skills and agents, needs no action.
 - PyPI metadata: added AI and data-science classifiers and cross-platform keywords.
 - Version raised to 2.1.0 in `pyproject.toml`, `.claude-plugin/plugin.json`, and `server.json`.
 
+### Removed
+
+- The skill name `graph-explore` and the agent name `graph-analyst`. Both are
+  renames, not deletions of function — see Upgrading above for the replacements.
+- The flat `skills/<name>/SKILL.md` layout, replaced by
+  `skills/<group>/<name>/SKILL.md`.
+- Four root documents, each describing a system that no longer matched the code:
+  `API_REFERENCE.md`, `ADVANCED_EXAMPLES.md`, `ARCHITECTURE.md` and
+  `CONFIGURATION.md`. They are replaced by `docs/tools-reference.md`,
+  `docs/advanced-examples.md`, `docs/architecture/index.md` and
+  `docs/configuration.md`.
+- A duplicated tool section in the configuration documentation, which documented
+  two parameters that do not exist: `style` on `export_graph` and `include_path`
+  on `export_structured`.
+
 ### Fixed
+
+- **Spatial statistics returned wrong numbers.** Anyone who ran them on 2.0.0
+  should re-run rather than reinterpret. Four defects, all in the variance terms:
+  the S2 term shared by Moran's I and Geary's C summed squared row sums instead
+  of squared row-plus-column sums (60 instead of 256.9 for a row-standardised
+  8-nearest-neighbour matrix over 60 points); Moran's variance ran roughly ten
+  times small, inflating a z-score of 18.9 to 59.9, and now uses the closed-form
+  normality variance of Cliff & Ord (1981); Geary's C divided by S0 twice,
+  deflating C by a factor of sixty, and its variance came out negative, so its
+  `p_value` was `None` on every call ever made; Getis-Ord Gi* used a variance
+  with no textbook counterpart and added a self-weight to an already
+  row-standardised matrix, and now uses the standard form of Getis & Ord (1992).
+  On three well-separated blobs it now labels every high-value point a hot spot
+  and every low-value point a cold spot, where before it found neither.
+- **All twelve data science tools raised before returning.** The adapter between
+  the MCP tools and the domain modules called almost every domain function with
+  the wrong signature — column selectors forwarded as keywords the transformers
+  do not accept, a DataFrame passed where a positional ndarray was required, and
+  renamed parameters (`amount_column`, not `value_column`; `algorithm`, not
+  `method`). The MCP signatures themselves were correct throughout.
+- **The time series tools could not run at all.** Every analyzer subclassed an
+  abstract pipeline base whose five hooks none of them implement, so
+  instantiation failed with "Can't instantiate abstract class"; and
+  `TimeSeriesResult.to_dict()` listed the base fields by hand, silently dropping
+  every field a subclass added.
+- **`request_data_chunk`, `request_multiple_chunks` and `get_query_metadata`
+  were non-functional from the day they were registered.** The chunk loader was a
+  placeholder returning `None`, so every chunk of every query came back as "Chunk
+  N not available". Chunk availability was sized from the buffered head rather
+  than the whole result, so a 50,000-row result advertised ten chunks covering
+  2,170 rows and refused every id past that. `get_query_metadata` serialized its
+  response with the stdlib encoder while the quality report carries numpy
+  scalars, so it returned "Object of type bool is not JSON serializable" and
+  nothing else, always.
+- Clustering results keyed per-cluster statistics by numpy integer labels, which
+  `json.dumps` rejects as mapping keys regardless of the `default` handler, so the
+  tool failed at serialization after the analysis had already succeeded.
+- Four geospatial entry points read result attributes their transformers do not
+  set, returning `{"error": "Analysis failed"}` while the analysis underneath had
+  succeeded.
+- The advertised tool count. Six files stated 53; the server registers 71.
 - Performance benchmarks workflow was invalid YAML and had never executed. Embedded
   Python scripts written at column 0 terminated the enclosing `run:` block scalar,
   so GitHub could not parse the file and every run completed with zero jobs.
@@ -91,8 +187,9 @@ without the skills and agents, needs no action.
   contributors to run `uv sync --dev`. The dev tools are a project extra, not a uv
   dependency group, so that command uninstalls pytest, black, and mypy instead of
   installing them. Corrected to `uv sync --extra dev`.
-- Tool counts and export-format lists across README and `docs/tools-reference.md`
-  now match the registered tools; `get_metrics` is documented.
+- Four domain guides documented internal Python adapters whose first parameter is
+  a SQLAlchemy engine as if they were MCP tools. `docs/domains/` now names the
+  tools an MCP client can actually call.
 
 ## [2.0.0] - 2026-04-06
 

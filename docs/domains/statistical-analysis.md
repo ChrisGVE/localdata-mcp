@@ -44,88 +44,46 @@ The statistical analysis domain provides hypothesis testing, ANOVA, non-parametr
 
 ## MCP Tool Reference
 
-The domain exposes three MCP tools via `src/localdata_mcp/datascience_tools.py`.
+The domain is reached through three MCP tools. Like every other analytical tool,
+each takes the name of a live connection and a SQL query — there is no
+data-frame parameter and no separate load step, and column parameters name
+columns in the query's result set. The classes listed under *Available Analyses*
+above are the internal implementation those tools call; they are not reachable
+from an MCP client.
 
-### `tool_hypothesis_test`
+Full parameter tables for all three live in the
+[tools reference](../tools-reference.md#data-science-12-tools). This page covers
+what each tool is for and when to reach for it.
 
-Run hypothesis tests on data retrieved from a SQL query.
+### `analyze_hypothesis_test`
 
-**Parameters:**
+Answers "is this difference real, or is it noise?" Set `test_type` to
+`ttest_1samp`, `ttest_ind`, `ttest_rel`, `chi2`, `normality` or `correlation`;
+the default `auto` picks from the shape of the data. `column` names the numeric
+column under test and `group_column` the grouping column for two-sample tests;
+`alpha` (default 0.05) and `alternative` (`two-sided`, `less`, `greater`)
+control the decision rule. Returns a `test_results` list, one entry per test,
+each with its statistic, p-value and an interpretation string.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine from an active connection |
-| `query` | `str` | required | SQL query returning the data to analyse |
-| `test_type` | `str` | `"auto"` | Test to run: `"auto"`, `"ttest_1samp"`, `"ttest_ind"`, `"ttest_rel"`, `"chi2"`, `"normality"`, `"correlation"` |
-| `column` | `str` | `None` | Target numeric column for focused testing |
-| `group_column` | `str` | `None` | Column defining groups for two-sample tests |
-| `alpha` | `float` | `0.05` | Significance level |
-| `alternative` | `str` | `"two-sided"` | Direction: `"two-sided"`, `"less"`, `"greater"` |
-| `max_rows` | `int` | `None` | Row cap (default 500,000) |
+Called with `test_type="auto"` and no `column`, it reports normality and
+correlation checks across every numeric column — a cheap first look before
+committing to a specific test.
 
-**Returns:** `dict` with keys:
+### `analyze_anova`
 
-- `test_results` — list of test result objects, each with `test_name`, `statistic`, `p_value`, `degrees_of_freedom`, `effect_size`, `interpretation`
-- `assumptions_checked` — dict of assumption check results
-- `effect_sizes` — dict of calculated effect sizes
-- `alpha_level` — significance level used
-- `correction_applied` — multiple comparison correction method if any
+Answers "do these three or more groups differ?" — the case a t-test cannot
+handle without inflating the false-positive rate. `dependent_var` is the numeric
+outcome, `group_var` the categorical factor. Returns the F-statistic, its
+p-value, per-group means and an effect size. A significant F says at least one
+group differs, not which one.
 
----
+### `analyze_effect_sizes`
 
-### `tool_anova_analysis`
-
-Perform one-way or two-way ANOVA with post-hoc tests.
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine |
-| `query` | `str` | required | SQL query returning the data |
-| `dependent_var` | `str` | required | Numeric outcome column |
-| `group_var` | `str` | required | Categorical grouping column |
-| `alpha` | `float` | `0.05` | Significance level |
-| `max_rows` | `int` | `None` | Row cap |
-
-Underlying `ANOVAAnalysisTransformer` also accepts:
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `anova_type` | `str` | `"one_way"` | `"one_way"`, `"two_way"`, `"auto"` |
-| `post_hoc` | `str` | `"tukey"` | `"tukey"`, `"bonferroni"`, `"scheffe"`, `None` |
-| `effect_size` | `str` | `"eta_squared"` | `"eta_squared"`, `"partial_eta_squared"`, `"omega_squared"` |
-| `check_assumptions` | `bool` | `True` | Run Shapiro-Wilk and Levene's tests before ANOVA |
-
-**Returns:** `dict` with keys:
-
-- `anova_results` — F-statistic, p-value, degrees of freedom, group means and sizes, interpretation
-- `post_hoc_results` — pairwise comparisons with adjusted p-values and confidence intervals
-- `effect_sizes` — eta-squared and omega-squared per factor
-- `assumptions_checked` — normality and homoscedasticity check results
-
----
-
-### `tool_effect_sizes`
-
-Calculate standardized effect sizes (Cohen's d, Cramer's V, correlation r).
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine |
-| `query` | `str` | required | SQL query |
-| `column` | `str` | required | Numeric column to analyse |
-| `group_column` | `str` | required | Categorical grouping column |
-| `max_rows` | `int` | `None` | Row cap |
-
-**Returns:** `dict` with keys:
-
-- `effect_sizes` — Cohen's d (two-group) or Cramer's V (categorical), with `effect_description` (`negligible`, `small`, `medium`, `large`)
-- `confidence_intervals` — interval estimates for means and correlations
-- `power_analysis` — power curve across sample sizes for the observed effect
-- `sample_sizes` — required n per group for small/medium/large effects
+Answers "does the difference matter?" — the question significance leaves open, since
+a large enough sample makes a trivial gap significant. Takes `column` and
+`group_column` and nothing else; the measure follows from the data (Cohen's d
+for two numeric groups, Cramer's V for categorical association). Returns the
+value with a plain-language magnitude label.
 
 ---
 
@@ -235,102 +193,78 @@ After running statistical analysis, consider chaining:
 | `business_intelligence` (A/B test) | Frame a group comparison as a controlled experiment with business metrics |
 | `sampling_estimation` (bootstrap) | Obtain distribution-free confidence intervals when normality is violated |
 
-The `test_results` list and `effect_sizes` dict from this domain pass naturally into regression feature selection and experimental design planning.
+Each step is a separate call. `test_results` and the effect-size values come back
+as JSON to the caller, not as a handle another tool can consume — deciding what
+the next call should be, and with which columns, is the caller's work.
 
 ---
 
 ## Examples
 
-### Basic hypothesis test on sales data
+Every example below is an MCP tool call, the way an agent would issue it.
+
+### Does revenue differ between two regions?
 
 ```python
-result = tool_hypothesis_test(
-    engine=engine,
-    query="SELECT revenue, region FROM sales WHERE year = 2024",
-    test_type="ttest_ind",
-    column="revenue",
-    group_column="region",
-    alpha=0.05,
+analyze_hypothesis_test(
+    "sales", "SELECT revenue, region FROM orders WHERE year = 2024",
+    test_type="ttest_ind", column="revenue", group_column="region",
 )
-
-# Inspect the first test result
-first = result["test_results"][0]
-print(first["test_name"])        # "Independent t-test (revenue by region)"
-print(first["p_value"])          # e.g. 0.0023
-print(first["effect_size"])      # Cohen's d
-print(first["interpretation"])   # "Significant difference between groups (medium effect)"
 ```
 
-### ANOVA across multiple product categories
+The first entry of `test_results` carries the t-statistic, its p-value and an
+interpretation. A p-value below `alpha` says the two regions differ; it says
+nothing about by how much — follow with `analyze_effect_sizes`.
+
+### Do satisfaction scores differ across product categories?
 
 ```python
-result = tool_anova_analysis(
-    engine=engine,
-    query="SELECT satisfaction_score, product_category FROM survey",
-    dependent_var="satisfaction_score",
-    group_var="product_category",
-    alpha=0.05,
+analyze_anova(
+    "survey", "SELECT satisfaction_score, product_category FROM responses",
+    dependent_var="satisfaction_score", group_var="product_category",
 )
-
-# Check overall significance
-for key, anova in result["anova_results"].items():
-    print(f"{key}: F={anova['f_statistic']:.3f}, p={anova['p_value']:.4f}")
-
-# Inspect post-hoc comparisons
-for key, post_hoc in result["post_hoc_results"].items():
-    for comp in post_hoc["comparisons"]:
-        if comp["significant"]:
-            print(f"{comp['group1']} vs {comp['group2']}: p={comp['p_value']:.4f}")
 ```
 
-### Effect size calculation before running a study
+Three or more groups need ANOVA rather than repeated t-tests, which would
+inflate the false-positive rate with every extra pair compared.
+
+### Is the pilot effect large enough to be worth a full study?
 
 ```python
-# Step 1: estimate effect size from pilot data
-effect_result = tool_effect_sizes(
-    engine=engine,
-    query="SELECT conversion, variant FROM pilot_experiment",
-    column="conversion",
-    group_column="variant",
+analyze_effect_sizes(
+    "pilot", "SELECT conversion, variant FROM data_table",
+    column="conversion", group_column="variant",
 )
-
-# Step 2: use power analysis to determine required sample size
-power = effect_result["power_analysis"]["ttest"]
-print(f"Required n per group: {power['required_sample_size']}")
-print(power["interpretation"])
 ```
 
-### Multi-step workflow: normality check then appropriate test
+`pilot` here is a CSV connection, so its single table is `data_table`. A
+`negligible` or `small` label on a significant result usually means the sample
+was large, not that the treatment worked.
+
+### Check normality before choosing a test
 
 ```python
-# 1. Check normality first
-normality = tool_hypothesis_test(
-    engine=engine,
-    query="SELECT response_time FROM api_logs",
-    test_type="normality",
+analyze_hypothesis_test(
+    "logs", "SELECT response_time FROM api_calls", test_type="normality",
 )
-
-is_normal = all(
-    r["p_value"] > 0.05
-    for r in normality["test_results"]
-    if "Shapiro" in r["test_name"]
-)
-
-# 2. Choose parametric or non-parametric test accordingly
-query = "SELECT response_time, server_zone FROM api_logs"
-if is_normal:
-    result = tool_hypothesis_test(
-        engine=engine, query=query,
-        test_type="ttest_ind",
-        column="response_time",
-        group_column="server_zone",
-    )
-else:
-    # Use NonParametricTestTransformer directly
-    from localdata_mcp.domains.statistical_analysis import NonParametricTestTransformer
-    import pandas as pd
-    df = pd.read_sql(query, engine)
-    transformer = NonParametricTestTransformer(test_type="mann_whitney", alpha=0.05)
-    transformer.fit(df)
-    result = transformer.transform(df).iloc[0].to_dict()
 ```
+
+Shapiro-Wilk and Kolmogorov-Smirnov both run. If either rejects normality, a
+t-test on that column rests on an assumption the data does not meet. The
+non-parametric transformers listed under *Available Analyses* — Mann-Whitney,
+Wilcoxon, Kruskal-Wallis, Friedman — have no MCP tool of their own in this
+release; the rank correlation reported by `test_type="correlation"` is the only
+distribution-free test reachable from a client.
+
+### Is response time associated with payload size?
+
+```python
+analyze_hypothesis_test(
+    "logs", "SELECT response_time, payload_bytes FROM api_calls",
+    test_type="correlation",
+)
+```
+
+Both Pearson and Spearman coefficients are reported. A large gap between them
+points at a monotone but non-linear relationship, which a linear model in
+`analyze_regression` will fit badly.

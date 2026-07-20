@@ -34,6 +34,17 @@ return a JSON-serializable result dict.
 
 ## MCP Tool Reference
 
+The domain is reached through four MCP tools. Each takes the name of a live
+connection, and — unlike the analytical tools, which take a SQL query — a
+`table_name`: the problem data is read from a whole table, since a solver needs
+the full constraint set rather than a projection of it. There is no data-frame
+parameter and no separate load step. The classes listed under *Available
+Analyses* above are the internal implementation those tools call; they are not
+reachable from an MCP client.
+
+Full parameter tables live in the
+[tools reference](../tools-reference.md#optimization-4-tools).
+
 ### `solve_linear_program`
 
 Solve a linear programming problem from database data.

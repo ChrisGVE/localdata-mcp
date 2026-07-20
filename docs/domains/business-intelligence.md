@@ -39,6 +39,16 @@ raise that cap — narrow the query instead.
 
 ## MCP Tool Reference
 
+The domain is reached through two MCP tools. Like every other analytical tool,
+each takes the name of a live connection and a SQL query — there is no
+data-frame parameter and no separate load step, and column parameters name
+columns in the query's result set. The functions listed under *Available
+Analyses* above are the internal implementation; most have no MCP tool at all,
+and where a name is shared its Python signature differs from the tool's.
+
+Full parameter tables live in the
+[tools reference](../tools-reference.md#data-science-12-tools).
+
 ### `analyze_rfm`
 
 Perform RFM customer segmentation on transaction data.
@@ -267,18 +277,18 @@ Every result includes enough metadata for downstream tools to understand data pr
 ### Segment an e-commerce customer base
 
 ```python
-result = analyze_rfm(
-    connection_name="ecommerce_db",
-    query="SELECT customer_id, order_date, order_total FROM orders WHERE order_date >= '2023-01-01'",
+analyze_rfm(
+    "ecommerce_db",
+    "SELECT customer_id, order_date, order_total FROM orders WHERE order_date >= '2023-01-01'",
     customer_column="customer_id",
     date_column="order_date",
     value_column="order_total",
 )
-# result.segment_summary shows count and avg metrics per segment
-# result.rfm_scores provides per-customer scores for downstream modelling
 ```
 
-Via MCP tool call:
+The returned JSON carries `segment_summary` — count and average metrics per
+segment — and `rfm_scores`, the per-customer scores. The same call as an MCP
+request:
 
 ```json
 {

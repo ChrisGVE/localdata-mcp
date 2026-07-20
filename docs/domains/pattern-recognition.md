@@ -44,110 +44,55 @@ The pattern recognition domain provides clustering, dimensionality reduction, an
 
 ## MCP Tool Reference
 
-The domain exposes three MCP tools via `src/localdata_mcp/datascience_tools.py`.
+The domain is reached through three MCP tools. Like every other analytical tool,
+each takes the name of a live connection and a SQL query — there is no
+data-frame parameter and no separate load step, and column parameters name
+columns in the query's result set. The classes listed under *Available Analyses*
+above are the internal implementation those tools call; they are not reachable
+from an MCP client.
 
-### `tool_clustering`
+All three share a `columns` parameter: a genuine list of column names
+(`["price", "sqft"]`, not a comma-separated string). Omit it and every numeric
+column in the result set is used. Full parameter tables live in the
+[tools reference](../tools-reference.md#data-science-12-tools); this page covers
+what each tool is for and when to reach for it.
 
-Perform clustering on data retrieved from a SQL query.
+### `analyze_clusters`
 
-**Parameters:**
+Answers "what natural groups are in this data?" `method` selects `kmeans`
+(default), `dbscan`, `hierarchical` or `gaussian_mixture`. Leave `n_clusters`
+unset and k is chosen by searching 2 through 10 for the best silhouette score,
+which is what you want when the number of segments is the question rather than
+an input. Returns the label per row, the centroids and a silhouette score.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine from an active connection |
-| `query` | `str` | required | SQL query returning numeric feature columns |
-| `columns` | `list[str]` | `None` | Columns to use as features; all numeric columns used if None |
-| `method` | `str` | `"kmeans"` | Algorithm: `"kmeans"`, `"hierarchical"`, `"dbscan"`, `"gmm"`, `"spectral"` |
-| `n_clusters` | `int` | `None` | Number of clusters; auto-selected if None |
-| `max_rows` | `int` | `None` | Row cap (default 500,000) |
+DBSCAN is the one to reach for when clusters are not blobs or when some rows
+should belong to nothing: it labels those `-1` instead of forcing them into the
+nearest group.
 
-Underlying `ClusteringTransformer` also accepts:
+### `detect_anomalies`
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `auto_k_selection` | `bool` | `True` | Search k_range for optimal k when n_clusters is None |
-| `k_range` | `tuple` | `(2, 10)` | Range to search for k |
-| `standardize` | `bool` | `True` | Standardise features before clustering |
-| `random_state` | `int` | `42` | Reproducibility seed |
+Answers "which rows do not belong?" `method` selects `isolation_forest`
+(default), `local_outlier_factor` or `one_class_svm`. These are multivariate
+detectors over a set of columns: there is no single-column mode, no threshold
+parameter, and no z-score or IQR method. `contamination` is the
+expected anomaly rate and defaults to 0.1 — a tenth of the rows will be flagged
+whatever the data looks like, so set it from what you actually expect. Returns a
+label per row (`-1` for anomaly), a continuous score, and the flagged indices.
 
-**Returns:** `dict` with keys:
+The tool ranks rows by unusualness; it does not know which unusual rows are
+problems. Query the flagged indices back and look at them.
 
-- `labels` — cluster assignment per observation
-- `n_clusters` — number of clusters found
-- `cluster_centers` — centroid coordinates (K-means and GMM)
-- `cluster_sizes` — count per cluster
-- `inertia` — within-cluster sum of squares (K-means only)
-- `evaluation` — silhouette score, Davies-Bouldin index, Calinski-Harabasz score
-- `k_scores` — scores across k values when auto-selection ran
+### `reduce_dimensions`
 
----
+Answers "can these many correlated columns be summarised in a few?" `method`
+selects `pca` (default), `tsne` or `umap`, and `n_components` sets the output
+width (default 2). PCA additionally reports explained variance, which says how
+much information survived the projection. The ICA and LDA transformers listed
+under *Available Analyses* have no MCP tool in this release.
 
-### `tool_anomaly_detection`
-
-Detect anomalous observations in data retrieved from a SQL query.
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine |
-| `query` | `str` | required | SQL query |
-| `columns` | `list[str]` | `None` | Feature columns; all numeric columns used if None |
-| `method` | `str` | `"isolation_forest"` | Algorithm: `"isolation_forest"`, `"one_class_svm"`, `"lof"`, `"statistical"` |
-| `contamination` | `float` | `0.1` | Expected proportion of anomalies (0.0 – 0.5) |
-| `max_rows` | `int` | `None` | Row cap |
-
-Underlying `AnomalyDetectionTransformer` also accepts:
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `standardize` | `bool` | `True` | Standardise features before detection |
-| `random_state` | `int` | `42` | Reproducibility seed |
-
-**Returns:** `dict` with keys:
-
-- `anomaly_labels` — 1 for normal, -1 for anomaly per observation
-- `anomaly_scores` — continuous anomaly score (lower = more anomalous for Isolation Forest)
-- `n_anomalies` — count of detected anomalies
-- `n_samples` — total observation count
-- `anomaly_rate` — fraction of observations flagged
-- `anomaly_indices` — indices of flagged observations
-- `evaluation` — precision, recall, F1 when ground truth provided; otherwise threshold and score distribution
-
----
-
-### `tool_dimensionality_reduction`
-
-Reduce feature dimensions in data retrieved from a SQL query.
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `engine` | `Engine` | required | SQLAlchemy engine |
-| `query` | `str` | required | SQL query |
-| `columns` | `list[str]` | `None` | Feature columns; all numeric columns used if None |
-| `method` | `str` | `"pca"` | Algorithm: `"pca"`, `"tsne"`, `"umap"`, `"ica"`, `"lda"` |
-| `n_components` | `int` | `2` | Number of output dimensions |
-| `max_rows` | `int` | `None` | Row cap |
-
-Underlying `DimensionalityReductionTransformer` also accepts:
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `preserve_variance` | `float` | `0.95` | Minimum variance to preserve for PCA auto-selection |
-| `standardize` | `bool` | `True` | Standardise features before reduction |
-| `random_state` | `int` | `42` | Reproducibility seed |
-
-**Returns:** `dict` with keys:
-
-- `transformed_data` — reduced-dimension representation
-- `original_dimensions` — input feature count
-- `reduced_dimensions` — output component count
-- `explained_variance_ratio` — per-component variance explained (PCA only)
-- `cumulative_variance_explained` — cumulative variance (PCA only)
-- `evaluation` — reconstruction error and variance preservation metrics
-- `loadings` — feature loadings per component (PCA, ICA)
+t-SNE and UMAP produce embeddings for looking at, not for feeding into a model:
+they distort distances by design. `umap` requires the optional `umap-learn`
+package.
 
 ---
 
@@ -311,123 +256,82 @@ Measures the local density deviation of each point relative to its k nearest nei
 
 Typical composition patterns:
 
-1. **Cluster then test**: Run `tool_clustering`, then pass cluster labels to `tool_hypothesis_test` with cluster as the group variable to determine which features drive cluster separation.
-2. **Reduce then cluster**: Run `tool_dimensionality_reduction` (PCA, n_components=10) to reduce noise, then run `tool_clustering` on the reduced representation.
-3. **Detect then investigate**: Run `tool_anomaly_detection`, extract anomaly indices, then query those rows back from the database for detailed review.
+1. **Cluster then test**: run `analyze_clusters`, write the labels back to the
+   source (or join them in SQL), then call `analyze_anova` with the cluster
+   column as `group_var` to see which features separate the groups.
+2. **Reduce then cluster**: run `reduce_dimensions` with `method="pca"` and
+   roughly ten components to drop noise, then cluster the reduced columns.
+3. **Detect then investigate**: run `detect_anomalies`, take the flagged
+   indices, and query those rows back with `execute_query` for review.
+
+Each step is a separate call. Results carry no handle that the next tool can
+consume, so passing data between them is the caller's work.
 
 ---
 
 ## Examples
 
-### Customer segmentation with automatic k selection
+Every example below is an MCP tool call, the way an agent would issue it.
+
+### How many customer segments are there?
 
 ```python
-result = tool_clustering(
-    engine=engine,
-    query="SELECT avg_order_value, order_frequency, days_since_last_order FROM customers",
+analyze_clusters(
+    "crm",
+    "SELECT avg_order_value, order_frequency, days_since_last_order FROM customers",
     method="kmeans",
-    n_clusters=None,  # auto-select
 )
-
-print(f"Optimal k: {result['n_clusters']}")
-print(f"Silhouette score: {result['evaluation']['silhouette_score']:.3f}")
-print(f"Davies-Bouldin: {result['evaluation']['davies_bouldin_score']:.3f}")
-
-for k, score in result["k_scores"].items():
-    print(f"  k={k}: silhouette={score:.3f}")
 ```
 
-### Fraud detection with Isolation Forest
+Omitting `n_clusters` lets the silhouette search pick k. A best silhouette below
+about 0.25 means the data has no clear segment structure, whatever k comes back
+— the answer is "there aren't any", not "here are three".
+
+### Which transactions look like fraud?
 
 ```python
-result = tool_anomaly_detection(
-    engine=engine,
-    query="SELECT amount, merchant_category, hour_of_day, distance_from_home FROM transactions",
+detect_anomalies(
+    "payments",
+    "SELECT amount, hour_of_day, distance_from_home FROM transactions",
+    ["amount", "hour_of_day", "distance_from_home"],
     method="isolation_forest",
-    contamination=0.02,   # expect ~2% fraud rate
+    contamination=0.02,
 )
-
-print(f"Anomalies detected: {result['n_anomalies']} / {result['n_samples']}")
-print(f"Anomaly rate: {result['anomaly_rate']:.2%}")
-
-# Get row indices to investigate
-anomaly_indices = result["anomaly_indices"]
 ```
 
-### PCA for visualisation and noise reduction
+`contamination=0.02` says roughly two per cent of rows are expected to be
+anomalous. The detector flags that share regardless, so the number is a budget
+for review capacity as much as an estimate.
+
+### Collapse forty sensor channels to something plottable
 
 ```python
-result = tool_dimensionality_reduction(
-    engine=engine,
-    query="SELECT * FROM high_dimensional_features",
-    method="pca",
-    n_components=2,
+reduce_dimensions(
+    "telemetry", "SELECT * FROM data_table", method="pca", n_components=2,
 )
-
-print(f"Explained variance: {result['cumulative_variance_explained'][-1]:.1%}")
-print("Component loadings:", result["loadings"])
-
-# 2D embedding ready for plotting
-import numpy as np
-coords = np.array(result["transformed_data"])
-# coords[:, 0] = PC1, coords[:, 1] = PC2
 ```
 
-### Reduce dimensions then cluster
+`telemetry` here is a Parquet connection, so its single table is `data_table`.
+Check the explained variance before trusting the picture: two components holding
+40% of the variance make a plot that hides more than it shows.
+
+### Reduce, then cluster
 
 ```python
-# Step 1: reduce with PCA to remove noise
-reduction = tool_dimensionality_reduction(
-    engine=engine,
-    query="SELECT * FROM sensor_readings",
-    method="pca",
-    n_components=10,
+reduce_dimensions(
+    "sensors", "SELECT * FROM readings", method="pca", n_components=10,
 )
-
-# Step 2: cluster in reduced space using direct transformer
-import numpy as np
-from localdata_mcp.domains.pattern_recognition import ClusteringTransformer, PatternEvaluationTransformer
-
-X_reduced = np.array(reduction["transformed_data"])
-
-clusterer = ClusteringTransformer(algorithm="dbscan", auto_k_selection=False)
-clusterer.fit(X_reduced)
-cluster_result = clusterer.get_clustering_result(X_reduced)
-
-evaluator = PatternEvaluationTransformer("clustering")
-eval_result = evaluator.evaluate_clustering(X_reduced, cluster_result.labels)
-
-print(f"Clusters found: {cluster_result.n_clusters}")
-print(f"Noise points: {(cluster_result.labels == -1).sum()}")
-print(f"Silhouette: {eval_result.metrics['silhouette_score']:.3f}")
 ```
 
-### Compare clustering against known labels
+Write the ten components back to the source, then cluster them:
 
 ```python
-from localdata_mcp.domains.pattern_recognition import perform_clustering
-import numpy as np
-
-# Assume X is feature array and y_true are known labels
-result = perform_clustering(X, algorithm="gmm", n_clusters=4, y_true=y_true)
-
-eval_data = result["evaluation"]
-print(f"Adjusted Rand Index: {eval_data['adjusted_rand_score']:.3f}")
-print(f"Normalised Mutual Info: {eval_data['normalized_mutual_info']:.3f}")
-print(eval_data["quality_assessment"])  # e.g. "Good clustering structure"
-```
-
-### t-SNE visualisation of cluster structure
-
-```python
-result = tool_dimensionality_reduction(
-    engine=engine,
-    query="SELECT * FROM embedding_features",
-    method="tsne",
-    n_components=2,
-    max_rows=5000,   # t-SNE is expensive; limit rows
+analyze_clusters(
+    "sensors",
+    "SELECT pc1, pc2, pc3, pc4, pc5, pc6, pc7, pc8, pc9, pc10 FROM readings_pca",
+    method="dbscan",
 )
-
-coords = result["transformed_data"]  # shape (n, 2)
-# Use with any plotting library
 ```
+
+The intermediate table is yours to create — nothing in the first result feeds
+the second automatically.

@@ -172,6 +172,47 @@ Run statistical analysis, modeling, and pattern detection directly on query resu
 | `analyze_rfm` | Business Intelligence |
 | `analyze_ab_test` | Business Intelligence |
 
+### Sampling and Estimation (4 tools)
+
+Draw samples and quantify uncertainty without assuming a distribution.
+
+| Tool | Description |
+| --- | --- |
+| `generate_sample` | Simple random, stratified, systematic, or cluster sample from a query |
+| `bootstrap_statistic` | Resampled confidence interval for a mean, median, or other statistic |
+| `monte_carlo_simulate` | Propagate input uncertainty through a simulation |
+| `bayesian_estimate` | Posterior estimate and credible interval under a chosen prior |
+
+### Optimization (4 tools)
+
+Solve allocation and routing problems over table data. These four read a whole
+table rather than a query, since a solver needs the full constraint set.
+
+| Tool | Description |
+| --- | --- |
+| `solve_linear_program` | Linear or mixed-integer program from objective and constraint columns |
+| `optimize_constrained` | Non-linear constrained minimisation (SLSQP and related methods) |
+| `analyze_network` | Graph structure and centrality from an edge table |
+| `solve_assignment_problem` | Hungarian-method matching of agents to tasks |
+
+### Geospatial (10 tools)
+
+Spatial statistics, joins, and network routing over coordinate or WKT geometry
+columns. Requires geopandas, shapely, and pyproj.
+
+| Tool | Description |
+| --- | --- |
+| `check_geospatial_capabilities` | Report which spatial backends are installed |
+| `analyze_spatial_autocorrelation` | Moran's I or Geary's C — is the pattern clustered or random? |
+| `find_spatial_hotspots` | Getis-Ord Gi* hot and cold spot labelling |
+| `calculate_spatial_distances` | Haversine or Euclidean distances and nearest neighbours |
+| `optimize_route` | Shortest route visiting a set of waypoints on a network |
+| `analyze_accessibility` | Travel time from demand points to services, with the unreachable named |
+| `generate_service_isochrones` | Reachable-area polygons per travel-time band |
+| `perform_spatial_join` | Join points or geometries to polygons by spatial relationship |
+| `perform_spatial_overlay` | Intersection, union, or difference of two polygon layers |
+| `aggregate_points_in_polygons` | Count or summarise point values per polygon |
+
 ## Supported Data Sources
 
 ### Databases

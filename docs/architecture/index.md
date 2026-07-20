@@ -148,7 +148,9 @@ availability flag, so a missing driver disables one source rather than breaking
 startup. `check_compatibility` reports what is available.
 
 Concurrency is bounded by a semaphore sized from
-`security.max_concurrent_connections` (default 10). Buffers expire on a timer.
+`connections.max_concurrent` (default 10), which the config manager reads in
+preference to the older `performance.max_concurrent_connections`. Buffers expire
+on a timer.
 
 ## Security boundaries
 

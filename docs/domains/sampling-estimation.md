@@ -42,6 +42,16 @@ functions accept a DataFrame or a file path and return JSON-serializable diction
 
 ## MCP Tool Reference
 
+The domain is reached through four MCP tools. Like every other analytical tool,
+each takes the name of a live connection and a SQL query — there is no
+data-frame parameter and no separate load step, and column parameters name
+columns in the query's result set. The classes listed under *Available Analyses*
+above are the internal implementation those tools call; they are not reachable
+from an MCP client.
+
+Full parameter tables live in the
+[tools reference](../tools-reference.md#sampling--estimation-4-tools).
+
 ### `generate_sample`
 
 Draw a sample from a dataset using a chosen sampling method.
