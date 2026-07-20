@@ -92,23 +92,34 @@ connect_database("config_xml", "xml",  "./config.xml")
 connect_database("app_ini",    "ini",  "./app.ini")
 ```
 
+Both land in a single table named `data_table`.
+
 ### XML table layout
 
-Each XML element becomes a row. The columns are:
+The file is flattened with pandas `read_xml`: each direct child of the root
+element becomes a row, and the columns come from that child's attributes and its
+own sub-elements. Column names have spaces and hyphens replaced by underscores.
+There is no `id`, `tag`, `text` or `parent_id` column, and attribute names are
+not prefixed.
 
-| Column | Content |
-|--------|---------|
-| `id` | Auto-assigned integer row identifier |
-| `tag` | Element tag name |
-| `text` | Text content of the element, if any |
-| `parent_id` | Row identifier of the parent element (`NULL` for the root) |
-| `attrs_*` | One column per attribute, prefixed with `attrs_` |
+For this file:
 
-Querying is the same as for any SQL-backed source:
+```xml
+<root>
+  <item enabled="true">alpha</item>
+  <item enabled="false">beta</item>
+</root>
+```
+
+the table has columns `enabled` (from the attribute) and `item` (from the
+element text), two rows:
 
 ```python
-execute_query("config_xml", "SELECT tag, text FROM data WHERE attrs_enabled = 'true'")
+execute_query("config_xml", "SELECT item FROM data_table WHERE enabled = 1")
 ```
+
+Deeply nested XML does not flatten cleanly. Run `describe_table("config_xml",
+"data_table")` after connecting to see the columns you actually got.
 
 ### INI table layout
 
@@ -121,7 +132,7 @@ Each key-value pair becomes a row:
 | `value` | Value as a string |
 
 ```python
-execute_query("app_ini", "SELECT value FROM data WHERE section = 'database' AND key = 'host'")
+execute_query("app_ini", "SELECT value FROM data_table WHERE section = 'database' AND key = 'host'")
 ```
 
 ### Available tools for XML and INI
@@ -131,6 +142,6 @@ Because these formats map to SQL tables, all standard database tools apply:
 - `describe_database(name)` — list tables and row counts
 - `describe_table(name, table)` — column names and types
 - `execute_query(name, sql)` — run any read query
-- `find_table(name, keyword)` — search table names by keyword
+- `find_table(table_name)` — report which connections hold a table of that name; it searches every active connection and takes no connection argument
 
 The tree tools (`get_node`, `get_value`, etc.) are not available for XML or INI connections.

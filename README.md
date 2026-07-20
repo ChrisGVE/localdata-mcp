@@ -64,9 +64,14 @@ Then connect to any supported source and start querying:
 connect_database("sales", "postgresql", "postgresql://user:pass@localhost/db")
 execute_query("sales", "SELECT product, SUM(amount) FROM orders GROUP BY product")
 
-connect_database("data", "csv", "./records.csv")
-analyze_hypothesis_test("data", "SELECT amount, region FROM data", column="amount", group_column="region")
+connect_database("records", "csv", "./records.csv")
+analyze_hypothesis_test("records", "SELECT amount, region FROM data_table", column="amount", group_column="region")
 ```
+
+A single-table file — CSV, TSV, JSON, XML, INI, Parquet, Feather, Arrow — is
+loaded into one table named `data_table`, whatever the connection is called. Run
+`describe_database(name)` after connecting if you are unsure what a source
+exposes; multi-sheet spreadsheets and databases keep their own table names.
 
 ## Feature Overview
 
@@ -173,7 +178,8 @@ Run statistical analysis, modeling, and pattern detection directly on query resu
 
 | Type | Engines |
 | --- | --- |
-| SQL | SQLite, PostgreSQL, MySQL, DuckDB |
+| SQL | SQLite, PostgreSQL, MySQL |
+| SQL (analytical) | DuckDB (`pip install duckdb duckdb-engine`) |
 | SQL (enterprise) | Oracle, MS SQL Server (`pip install localdata-mcp[enterprise]`) |
 | Document | MongoDB, CouchDB (`pip install localdata-mcp[modern-databases]`) |
 | Key-value | Redis (`pip install localdata-mcp[modern-databases]`) |
@@ -187,13 +193,13 @@ Run statistical analysis, modeling, and pattern detection directly on query resu
 | Category | Formats |
 | --- | --- |
 | Tabular | CSV, TSV |
-| Structured | JSON, JSONL, YAML, TOML, XML, INI |
+| Structured | JSON, YAML, TOML, XML, INI |
 | Spreadsheet | Excel (.xlsx, .xls), LibreOffice Calc (.ods), Apple Numbers (.numbers) |
 | Analytical | Parquet, Feather, Arrow, HDF5 |
 | Graph | DOT (Graphviz), GML, GraphML, Mermaid |
 | RDF | Turtle (.ttl), N-Triples (.nt) |
 
-Multi-sheet spreadsheets are fully supported: each sheet becomes a separately queryable table. Connect to a specific sheet with `?sheet=SheetName` in the path.
+Multi-sheet spreadsheets are supported: each sheet becomes a separately queryable table. To load one sheet only, pass its name as the fourth argument to `connect_database` — `connect_database("q1", "excel", "./report.xlsx", "Q1 Results")`. Use `"excel"` for both `.xlsx` and `.xls`; `"xlsx"` is not a connection type.
 
 ## Data Science Domains
 
@@ -203,7 +209,7 @@ Multi-sheet spreadsheets are fully supported: each sheet becomes a separately qu
 
 **Pattern Recognition** — K-means, DBSCAN, and hierarchical clustering; anomaly detection via isolation forest, LOF, and one-class SVM; dimensionality reduction with PCA, t-SNE, and UMAP.
 
-**Time Series** — decomposition, stationarity testing, autocorrelation analysis; ARIMA, SARIMA, and ETS forecasting; change point detection; multivariate analysis with VAR, Granger causality, and cointegration tests.
+**Time Series** — decomposition, stationarity testing, autocorrelation analysis; ARIMA and ETS forecasting; change point detection; multivariate analysis with VAR, Granger causality, and cointegration tests. `forecast_time_series` accepts `method="arima"` or `method="ets"`; the SARIMA and ensemble models in the domain package are not reachable through an MCP tool.
 
 **Business Intelligence** — A/B test statistical analysis; RFM customer segmentation; cohort analysis, CLV modeling, and funnel analysis.
 
@@ -245,10 +251,10 @@ Agents in `agents/` take on longer analyses that span several tools:
 
 ## Architecture
 
-- **Intention-driven interface** — tools accept semantic parameters ("find strong correlations") rather than requiring statistical procedure names or threshold values
-- **Progressive disclosure** — simple calls return high-level insights with sensible defaults; advanced parameters are available when needed
-- **Streaming-first execution** — all operations are designed for chunked processing; tools automatically switch strategies based on data size, keeping memory usage within configured bounds
-- **Composition metadata** — every tool result includes metadata that downstream tools can use directly, enabling chained analysis without manual wiring
+- **One uniform call shape** — every analysis tool takes a connection name, a SQL query, and the column names it should work on. There is no separate load step and no data-frame argument: the query is the data selection, so the same call works against a CSV file and a PostgreSQL table
+- **Named methods, sensible defaults** — the statistical procedure is chosen by name (`method="dbscan"`, `test_type="ttest_ind"`) and every method parameter has a default, so a call that names only the columns still runs. Thresholds such as `alpha` and `contamination` are numeric parameters, not inferred from intent
+- **Streaming-first execution** — query results are chunked and buffered rather than materialized whole. `execute_query` returns the first chunk plus a `query_id`, and `next_chunk` walks the rest, so a result larger than the configured memory ceiling (default 2 GB) is still workable
+- **Self-describing query results** — `execute_query` returns row counts, memory state, data-quality signals, and ready-to-run `next_chunk` calls alongside the rows, so an agent can decide what to do next without a second round trip
 
 ## Configuration
 
