@@ -8,7 +8,7 @@ summary dictionaries and optimization recommendations.
 import json
 import time
 from dataclasses import asdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..logging_manager import get_logger
 from .models import BenchmarkConfig, BenchmarkResult, ComparisonResult
@@ -20,13 +20,15 @@ def save_detailed_results(
     config: BenchmarkConfig,
     results: List[BenchmarkResult],
     comparisons: List[ComparisonResult],
+    mode_comparisons: Optional[List[ComparisonResult]] = None,
 ) -> None:
     """Save detailed benchmark results to files.
 
     Args:
         config: Benchmark configuration with results directory.
         results: All benchmark results to persist.
-        comparisons: All comparison results to persist.
+        comparisons: Baseline comparisons to persist.
+        mode_comparisons: Informational streaming-vs-batch comparisons.
     """
     logger.info("Saving detailed benchmark results")
 
@@ -44,13 +46,14 @@ def save_detailed_results(
                 default=str,
             )
 
-    if comparisons:
+    all_comparisons = list(comparisons) + list(mode_comparisons or [])
+    if all_comparisons:
         comparisons_file = (
             config.results_dir / f"benchmark_comparisons_{int(time.time())}.json"
         )
         with open(comparisons_file, "w") as f:
             json.dump(
-                [asdict(comp) for comp in comparisons],
+                [asdict(comp) for comp in all_comparisons],
                 f,
                 indent=2,
                 default=str,
@@ -146,13 +149,15 @@ def generate_reports(
     config: BenchmarkConfig,
     results: List[BenchmarkResult],
     comparisons: List[ComparisonResult],
+    mode_comparisons: Optional[List[ComparisonResult]] = None,
 ) -> None:
     """Generate human-readable performance reports.
 
     Args:
         config: Benchmark configuration with results directory.
         results: All benchmark results.
-        comparisons: All comparison results.
+        comparisons: Baseline comparisons — the ones that gate the build.
+        mode_comparisons: Informational streaming-vs-batch comparisons.
     """
     logger.info("Generating performance reports")
 
@@ -189,7 +194,7 @@ def generate_reports(
                 f.write(f"- Tests in category: {len(category_results)}\n\n")
 
         if comparisons:
-            f.write("## Performance Comparisons\n\n")
+            f.write("## Regression Comparisons (vs baseline)\n\n")
             for comp in comparisons:
                 f.write(f"### {comp.summary}\n\n")
                 f.write(
@@ -204,6 +209,32 @@ def generate_reports(
                     f"{comp.processing_rate_improvement_percent:.1f}%\n"
                 )
                 f.write(f"- Statistically significant: {comp.is_significant}\n\n")
+        else:
+            f.write("## Regression Comparisons (vs baseline)\n\n")
+            f.write(
+                "No baseline was available for this run, so no regression "
+                "comparison was possible.\n\n"
+            )
+
+        if mode_comparisons:
+            f.write("## Streaming vs Batch (informational)\n\n")
+            f.write(
+                "Streaming trades throughput for bounded memory, so a slower "
+                "streaming mode is expected and is never counted as a "
+                "regression.\n\n"
+            )
+            for comp in mode_comparisons:
+                scenario = comp.comparison_result.metadata.get("scenario", "unknown")
+                slower_percent = -comp.execution_time_improvement_percent
+                f.write(f"### {scenario}\n\n")
+                f.write(f"- Streaming slower than batch by: {slower_percent:.1f}%\n")
+                f.write(
+                    f"- Memory difference: {comp.memory_improvement_percent:.1f}%\n"
+                )
+                f.write(
+                    f"- Processing rate difference: "
+                    f"{comp.processing_rate_improvement_percent:.1f}%\n\n"
+                )
 
         f.write("## Recommendations\n\n")
         recommendations = generate_recommendations(results)
@@ -217,13 +248,24 @@ def generate_summary(
     results: List[BenchmarkResult],
     comparisons: List[ComparisonResult],
     config: BenchmarkConfig,
+    mode_comparisons: Optional[List[ComparisonResult]] = None,
 ) -> Dict[str, Any]:
     """Generate summary of all benchmark results.
 
+    `performance_regressions` and `performance_improvements` are counted
+    from `comparisons` alone — comparisons against the recorded baseline.
+    Streaming-vs-batch comparisons are reported separately under
+    `streaming_vs_batch` and never affect those counts, because streaming
+    is designed to be slower than batch in exchange for bounded memory.
+
+    `baseline_comparisons` lets a caller distinguish "nothing regressed"
+    from "there was no baseline to compare against".
+
     Args:
         results: All benchmark results.
-        comparisons: All comparison results.
+        comparisons: Baseline comparisons — the ones that gate the build.
         config: Benchmark configuration.
+        mode_comparisons: Informational streaming-vs-batch comparisons.
 
     Returns:
         Summary dictionary with aggregate metrics.
@@ -255,6 +297,18 @@ def generate_summary(
         "performance_regressions": len(
             [c for c in comparisons if c.execution_time_improvement_percent < -5]
         ),
+        "baseline_comparisons": len(comparisons),
+        "streaming_vs_batch": [
+            {
+                "scenario": c.comparison_result.metadata.get("scenario", "unknown"),
+                "streaming_slower_percent": -c.execution_time_improvement_percent,
+                "memory_difference_percent": c.memory_improvement_percent,
+                "processing_rate_difference_percent": (
+                    c.processing_rate_improvement_percent
+                ),
+            }
+            for c in (mode_comparisons or [])
+        ],
         "results_directory": str(config.results_dir),
         "timestamp": time.time(),
     }

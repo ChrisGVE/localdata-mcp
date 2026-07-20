@@ -80,6 +80,12 @@ def run_regression_tests(
 ) -> None:
     """Run automated regression testing against baseline performance.
 
+    This is the only source of comparisons that drives the pass/fail
+    regression gate: each entry answers "is this build slower than the
+    recorded baseline?". It contributes nothing when
+    `baseline_results.json` is absent from the results directory, so CI
+    must restore that file between runs for the gate to mean anything.
+
     Args:
         config: Benchmark configuration with results directory.
         results: Current benchmark results to compare.
@@ -121,17 +127,28 @@ def run_regression_tests(
         logger.warning(f"Regression testing failed: {e}")
 
 
-def generate_comparisons(
+def generate_mode_comparisons(
     results: List[BenchmarkResult],
-    comparisons: List[ComparisonResult],
+    mode_comparisons: List[ComparisonResult],
 ) -> None:
-    """Generate performance comparisons between different approaches.
+    """Compare streaming against batch processing within a single run.
+
+    These comparisons are INFORMATIONAL and must be kept out of the
+    baseline comparison list that drives the regression gate. Streaming is
+    expected to be slower than batch — that is the deliberate trade for
+    bounded memory (First Principle 4, streaming-first) — so counting a
+    slower streaming mode as a "regression" would fail the build precisely
+    when the architecture works as designed.
+
+    Batch is passed as the `baseline` argument to `compare_results`, so a
+    negative `execution_time_improvement_percent` means streaming took
+    longer than batch.
 
     Args:
         results: All benchmark results to group and compare.
-        comparisons: List to append new comparisons to (mutated in place).
+        mode_comparisons: List to append new comparisons to (mutated in place).
     """
-    logger.info("Generating performance comparisons")
+    logger.info("Generating streaming-vs-batch comparisons")
 
     scenarios: Dict[str, List[BenchmarkResult]] = {}
     for result in results:
@@ -156,4 +173,4 @@ def generate_comparisons(
 
             comparison = compare_results(best_batch, best_streaming)
             comparison.summary = f"Streaming vs Batch comparison for {scenario}"
-            comparisons.append(comparison)
+            mode_comparisons.append(comparison)
