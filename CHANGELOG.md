@@ -124,6 +124,29 @@ client that names tools explicitly needs no edit for the new ones to appear.
 
 ### Fixed
 
+- **`analyze_hypothesis_test` never compared the groups it was given.** With the
+  default `test_type="auto"` and a `group_column`, it returned only Shapiro-Wilk
+  and Kolmogorov-Smirnov normality tests -- no group comparison at any point.
+  This is the call shown as the flagship analytical example in the README, so an
+  agent following the documentation received a well-formed result that answered a
+  different question and reported no difference where one existed. The automatic
+  path now selects from the data's assumptions: Welch's or Student's t-test for
+  two normal groups depending on Levene, Mann-Whitney U with a rank-biserial
+  effect size when either group is non-normal, one-way ANOVA with eta squared for
+  three or more normal homoscedastic groups, Kruskal-Wallis H with epsilon
+  squared otherwise. The comparison leads `test_results` and the normality
+  profile follows it. Behaviour without a `group_column` is unchanged.
+- **`analyze_anova` returned no post-hoc comparisons, ever.** `post_hoc_results`
+  was `{}` on every call, including a three-group fixture with F = 27.9 and
+  p = 1.2e-10, because the extraction indexed a raw observation array as though it
+  were a labelled table and the resulting error was swallowed. Pairwise
+  comparisons are now returned with their mean differences, p-values and
+  confidence intervals, and the exception handling around them is narrowed so a
+  future failure of this kind surfaces instead of returning an empty result.
+- **`export_structured(name, "markdown")` returned an empty document.** The call
+  produced `{"format": "markdown", "content": "## "}` for every tree, flat or
+  nested, while `json`, `yaml` and `toml` returned the full structure. Markdown
+  export now renders the tree.
 - **Spatial statistics returned wrong numbers.** Anyone who ran them on 2.0.0
   should re-run rather than reinterpret. Four defects, all in the variance terms:
   the S2 term shared by Moran's I and Geary's C summed squared row sums instead

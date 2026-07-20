@@ -1,5 +1,7 @@
 # Troubleshooting
 
+<!-- sphinx-start -->
+
 ## Quick diagnostic checklist
 
 - [ ] LocalData MCP is installed: `localdata-mcp --version`
@@ -163,7 +165,7 @@ These require the `enterprise` extra:
 uv tool install "localdata-mcp[enterprise]"
 ```
 
-See the [configuration guide](docs/configuration.md) for authentication methods (Kerberos, Oracle Wallet, Azure AD, certificates).
+See the [configuration guide](https://localdata-mcp.readthedocs.io/en/latest/configuration.html) for authentication methods (Kerberos, Oracle Wallet, Azure AD, certificates).
 
 ### Connection limits
 
@@ -265,7 +267,7 @@ If you have a config at `~/.localdata.yaml`, move it to the platform-appropriate
 localdata-mcp --migrate-config
 ```
 
-See the [configuration documentation](docs/configuration.md) for the full reference.
+See the [configuration documentation](https://localdata-mcp.readthedocs.io/en/latest/configuration.html) for the full reference.
 
 ## Logging
 
@@ -284,7 +286,7 @@ logging:
 
 ## Docker
 
-See [DOCKER_USAGE.md](DOCKER_USAGE.md) for container-specific troubleshooting (permissions, networking, resource limits).
+See [the Docker guide](https://localdata-mcp.readthedocs.io/en/latest/docker.html) for container-specific troubleshooting (permissions, networking, resource limits).
 
 ## Collecting diagnostic information
 

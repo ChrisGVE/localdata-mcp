@@ -351,7 +351,6 @@ Suppose a table `production_plan` has columns `profit` (objective), `labor_hours
     "constraint_columns": ["labor_hours", "material_kg"],
     "constraint_values": [120.0, 500.0],
     "constraint_types": ["<=", "<="],
-    "bounds": [[0, null], [0, null]],
     "method": "highs"
   }
 }

@@ -158,7 +158,7 @@ docker-compose down
 - Follow PEP 8
 - Use type hints on all public function signatures
 - Write clear docstrings for public APIs
-- Keep functions focused and within size limits
+- Keep functions focused enough to read without scrolling
 
 ### Security
 

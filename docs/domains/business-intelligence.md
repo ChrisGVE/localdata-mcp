@@ -268,7 +268,7 @@ The business intelligence domain is designed to chain with other domains:
 | Cohort retention table | Time Series Analysis | Forecast future retention curves |
 | Funnel step counts | Statistical Analysis | Test funnel step improvement significance |
 
-Every result includes enough metadata for downstream tools to understand data provenance.
+Results do not carry composition metadata -- nothing in one names the analysis that produced it, so chaining is the caller's work (issue #26). Read a value out of one result and narrow the next query with it.
 
 ---
 

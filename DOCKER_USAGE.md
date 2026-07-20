@@ -1,5 +1,7 @@
 # Docker Usage Guide
 
+<!-- sphinx-start -->
+
 Run LocalData MCP in a container with optional database services for development and production use.
 
 ## Quick start
@@ -94,7 +96,7 @@ connect_database("cache", "redis", "redis://:testpass@redis:6379/0")
 connect_database("search", "elasticsearch", "http://elasticsearch:9200")
 ```
 
-For complete connection string formats and all supported database types, see the [data sources documentation](docs/data-sources/complete-reference.md).
+For complete connection string formats and all supported database types, see the [data sources documentation](https://localdata-mcp.readthedocs.io/en/latest/data-sources/complete-reference.html).
 
 ### External databases
 
@@ -109,7 +111,7 @@ docker run -it --rm \
 
 ## Environment variables
 
-Pass environment variables to configure the server. For the full reference, see the [configuration documentation](docs/configuration.md).
+Pass environment variables to configure the server. For the full reference, see the [configuration documentation](https://localdata-mcp.readthedocs.io/en/latest/configuration.html).
 
 ```yaml
 # docker-compose.override.yml

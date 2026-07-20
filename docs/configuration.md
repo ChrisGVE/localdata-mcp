@@ -232,6 +232,28 @@ Controls log output.
 | `max_file_size` | `int` | `10485760` | Maximum log file size in bytes (10 MB) |
 | `backup_count` | `int` | `5` | Number of rotated log files to keep |
 | `console_output` | `bool` | `true` | Print logs to stdout |
+| `output_format` | `str` | `json` | Record format: `json` or `text` |
+| `destinations` | `list[str]` | `["stdout"]` | Where records go: `stdout`, `stderr`, `file`, `json_file` |
+| `json_file_path` | `str` | `null` | Path for JSON-formatted records when `json_file` is a destination |
+| `enable_correlation_ids` | `bool` | `true` | Tag every record with a request id so one operation can be followed across components |
+| `enable_context_propagation` | `bool` | `true` | Carry operation and component context into nested records |
+| `enable_query_audit` | `bool` | `true` | Record every query to the audit buffer that `get_query_log` and `get_error_log` read. Turning this off empties both tools |
+| `enable_performance_logging` | `bool` | `true` | Record execution timings |
+| `enable_security_logging` | `bool` | `true` | Record blocked queries, path rejections and failed connections |
+| `slow_query_threshold` | `float` | `1.0` | Seconds above which a query is logged as slow |
+| `very_slow_query_threshold` | `float` | `5.0` | Seconds above which a query is logged as very slow |
+| `log_blocked_queries` | `bool` | `true` | Log queries the SQL validator rejects |
+| `log_timeout_events` | `bool` | `true` | Log query timeouts |
+| `log_resource_limits` | `bool` | `true` | Log memory and disk budget refusals |
+| `log_failed_connections` | `bool` | `true` | Log connection failures |
+| `enable_debug_traces` | `bool` | `false` | Verbose internal tracing |
+| `debug_sql_queries` | `bool` | `false` | Log every SQL statement as issued |
+| `debug_connection_pool` | `bool` | `false` | Log connection pool activity |
+
+The metrics keys — `enable_metrics`, `metrics_port`, `metrics_endpoint` — live in
+this section too and are documented under [Metrics](#metrics) above, because
+`enable_metrics` decides whether a tool is registered rather than only how much
+is logged.
 
 ### `performance`
 

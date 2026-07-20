@@ -20,18 +20,23 @@ connect_database("arch", "mermaid", "./architecture.mmd")
 ## Graph tools
 
 Node and property operations are the same tools used for JSON/YAML/TOML trees;
-they detect a graph connection and read their second argument as a node ID. That
-argument is named `path` in the tool signature, so pass it positionally or as
-`path=` — `node_id=` is not a valid keyword.
+they detect a graph connection and read their second argument as a node ID. In
+those tools the argument is named **`path`**, so pass it positionally or as
+`path=` — `node_id=` raises there.
+
+The two graph-native tools are the exception: `get_neighbors` and `get_edges`
+were written for graphs and their argument really is named **`node_id`**. The
+signatures below say which is which, and both are given exactly as the server
+accepts them.
 
 ### Node operations
 
 | Tool | Description |
 |------|-------------|
-| `set_node(name, node_id, label=)` | Create or update a node |
-| `delete_node(name, node_id)` | Remove a node, cascading its edges and properties |
-| `get_node(name, node_id)` | Inspect a node's label and properties |
-| `get_neighbors(name, node_id, direction=)` | List adjacent nodes — `"in"`, `"out"`, or `"both"` |
+| `set_node(name, path, label=)` | Create or update a node |
+| `delete_node(name, path)` | Remove a node, cascading its edges and properties |
+| `get_node(name, path=None)` | Inspect a node's label and properties |
+| `get_neighbors(name, node_id, direction=)` | List adjacent nodes — `"in"`, `"out"`, or `"both"`. Takes `node_id`, not `path` |
 
 ### Edge operations
 
@@ -39,7 +44,7 @@ argument is named `path` in the tool signature, so pass it positionally or as
 |------|-------------|
 | `add_edge(name, source, target, label=, weight=)` | Create a directed edge; endpoint nodes are created automatically if absent |
 | `remove_edge(name, source, target, label=)` | Remove an edge |
-| `get_edges(name, node_id=)` | List edges for a node |
+| `get_edges(name, node_id=)` | List edges for a node. Takes `node_id`, not `path` |
 
 ### Property operations
 
@@ -47,10 +52,10 @@ Nodes carry typed key-value metadata. Types are inferred automatically from the 
 
 | Tool | Description |
 |------|-------------|
-| `get_value(name, node_id, key)` | Read a property |
-| `set_value(name, node_id, key, value)` | Set a property |
-| `delete_key(name, node_id, key)` | Remove a property |
-| `list_keys(name, node_id)` | List all properties on a node |
+| `get_value(name, path, key)` | Read a property |
+| `set_value(name, path, key, value)` | Set a property |
+| `delete_key(name, path, key)` | Remove a property |
+| `list_keys(name, path)` | List all properties on a node |
 
 ### Analysis
 

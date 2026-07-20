@@ -294,7 +294,7 @@ Agents in `agents/` take on longer analyses that span several tools:
 
 ## Architecture
 
-- **One uniform call shape** — every analysis tool takes a connection name, a SQL query, and the column names it should work on. There is no separate load step and no data-frame argument: the query is the data selection, so the same call works against a CSV file and a PostgreSQL table
+- **One uniform call shape** — an analysis tool takes a connection name, a SQL query, and the column names it should work on. There is no separate load step and no data-frame argument: the query is the data selection, so the same call works against a CSV file and a PostgreSQL table. The four optimization tools are the one exception, taking a `table_name` and reading the whole table
 - **Named methods, sensible defaults** — the statistical procedure is chosen by name (`method="dbscan"`, `test_type="ttest_ind"`) and every method parameter has a default, so a call that names only the columns still runs. Thresholds such as `alpha` and `contamination` are numeric parameters, not inferred from intent
 - **Streaming-first execution** — query results are chunked and buffered rather than materialized whole. `execute_query` returns the first chunk plus a `query_id`, and `next_chunk` walks the rest, so a result larger than the configured memory ceiling (default 2 GB) is still workable
 - **Self-describing query results** — `execute_query` returns row counts, memory state, data-quality signals, and ready-to-run `next_chunk` calls alongside the rows, so an agent can decide what to do next without a second round trip

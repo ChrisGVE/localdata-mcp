@@ -208,6 +208,12 @@ values of points falling within each polygon — useful for spatial binning.
 
 ### Spatial Interpolation
 
+**No MCP tool exposes interpolation.** `SpatialInterpolator` and `VariogramModel`
+are implemented and importable from Python, but nothing in `_register_tools`
+reaches them, so an agent cannot call them over the protocol. The methods are
+described here because the classes ship and the reasoning is useful; treat this
+section as background, not as an available capability (issue #27).
+
 #### IDW (Inverse Distance Weighting)
 
 Estimates values at unsampled locations as a weighted average of nearby observations, with weights

@@ -257,9 +257,11 @@ categories must appear in sufficient numbers.
 
 #### Cluster Sampling
 
-Selects random clusters, then includes all (or a sample of) members from those clusters. If no
-`cluster_column` is provided, clusters are created automatically using K-means on numeric columns,
-with the number of clusters set to `sqrt(sample_size)`.
+Selects random clusters, then includes members from those clusters. The tool
+takes no cluster column -- there is no such parameter -- so clusters are always
+derived automatically by K-means on the numeric columns of the query result, with
+the number of clusters set to `sqrt(sample_size)`. To cluster on a grouping you
+control, express it in the SQL query.
 
 More efficient than stratified sampling when travel cost or data collection cost is grouped
 geographically or organisationally. Variance is higher than SRS for the same total sample size.
@@ -313,7 +315,7 @@ Monte Carlo methods approximate quantities by averaging over random draws. The k
 - `estimated_value` — the Monte Carlo estimate of the target quantity
 - `standard_error` — uncertainty of the estimate (decreases as 1/sqrt(n_simulations))
 - `confidence_interval` — normal approximation CI around the estimate
-- `convergence_diagnostic.relative_error` — SE / estimated_value; below 0.01 indicates good
+- `convergence_diagnostic.relative_std_error` — SE / estimated_value; below 0.01 indicates good
   convergence
 
 **Simulation types:**
@@ -321,11 +323,12 @@ Monte Carlo methods approximate quantities by averaging over random draws. The k
 | Type | Description |
 |---|---|
 | `integration` | Estimate the integral of a function over a domain by uniform random sampling |
-| `simulation` | Forward propagation: draw uncertain inputs, compute output distribution |
+| `uncertainty` | Forward propagation: draw uncertain inputs, compute output distribution |
 | `importance` | Reduce variance for rare-event probabilities by sampling from a proposal distribution |
+| `mcmc` | Markov chain Monte Carlo sampling from a target distribution |
 
 **n_simulations guidance:** Start with 1000 to verify setup, then increase to 10,000–100,000
-for stable estimates. Check `convergence_diagnostic.relative_error < 0.01` for 1% accuracy.
+for stable estimates. Check `convergence_diagnostic.relative_std_error < 0.01` for 1% accuracy. The other key emitted is `batch_variance`.
 
 ---
 
@@ -349,11 +352,11 @@ A 95% credible interval `[a, b]` means there is a 95% posterior probability that
 parameter lies in `[a, b]`. This is the intuitive interpretation often (incorrectly) attributed
 to frequentist confidence intervals.
 
-Two credible interval types are reported:
-
-- `equal_tailed` — 2.5th to 97.5th percentile of the posterior
-- The interval is equal-tailed and keyed by its level, e.g. `credible_intervals["95%"]`. No highest-density interval is computed.
-  mass; preferred for skewed posteriors
+One interval is reported. It is equal-tailed -- for a 95% level, the 2.5th to
+97.5th percentile of the posterior -- and it is keyed by that level, so you read
+it as `credible_intervals["95%"]`. No highest-density interval is computed, so
+for a strongly skewed posterior the reported interval is wider than the narrowest
+one containing the same mass.
 
 **Bayes factor:** When available, summarises the evidence ratio between hypotheses. BF > 10
 is considered strong evidence; BF > 100 is decisive.

@@ -14,7 +14,7 @@ LocalData MCP gives LLM agents direct access to local and remote data sources th
 - **RDF/SPARQL**: Turtle, N-Triples files and remote SPARQL endpoints
 - **Data science**: 8 analytical domains with 30 specialized tools
 - **Streaming**: Memory-bounded query execution with adaptive chunk sizing
-- **Security**: SELECT-only SQL validation, path restrictions, connection limits
+- **Security**: path restrictions, connection limits, and SELECT-only SQL validation on `execute_query` and `analyze_query_preview`. The analytical tools bypass that gate (issue #25)
 - **Claude Code plugin**: 18 skills and 11 agents that drive the tools
 
 ```{toctree}
@@ -30,5 +30,7 @@ advanced-examples
 architecture/index
 plugin
 error-classification
+troubleshooting
+docker
 changelog
 ```

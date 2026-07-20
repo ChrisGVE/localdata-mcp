@@ -115,9 +115,12 @@ The mixin is added to `DatabaseManager`'s bases and its methods listed in
 mixin; the twelve older data science tools and the graph, tree and search tools
 are still implemented directly in `server/database_manager.py`.
 
-Every analytical tool takes a connection name and a SQL query as its first two
-parameters. The query selects the data; there is no separate load step and no
+Nearly every analytical tool takes a connection name and a SQL query as its first
+two parameters. The query selects the data; there is no separate load step and no
 data-frame parameter. Column arguments name columns in that query's result set.
+The four optimization tools are the exception: they take a `table_name` and read
+the whole table, because a linear program is defined over a full constraint
+matrix rather than a projection of one.
 
 **These tools do not pass through the SELECT-only gate.** The gate guards
 `execute_query` and `analyze_query_preview`; an analytical tool hands its query

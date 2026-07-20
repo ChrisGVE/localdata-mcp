@@ -1012,21 +1012,41 @@ Run a statistical hypothesis test on query results.
 | `query` | string | Yes | SQL query returning data |
 | `test_type` | string | No | `auto`, `ttest_1samp`, `ttest_ind`, `ttest_rel`, `chi2`, `normality`, `correlation` (default: `auto`) |
 | `column` | string | No | Column to test (default: empty, meaning all numeric columns) |
-| `group_column` | string | No | Grouping column for two-sample tests |
+| `group_column` | string | No | Column whose values define the groups to compare. Two groups give a two-sample test, three or more give a one-way comparison |
 | `alpha` | number | No | Significance level (default: 0.05) |
 | `alternative` | string | No | `two-sided`, `less`, or `greater` (default: `two-sided`) |
 
 **Returns:** A `test_results` list, one entry per test performed, each with
 `test_name`, `statistic`, `p_value`, and an `interpretation` string (JSON).
 
+With `test_type="auto"` and a `group_column`, the group comparison comes first in
+that list and the test is chosen from the data's assumptions:
+
+| Groups | Condition | Test | Effect size |
+|---|---|---|---|
+| 2 | both normal, equal variance | Student's t-test | Cohen's d |
+| 2 | both normal, unequal variance | Welch's t-test | Cohen's d |
+| 2 | either non-normal | Mann-Whitney U | rank-biserial |
+| 3+ | normal and homoscedastic | one-way ANOVA | eta squared |
+| 3+ | otherwise | Kruskal-Wallis H | epsilon squared |
+
+Normality and correlation checks follow the comparison as context. Groups larger
+than 5000 rows are treated as normal on the central limit theorem.
+
 **Example:**
 ```python
 analyze_hypothesis_test("mydb", "SELECT score FROM experiments", test_type="ttest_1samp")
+
+# Compare two groups: the comparison leads the result.
+analyze_hypothesis_test("mydb", "SELECT score, cohort FROM experiments",
+                        column="score", group_column="cohort")
 ```
 
-**Composition hints:** With `test_type="auto"` and no column named, this reports
+**Composition hints:** With `test_type="auto"` and no `group_column`, this reports
 normality and correlation checks across the numeric columns — a reasonable first
-call before choosing a specific test.
+call before choosing a specific test. Name a `group_column` when the question is
+whether two populations differ, and read `analyze_effect_sizes` next for the
+magnitude the p-value does not give you.
 
 ---
 
@@ -1044,7 +1064,14 @@ Compare group means with a one-way ANOVA.
 | `group_var` | string | Yes | Column defining the groups |
 | `alpha` | number | No | Significance level (default: 0.05) |
 
-**Returns:** F-statistic, p-value, per-group means, and effect size (JSON)
+**Returns:** `anova_results` keyed by the comparison, each carrying the
+F-statistic, p-value, degrees of freedom, per-group means and effect size, plus
+`post_hoc_results` and `post_hoc_method` (JSON).
+
+`post_hoc_results` holds the pairwise Tukey HSD comparisons — one entry per pair
+with `group1`, `group2`, `mean_diff`, `p_value`, `significant`, `lower_ci` and
+`upper_ci`. The F-test tells you the groups are not all alike; these tell you
+which pairs differ, which is usually the question worth answering.
 
 **Example:**
 ```python
@@ -1869,17 +1896,15 @@ is on — the default, so the stock server exposes all seventy-one.
 
 ## Return Format Convention
 
-All tools return JSON-formatted responses with:
+All tools return a JSON string. There is no single envelope shared across the
+surface -- the shape is the one documented in each tool's own **Returns** line
+above, and reading it there is the only reliable way to know what you get.
 
-```json
-{
-  "status": "success|error|warning",
-  "data": { },
-  "metadata": { }
-}
-```
-
-Successful queries return `"status": "success"`. Errors include context in `metadata` for debugging.
+Two conventions do hold. `execute_query` and the streaming tools nest rows under
+`data` alongside a `metadata` object carrying `query_id`, `total_rows` and
+`showing_rows`. And a failure surfaces as an object with an `error` key -- often
+with `error_type` and `is_retryable` -- rather than as an exception or an empty
+success.
 
 ## Composition Patterns
 
