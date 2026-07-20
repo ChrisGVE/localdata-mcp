@@ -1,6 +1,7 @@
 """Tests for regex, schema export, and audit tool registration."""
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -129,3 +130,74 @@ class TestExportSchema:
                 result = json.loads(manager.export_schema("test", format="invalid_fmt"))
                 assert "error" in result
                 assert "invalid_fmt" in result["error"]
+
+
+class TestToolCountClaims:
+    """Keep the shipped tool surface and every claim about it in agreement.
+
+    The tool count appeared in six places — the package metadata, the plugin
+    manifest, the README, the docs index and the tools reference — and drifted
+    from reality as domains were added. Worse, the reference documented a
+    `get_metrics` tool that was never registered at all, so a reader could not
+    tell a real tool from a fictional one. These tests make the documentation
+    answerable to the registry rather than to whoever edited it last.
+    """
+
+    @staticmethod
+    def _registered_tool_names(manager: DatabaseManager) -> set:
+        names = set()
+
+        class _Recorder:
+            def add_tool(self, func):
+                names.add(func.__name__)
+
+        manager._register_tools(_Recorder())
+        return names
+
+    @staticmethod
+    def _documented_tool_names() -> set:
+        import re
+
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "docs", "tools-reference.md"
+        )
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        # Headings after this point name workflows, not tools.
+        body = text[: text.index("## Composition Patterns")]
+        return set(re.findall(r"^### (\w+)$", body, re.MULTILINE))
+
+    def test_every_registered_tool_is_documented(self, manager):
+        registered = self._registered_tool_names(manager)
+        documented = self._documented_tool_names()
+
+        assert (
+            registered - documented == set()
+        ), "tools are registered but missing from docs/tools-reference.md"
+
+    def test_no_documented_tool_is_fictional(self, manager):
+        registered = self._registered_tool_names(manager)
+        documented = self._documented_tool_names()
+
+        assert (
+            documented - registered == set()
+        ), "docs/tools-reference.md documents tools the server does not register"
+
+    def test_advertised_count_matches_the_registry(self, manager):
+        """Every file that states a tool count must state the true one."""
+        count = len(self._registered_tool_names(manager))
+        root = os.path.dirname(os.path.dirname(__file__))
+
+        for relative in (
+            "pyproject.toml",
+            "server.json",
+            ".claude-plugin/plugin.json",
+            "README.md",
+            "docs/index.md",
+            "docs/tools-reference.md",
+        ):
+            with open(os.path.join(root, relative), encoding="utf-8") as handle:
+                text = handle.read()
+            assert (
+                f"{count} tools" in text or f"{count} MCP tools" in text
+            ), f"{relative} does not state the true tool count of {count}"

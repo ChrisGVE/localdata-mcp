@@ -1,7 +1,7 @@
 {
   "name": "localdata-mcp",
   "version": "2.1.0",
-  "description": "Data science plugin for LLM agents. Connects to 13 database types, 20+ file formats, graph/RDF sources, and provides 8 analytical domains with 53 MCP tools, 18 skills, and 11 agents.",
+  "description": "Data science plugin for LLM agents. Connects to 13 database types, 20+ file formats, graph/RDF sources, and provides 8 analytical domains with 70 MCP tools, 18 skills, and 11 agents.",
   "author": {
     "name": "Christian C. Berclaz",
     "email": "christian.berclaz@mac.com"

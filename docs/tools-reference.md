@@ -1,6 +1,6 @@
 # LocalData MCP Tools Reference
 
-Complete reference documentation for all 53 MCP tools. Organized by category for quick navigation.
+Complete reference documentation for all 70 MCP tools. Organized by category for quick navigation.
 
 ## Table of Contents
 
@@ -10,8 +10,11 @@ Complete reference documentation for all 53 MCP tools. Organized by category for
 4. Graph Operations (7 tools)
 5. Search & Transform (2 tools)
 6. Schema & Audit (3 tools)
-7. System (2 tools)
+7. System (1 tool)
 8. Data Science (12 tools)
+9. Sampling & Estimation (4 tools)
+10. Optimization (4 tools)
+11. Geospatial (10 tools)
 
 The tree tools in section 3 double as the node-level graph API: `get_node`,
 `set_node`, `delete_node`, `list_keys`, `get_value`, `set_value`, and
@@ -936,7 +939,7 @@ get_error_log(database="mydb", since_minutes=60)
 
 ---
 
-## System (2 tools)
+## System (1 tool)
 
 ### check_compatibility
 
@@ -959,29 +962,6 @@ check_compatibility(generate_migration_script=True)
 
 ---
 
-### get_metrics
-
-Return the server's Prometheus metrics as text.
-
-This tool is registered only when metrics collection is enabled
-(`logging.enable_metrics`), which is the default. Disable it and the tool
-disappears from the tool list, leaving 52 tools.
-
-**Parameters:** none
-
-**Returns:** Prometheus exposition-format metrics (string). On failure, the
-string `Error exporting metrics: <reason>` rather than an exception.
-
-**Example:**
-```python
-get_metrics()
-```
-
-**Composition hints:** Use to check memory pressure and query throughput before
-launching a large streaming job.
-
----
-
 ## Data Science (12 tools)
 
 Every tool in this section has the same first two parameters: the name of a live
@@ -994,19 +974,6 @@ Where a parameter takes a list of columns, it is a genuine list
 method, only the values listed below are accepted; anything else raises
 `ValueError`.
 
-```{warning}
-Verified by execution against a live connection: `analyze_anova`,
-`analyze_effect_sizes`, `evaluate_model_performance`, `analyze_clusters`,
-`detect_anomalies`, `reduce_dimensions`, `analyze_time_series`,
-`forecast_time_series`, `analyze_rfm` and `analyze_ab_test` currently raise
-`TypeError` inside the server before returning a result, as does
-`analyze_hypothesis_test` when `column` or `group_column` is supplied. The
-signatures documented below are correct; the adapter layer that forwards them to
-the analysis code is not. Tracked as
-[issue #23](https://github.com/ChrisGVE/localdata-mcp/issues/23).
-`analyze_regression`, and `analyze_hypothesis_test` without column arguments,
-work as documented.
-```
 
 ### analyze_hypothesis_test
 
@@ -1348,6 +1315,502 @@ report lift alongside significance.
 
 ---
 
+## Sampling & Estimation (4 tools)
+
+Tools for working with a subset of the data, and for putting an interval around
+a number rather than reporting it bare. Like the Data Science tools, each takes
+a connection name and a SQL query.
+
+### generate_sample
+
+Draw a representative sample from query results.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `query` | string | Yes | SQL query returning the rows to sample from |
+| `sampling_method` | string | No | `simple_random`, `stratified`, `systematic`, `cluster` (default: `simple_random`) |
+| `sample_size` | number | No | A fraction when below 1, a row count when 1 or above (default: 0.1) |
+| `columns` | list | No | Columns to keep in the sample (default: all) |
+| `stratify_column` | string | No | Column defining the strata; required for `stratified` |
+
+**Returns:** The sampled rows plus a `sampling_results` summary giving the
+method, the realised sample size and the population size (JSON).
+
+**Example:**
+```python
+generate_sample("mydb", "SELECT * FROM customers", sampling_method="stratified",
+                sample_size=500, stratify_column="region")
+```
+
+**Composition hints:** Sample first, then run an expensive analysis on the
+sample. Stratify on the column you intend to group by, so every group survives.
+
+---
+
+### bootstrap_statistic
+
+Estimate a statistic's sampling distribution and confidence interval.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `query` | string | Yes | SQL query returning the column to resample |
+| `column` | string | No | Numeric column (default: the first numeric column) |
+| `statistic` | string | No | `mean`, `median`, `std`, `var`, `min`, `max` (default: `mean`) |
+| `n_bootstrap` | integer | No | Resamples to draw (default: 1000) |
+| `confidence_level` | number | No | Interval width, e.g. 0.95 (default: 0.95) |
+
+**Returns:** The observed statistic, its bootstrap standard error, and the
+confidence interval bounds (JSON).
+
+**Composition hints:** Use when the sampling distribution is unknown or the
+sample is small — it makes no normality assumption, unlike `analyze_effect_sizes`.
+
+---
+
+### monte_carlo_simulate
+
+Run a Monte Carlo simulation parameterised by query results.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `query` | string | Yes | SQL query supplying the simulation's parameters |
+| `simulation_type` | string | No | `integration`, `optimization`, `risk_analysis` (default: `integration`) |
+| `n_simulations` | integer | No | Iterations to run (default: 10000) |
+| `columns` | list | No | Columns to draw parameters from (default: all numeric) |
+
+**Returns:** The simulation estimate, its standard error, and a convergence
+summary (JSON).
+
+---
+
+### bayesian_estimate
+
+Estimate a posterior distribution and credible interval from query results.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `query` | string | Yes | SQL query returning the observed data |
+| `column` | string | No | Numeric column (default: the first numeric column) |
+| `estimation_type` | string | No | `posterior`, `credible_interval`, `model_comparison` (default: `posterior`) |
+| `prior_distribution` | string | No | `normal`, `uniform`, `beta`, `gamma` (default: `normal`) |
+| `confidence_level` | number | No | Credible-interval width (default: 0.95) |
+
+**Returns:** Posterior parameters and the credible interval (JSON).
+
+**Composition hints:** A credible interval answers "where does the value lie,
+given this data", where `bootstrap_statistic`'s confidence interval answers
+"how would this estimate vary across repeated samples". Choose by which question
+was asked.
+
+---
+
+## Optimization (4 tools)
+
+These four tools differ from every other analytical tool in one way: they take a
+**table name**, not a query. The solvers read the columns they need from the
+table directly. Node and cost identifiers must be numeric — a text column is
+rejected by name rather than failing inside a float conversion.
+
+### solve_linear_program
+
+Minimise a linear objective subject to linear constraints.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `table_name` | string | Yes | Table holding the objective coefficients |
+| `objective_column` | string | Yes | Numeric column, one coefficient per variable |
+| `constraint_columns` | list | No | Columns forming the constraint matrix |
+| `constraint_values` | list | No | Right-hand side per constraint; required with `constraint_columns` |
+| `constraint_types` | list | No | Per constraint: `<=`, `>=` or `=` (default: `<=`) |
+| `method` | string | No | Solver method (default: `highs`) |
+| `integer_variables` | list | No | Indices of variables constrained to integers |
+
+**Returns:** The optimal variable values, the objective value, and solver status
+(JSON).
+
+---
+
+### optimize_constrained
+
+Optimize a nonlinear objective from a starting point stored in a column.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `table_name` | string | Yes | Table holding the starting point and any bounds |
+| `objective_function` | string | Yes | Python expression in `x`, e.g. `np.sum(x**2)` |
+| `initial_guess_column` | string | Yes | Numeric column giving the starting point |
+| `constraint_functions` | list | No | Constraints as expressions in `x` |
+| `constraint_types` | list | No | Per constraint: `eq` or `ineq` |
+| `bounds_columns` | list | No | Two columns giving lower and upper bounds per variable |
+| `method` | string | No | scipy.optimize method (default: `SLSQP`) |
+
+**Returns:** The optimal point, the objective value, iteration count and
+convergence status (JSON).
+
+---
+
+### analyze_network
+
+Analyze a graph stored as an edge table.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `table_name` | string | Yes | Table holding one edge per row |
+| `source_column` | string | Yes | Numeric source-node column |
+| `target_column` | string | Yes | Numeric target-node column |
+| `weight_column` | string | No | Numeric edge weight (default: unweighted) |
+| `directed` | boolean | No | Treat edges as directed (default: false) |
+| `include_centrality` | boolean | No | Compute centrality measures (default: true) |
+
+**Returns:** Graph properties, centrality measures, shortest paths and a minimum
+spanning tree (JSON).
+
+**Composition hints:** Distinct from the Graph Operations tools, which manage a
+stored graph. This one analyses an edge table that already exists as data.
+
+---
+
+### solve_assignment_problem
+
+Assign agents to tasks at optimal total cost.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `table_name` | string | Yes | Table holding the cost matrix, one agent per row |
+| `cost_matrix_columns` | list | Yes | Numeric columns, one per task |
+| `agent_id_column` | string | No | Column naming each agent (default: row index) |
+| `task_id_column` | string | No | Column naming each task |
+| `method` | string | No | `hungarian` or `greedy` (default: `hungarian`) |
+| `maximize` | boolean | No | Maximise total value instead of minimising cost (default: false) |
+
+**Returns:** The chosen agent-to-task pairs and the total cost (JSON).
+
+---
+
+## Geospatial (10 tools)
+
+Spatial data reaches these tools in one of three shapes, and the parameters
+follow that split:
+
+- **Point data** — a pair of numeric coordinate columns, named by `x_column` and
+  `y_column` (defaults `x` and `y`).
+- **Geometry data** — a single text column holding WKT, named by a
+  `*_geometry_column` parameter (default `geometry`). WKT is how a geometry
+  survives a database with no geometry type.
+- **Network data** — two queries, one for nodes and one for edges, which is how
+  a graph is stored relationally.
+
+`perform_spatial_join` accepts either of the first two on either side, because
+joining points to zones is the commonest spatial join and point tables rarely
+carry a WKT column.
+
+### check_geospatial_capabilities
+
+Report which geospatial backends are installed and what they enable.
+
+**Parameters:** none. This is the only tool in the reference that takes no
+connection.
+
+**Returns:** Per-library availability and version, the list of missing
+libraries, and the feature set each enables (JSON).
+
+**Composition hints:** Call this before an analysis that needs an optional
+backend. geopandas, shapely, pyproj and fiona ship as required dependencies;
+scikit-gstat (advanced kriging) and rasterio (raster data) do not.
+
+---
+
+### analyze_spatial_autocorrelation
+
+Test whether nearby locations hold similar values.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `query` | string | Yes | SQL returning the coordinate columns and the value column |
+| `value_column` | string | Yes | Numeric column whose spatial pattern is tested |
+| `x_column` | string | No | Longitude or easting column (default: `x`) |
+| `y_column` | string | No | Latitude or northing column (default: `y`) |
+| `method` | string | No | `moran` for Moran's I, `geary` for Geary's C (default: `moran`) |
+| `k_neighbors` | integer | No | Neighbours defining each location's neighbourhood (default: 8) |
+
+The query must return more than `k_neighbors` rows, or the call raises
+`ValueError`.
+
+**Returns:** The statistic, its expected value under no autocorrelation, the
+variance, z-score, p-value, `is_significant`, and an interpretation string
+(JSON).
+
+**Example:**
+```python
+analyze_spatial_autocorrelation("mydb", "SELECT lon, lat, price FROM listings",
+                                "price", x_column="lon", y_column="lat")
+```
+
+**Composition hints:** Settle this before treating geography as meaningful in a
+model. Significant positive autocorrelation is what justifies `find_spatial_hotspots`;
+without it, apparent clusters are noise. Moran's I above its expected value and
+Geary's C below 1 both indicate clustering.
+
+---
+
+### find_spatial_hotspots
+
+Locate statistically significant hot and cold spots (Getis-Ord Gi*).
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `query` | string | Yes | SQL returning the coordinate columns and the value column |
+| `value_column` | string | Yes | Numeric column whose local clustering is tested |
+| `x_column` | string | No | Longitude or easting column (default: `x`) |
+| `y_column` | string | No | Latitude or northing column (default: `y`) |
+| `significance_level` | number | No | p-value threshold for calling a spot (default: 0.05) |
+
+**Returns:** Hot-spot and cold-spot counts, an interpretation string, and a
+`points` list carrying each location's Gi* statistic, z-score, p-value and a
+`cluster_id` of 1 (hot spot), -1 (cold spot) or 0 (not significant) (JSON).
+
+**Composition hints:** A hot spot is a location surrounded by unusually high
+values, which is not the same as a high value — a lone peak among low neighbours
+is not a hot spot.
+
+---
+
+### calculate_spatial_distances
+
+Measure how far apart points are, and what each one's nearest neighbour is.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `query` | string | Yes | SQL returning the coordinate columns |
+| `x_column` | string | No | Longitude or easting column (default: `x`) |
+| `y_column` | string | No | Latitude or northing column (default: `y`) |
+| `distance_type` | string | No | `euclidean` in coordinate units, or `haversine` in kilometres (default: `euclidean`) |
+| `reference_query` | string | No | SQL for a second set; distances are then measured from the first set to this one |
+| `include_pairs` | boolean | No | Also return every individual pair (default: false) |
+
+**Returns:** A summary (min, max, mean, median, and mean nearest-neighbour
+distance) plus each point's nearest neighbour. `include_pairs` adds every pair
+(JSON).
+
+The tool refuses more than 2,000 points, and `include_pairs` refuses more than
+10,000 pairs: the matrix grows with the square of the row count.
+
+**Composition hints:** Use `haversine` for longitude/latitude pairs — treating
+degrees as a plane understates distance badly away from the equator.
+
+---
+
+### optimize_route
+
+Order and connect waypoints into the cheapest route across a network.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `nodes_query` | string | Yes | SQL returning one node per row with an id and coordinates |
+| `edges_query` | string | Yes | SQL returning one edge per row with source and target ids |
+| `waypoints` | list | Yes | Node ids the route must visit, in any order |
+| `node_id_column` | string | No | Node identifier column (default: `id`) |
+| `x_column` | string | No | Node longitude or easting column (default: `x`) |
+| `y_column` | string | No | Node latitude or northing column (default: `y`) |
+| `source_column` | string | No | Edge source node column (default: `source`) |
+| `target_column` | string | No | Edge target node column (default: `target`) |
+| `weight_column` | string | No | Edge cost column (default: straight-line distance) |
+| `return_to_start` | boolean | No | Close the route back to its first waypoint (default: false) |
+| `optimization_method` | string | No | Waypoint ordering strategy (default: `greedy`) |
+
+**Returns:** The ordered node path, its coordinates, the total distance, and the
+path as a WKT `LINESTRING` (JSON).
+
+An edge naming a node the nodes query did not return is rejected by name rather
+than silently building a broken graph.
+
+---
+
+### analyze_accessibility
+
+Score how well a set of service points covers a set of demand points.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `nodes_query` | string | Yes | SQL returning one node per row with an id and coordinates |
+| `edges_query` | string | Yes | SQL returning one edge per row with source and target ids |
+| `service_locations` | list | Yes | Node ids where the service sits |
+| `demand_locations` | list | Yes | Node ids that need to reach it |
+| `node_id_column` | string | No | Node identifier column (default: `id`) |
+| `x_column` | string | No | Node longitude or easting column (default: `x`) |
+| `y_column` | string | No | Node latitude or northing column (default: `y`) |
+| `source_column` | string | No | Edge source node column (default: `source`) |
+| `target_column` | string | No | Edge target node column (default: `target`) |
+| `weight_column` | string | No | Edge travel-cost column (default: distance) |
+| `max_travel_time` | number | No | Cost beyond which a demand point counts unreachable |
+| `impedance_function` | string | No | How cost decays into a score (default: `linear`) |
+
+**Returns:** A per-demand-point accessibility score and travel time, the
+reachable and unreachable lists, and a coverage summary (JSON).
+
+**Composition hints:** `unreachable_locations` is the answer to "who is left
+out" — the question a coverage percentage hides.
+
+---
+
+### generate_service_isochrones
+
+Draw the area reachable from service points within each travel-time band.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `nodes_query` | string | Yes | SQL returning one node per row with an id and coordinates |
+| `edges_query` | string | Yes | SQL returning one edge per row with source and target ids |
+| `service_locations` | list | Yes | Node ids the service operates from |
+| `time_bands` | list | Yes | Travel-cost cutoffs, one polygon per band |
+| `node_id_column` | string | No | Node identifier column (default: `id`) |
+| `x_column` | string | No | Node longitude or easting column (default: `x`) |
+| `y_column` | string | No | Node latitude or northing column (default: `y`) |
+| `source_column` | string | No | Edge source node column (default: `source`) |
+| `target_column` | string | No | Edge target node column (default: `target`) |
+| `weight_column` | string | No | Edge travel-cost column (default: distance) |
+| `resolution` | integer | No | Polygon smoothness (default: 50) |
+
+**Returns:** One entry per band with the band's cutoff, its polygon as WKT, and
+its area (JSON).
+
+**Composition hints:** Compare the areas between bands to see where coverage
+stops growing, or between candidate sites to choose one.
+
+---
+
+### perform_spatial_join
+
+Attach the attributes of one geometry set to another by spatial relation.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `left_query` | string | Yes | SQL for the features that receive attributes |
+| `right_query` | string | Yes | SQL for the features that supply them |
+| `left_geometry_column` | string | No | WKT column on the left (default: `geometry`) |
+| `right_geometry_column` | string | No | WKT column on the right (default: `geometry`) |
+| `join_type` | string | No | `intersects`, `within`, `contains`, `nearest` (default: `intersects`) |
+| `how` | string | No | `inner` to keep matches only, `left` to keep every left feature (default: `inner`) |
+| `x_column` | string | No | Coordinate column used when there is no WKT column (default: `x`) |
+| `y_column` | string | No | Coordinate column used when there is no WKT column (default: `y`) |
+| `crs` | string | No | Coordinate reference system (default: `EPSG:4326`) |
+
+A side with neither a WKT column nor a coordinate pair raises `ValueError`
+naming both encodings it looked for.
+
+**Returns:** Match counts and the joined rows, with left and right columns
+suffixed `_left` and `_right` and geometries written back out as WKT (JSON).
+
+**Example:**
+```python
+perform_spatial_join("mydb", "SELECT * FROM readings", "SELECT * FROM districts")
+```
+
+---
+
+### perform_spatial_overlay
+
+Combine two geometry sets with a set operation.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `left_query` | string | Yes | SQL returning the left geometries as WKT |
+| `right_query` | string | Yes | SQL returning the right geometries as WKT |
+| `operation` | string | No | `intersection`, `union`, `difference` (default: `intersection`) |
+| `left_geometry_column` | string | No | WKT column on the left (default: `geometry`) |
+| `right_geometry_column` | string | No | WKT column on the right (default: `geometry`) |
+| `crs` | string | No | Coordinate reference system (default: `EPSG:4326`) |
+
+Both sides must supply WKT geometries; coordinate pairs are not accepted, since
+a set operation on points is not meaningful.
+
+**Returns:** Input and output feature counts and the resulting rows, geometries
+as WKT (JSON).
+
+---
+
+### aggregate_points_in_polygons
+
+Summarise a point measurement within each polygon that contains it.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `connection_name` | string | Yes | Database connection name |
+| `point_query` | string | Yes | SQL returning the points and the value column |
+| `polygon_query` | string | Yes | SQL returning the polygons as WKT |
+| `value_column` | string | Yes | Numeric point column to summarise |
+| `x_column` | string | No | Point longitude or easting column (default: `x`) |
+| `y_column` | string | No | Point latitude or northing column (default: `y`) |
+| `polygon_geometry_column` | string | No | WKT column on the polygons (default: `geometry`) |
+| `aggregation_functions` | list | No | Any of `mean`, `sum`, `count`, `min`, `max`, `median`, `std` (default: mean, sum and count) |
+| `crs` | string | No | Coordinate reference system (default: `EPSG:4326`) |
+
+**Returns:** Each polygon with one column per requested aggregation, named
+`<value_column>_<function>`. Polygons containing no points are kept, with a
+count of zero (JSON).
+
+**Example:**
+```python
+aggregate_points_in_polygons("mydb", "SELECT * FROM sensors",
+                             "SELECT * FROM districts", "reading")
+```
+
+**Composition hints:** This is the spatial equivalent of a GROUP BY, and the
+usual bridge from point measurements into the Data Science tools, which work on
+the resulting per-polygon table.
+
+---
+
 ## Quick Reference Summary
 
 | Category | Count | Purpose |
@@ -1358,13 +1821,14 @@ report lift alongside significance.
 | Graph | 7 | Network analysis and manipulation |
 | Search & Transform | 2 | Pattern matching and text replacement |
 | Schema & Audit | 3 | Introspection and query history |
-| System | 2 | Compatibility check and Prometheus metrics |
-| Data Science | 12 | Statistical analysis and forecasting |
-| **Total** | **53** | Complete LLM-native data platform |
+| System | 1 | Compatibility and migration check |
+| Data Science | 12 | Statistical analysis, modeling and forecasting |
+| Sampling & Estimation | 4 | Sampling, bootstrap, simulation, Bayesian inference |
+| Optimization | 4 | Linear and nonlinear programming, networks, assignment |
+| Geospatial | 10 | Spatial statistics, distance, routing, geometry |
+| **Total** | **70** | Complete LLM-native data platform |
 
-Fifty-two tools are registered unconditionally; `get_metrics` is the
-fifty-third, registered only when `logging.enable_metrics` is true, which is the
-default.
+All seventy tools are registered unconditionally.
 
 ## Parameter Type Reference
 

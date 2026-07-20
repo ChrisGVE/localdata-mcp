@@ -1,7 +1,7 @@
 [project]
 name = "localdata-mcp"
 version = "2.1.0"
-description = "MCP server giving LLM agents access to databases, files, graphs, and a full data science toolkit — 53 tools across 13 database types and 20+ file formats."
+description = "MCP server giving LLM agents access to databases, files, graphs, and a full data science toolkit — 70 tools across 13 database types and 20+ file formats."
 readme = "README.md"
 authors = [
   { name = "Christian C. Berclaz", email = "christian.berclaz@mac.com" },
