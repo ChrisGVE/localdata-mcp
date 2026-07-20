@@ -202,6 +202,9 @@ _SECTION_VARS = {
     "LOCALDATA_QUERY_PREFLIGHT_DEFAULT": ("query", "preflight_default", bool),
     "LOCALDATA_CONNECTIONS_MAX_CONCURRENT": ("connections", "max_concurrent", int),
     "LOCALDATA_CONNECTIONS_TIMEOUT": ("connections", "timeout_seconds", int),
+    "LOCALDATA_LOGGING_ENABLE_METRICS": ("logging", "enable_metrics", bool),
+    "LOCALDATA_LOGGING_METRICS_PORT": ("logging", "metrics_port", int),
+    "LOCALDATA_LOGGING_METRICS_ENDPOINT": ("logging", "metrics_endpoint", str),
     "LOCALDATA_SECURITY_MAX_QUERY_LENGTH": ("security", "max_query_length", int),
     "LOCALDATA_SECURITY_RESTRICT_PATHS": ("security", "restrict_paths", bool),
     "LOCALDATA_DISK_BUDGET_MAX_STAGING_MB": (

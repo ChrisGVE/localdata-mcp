@@ -3,7 +3,9 @@
 import os
 import threading
 import time
-from typing import Any, Dict, Optional
+from dataclasses import fields
+from enum import Enum
+from typing import Any, Dict, Optional, Type
 
 from dotenv import load_dotenv
 
@@ -14,7 +16,29 @@ from .models import (
     LoggingConfig,
     PerformanceConfig,
 )
-from .types import DatabaseType, LogLevel
+from .types import DatabaseType, LogLevel, OutputDestination, OutputFormat
+
+
+def _coerce_enum(enum_type: Type[Enum], value: Any, field_name: str) -> Enum:
+    """Convert a configured string to its enum member.
+
+    Args:
+        enum_type: The enum the value must belong to.
+        value: The configured value, already an enum member or a string.
+        field_name: Field name, so an invalid value names its own field.
+
+    Raises:
+        ValueError: If the value is not a member of the enum.
+    """
+    if isinstance(value, enum_type):
+        return value
+    try:
+        return enum_type(value)
+    except ValueError:
+        allowed = ", ".join(member.value for member in enum_type)
+        raise ValueError(
+            f"Invalid value {value!r} for '{field_name}'; expected one of: {allowed}"
+        ) from None
 
 
 class ConfigManager:
@@ -108,18 +132,39 @@ class ConfigManager:
         return db_configs
 
     def get_logging_config(self) -> LoggingConfig:
-        """Get logging configuration."""
+        """Get logging configuration.
+
+        Built from the dataclass definition rather than a hand-written
+        list of keys, so every field of :class:`LoggingConfig` is
+        settable and a field added to the model becomes configurable
+        without a matching edit here. An earlier hand-written loader read
+        six of the twenty-five fields and silently dropped the rest,
+        which is why the documented ``enable_metrics`` off-switch had no
+        effect. Keys the model does not define are reported rather than
+        ignored, so a typo surfaces instead of resolving to a default.
+        """
         logging_data = self._config_data.get("logging", {})
-        return LoggingConfig(
-            level=LogLevel(logging_data.get("level", LogLevel.INFO.value)),
-            format=logging_data.get(
-                "format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            ),
-            file_path=logging_data.get("file_path"),
-            max_file_size=logging_data.get("max_file_size", 10 * 1024 * 1024),
-            backup_count=logging_data.get("backup_count", 5),
-            console_output=logging_data.get("console_output", True),
-        )
+        known_fields = {f.name for f in fields(LoggingConfig)}
+
+        for key in logging_data:
+            if key not in known_fields:
+                print(f"Warning: unknown logging config key '{key}' ignored")
+
+        settings = {k: v for k, v in logging_data.items() if k in known_fields}
+
+        if "level" in settings:
+            settings["level"] = _coerce_enum(LogLevel, settings["level"], "level")
+        if "output_format" in settings:
+            settings["output_format"] = _coerce_enum(
+                OutputFormat, settings["output_format"], "output_format"
+            )
+        if "destinations" in settings:
+            settings["destinations"] = [
+                _coerce_enum(OutputDestination, d, "destinations")
+                for d in settings["destinations"]
+            ]
+
+        return LoggingConfig(**settings)
 
     def get_performance_config(self) -> PerformanceConfig:
         """Get performance configuration."""
