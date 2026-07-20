@@ -281,6 +281,8 @@ Set them in your MCP server configuration under `"env"`, or in a `.env` file in 
 - [Configuration reference](docs/configuration.md) — config file discovery, every environment variable, every default
 - [Data sources](docs/data-sources/index.md) — connection strings and quirks per database and file format
 - [Data science domains](docs/domains/index.md) — what each of the eight analytical domains does
+- [Advanced examples](docs/advanced-examples.md) — multi-tool workflows, each one executed by the test suite
+- [Architecture](docs/architecture/index.md) — how a tool call is served, and where the boundaries are
 - [Error classification](docs/error-classification.md) — structured error types, retryability, and suggested recovery
 - [Docker usage](DOCKER_USAGE.md) — container deployment and configuration
 - [Troubleshooting](TROUBLESHOOTING.md) — common failures and their fixes

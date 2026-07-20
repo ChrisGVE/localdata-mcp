@@ -112,6 +112,18 @@ Define databases with the pattern `LOCALDATA_DB_<NAME>_<PROPERTY>`:
 | `LOCALDATA_DISK_BUDGET_HEADROOM_MB` | `disk_budget.headroom_mb` | `int` | `500` |
 | `LOCALDATA_DISK_BUDGET_CHECK_INTERVAL` | `disk_budget.check_interval_rows` | `int` | `1000` |
 
+### Metrics
+
+| Variable | Maps to | Type | Default |
+|----------|---------|------|---------|
+| `LOCALDATA_LOGGING_ENABLE_METRICS` | `logging.enable_metrics` | `bool` | `true` |
+| `LOCALDATA_LOGGING_METRICS_PORT` | `logging.metrics_port` | `int` | `8000` |
+| `LOCALDATA_LOGGING_METRICS_ENDPOINT` | `logging.metrics_endpoint` | `str` | `/metrics` |
+
+`enable_metrics` does more than silence an exporter: it decides whether the
+`get_metrics` tool is registered at all. On by default, so the server normally
+exposes 71 tools; turn it off and it exposes 70.
+
 ### Aggressive memory
 
 | Variable | Maps to | Type | Default |
@@ -552,80 +564,15 @@ When `security.readonly` is set to `true`, the server rejects any SQL statement 
 
 Standard DML (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `TRUNCATE`) is already blocked by the query validator regardless of this setting.
 
-## Tools reference (v1.7.0)
+## Tool documentation
 
-The following tools were added in v1.7.0.
-
-### `search_data`
-
-Search query results using a regular expression. Runs the given SQL query, then matches `pattern` against the specified columns (or all columns if none are specified).
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `name` | `str` | yes | Connected database name |
-| `query` | `str` | yes | SQL query to execute |
-| `pattern` | `str` | yes | Regular expression to match |
-| `columns` | `str` | no | Comma-separated column names to search (default: all) |
-| `max_matches` | `int` | no | Maximum number of matches to return |
-
-### `transform_data`
-
-Apply a regex find-and-replace to a column in query results. Executes the SQL query, transforms matching values in the specified column, and returns the modified data.
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `name` | `str` | yes | Connected database name |
-| `query` | `str` | yes | SQL query to execute |
-| `column` | `str` | yes | Column to transform |
-| `find` | `str` | yes | Regex pattern to find |
-| `replace` | `str` | yes | Replacement string (supports backreferences) |
-| `max_rows` | `int` | no | Maximum rows to process |
-
-### `export_schema`
-
-Export database schema in a structured format. Useful for generating type definitions or documentation from a live database.
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `name` | `str` | yes | Connected database name |
-| `tables` | `str` | no | Comma-separated table names (default: all tables) |
-| `format` | `str` | no | Output format: `json_schema` (default), `python`, `typescript`, `sql_ddl` |
-
-### `get_query_log`
-
-Retrieve the recent query execution history for auditing or debugging.
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `database` | `str` | no | Filter by database name |
-| `limit` | `int` | no | Maximum entries to return (default: 50) |
-| `status` | `str` | no | Filter by status (e.g., `success`, `error`) |
-| `since_minutes` | `int` | no | Only include entries from the last N minutes (default: 60) |
-
-### `get_error_log`
-
-Retrieve the recent error history.
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `database` | `str` | no | Filter by database name |
-| `limit` | `int` | no | Maximum entries to return (default: 50) |
-| `since_minutes` | `int` | no | Only include entries from the last N minutes (default: 60) |
-
-## Graph export formats
-
-The `export_graph` tool supports a `style` parameter for markdown output. In addition to the default `summary` style, the following styles are available:
-
-| Style | Description |
-|---|---|
-| `summary` | Default. Compact overview with node and edge counts, plus a sample of each. |
-| `hierarchy` | Indented tree layout rooted at source nodes. Suitable for DAGs and organizational charts. |
-| `adjacency` | Compact adjacency-list format: each node followed by its outgoing neighbors. |
-| `detailed` | Full per-node listing with all attributes and edge details. Respects `max_rows` for large graphs. |
-
-## Tree breadcrumb paths
-
-When exporting structured data (JSON, YAML, TOML) as a tree, pass `include_path=true` to add a breadcrumb trail to each node. The breadcrumb shows the full path from the root, formatted as `parent > child > leaf`, which helps orient the reader in deeply nested structures.
+Tool parameters are documented in the [tools reference](tools-reference.md),
+which is held to the running server by tests. Three sections describing tools
+used to live here and had drifted away from it: they omitted `search_data`'s
+`case_sensitive` argument, and they described an `export_graph` `style`
+parameter and an `export_structured` `include_path` argument that the tools do
+not accept. The Markdown graph styles are real, but they are values of
+`format` -- `hierarchy`, `adjacency`, `detailed` -- not a separate parameter.
 
 ## Migration guide
 
