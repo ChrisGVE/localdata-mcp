@@ -116,9 +116,11 @@ class DatabaseManager:
         self.query_history: Dict[str, List[str]] = {}
 
         # Security and connection management
+        _config = _parent.get_config_manager()
+        _max_connections = _config.get_configured_max_concurrent_connections()
         self.connection_semaphore = threading.Semaphore(
-            10
-        )  # Max 10 concurrent connections
+            _max_connections if _max_connections is not None else 10
+        )
         self.connection_lock = threading.Lock()
         self.connection_count = 0
 
@@ -130,8 +132,11 @@ class DatabaseManager:
         self.temp_files: List[str] = []
         self.temp_file_lock = threading.Lock()
 
-        # Auto-cleanup for buffers (10 minute expiry)
-        self.buffer_cleanup_interval = 600  # 10 minutes
+        # Auto-cleanup for buffers (10 minute expiry unless configured).
+        _buffer_timeout = _config.get_configured_buffer_timeout()
+        self.buffer_cleanup_interval = (
+            _buffer_timeout if _buffer_timeout is not None else 600
+        )
         self.last_cleanup = time.time()
 
         # Streaming executor for memory-bounded processing
@@ -497,9 +502,7 @@ class DatabaseManager:
     def _generate_query_id(self, db_name: str, query: str) -> str:
         """Generate a unique query ID in format: {db}_{timestamp}_{4char_hash}."""
         timestamp = int(time.time())
-        query_hash = hashlib.md5(query.encode(), usedforsecurity=False).hexdigest()[
-            :4
-        ]  # nosec B324
+        query_hash = hashlib.md5(query.encode(), usedforsecurity=False).hexdigest()[:4]  # nosec B324
         return f"{db_name}_{timestamp}_{query_hash}"
 
     def _cleanup_expired_buffers(self):
@@ -3904,7 +3907,7 @@ class DatabaseManager:
                 "streaming_buffers": {},
                 "performance_config": {
                     "memory_limit_mb": self.streaming_executor.config.memory_limit_mb,
-                    "default_chunk_size": self.streaming_executor.config.chunk_size,
+                    "default_chunk_size": self.streaming_executor.default_chunk_size,
                     "memory_warning_threshold": self.streaming_executor.config.memory_warning_threshold,
                     "enable_query_analysis": self.streaming_executor.config.enable_query_analysis,
                     "auto_cleanup_buffers": self.streaming_executor.config.auto_cleanup_buffers,

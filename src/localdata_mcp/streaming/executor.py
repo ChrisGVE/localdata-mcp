@@ -41,7 +41,19 @@ class StreamingQueryExecutor:
         Args:
             config: Performance configuration. If None, loads from config manager.
         """
-        self.config = config or get_config_manager().get_performance_config()
+        config_manager = get_config_manager()
+        self.config = config or config_manager.get_performance_config()
+        # Resolved once so every expiry sweep uses the configured timeout.
+        # The 3600s default is this store's long-standing behaviour and is
+        # kept until the mismatch with the manager's 600s store is settled.
+        configured_timeout = config_manager.get_configured_buffer_timeout()
+        self.buffer_timeout_seconds = (
+            configured_timeout if configured_timeout is not None else 3600
+        )
+        configured_chunk = config_manager.get_configured_chunk_size()
+        self.default_chunk_size = (
+            configured_chunk if configured_chunk is not None else self.config.chunk_size
+        )
         self._result_buffers: Dict[str, ResultBuffer] = {}
         self._chunk_metrics: List = []
 
@@ -53,8 +65,8 @@ class StreamingQueryExecutor:
             logger.info(
                 "StreamingQueryExecutor initialized",
                 memory_limit_mb=self.config.memory_limit_mb,
-                default_chunk_size=self.config.chunk_size,
-                buffer_timeout=self.config.query_buffer_timeout,
+                default_chunk_size=self.default_chunk_size,
+                buffer_timeout=self.buffer_timeout_seconds,
                 max_concurrent_connections=self.config.max_concurrent_connections,
             )
 
@@ -284,7 +296,7 @@ class StreamingQueryExecutor:
             logger.error(f"Query result buffer '{query_id}' not found")
             return
         buffer = self._result_buffers[query_id]
-        chunk_size = chunk_size or self.config.chunk_size
+        chunk_size = chunk_size or self.default_chunk_size
         current_row = start_row
         while True:
             chunk = buffer.get_chunk_range(current_row, chunk_size)
@@ -314,8 +326,16 @@ class StreamingQueryExecutor:
         """Get information about a result buffer."""
         return _get_buffer_info(self._result_buffers, query_id)
 
-    def cleanup_expired_buffers(self, max_age_seconds: int = 3600) -> int:
-        """Clean up buffers older than specified age."""
+    def cleanup_expired_buffers(self, max_age_seconds: Optional[int] = None) -> int:
+        """Clean up buffers older than the given age.
+
+        Args:
+            max_age_seconds: Age threshold. Defaults to the configured
+                buffer timeout (``query.buffer_timeout_seconds``, or
+                ``LOCALDATA_QUERY_BUFFER_TIMEOUT``). Pass 0 to clear all.
+        """
+        if max_age_seconds is None:
+            max_age_seconds = self.buffer_timeout_seconds
         return _cleanup_expired_buffers(
             self._result_buffers,
             max_age_seconds,
