@@ -17,8 +17,10 @@ Use this domain when you need to:
 - Find shortest paths or service area isochrones on a road/graph network
 - Measure spatial autocorrelation (clustering vs dispersion) in attribute values
 
-All transformers are sklearn-compatible (`BaseEstimator`, `TransformerMixin`) and can be embedded
-in scikit-learn pipelines. High-level convenience functions are also available for direct use.
+The domain is reached through the ten MCP tools listed below. The classes named
+in the table that follows are the internal implementation those tools call — they
+are sklearn-compatible (`BaseEstimator`, `TransformerMixin`) and usable from
+Python, but an MCP client never sees them.
 
 ---
 
@@ -48,151 +50,95 @@ in scikit-learn pipelines. High-level convenience functions are also available f
 
 ## MCP Tool Reference
 
-The geospatial domain exposes its functionality through Python API calls. The high-level functions
-below are the primary entry points.
+The geospatial domain exposes ten MCP tools. Like every other analytical tool,
+each takes the name of a live connection and one or more SQL queries — there is
+no data-frame parameter and no separate load step. The classes listed under
+*Available Analyses* above are the internal implementation those tools call;
+they are not reachable from an MCP client.
 
-### `calculate_spatial_distance`
+Spatial data arrives from SQL in one of three shapes, and the parameters follow
+that split:
 
-Compute distances between points in a DataFrame.
+| Shape | How it is given | Tools |
+|---|---|---|
+| Points | `x_column` and `y_column` (default `x`, `y`) | autocorrelation, hotspots, distances |
+| Geometries | a WKT text column (default `geometry`) | join, overlay, aggregation |
+| Networks | a nodes query and an edges query | route, accessibility, isochrones |
 
-**Parameters**
+Full parameter tables for all ten live in the
+[tools reference](../tools-reference.md#geospatial-10-tools). This page covers
+what each tool is for and when to reach for it.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `data` | pd.DataFrame | required | DataFrame with coordinate columns |
-| `coordinate_columns` | list[str] | `["x", "y"]` | Names of the x/y (or lon/lat) columns |
-| `distance_metrics` | list[str] | `["euclidean"]` | Metrics: `euclidean`, `haversine`, `manhattan` |
-| `output_format` | str | `"dataframe"` | Output as `"dataframe"` or `"matrix"` |
+### `check_geospatial_capabilities`
 
-**Return format**
-
-Returns a DataFrame with distance columns appended, or a distance matrix.
-
----
-
-### `perform_spatial_join`
-
-Join two spatial datasets by geometric relationship.
-
-**Parameters**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `left_gdf` | GeoDataFrame | required | Left dataset (points or polygons) |
-| `right_gdf` | GeoDataFrame | required | Right dataset to join against |
-| `join_type` | str | `"intersects"` | Join predicate: `intersects`, `contains`, `within`, `nearest` |
-| `how` | str | `"left"` | Join direction: `left`, `right`, `inner` |
-| `distance_threshold` | float | None | Maximum distance for nearest joins |
-
-**Return format**
-
-```python
-SpatialJoinResult(
-    result_gdf=...,          # GeoDataFrame with joined attributes
-    join_count=...,          # Number of matched pairs
-    unmatched_left=...,      # Indices with no match
-    join_type="intersects",
-    metadata={...}
-)
-```
-
----
-
-### `perform_spatial_overlay`
-
-Combine two polygon layers with set operations.
-
-**Parameters**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `gdf1` | GeoDataFrame | required | First polygon layer |
-| `gdf2` | GeoDataFrame | required | Second polygon layer |
-| `operation` | str | `"intersection"` | Operation: `intersection`, `union`, `difference`, `symmetric_difference` |
-
----
+Reports which backends are installed. geopandas, shapely, pyproj and fiona are
+required dependencies; scikit-gstat (advanced kriging) and rasterio (raster
+data) are optional, so call this before an analysis that needs one. It is the
+only tool in the server that takes no connection.
 
 ### `analyze_spatial_autocorrelation`
 
-Measure spatial autocorrelation in a variable across a point dataset.
+Answers "is this pattern clustered, dispersed, or random?" — the question to
+settle before treating geography as meaningful in a model. Returns Moran's I
+(`method="moran"`) or Geary's C (`method="geary"`) with its expected value,
+variance, z-score, p-value and an interpretation. Clustering pushes Moran's I
+above its expected value and Geary's C below 1.
 
-**Parameters**
+### `find_spatial_hotspots`
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `data` | pd.DataFrame | required | DataFrame with coordinate and value columns |
-| `coordinate_columns` | list[str] | `["x", "y"]` | Coordinate column names |
-| `value_column` | str | required | Column to test for spatial pattern |
-| `method` | str | `"moran"` | Method: `moran`, `geary` |
-| `k_neighbors` | int | `8` | Number of spatial neighbours for weights matrix |
+Answers "where are the clusters?" — a Getis-Ord Gi* analysis labelling each
+location a hot spot, a cold spot, or not significant, with its statistic and
+p-value. A hot spot is a location *surrounded by* unusually high values, which
+is not the same as a high value: a lone peak among low neighbours is not one.
+Run `analyze_spatial_autocorrelation` first; without significant global
+autocorrelation, local clusters are noise.
 
-**Return format**
+### `calculate_spatial_distances`
 
-```python
-SpatialStatisticsResult(
-    statistic="morans_i",
-    value=0.42,              # Moran's I: -1 (dispersion) to +1 (clustering)
-    p_value=0.001,
-    z_score=3.8,
-    interpretation="Strong positive spatial autocorrelation detected",
-    weights_summary={...}
-)
-```
-
----
+Answers "how far apart is everything, and what is each point's nearest
+neighbour?" Returns a summary and per-point nearest neighbours rather than the
+matrix itself, which grows with the square of the row count; pass
+`include_pairs=True` for individual pairs. Use `distance_type="haversine"` for
+longitude/latitude, which reports kilometres — treating degrees as a plane
+understates distance badly away from the equator.
 
 ### `optimize_route`
 
-Find the shortest path between two nodes in a spatial network.
+Answers "what is the cheapest way to visit all of these?" Orders the waypoints
+and connects them across the network, returning the node path, its coordinates,
+the total cost and the route as a WKT `LINESTRING`.
 
-**Parameters**
+### `analyze_accessibility`
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `network_data` | dict | required | Graph definition with nodes and edges |
-| `origin` | str/int | required | Origin node identifier |
-| `destination` | str/int | required | Destination node identifier |
-| `weight` | str | `"distance"` | Edge attribute to minimise |
-| `algorithm` | str | `"dijkstra"` | Algorithm: `dijkstra`, `astar`, `bellman_ford` |
-
-**Return format**
-
-```python
-RouteResult(
-    path=[node1, node2, ...],
-    total_distance=12.4,
-    total_time=None,
-    segments=[{"from": ..., "to": ..., "distance": ...}],
-    metadata={...}
-)
-```
-
----
+Answers "who can reach a facility, how quickly, and who is left out?" Returns a
+score and travel time per demand point plus an explicit
+`unreachable_locations` list — the answer a coverage percentage hides.
 
 ### `generate_service_isochrones`
 
-Compute reachable areas from service locations within a distance/time budget.
+Answers "how much ground does this site cover?" Returns one polygon per
+travel-time band as WKT, with its area. Compare areas between bands to find
+where coverage stops growing, or between candidate sites to choose one.
 
-**Parameters**
+### `perform_spatial_join`
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `network_data` | dict | required | Graph definition |
-| `service_locations` | list | required | Origin node IDs for service points |
-| `thresholds` | list[float] | required | Distance or time budgets for each isochrone band |
-| `analysis_type` | str | `"distance"` | `"distance"` or `"time"` |
+Answers "which zone is each point in?" Either side may be given as WKT
+geometries or, for point data, as a coordinate pair — point tables rarely carry
+a WKT column, and joining points to zones is the commonest spatial join there
+is. Left and right columns come back suffixed `_left` and `_right`.
 
-**Return format**
+### `perform_spatial_overlay`
 
-```python
-IsochroneResult(
-    service_areas={threshold: [node_ids]},
-    coverage_stats={"fraction_covered": 0.72, ...},
-    metadata={...}
-)
-```
+Answers "where do these two areas overlap, and where does one exclude the
+other?" Both sides must supply WKT geometries, since a set operation on points
+is not meaningful. Supports `intersection`, `union` and `difference`.
 
----
+### `aggregate_points_in_polygons`
+
+Answers "what is the average reading per district?" — the spatial equivalent of
+a GROUP BY, and the usual bridge from point measurements into the Data Science
+tools, which then work on the resulting per-polygon table. Polygons containing
+no points are kept with a count of zero rather than dropped.
 
 ## Method Details
 
@@ -358,72 +304,115 @@ exhausted. Returns the set of reachable nodes per threshold.
 
 ## Examples
 
-### Compute haversine distances between store locations and customers
+Every example below is an MCP tool call, the way an agent would issue it.
+
+### Are house prices spatially clustered?
 
 ```python
-from localdata_mcp.domains.geospatial_analysis import SpatialDistanceCalculator
-
-calc = SpatialDistanceCalculator()
-distances = calc.haversine_distance(
-    lat1=customer_df["lat"].values,
-    lon1=customer_df["lon"].values,
-    lat2=store_lat,
-    lon2=store_lon,
-    unit="km",
+analyze_spatial_autocorrelation(
+    "listings", "SELECT lon, lat, price FROM properties",
+    value_column="price", x_column="lon", y_column="lat",
 )
 ```
 
-### Run autocorrelation analysis via pipeline
+A Moran's I well above its expected value with a p-value below 0.05 means price
+depends on location, and a model that ignores geography will be biased.
+
+### Where are the expensive neighbourhoods?
 
 ```python
-result = analyze_spatial_autocorrelation(
-    data=df,
-    coordinate_columns=["longitude", "latitude"],
-    value_column="house_price",
-    method="moran",
-    k_neighbors=6,
+find_spatial_hotspots(
+    "listings", "SELECT lon, lat, price FROM properties",
+    value_column="price", x_column="lon", y_column="lat",
 )
-print(f"Moran's I = {result.value:.3f}, p = {result.p_value:.4f}")
-print(result.interpretation)
 ```
 
-### Spatial join: assign census polygon attributes to point data
+Each returned point carries a `cluster_id` of 1, -1 or 0. Run this only after
+the autocorrelation test above comes back significant.
+
+### How far is each customer from the nearest store?
 
 ```python
-from localdata_mcp.domains.geospatial_analysis import perform_spatial_join
-
-joined = perform_spatial_join(
-    left_gdf=customer_points,
-    right_gdf=census_polygons,
-    join_type="intersects",
-    how="left",
+calculate_spatial_distances(
+    "retail", "SELECT lon, lat FROM customers",
+    x_column="lon", y_column="lat", distance_type="haversine",
+    reference_query="SELECT lon, lat FROM stores",
 )
-# Each customer point now carries attributes from the census polygon it falls within
 ```
 
-### Interpolate sensor readings onto a regular grid
+`haversine` reports kilometres. The `summary` gives the distribution; the
+per-point nearest neighbour identifies the closest store to each customer.
+
+### Which sales region does each customer fall in?
 
 ```python
-from localdata_mcp.domains.geospatial_analysis import SpatialInterpolator
-
-interpolator = SpatialInterpolator(method="kriging", variogram_model="spherical")
-result = interpolator.interpolate(
-    points=sensor_locations,     # list of (x, y) tuples
-    values=sensor_readings,      # np.ndarray of observed values
-    grid_resolution=100,
+perform_spatial_join(
+    "retail",
+    "SELECT customer_id, lon, lat FROM customers",
+    "SELECT region_name, geometry FROM sales_regions",
+    x_column="lon", y_column="lat",
 )
-# result.interpolated_values: grid of estimated values
-# result.prediction_variance: uncertainty per grid cell
 ```
 
-### Route optimisation on a delivery network
+The left side is point data given as coordinates and the right side is WKT
+polygons; each side is read in whichever form its query provides.
+
+### What is average revenue per region?
 
 ```python
-route = optimize_route(
-    network_data={"nodes": node_list, "edges": edge_list},
-    origin="depot_A",
-    destination="customer_42",
-    weight="travel_time_minutes",
+aggregate_points_in_polygons(
+    "retail",
+    "SELECT lon, lat, revenue FROM customers",
+    "SELECT region_name, geometry FROM sales_regions",
+    value_column="revenue", x_column="lon", y_column="lat",
 )
-print(f"Route: {route.path}, total time: {route.total_distance} min")
 ```
+
+The result is one row per region, ready to feed into `analyze_hypothesis_test`
+or `analyze_regression` as an ordinary table.
+
+### What is the cheapest delivery round?
+
+```python
+optimize_route(
+    "logistics",
+    "SELECT id, x, y FROM depots",
+    "SELECT source, target, travel_minutes FROM roads",
+    waypoints=[3, 17, 42],
+    weight_column="travel_minutes",
+    return_to_start=True,
+)
+```
+
+### Who is more than 20 minutes from a clinic?
+
+```python
+analyze_accessibility(
+    "health",
+    "SELECT id, x, y FROM junctions",
+    "SELECT source, target, travel_minutes FROM roads",
+    service_locations=[11, 58],
+    demand_locations=[2, 7, 19, 33],
+    weight_column="travel_minutes",
+    max_travel_time=20,
+)
+```
+
+`unreachable_locations` names them directly, rather than leaving them implied by
+a coverage percentage.
+
+### How much ground would a new site cover?
+
+```python
+generate_service_isochrones(
+    "health",
+    "SELECT id, x, y FROM junctions",
+    "SELECT source, target, travel_minutes FROM roads",
+    service_locations=[58],
+    time_bands=[10, 20, 30],
+    weight_column="travel_minutes",
+)
+```
+
+Each band comes back as a WKT polygon with its area, so two candidate sites can
+be compared band for band.
