@@ -205,25 +205,27 @@ tools, and inspecting what actually loaded and what actually held state:
 
 ## Design documents
 
-Two design documents are normative and still govern how the interface evolves.
-They are published alongside this page:
+Six documents live in `docs/architecture/` in the repository and none of them are
+published: `FIRST_PRINCIPLES.md`, `DESIGN_DECISIONS.md`, `CORE_PATTERNS.md`,
+`LIBRARY_STRATEGY.md`, `domain-integration-layer.md` and
+`integration-shims-architecture.md`.
 
-```{toctree}
-:maxdepth: 1
+All six predate the implementation and describe a system that was designed but
+not built. `IntentResolver`, `DomainRegistry`, `DomainBridge`, `SemanticWrapper`,
+`AdaptiveProcessor`, `DataStream` and `AnalysisResult` appear in them and in no
+source file. Their worked examples call `explore_relationships`, `profile_data`,
+`model_relationships` and `generate_business_insights`, none of which is a tool
+this server registers — and the shipped interface is the one those examples hold
+up as the pattern to avoid: `analyze_clusters` does take `n_clusters`, and
+`analyze_hypothesis_test` does take `alpha`.
 
-FIRST_PRINCIPLES
-DESIGN_DECISIONS
-```
-
-Four further documents live in `docs/architecture/` in the repository but are
-deliberately not published: `CORE_PATTERNS.md`, `LIBRARY_STRATEGY.md`,
-`domain-integration-layer.md` and `integration-shims-architecture.md`. They
-propose machinery that was never built — `IntentResolver`, `DomainRegistry`,
-`DomainBridge`, `SemanticWrapper`, `AdaptiveProcessor`, `DataStream` and
-`AnalysisResult` do not exist in the source. The reasoning in them is still the
-reasoning behind the interface, which is why they are kept; publishing them as
-architecture would present a proposal as a description, which is the failure this
-page exists to correct.
+The first two are the project's design constitution and still govern how the
+interface evolves, which is why they are kept in the repository and cited from
+`CLAUDE.md`. That is a different job from documenting the server, and it does not
+earn them a place in the published docs: a reader who found a prescribed API here
+would go looking for tools that do not exist. Publishing a proposal as a
+description is the failure this page exists to correct, and the rule has to apply
+to the documents this page likes as much as to the ones it does not.
 
 ## Where to look next
 

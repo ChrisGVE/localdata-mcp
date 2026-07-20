@@ -49,9 +49,12 @@ Verify the command exists and is on your PATH:
 
 ```bash
 which localdata-mcp
-
-# If not found, use the full path
 localdata-mcp --version
+
+# If `which` finds nothing, the entry point is not on PATH. Ask uv where it put
+# it and call that path directly:
+uv tool dir
+"$(uv tool dir)/localdata-mcp/bin/localdata-mcp" --version
 ```
 
 Minimal MCP client configuration:

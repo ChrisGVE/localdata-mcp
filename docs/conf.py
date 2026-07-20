@@ -22,14 +22,20 @@ myst_heading_anchors = 3
 templates_path = ["_templates"]
 exclude_patterns = [
     "_build",
-    # The architecture section publishes its index and the two normative design
-    # documents. The four below propose machinery that was never built, so they
-    # stay in the repository for their reasoning but out of the shipped docs,
-    # where every page is expected to describe the current system.
+    # The architecture section publishes its index and nothing else. Every other
+    # page in this directory predates the implementation and shows worked examples
+    # built from tools that were never written -- `explore_relationships`,
+    # `profile_data`, `model_relationships`, `IntentResolver`, `DomainRegistry`.
+    # FIRST_PRINCIPLES and DESIGN_DECISIONS are no exception, whatever their
+    # standing as internal design reasoning: publishing them would present a
+    # proposal as a description, which is the failure the index exists to correct.
+    # They stay in the repository, out of the shipped docs.
     "architecture/CORE_PATTERNS.md",
     "architecture/LIBRARY_STRATEGY.md",
     "architecture/domain-integration-layer.md",
     "architecture/integration-shims-architecture.md",
+    "architecture/FIRST_PRINCIPLES.md",
+    "architecture/DESIGN_DECISIONS.md",
     "integration",
     "BACKWARD_COMPATIBILITY.md",
     "PERFORMANCE_BENCHMARKS.md",

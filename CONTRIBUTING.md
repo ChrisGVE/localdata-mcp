@@ -112,7 +112,9 @@ git checkout -b feature/your-feature-name
 
 - Follow existing code patterns and module structure
 - Add tests for new functionality
-- Keep functions and files within the project's size limits (see `CLAUDE.md`)
+- Keep modules focused enough to read in one sitting. There is no enforced line
+  limit, but `server/database_manager.py` is the cautionary example at 4,000-plus
+  lines: new domains go in their own adapter and mixin rather than into it
 - Update documentation when adding user-facing features
 
 ### Run tests
