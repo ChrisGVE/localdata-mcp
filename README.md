@@ -221,7 +221,9 @@ Multi-sheet spreadsheets are supported: each sheet becomes a separately queryabl
 
 ## Claude Code plugin
 
-The repository doubles as a Claude Code plugin. Its manifest (`.claude-plugin/plugin.json`) registers the `localdata` MCP server via `uvx localdata-mcp` and ships 18 skills and 11 agents that drive the tools above.
+The repository doubles as a Claude Code plugin. Its manifest (`.claude-plugin/plugin.json`) registers the `localdata` MCP server via `uvx localdata-mcp` and ships 18 skills and 11 agents that drive the tools above. See [the plugin page](docs/plugin.md) for how to install it and how to invoke a skill.
+
+Upgrading from 2.0.0: `graph-explore` is now `graph-data-explore` and `graph-analyst` is now `graph-data-analyst`, and every skill moved one directory deeper. Invoking an old name silently does nothing — the [changelog](CHANGELOG.md) lists the steps.
 
 Skills are grouped by domain under `skills/`:
 
@@ -274,6 +276,7 @@ Set them in your MCP server configuration under `"env"`, or in a `.env` file in 
 ## Documentation
 
 - [Getting started](docs/getting-started.md) — install, configure an MCP client, run the first queries
+- [Claude Code plugin](docs/plugin.md) — install the plugin, invoke a skill, what each skill and agent does
 - [Tools reference](docs/tools-reference.md) — every tool with parameters, return shape, and composition hints
 - [Configuration reference](docs/configuration.md) — config file discovery, every environment variable, every default
 - [Data sources](docs/data-sources/index.md) — connection strings and quirks per database and file format

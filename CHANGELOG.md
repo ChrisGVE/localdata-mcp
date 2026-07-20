@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.1.0] - unreleased
 
+### Upgrading from 2.0.0
+
+Two components were renamed and every skill moved. Both renames break callers by
+name, and nothing warns you — an old name simply resolves to nothing.
+
+1. **Rename `graph-explore` to `graph-data-explore`** wherever you invoke it:
+   `/graph-explore` becomes `/graph-data-explore`.
+2. **Rename `graph-analyst` to `graph-data-analyst`** in any request or
+   configuration that names the agent.
+3. **Update any pinned path** of the form `skills/<name>/SKILL.md`. All eighteen
+   skills now sit one level deeper, under a group directory:
+   `skills/<group>/<name>/SKILL.md`. The eight that existed in 2.0.0 moved to
+   `skills/exploration/explore-data/`, `skills/statistical/ab-test/`,
+   `skills/statistical/analyze-correlations/`,
+   `skills/modeling/cluster-analysis/`, `skills/modeling/forecast/`,
+   `skills/modeling/regression/`, `skills/graph-data/graph-data-explore/`, and
+   `skills/workflow/data-pipeline/`.
+4. **Reload the plugin** so the moved directories are rescanned. Confirm with
+   `claude --plugin-dir <path> plugin details localdata-mcp`, which should
+   report 18 skills and 11 agents.
+
+Nothing else in the tool surface changed: all 53 MCP tool names, parameters, and
+return shapes are as they were in 2.0.0. A client that uses only the MCP server,
+without the skills and agents, needs no action.
+
+### Removed
+
+- The skill name `graph-explore` and the agent name `graph-analyst`. Both are
+  renames, not deletions of function — see Upgrading above for the replacements.
+- The flat `skills/<name>/SKILL.md` layout, replaced by
+  `skills/<group>/<name>/SKILL.md`.
+
 ### Added
 - Ten skills: data-quality, find-reference-data, anomaly-detection,
   dimensionality-reduction, geospatial, optimization, hypothesis-test,
@@ -27,9 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Licence migrated from MIT to Apache 2.0. `LICENSE` carries the Apache 2.0 text,
   `NOTICE` carries the attribution notice Apache 2.0 requires, and `pyproject.toml`
   declares `license = "Apache-2.0"` as a PEP 639 expression.
-- Skills are grouped into five domain directories (exploration, statistical, modeling,
-  graph-data, workflow). Eight skills moved; `graph-explore` is now `graph-data-explore`.
-- `graph-analyst` is now `graph-data-analyst`.
+- **Breaking:** skills are grouped into five domain directories (exploration,
+  statistical, modeling, graph-data, workflow). All eight 2.0.0 skills moved, and
+  `graph-explore` is now `graph-data-explore`. See Upgrading above.
+- **Breaking:** `graph-analyst` is now `graph-data-analyst`. See Upgrading above.
 - `statistical-analyst` covers sampling design and estimation alongside hypothesis testing.
 - PyPI metadata: added AI and data-science classifiers and cross-platform keywords.
 - Version raised to 2.1.0 in `pyproject.toml`, `.claude-plugin/plugin.json`, and `server.json`.
