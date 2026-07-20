@@ -19,6 +19,11 @@ connect_database("arch", "mermaid", "./architecture.mmd")
 
 ## Graph tools
 
+Node and property operations are the same tools used for JSON/YAML/TOML trees;
+they detect a graph connection and read their second argument as a node ID. That
+argument is named `path` in the tool signature, so pass it positionally or as
+`path=` — `node_id=` is not a valid keyword.
+
 ### Node operations
 
 | Tool | Description |
@@ -62,7 +67,14 @@ export_graph("kg", "dot")
 export_graph("kg", "gml")
 export_graph("kg", "mermaid")
 export_graph("kg", "mermaid", node_id="root")          # subgraph around a node
+
+export_graph("kg", "adjacency")                        # compact A -> B [label] list
+export_graph("kg", "hierarchy")                        # indented tree, DAGs only
+export_graph("kg", "detailed")                         # per-node property sections
+export_graph("kg", "markdown")                         # summary tables
 ```
+
+`adjacency`, `hierarchy`, `detailed`, and `markdown` render for an agent to read rather than for another tool to parse; they ignore `node_id` and always cover the whole graph. `hierarchy` falls back to the adjacency list when the graph contains a cycle.
 
 All node and edge metadata properties are included in the export. Output is capped at 100 KB; larger graphs receive a truncation notice in the response.
 

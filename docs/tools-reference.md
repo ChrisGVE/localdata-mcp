@@ -1,6 +1,6 @@
 # LocalData MCP Tools Reference
 
-Complete reference documentation for all 52 MCP tools. Organized by category for quick navigation.
+Complete reference documentation for all 53 MCP tools. Organized by category for quick navigation.
 
 ## Table of Contents
 
@@ -10,8 +10,13 @@ Complete reference documentation for all 52 MCP tools. Organized by category for
 4. Graph Operations (7 tools)
 5. Search & Transform (2 tools)
 6. Schema & Audit (3 tools)
-7. System (1 tool)
+7. System (2 tools)
 8. Data Science (12 tools)
+
+The tree tools in section 3 double as the node-level graph API: `get_node`,
+`set_node`, `delete_node`, `list_keys`, `get_value`, `set_value`, and
+`delete_key` detect a graph connection and read their `path` argument as a node
+ID. `get_children` and `move_node` work on trees only.
 
 ---
 
@@ -605,17 +610,20 @@ delete_key("config", "database", "deprecated_setting")
 
 ### export_structured
 
-Export tree or RDF data as TOML, JSON, YAML, Turtle, or N-Triples.
+Export tree data as TOML, JSON, YAML, or Markdown — or RDF data as Turtle or
+N-Triples. The accepted formats depend on the connection type; passing an RDF
+format to a tree connection (or the reverse) returns an error.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `name` | string | Yes | Connection name |
-| `format` | string | Yes | Export format: json, yaml, toml, turtle, ntriples |
-| `path` | string | No | Root path to export (null for all) |
+| `format` | string | Yes | Tree connections: `json`, `yaml`, `toml`, `markdown` (alias `md`). RDF connections: `turtle` (alias `ttl`), `ntriples` (alias `nt`) |
+| `path` | string | No | Root path to export (null for all). Ignored for RDF connections, which always serialize the whole graph |
 
-**Returns:** Exported data in requested format (string)
+**Returns:** `{"format": ..., "content": ...}`. Output above 100 KB is halved and
+returned with `truncated: true` and a `notice`
 
 **Example:**
 ```python
@@ -773,21 +781,29 @@ get_graph_stats("network")
 
 ### export_graph
 
-Export graph as DOT, GML, or GraphML format.
+Export a graph in a machine-readable or agent-readable format.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `name` | string | Yes | Connection name |
-| `format` | string | Yes | Format: dot, gml, graphml |
-| `node_id` | string | No | Export subgraph from node (null for all) |
+| `format` | string | Yes | `dot`, `gml`, `graphml`, `mermaid` (alias `mmd`), `markdown` (alias `md`), `hierarchy`, `adjacency`, or `detailed` |
+| `node_id` | string | No | Export the ego subgraph around this node (null for the whole graph). Ignored by the Markdown styles, which always render the full graph |
 
-**Returns:** Graph in requested format (string)
+`hierarchy`, `adjacency`, and `detailed` are Markdown styles: an indented tree
+for DAGs, a compact `A -> B [label]` list, and full per-node property sections
+respectively. Output above 100 KB is truncated and flagged with `truncated: true`
+plus a `notice`. For the non-Markdown formats, pass `node_id` to export a smaller
+subgraph instead.
+
+**Returns:** `{"format": ..., "content": ...}`, or `{"error": ...}` for an unknown format or missing node
 
 **Example:**
 ```python
 export_graph("network", "graphml")
+export_graph("network", "adjacency")
+export_graph("network", "mermaid", node_id="root")
 ```
 
 **Composition hints:** Use for graph visualization and portability.
@@ -920,7 +936,7 @@ get_error_log(database="mydb", since_minutes=60)
 
 ---
 
-## System (1 tool)
+## System (2 tools)
 
 ### check_compatibility
 
@@ -940,6 +956,29 @@ check_compatibility(generate_migration_script=True)
 ```
 
 **Composition hints:** Use during upgrades or configuration migrations.
+
+---
+
+### get_metrics
+
+Return the server's Prometheus metrics as text.
+
+This tool is registered only when metrics collection is enabled
+(`logging.enable_metrics`), which is the default. Disable it and the tool
+disappears from the tool list, leaving 52 tools.
+
+**Parameters:** none
+
+**Returns:** Prometheus exposition-format metrics (string). On failure, the
+string `Error exporting metrics: <reason>` rather than an exception.
+
+**Example:**
+```python
+get_metrics()
+```
+
+**Composition hints:** Use to check memory pressure and query throughput before
+launching a large streaming job.
 
 ---
 

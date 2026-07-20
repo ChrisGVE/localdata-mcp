@@ -9,24 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.1] - 2026-07-20
 
+### Added
+- Ten skills: data-quality, find-reference-data, anomaly-detection,
+  dimensionality-reduction, geospatial, optimization, hypothesis-test,
+  sampling-estimation, process-control, research-pipeline. The plugin now ships 18.
+- Five agents: data-researcher, data-scientist, geospatial-analyst,
+  operations-analyst, research-analyst. The plugin now ships 11.
+- `server.json` describing the package for the official MCP registry, plus the
+  `mcp-name` marker in README.
+- Docker Hub publish workflow and MCP metadata label on the image.
+- Kaggle demo: an RFM replication notebook over the UCI Online Retail dataset,
+  with a Google Colab variant.
+- `uv.lock`, committed so development environments are reproducible.
+- `docs/plugin.md`, documenting every shipped skill and agent.
+
+### Changed
+- Licence migrated from MIT to Apache 2.0. `LICENSE` carries the Apache 2.0 text,
+  `NOTICE` carries the attribution notice Apache 2.0 requires, and `pyproject.toml`
+  declares `license = "Apache-2.0"` as a PEP 639 expression.
+- Skills are grouped into five domain directories (exploration, statistical, modeling,
+  graph-data, workflow). Eight skills moved; `graph-explore` is now `graph-data-explore`.
+- `graph-analyst` is now `graph-data-analyst`.
+- `statistical-analyst` covers sampling design and estimation alongside hypothesis testing.
+- PyPI metadata: added AI and data-science classifiers and cross-platform keywords.
+- Version raised to 2.0.1 in `pyproject.toml`, `.claude-plugin/plugin.json`, and `server.json`.
+
 ### Fixed
 - Performance benchmarks workflow was invalid YAML and had never executed. Embedded
   Python scripts written at column 0 terminated the enclosing `run:` block scalar,
   so GitHub could not parse the file and every run completed with zero jobs.
 - Performance benchmarks workflow installed dependencies from `requirements.txt` and
   `requirements-dev.txt`, which no longer exist; it now installs from `pyproject.toml`.
+  Deprecated actions were updated and the Python matrix aligned with CI.
+- Benchmark harness called token estimation with the wrong parameter name.
+- Retry-logic test counted sleeps raised on other threads and failed intermittently.
 - Plugin manifest and contributing guide still referenced the MIT licence after the
-  migration to Apache 2.0.
-
-### Changed
-- Skills are grouped into five domain directories (exploration, statistical, modeling,
-  graph-data, workflow). Eight skills moved; `graph-explore` is now `graph-data-explore`.
-- Ten skills added: data-quality, find-reference-data, anomaly-detection,
-  dimensionality-reduction, geospatial, optimization, hypothesis-test,
-  sampling-estimation, process-control, research-pipeline.
-- Five agents added: data-researcher, data-scientist, geospatial-analyst,
-  operations-analyst, research-analyst. `graph-analyst` is now `graph-data-analyst`.
-- `statistical-analyst` covers sampling design and estimation alongside hypothesis testing.
+  migration to Apache 2.0. The `License :: OSI Approved :: MIT License` classifier was
+  removed, since a PEP 639 `license` expression supersedes it.
+- README documented seven graph tools that do not exist (`get_node_graph`,
+  `set_node_graph`, `delete_node_graph`, `get_value_graph`, `set_value_graph`,
+  `delete_key_graph`, `list_keys_graph`). Graph node operations are served by the tree
+  tools, which read `path` as a node ID for graph connections.
+- README named four environment variables the server never reads
+  (`LOCALDATA_MAX_CONNECTIONS`, `LOCALDATA_CHUNK_SIZE`, `LOCALDATA_BUFFER_TTL`,
+  `LOCALDATA_WORKING_DIR`) and gave a chunk-size default of 500 where the code uses 100.
+- README linked `DATABASE_CONNECTIONS.md` and `FAQ.md`, both deleted before 2.0.0.
+- `CONTRIBUTING.md`, `TROUBLESHOOTING.md`, and `docs/getting-started.md` told
+  contributors to run `uv sync --dev`. The dev tools are a project extra, not a uv
+  dependency group, so that command uninstalls pytest, black, and mypy instead of
+  installing them. Corrected to `uv sync --extra dev`.
+- Tool counts and export-format lists across README and `docs/tools-reference.md`
+  now match the registered tools; `get_metrics` is documented.
 
 ## [2.0.0] - 2026-04-06
 

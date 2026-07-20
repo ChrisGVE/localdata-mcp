@@ -1,6 +1,6 @@
 # LocalData MCP
 
-A data science plugin for LLM agents. Connects to 13 database types, 20+ file formats, graph and RDF sources, and provides 8 analytical domains through 52 MCP tools.
+A data science plugin for LLM agents. Connects to 13 database types, 20+ file formats, graph and RDF sources, and provides 8 analytical domains through 53 MCP tools.
 
 LocalData MCP gives LLM agents direct access to local and remote data sources through the [Model Context Protocol](https://modelcontextprotocol.io/). Beyond data connectivity, it provides a full data science toolkit: statistical analysis, time series forecasting, regression modeling, clustering, business intelligence, geospatial analysis, optimization, and sampling methods — all designed for LLM-driven workflows with composition metadata and progressive disclosure.
 
@@ -14,7 +14,8 @@ LocalData MCP gives LLM agents direct access to local and remote data sources th
 - **RDF/SPARQL**: Turtle, N-Triples files and remote SPARQL endpoints
 - **Data science**: 8 analytical domains with 12 specialized tools
 - **Streaming**: Memory-bounded query execution with adaptive chunk sizing
-- **Security**: Path restrictions, SQL injection prevention, connection limits
+- **Security**: SELECT-only SQL validation, path restrictions, connection limits
+- **Claude Code plugin**: 18 skills and 11 agents that drive the tools
 
 ```{toctree}
 :maxdepth: 2
@@ -25,6 +26,7 @@ tools-reference
 configuration
 data-sources/index
 domains/index
+plugin
 error-classification
 changelog
 ```

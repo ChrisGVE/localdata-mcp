@@ -22,7 +22,7 @@ uv tool install localdata-mcp
 # For development
 git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
-uv sync --dev
+uv sync --extra dev
 ```
 
 ### ModuleNotFoundError after installation
