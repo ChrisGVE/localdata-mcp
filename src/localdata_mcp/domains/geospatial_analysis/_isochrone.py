@@ -48,14 +48,22 @@ class IsochroneGenerator:
                 reachable_nodes = []
 
                 try:
-                    path_lengths = nx.single_source_shortest_path_length(
+                    # Dijkstra, not the BFS variant: edge weights are travel
+                    # cost, and ``single_source_shortest_path_length`` takes no
+                    # ``weight`` argument at all, so the call raised TypeError
+                    # and every band came back empty.
+                    path_lengths = nx.single_source_dijkstra_path_length(
                         self.network.network,
                         service_node,
                         cutoff=time_threshold,
                         weight="weight",
                     )
                     reachable_nodes = list(path_lengths.keys())
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        f"Isochrone band {time_threshold} unreachable from "
+                        f"{service_node}: {exc}"
+                    )
                     continue
 
                 if len(reachable_nodes) < 3:

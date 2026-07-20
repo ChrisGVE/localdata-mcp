@@ -190,8 +190,10 @@ class SpatialAggregator:
             else:
                 logger.warning(f"Aggregation function '{func}' not supported")
 
-        grouped = join_result.joined_data.groupby(polygon_cols).agg(agg_dict)
-        grouped.columns = [col[0] for col in grouped.columns]
+        # Named aggregation only takes the ``new_name=(column, func)`` keyword
+        # form. Passing the same mapping positionally makes pandas read the keys
+        # as columns to aggregate and raise ``Label(s) [...] do not exist``.
+        grouped = join_result.joined_data.groupby(polygon_cols).agg(**agg_dict)
         grouped = grouped.reset_index()
 
         polygon_mapping = {}
