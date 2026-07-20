@@ -984,9 +984,33 @@ launching a large streaming job.
 
 ## Data Science (12 tools)
 
+Every tool in this section has the same first two parameters: the name of a live
+connection and a SQL query. The query selects the data; there is no separate
+load step and no data-frame parameter. Column parameters name columns in the
+query's result set.
+
+Where a parameter takes a list of columns, it is a genuine list
+(`["price", "sqft"]`), not a comma-separated string. Where a parameter selects a
+method, only the values listed below are accepted; anything else raises
+`ValueError`.
+
+```{warning}
+Verified by execution against a live connection: `analyze_anova`,
+`analyze_effect_sizes`, `evaluate_model_performance`, `analyze_clusters`,
+`detect_anomalies`, `reduce_dimensions`, `analyze_time_series`,
+`forecast_time_series`, `analyze_rfm` and `analyze_ab_test` currently raise
+`TypeError` inside the server before returning a result, as does
+`analyze_hypothesis_test` when `column` or `group_column` is supplied. The
+signatures documented below are correct; the adapter layer that forwards them to
+the analysis code is not. Tracked as
+[issue #23](https://github.com/ChrisGVE/localdata-mcp/issues/23).
+`analyze_regression`, and `analyze_hypothesis_test` without column arguments,
+work as documented.
+```
+
 ### analyze_hypothesis_test
 
-Run statistical hypothesis test on query results.
+Run a statistical hypothesis test on query results.
 
 **Parameters:**
 
@@ -994,295 +1018,333 @@ Run statistical hypothesis test on query results.
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
 | `query` | string | Yes | SQL query returning data |
-| `test_type` | string | Yes | Test type: t_test, chi_square, mann_whitney, wilcoxon, kruskal, fisher |
-| `column` | string | Yes | Column to test |
-| `group_column` | string | No | Column defining groups for comparison |
+| `test_type` | string | No | `auto`, `ttest_1samp`, `ttest_ind`, `ttest_rel`, `chi2`, `normality`, `correlation` (default: `auto`) |
+| `column` | string | No | Column to test (default: empty, meaning all numeric columns) |
+| `group_column` | string | No | Grouping column for two-sample tests |
 | `alpha` | number | No | Significance level (default: 0.05) |
-| `alternative` | string | No | Two-sided, less, or greater (default: two-sided) |
+| `alternative` | string | No | `two-sided`, `less`, or `greater` (default: `two-sided`) |
 
-**Returns:** Test statistics, p-value, and interpretation (JSON)
+**Returns:** A `test_results` list, one entry per test performed, each with
+`test_name`, `statistic`, `p_value`, and an `interpretation` string (JSON).
 
 **Example:**
 ```python
-analyze_hypothesis_test("mydb", "SELECT * FROM experiments", "t_test", "score", "treatment", alpha=0.05)
+analyze_hypothesis_test("mydb", "SELECT score FROM experiments", test_type="ttest_1samp")
 ```
 
-**Composition hints:** Use for A/B testing and experiment validation.
+**Composition hints:** With `test_type="auto"` and no column named, this reports
+normality and correlation checks across the numeric columns — a reasonable first
+call before choosing a specific test.
 
 ---
 
 ### analyze_anova
 
-Analyze variance across multiple groups using ANOVA.
+Compare group means with a one-way ANOVA.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with group and value columns |
-| `value_column` | string | Yes | Column with numeric values |
-| `group_column` | string | Yes | Column defining groups |
+| `query` | string | Yes | SQL query with the dependent and grouping columns |
+| `dependent_var` | string | Yes | Column holding the numeric values being compared |
+| `group_var` | string | Yes | Column defining the groups |
+| `alpha` | number | No | Significance level (default: 0.05) |
 
-**Returns:** F-statistic, p-value, group means, effect size (JSON)
+**Returns:** F-statistic, p-value, per-group means, and effect size (JSON)
 
 **Example:**
 ```python
-analyze_anova("mydb", "SELECT * FROM sales", "revenue", "region")
+analyze_anova("mydb", "SELECT revenue, region FROM sales", "revenue", "region")
 ```
 
-**Composition hints:** Use for comparing means across multiple groups.
+**Composition hints:** Follow a significant result with `analyze_effect_sizes`
+to judge whether the difference matters in practice.
 
 ---
 
 ### analyze_effect_sizes
 
-Calculate effect sizes for statistical tests.
+Calculate effect sizes for a comparison between groups.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query returning data |
-| `effect_type` | string | Yes | Type: cohens_d, cramers_v, eta_squared |
-| `column1` | string | Yes | First column/group |
-| `column2` | string | No | Second column for comparison |
+| `query` | string | Yes | SQL query returning the value and grouping columns |
+| `column` | string | Yes | Numeric column to compare |
+| `group_column` | string | Yes | Column defining the groups |
+
+There is no `effect_type` parameter; the measure follows from the data. The tool
+takes four arguments, not five.
 
 **Returns:** Effect size value and interpretation (JSON)
 
 **Example:**
 ```python
-analyze_effect_sizes("mydb", "SELECT * FROM experiments", "cohens_d", "control", "treatment")
+analyze_effect_sizes("mydb", "SELECT score, treatment FROM experiments", "score", "treatment")
 ```
 
-**Composition hints:** Pair with hypothesis tests for practical significance.
+**Composition hints:** Pair with a hypothesis test — significance answers
+"is there a difference", effect size answers "is it worth acting on".
 
 ---
 
 ### analyze_regression
 
-Fit regression models to data.
+Fit a regression model to query results.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with feature and target columns |
+| `query` | string | Yes | SQL query with the feature and target columns |
 | `target_column` | string | Yes | Column to predict |
-| `feature_columns` | string | Yes | Comma-separated feature columns |
-| `model_type` | string | No | linear, ridge, lasso, polynomial (default: linear) |
+| `feature_columns` | list of strings | No | Columns to use as features. Omit to use every numeric column except the target |
+| `model_type` | string | No | `linear`, `ridge`, `lasso`, `elastic_net`, `logistic`, `polynomial` (default: `linear`) |
+| `regularization` | string | No | `l1`, `l2`, `elastic_net`, or empty for none (default: empty) |
 
-**Returns:** Model coefficients, R², predictions (JSON)
+**Returns:** `model_type`, the resolved `pipeline_config`, a
+`regression_analysis` block with coefficients and fit statistics, and a
+`residual_analysis` block for non-logistic models (JSON)
 
 **Example:**
 ```python
-analyze_regression("mydb", "SELECT * FROM properties", "price", "sqft,bedrooms,year_built", model_type="linear")
+analyze_regression("mydb", "SELECT * FROM properties", "price", ["sqft", "bedrooms", "year_built"], model_type="ridge")
 ```
 
-**Composition hints:** Use with `evaluate_model_performance` for validation.
+**Composition hints:** Use `model_type="logistic"` for a binary target. Pass the
+model's predictions back through `evaluate_model_performance` to score them.
 
 ---
 
 ### evaluate_model_performance
 
-Evaluate trained model performance on test data.
+Score predictions that are already stored alongside their actual values.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with actual and predicted columns |
-| `actual_column` | string | Yes | Column with true values |
-| `predicted_column` | string | Yes | Column with predictions |
-| `metric_type` | string | No | r2, rmse, mae, accuracy (default: r2) |
+| `query` | string | Yes | SQL query returning both the actual and the predicted column |
+| `target_column` | string | Yes | Column with the actual values |
+| `prediction_column` | string | Yes | Column with the predicted values |
+| `model_type` | string | No | `regression` or `classification` (default: `regression`) |
 
-**Returns:** Performance metrics and diagnostics (JSON)
+The metric set follows from `model_type`; there is no `metric_type` parameter.
+
+**Returns:** Performance metrics and diagnostics for the chosen model type (JSON)
 
 **Example:**
 ```python
-evaluate_model_performance("mydb", "SELECT * FROM test_results", "actual_price", "predicted_price", metric_type="rmse")
+evaluate_model_performance("mydb", "SELECT actual_price, predicted_price FROM test_results", "actual_price", "predicted_price")
 ```
 
-**Composition hints:** Use after regression or classification.
+**Composition hints:** Use after scoring a model whose predictions you have
+written back to the database.
 
 ---
 
 ### analyze_clusters
 
-Perform clustering analysis on query data.
+Group rows by similarity across numeric columns.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with feature columns |
-| `feature_columns` | string | Yes | Comma-separated numeric columns |
-| `n_clusters` | integer | No | Number of clusters (default: auto) |
-| `algorithm` | string | No | kmeans, hierarchical, dbscan (default: kmeans) |
+| `query` | string | Yes | SQL query returning the columns to cluster on |
+| `columns` | list of strings | No | Columns to cluster on. Omit to use every numeric column |
+| `method` | string | No | `kmeans`, `dbscan`, `hierarchical`, `gaussian_mixture` (default: `kmeans`) |
+| `n_clusters` | integer | No | Number of clusters. Omit to let the method choose |
 
-**Returns:** Cluster assignments, centroids, silhouette score (JSON)
+**Returns:** Cluster assignments, centroids, and a silhouette score (JSON)
 
 **Example:**
 ```python
-analyze_clusters("mydb", "SELECT * FROM customers", "spending,frequency,recency", n_clusters=5, algorithm="kmeans")
+analyze_clusters("mydb", "SELECT * FROM customers", ["spending", "frequency", "recency"], method="kmeans", n_clusters=5)
 ```
 
-**Composition hints:** Use for customer segmentation and pattern discovery.
+**Composition hints:** Reduce dimensionality first when clustering on more than a
+handful of columns.
 
 ---
 
 ### detect_anomalies
 
-Detect anomalies in query data using statistical methods.
+Flag rows that do not fit the rest of the data.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with numeric columns |
-| `column` | string | Yes | Column to analyze for anomalies |
-| `threshold` | number | No | Standard deviation threshold (default: 3.0) |
-| `method` | string | No | zscore, iqr, isolation_forest (default: zscore) |
+| `query` | string | Yes | SQL query returning the columns to examine |
+| `columns` | list of strings | No | Columns to examine. Omit to use every numeric column |
+| `method` | string | No | `isolation_forest`, `local_outlier_factor`, `one_class_svm` (default: `isolation_forest`) |
+| `contamination` | number | No | Expected proportion of anomalies, 0.0 to 0.5 (default: 0.1) |
 
-**Returns:** Anomaly flags, scores, flagged rows (JSON)
+These are multivariate detectors over a set of columns. There is no single
+`column` parameter, no `threshold`, and no z-score or IQR method.
+
+**Returns:** Anomaly flags, scores, and the flagged rows (JSON)
 
 **Example:**
 ```python
-detect_anomalies("mydb", "SELECT * FROM transactions", "amount", threshold=2.5, method="iqr")
+detect_anomalies("mydb", "SELECT * FROM transactions", ["amount", "item_count"], method="isolation_forest", contamination=0.05)
 ```
 
-**Composition hints:** Use for data quality and fraud detection.
+**Composition hints:** Use for data quality screening and fraud detection.
+Lower `contamination` when false positives are expensive.
 
 ---
 
 ### reduce_dimensions
 
-Perform dimensionality reduction on high-dimensional data.
+Project numeric columns onto fewer dimensions.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with feature columns |
-| `feature_columns` | string | Yes | Comma-separated numeric columns |
+| `query` | string | Yes | SQL query returning the columns to reduce |
+| `columns` | list of strings | No | Columns to include. Omit to use every numeric column |
+| `method` | string | No | `pca`, `tsne`, `umap` (default: `pca`) |
 | `n_components` | integer | No | Target number of dimensions (default: 2) |
-| `method` | string | No | pca, tsne, umap (default: pca) |
 
-**Returns:** Reduced components, explained variance (JSON)
+**Returns:** The reduced components and, for PCA, explained variance (JSON)
 
 **Example:**
 ```python
-reduce_dimensions("mydb", "SELECT * FROM gene_data", "gene_*", n_components=3, method="pca")
+reduce_dimensions("mydb", "SELECT * FROM gene_data", ["gene_a", "gene_b", "gene_c"], method="pca", n_components=3)
 ```
 
-**Composition hints:** Use before clustering on high-dimensional data.
+**Composition hints:** Run before `analyze_clusters` on wide data. `pca` is
+reversible and cheap; `tsne` and `umap` are for visualization, not for feeding
+another model.
 
 ---
 
 ### analyze_time_series
 
-Analyze time series data for trends and patterns.
+Decompose a series and test it for stationarity.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with timestamp and value columns |
-| `time_column` | string | Yes | Timestamp column name |
-| `value_column` | string | Yes | Numeric value column |
-| `period` | string | No | Decomposition period: daily, weekly, monthly |
+| `query` | string | Yes | SQL query returning the date and value columns |
+| `date_column` | string | Yes | Column with datetime values |
+| `value_column` | string | Yes | Column with numeric values |
+| `frequency` | string | No | `D`, `W`, `M`, `Q`, `Y`, or empty to infer (default: empty) |
 
-**Returns:** Trend, seasonal, residual components; stationarity test (JSON)
+The frequency codes are the pandas offset aliases, not words like `daily`.
+
+**Returns:** Trend, seasonal and residual components, plus a stationarity test
+(JSON)
 
 **Example:**
 ```python
-analyze_time_series("mydb", "SELECT * FROM stock_prices", "date", "price", period="daily")
+analyze_time_series("mydb", "SELECT date, price FROM stock_prices", "date", "price", frequency="D")
 ```
 
-**Composition hints:** Use before `forecast_time_series`.
+**Composition hints:** Run before `forecast_time_series` — a non-stationary
+series usually needs differencing or a different model.
 
 ---
 
 ### forecast_time_series
 
-Generate time series forecasts.
+Project a series forward.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with historical data |
-| `time_column` | string | Yes | Timestamp column name |
-| `value_column` | string | Yes | Numeric value column |
-| `periods_ahead` | integer | No | Number of periods to forecast (default: 10) |
-| `method` | string | No | arima, exponential_smoothing, prophet (default: arima) |
+| `query` | string | Yes | SQL query returning the historical date and value columns |
+| `date_column` | string | Yes | Column with datetime values |
+| `value_column` | string | Yes | Column with numeric values |
+| `horizon` | integer | No | Number of periods to forecast (default: 10) |
+| `method` | string | No | `arima`, or `ets` / `exponential_smoothing` (default: `arima`) |
 
-**Returns:** Forecast values, confidence intervals (JSON)
+Those are the only accepted values. There is no automatic model selection, and
+`prophet` and `sarima` both raise
+`ValueError: Unknown forecast method: <name>. Use 'arima' or 'ets'.` The SARIMA
+and ensemble forecasters in `localdata_mcp.domains.time_series_analysis` are
+reachable from Python but are exposed by no MCP tool.
+
+**Returns:** Forecast values with confidence intervals (JSON)
 
 **Example:**
 ```python
-forecast_time_series("mydb", "SELECT * FROM sales_history", "date", "sales", periods_ahead=30, method="arima")
+forecast_time_series("mydb", "SELECT date, sales FROM sales_history", "date", "sales", horizon=30, method="arima")
 ```
 
-**Composition hints:** Use for sales, demand, and resource planning.
+**Composition hints:** Use for demand and capacity planning. Compare `arima`
+against `ets` on a held-out tail rather than trusting either by default.
 
 ---
 
 ### analyze_rfm
 
-Perform RFM (Recency, Frequency, Monetary) customer analysis.
+Segment customers by recency, frequency, and monetary value.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with customer transactions |
-| `customer_id` | string | Yes | Column with customer identifiers |
-| `date_column` | string | Yes | Transaction date column |
-| `amount_column` | string | Yes | Transaction amount column |
+| `query` | string | Yes | SQL query returning transaction rows |
+| `customer_column` | string | Yes | Column identifying the customer |
+| `date_column` | string | Yes | Column with the transaction date |
+| `value_column` | string | Yes | Column with the transaction value |
 
-**Returns:** RFM scores, customer segments, value tiers (JSON)
+**Returns:** RFM scores, customer segments, and value tiers (JSON)
 
 **Example:**
 ```python
 analyze_rfm("mydb", "SELECT * FROM transactions", "customer_id", "order_date", "order_value")
 ```
 
-**Composition hints:** Use for customer segmentation and targeting.
+**Composition hints:** Feed the resulting segments back into a query to size or
+target each one.
 
 ---
 
 ### analyze_ab_test
 
-Analyze results from A/B tests with statistical rigor.
+Compare an experiment's variants.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `connection_name` | string | Yes | Database connection name |
-| `query` | string | Yes | SQL query with control/test and outcome |
-| `group_column` | string | Yes | Column denoting control/treatment groups |
-| `outcome_column` | string | Yes | Column with binary or continuous outcome |
-| `confidence_level` | number | No | Confidence level (default: 0.95) |
+| `query` | string | Yes | SQL query returning the variant and metric columns |
+| `variant_column` | string | Yes | Column identifying control and treatment |
+| `metric_column` | string | Yes | Column with the metric being compared |
+| `alpha` | number | No | Significance level (default: 0.05) |
 
-**Returns:** Test statistics, p-value, sample size, power analysis (JSON)
+The threshold is `alpha`, the significance level — not a `confidence_level`. For
+a 95% interval, pass `alpha=0.05`.
+
+**Returns:** Test statistics, p-value, sample sizes, and power analysis (JSON)
 
 **Example:**
 ```python
-analyze_ab_test("mydb", "SELECT * FROM experiment_results", "group", "converted", confidence_level=0.95)
+analyze_ab_test("mydb", "SELECT variant, converted FROM experiment_results", "variant", "converted", alpha=0.05)
 ```
 
-**Composition hints:** Use for experimentation and decision-making.
+**Composition hints:** Pair with `analyze_effect_sizes` on the same columns to
+report lift alongside significance.
 
 ---
 
@@ -1296,9 +1358,13 @@ analyze_ab_test("mydb", "SELECT * FROM experiment_results", "group", "converted"
 | Graph | 7 | Network analysis and manipulation |
 | Search & Transform | 2 | Pattern matching and text replacement |
 | Schema & Audit | 3 | Introspection and query history |
-| System | 1 | Compatibility and migration |
+| System | 2 | Compatibility check and Prometheus metrics |
 | Data Science | 12 | Statistical analysis and forecasting |
-| **Total** | **52** | Complete LLM-native data platform |
+| **Total** | **53** | Complete LLM-native data platform |
+
+Fifty-two tools are registered unconditionally; `get_metrics` is the
+fifty-third, registered only when `logging.enable_metrics` is true, which is the
+default.
 
 ## Parameter Type Reference
 
