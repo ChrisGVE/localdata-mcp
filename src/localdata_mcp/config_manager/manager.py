@@ -1,22 +1,37 @@
 """ConfigManager class and singleton access for LocalData MCP."""
 
+import logging
 import os
 import threading
 import time
 from dataclasses import fields
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type
 
 from dotenv import load_dotenv
 
 from .env_loader import load_env_config
-from .loaders import deep_merge, load_yaml_config, validate_config
+from .loaders import (
+    deep_merge,
+    load_config_layers,
+    select_effective_layers,
+    validate_config,
+)
+from .security_resolution import (
+    ClampRecord,
+    merge_invariants,
+    report_clamps,
+    resolve_security,
+    validate_invariant,
+)
 from .models import (
     DatabaseConfig,
     LoggingConfig,
     PerformanceConfig,
 )
 from .types import DatabaseType, LogLevel, OutputDestination, OutputFormat
+
+logger = logging.getLogger(__name__)
 
 
 def _coerce_enum(enum_type: Type[Enum], value: Any, field_name: str) -> Enum:
@@ -84,25 +99,32 @@ class ConfigManager:
             # settings have a current and a legacy home, and "present in
             # the merged data" cannot tell a default from a choice.
             self._explicit_keys: set = set()
+            # The operator's security floor, the file behind each security key,
+            # and what the floor overrode. Reset per load so a reload cannot
+            # inherit a floor from a file that has since been edited away.
+            self._security_invariant: Dict[str, Any] = {}
+            self._security_sources: Dict[str, str] = {}
+            self._security_clamps: List[ClampRecord] = []
 
             # 1. Load defaults
             self._apply_defaults()
 
             # 2. Load from YAML files (discovery order)
-            yaml_data = load_yaml_config(
-                self._config_file, self._file_mtimes, self._merge_config
-            )
-            if yaml_data:
-                self._merge_config(yaml_data)
-                self._record_explicit_keys(yaml_data)
+            layers = load_config_layers(self._config_file, self._file_mtimes)
+            self._apply_yaml_layers(layers)
 
             # 3. Override with environment variables
             env_data = load_env_config()
             if env_data:
                 self._merge_config(env_data)
                 self._record_explicit_keys(env_data)
+                self._record_security_sources(env_data, "environment")
 
-            # 4. Validate final configuration
+            # 4. Clamp security against the operator's floor. This runs after
+            #    every source has had its say, so no later merge can undo it.
+            self._resolve_security_section()
+
+            # 5. Validate final configuration
             self._validate_config()
 
             self._last_reload = time.time()
@@ -334,6 +356,82 @@ class ConfigManager:
                 "memory_warning_threshold": 0.85,
             },
         }
+
+    def _apply_yaml_layers(self, layers) -> None:
+        """Merge the YAML layers and collect the security floor they declare.
+
+        Settings and floors are gathered differently on purpose. Settings come
+        from the highest-priority operator file plus the project-local file, as
+        they always have. Floors are collected from *every* operator layer, so a
+        floor written in ``/etc`` still binds when a user config also exists.
+
+        A ``global_invariant`` in the project-local file is ignored and reported:
+        that file lives in the data directory and must not be able to author the
+        policy that constrains it.
+        """
+        declarations = []
+        for layer in layers:
+            if "global_invariant" not in layer.data:
+                continue
+            if layer.is_project_local:
+                logger.warning(
+                    "%s: 'global_invariant' is ignored in a project-local config; "
+                    "a security floor may only be declared in an operator "
+                    "configuration (LOCALDATA_CONFIG, /etc/localdata/config.yaml, "
+                    "or the user config).",
+                    layer.path,
+                )
+                continue
+            declarations.append(
+                (
+                    layer.path,
+                    validate_invariant(layer.data["global_invariant"], layer.path),
+                )
+            )
+
+        self._security_invariant = merge_invariants(declarations)
+
+        operator, project_local = select_effective_layers(layers)
+        for layer in (operator, project_local):
+            if layer is None:
+                continue
+            settings = {k: v for k, v in layer.data.items() if k != "global_invariant"}
+            self._merge_config(settings)
+            self._record_explicit_keys(settings)
+            self._record_security_sources(settings, layer.path)
+
+    def _record_security_sources(self, source: Dict[str, Any], origin: str) -> None:
+        """Remember which file supplied each security key's current value.
+
+        Used only to name that file when the floor overrides it -- a warning
+        that cannot say which file to edit is barely a warning at all.
+        """
+        security = source.get("security")
+        if isinstance(security, dict):
+            for key in security:
+                self._security_sources[key] = origin
+
+    def _resolve_security_section(self) -> None:
+        """Apply the operator's floor to the merged security settings."""
+        requested = self._config_data.get("security", {})
+        resolution = resolve_security(
+            requested, self._security_invariant, self._security_sources
+        )
+        self._config_data["security"] = resolution.effective
+        self._security_clamps = resolution.clamps
+        report_clamps(resolution.clamps)
+
+    def get_security_invariant(self) -> Dict[str, Any]:
+        """The operator's floor, as merged from the operator layers."""
+        return dict(self._security_invariant)
+
+    def get_security_clamps(self) -> List[ClampRecord]:
+        """Every security value the floor overrode during the last load.
+
+        Surfaced so a user can see why a setting did not take effect, rather
+        than having to infer it from behaviour.
+        """
+        return list(self._security_clamps)
 
     def _record_explicit_keys(self, source: Dict[str, Any]) -> None:
         """Record which (section, key) pairs a config source supplied."""
