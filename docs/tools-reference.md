@@ -1124,7 +1124,7 @@ Fit a regression model to query results.
 | `target_column` | string | Yes | Column to predict |
 | `feature_columns` | list of strings | No | Columns to use as features. Omit to use every numeric column except the target |
 | `model_type` | string | No | `linear`, `ridge`, `lasso`, `elastic_net`, `logistic`, `polynomial` (default: `linear`) |
-| `regularization` | string | No | `l1`, `l2`, `elastic_net`, or empty for none (default: empty) |
+| `regularization` | string | No | Penalty to fit instead of naming a `model_type`: `l1` (lasso), `l2` (ridge), `elastic_net`, or empty for none (default: empty). Any other value raises |
 
 **Returns:** `model_type`, the resolved `pipeline_config`, a
 `regression_analysis` block with coefficients and fit statistics, and a
@@ -1266,8 +1266,14 @@ Decompose a series and test it for stationarity.
 
 The frequency codes are the pandas offset aliases, not words like `daily`.
 
-**Returns:** Trend, seasonal and residual components, plus a stationarity test
-(JSON)
+**Returns:** `series_info`, `descriptive_stats`, a `trend_analysis` block
+(linear trend and Mann-Kendall), a `seasonality_analysis` block giving seasonal
+and trend *strengths* and the dominant pattern, `stationarity_tests` (ADF and
+KPSS) and `autocorrelation_analysis` (JSON).
+
+The decomposition is summarised, not returned: the tool reports how strong the
+trend and seasonal signals are, not the fitted trend, seasonal and residual
+series themselves.
 
 **Example:**
 ```python
@@ -1326,7 +1332,10 @@ Segment customers by recency, frequency, and monetary value.
 | `date_column` | string | Yes | Column with the transaction date |
 | `value_column` | string | Yes | Column with the transaction value |
 
-**Returns:** RFM scores, customer segments, and value tiers (JSON)
+**Returns:** `rfm_scores` (one row per customer with `recency`, `frequency`,
+`monetary`, their `R`/`F`/`M` scores and the combined `RFM_Score`), `segments`,
+a per-segment `segment_summary`, and the `quartile_boundaries` used to score
+(JSON)
 
 **Example:**
 ```python
@@ -1413,7 +1422,7 @@ Estimate a statistic's sampling distribution and confidence interval.
 | `connection_name` | string | Yes | Database connection name |
 | `query` | string | Yes | SQL query returning the column to resample |
 | `column` | string | No | Numeric column (default: the first numeric column) |
-| `statistic` | string | No | `mean`, `median`, `std`, `var`, `min`, `max` (default: `mean`) |
+| `statistic` | string | No | `mean`, `median`, `std`, `var` (default: `mean`). Any other name raises |
 | `n_bootstrap` | integer | No | Resamples to draw (default: 1000) |
 | `confidence_level` | number | No | Interval width, e.g. 0.95 (default: 0.95) |
 

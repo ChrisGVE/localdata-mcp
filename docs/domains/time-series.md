@@ -58,15 +58,17 @@ what each tool is for and when to reach for it.
 
 ### `analyze_time_series`
 
-Answers "what is this series made of, and is it stable?" Returns the trend,
-seasonal and residual components of a decomposition together with a stationarity
-test. `frequency` takes a pandas offset alias — `D`, `W`, `M`, `Q`, `Y` — not a
-word like `daily`; leave it empty and the frequency is inferred from the
-timestamps.
+Answers "what is this series made of, and is it stable?" Returns a description
+of the trend (linear fit and Mann-Kendall), the *strength* of the seasonal and
+trend signals, ADF and KPSS stationarity tests, and an autocorrelation summary.
+The decomposition is summarised rather than handed back: you get how strong the
+seasonality is, not the fitted seasonal and residual series. `frequency` takes a
+pandas offset alias — `D`, `W`, `M`, `Q`, `Y` — not a word like `daily`; leave
+it empty and the frequency is inferred from the timestamps.
 
 Run this before forecasting. A series the stationarity test rejects has a trend
 or a changing variance that a model must difference away first, and the seasonal
-component tells you whether a seasonal period exists at all.
+strength tells you whether a seasonal period exists at all.
 
 ### `forecast_time_series`
 

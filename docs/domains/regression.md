@@ -56,8 +56,14 @@ Answers "how does this outcome depend on these predictors?" `target_column` is
 the column being explained; `feature_columns` is a genuine list of column names
 (`["sqft", "bedrooms"]`, not a comma-separated string) and defaults to every
 other numeric column in the result set. `model_type` selects `linear` (default),
-`ridge`, `lasso`, `elastic_net`, `logistic` or `polynomial`, and
-`regularization` takes `l1`, `l2` or `elastic_net` for finer control.
+`ridge`, `lasso`, `elastic_net`, `logistic` or `polynomial`.
+
+`regularization` names the penalty instead of the estimator: `l1` fits lasso,
+`l2` fits ridge, and `elastic_net` fits elastic net. It is an alternative to
+naming the model — reach for it when you are thinking in terms of the penalty
+you want rather than the estimator that carries it. Combined with
+`model_type="polynomial"` it penalises the expanded basis. Anything else raises,
+as does a `regularization` that contradicts an explicitly chosen `model_type`.
 
 Returns coefficients with their standard errors and p-values, R² and the other
 fit statistics, and — for every model except logistic — a `residual_analysis`

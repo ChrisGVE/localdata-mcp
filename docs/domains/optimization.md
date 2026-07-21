@@ -130,8 +130,8 @@ Perform comprehensive network analysis on graph edge data.
 |---|---|---|---|
 | `connection_name` | str | required | Name of an active database connection |
 | `table_name` | str | required | Table with edge list data |
-| `source_column` | str | required | Column with source node identifiers |
-| `target_column` | str | required | Column with target node identifiers |
+| `source_column` | str | required | Numeric column with source node identifiers |
+| `target_column` | str | required | Numeric column with target node identifiers |
 | `weight_column` | str | None | Column with edge weights (omit for unweighted) |
 | `directed` | bool | `False` | Whether the graph is directed |
 | `include_centrality` | bool | `True` | Compute centrality measures for all nodes |
@@ -142,17 +142,30 @@ Perform comprehensive network analysis on graph edge data.
 {
   "success": true,
   "graph_properties": {
-    "n_nodes": 42,
-    "n_edges": 118,
+    "num_nodes": 4,
+    "num_edges": 5,
+    "is_directed": false,
     "is_connected": true,
-    "density": 0.137,
-    "average_degree": 5.6
+    "density": 0.833
   },
-  "shortest_paths": {"A": {"B": {"distance": 4.2, "path": ["A", "C", "B"]}}},
-  "minimum_spanning_tree": {"edges": [...], "total_weight": 28.3},
-  "tsp_solution": {"tour": [...], "total_distance": 94.1},
+  "shortest_paths": {
+    "algorithm": "floyd_warshall",
+    "distances": {"0": {"1": 1.0, "2": 2.5, "3": 3.0}},
+    "predecessors": {"0": {"1": 0, "2": 0, "3": 0}}
+  },
+  "minimum_spanning_tree": {
+    "edges": [[0, 1, 1.0], [1, 2, 2.0], [2, 3, 1.5]],
+    "total_weight": 4.5,
+    "num_edges": 3
+  },
+  "tsp_solution": {
+    "tour": [0, 1, 2, 3],
+    "distance": 7.5,
+    "algorithm": "nearest_neighbor",
+    "is_optimal": false
+  },
   "centrality_measures": {
-    "degree": {"node1": 0.4, ...},
+    "degree": {"0": 1.0, "1": 0.667, ...},
     "betweenness": {...},
     "closeness": {...}
   },
@@ -160,6 +173,15 @@ Perform comprehensive network analysis on graph edge data.
   "method": "networkx"
 }
 ```
+
+Node identifiers must be numeric — a text source or target column raises
+`ValueError: Column(s) [...] are not numeric`. Map identifiers to numbers before
+calling, and map them back afterwards; the node keys come back as the string
+form of those numbers.
+
+Graphs of 100 nodes or fewer are solved with Floyd-Warshall, which returns
+`distances` and `predecessors` for every pair. Larger graphs fall back to
+Dijkstra from the first ten nodes only, returning `distances` and `paths`.
 
 ---
 

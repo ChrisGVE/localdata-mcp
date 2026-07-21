@@ -2115,7 +2115,16 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
         format: str,
         node_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Export graph as DOT, GML, or GraphML."""
+        """Export a graph in the requested format.
+
+        Args:
+            name: Name of the graph.
+            format: `dot`, `gml`, `graphml`, `mermaid` (alias `mmd`), or one of
+                the Markdown renderings — `markdown` (alias `md`), `hierarchy`,
+                `adjacency`, `detailed`.
+            node_id: Export only this node's ego graph rather than the whole
+                graph. Markdown renderings ignore it.
+        """
         return tool_export_graph(self._get_graph_manager(name), name, format, node_id)
 
     # =========================================================

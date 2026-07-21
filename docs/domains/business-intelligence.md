@@ -68,17 +68,22 @@ Perform RFM customer segmentation on transaction data.
 ```text
 {
   "rfm_scores": [
-    {"customer_id": "...", "recency": 5, "frequency": 3, "monetary": 4,
-     "rfm_score": 12, "segment": "Champions"}
+    {"customer_id": "C001", "recency": 141, "frequency": 6, "monetary": 763.3,
+     "R": 2, "F": 3, "M": 3, "RFM_Score": "233"}
   ],
-  "segments": [...],
+  "segments": [
+    {"customer_id": "C001", ..., "RFM_Score": "233", "Segment": "Loyal Customers"}
+  ],
   "segment_summary": [
-    {"segment": "Champions", "count": 120, "avg_recency": 4.8, ...}
+    {"Segment": "About to Sleep", "customer_count": 1, "percentage": 2.5,
+     "recency_mean": 150.0, "recency_median": 150.0,
+     "frequency_mean": 5.0, "frequency_median": 5.0,
+     "monetary_mean": 341.39, "monetary_median": 341.39, "monetary_sum": 341.39}
   ],
   "quartile_boundaries": {
-    "recency": [7.0, 30.0, 90.0],
-    "frequency": [1.0, 3.0, 8.0],
-    "monetary": [50.0, 200.0, 800.0]
+    "recency": [32.75, 82.5, 152.75],
+    "frequency": [3.0, 5.0, 6.0],
+    "monetary": [356.05, 522.59, 765.8]
   }
 }
 ```
@@ -351,6 +356,7 @@ Two constraints this example depends on:
   a column literally named `customer_id` and raises `KeyError: 'customer_id'`
   otherwise. Rename the column before calling it.
 - `analyze_rfm` keeps whatever the customer column was called, so the merge key
-  above is `customer_id` only because the input column is. It also needs enough
-  spread in the monetary values to form quartiles; a near-constant column fails
-  with `ValueError: Bin edges must be unique`.
+  above is `customer_id` only because the input column is. A dimension with no
+  spread — every customer placing the same number of orders, say — has no
+  ordering to express, so each customer receives the same neutral score on that
+  dimension and is separated by the other two.

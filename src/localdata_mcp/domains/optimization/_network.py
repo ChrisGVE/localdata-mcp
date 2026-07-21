@@ -196,21 +196,25 @@ class NetworkAnalyzer(AnalysisPipelineBase):
             if self.algorithm == "floyd_warshall" or (
                 self.algorithm == "auto" and self.graph_.number_of_nodes() <= 100
             ):
-                # Floyd-Warshall for small dense graphs
-                paths = dict(
-                    nx.floyd_warshall_predecessor_and_distance(
-                        self.graph_, weight=weight_attr
-                    )
+                # Floyd-Warshall for small dense graphs. The NetworkX call
+                # returns a (predecessors, distances) tuple; wrapping it in
+                # dict() tried to read those two dicts as key/value pairs and
+                # failed with "dictionary update sequence element #0 has length
+                # N; 2 is required", which was swallowed into an error payload —
+                # so every graph small enough to take this branch, i.e. the
+                # default one, reported no shortest paths at all.
+                predecessors, distances = nx.floyd_warshall_predecessor_and_distance(
+                    self.graph_, weight=weight_attr
                 )
                 return {
                     "algorithm": "floyd_warshall",
                     "distances": {
-                        str(u): {str(v): dist for v, dist in distances.items()}
-                        for u, distances in paths[1].items()
+                        str(u): {str(v): dist for v, dist in row.items()}
+                        for u, row in distances.items()
                     },
                     "predecessors": {
                         str(u): {str(v): pred for v, pred in preds.items()}
-                        for u, preds in paths[0].items()
+                        for u, preds in predecessors.items()
                     },
                 }
             else:

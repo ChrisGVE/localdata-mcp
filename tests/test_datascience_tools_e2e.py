@@ -805,6 +805,45 @@ class TestOptimizationTools:
         assert properties["is_directed"] is False
         assert "centrality_measures" in result
 
+    def test_network_analysis_returns_real_shortest_paths(
+        self, db: DatabaseManager
+    ) -> None:
+        """Shortest paths must be computed, not swallowed into an error payload.
+
+        Graphs of 100 nodes or fewer take the Floyd-Warshall branch — the
+        default for anything small — where the NetworkX ``(predecessors,
+        distances)`` tuple was wrapped in ``dict()``. That raised, was caught,
+        and every such graph reported ``{"algorithm": "failed"}`` instead of its
+        paths.
+
+        The fixture is the 4-node cycle 0-1-2-3-0 with weights 1, 2, 1.5, 3 plus
+        the chord 0-2 weighted 2.5, so the distances below are hand-computed:
+        0 to 2 goes over the chord (2.5) rather than through 1 (3.0), and 1 to 3
+        goes through 2 (3.5) rather than through 0 (4.0).
+        """
+        _connect(db, "netsp", "ds_network.csv")
+        result = _json(
+            db.analyze_network(
+                "netsp",
+                "data_table",
+                source_column="source",
+                target_column="target",
+                weight_column="weight",
+            )
+        )
+
+        paths = result["shortest_paths"]
+        assert "error" not in paths, f"shortest paths failed: {paths}"
+        assert paths["algorithm"] == "floyd_warshall"
+
+        distances = paths["distances"]
+        assert (
+            distances["0"]["2"] == 2.5
+        ), "the chord is shorter than the path through 1"
+        assert distances["0"]["3"] == 3.0, "0 and 3 are directly connected"
+        assert distances["1"]["3"] == 3.5, "1 reaches 3 through 2, not through 0"
+        assert distances["0"]["0"] == 0
+
     def test_unknown_column_is_named_in_the_error(self, db: DatabaseManager) -> None:
         """A bad column must say which one, not fail inside the SQL string."""
         _connect(db, "bad", "ds_optimization.csv")
