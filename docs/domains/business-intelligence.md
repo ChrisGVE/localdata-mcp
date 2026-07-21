@@ -132,7 +132,10 @@ RFM scores each customer on three dimensions calculated from transaction history
 - **Monetary** — total spend
 
 Each dimension is ranked into quartiles (1–4, higher is better for all three). The quartile
-boundaries are stored in the result so segments are reproducible across runs.
+boundaries are returned in `quartile_boundaries`, so you can see exactly where each cut fell and
+reproduce the scoring by hand. Note that this does **not** make a run repeatable on a later day:
+recency is measured against today (see *Key parameters*), so the same query re-run next week
+shifts every recency value and can move customers between segments.
 
 The three scores are concatenated, not summed: `RFM_Score` is a string like `"433"`, meaning R=4,
 F=3, M=3. A dimension in which every customer ties — an order log where all of them placed the same
@@ -147,11 +150,11 @@ loyalty programme design.
 
 **Key parameters:**
 
-- `analysis_date` — pass an explicit ISO date string to fix the reference date for recency; omit
-  to use today
-- `customer_column`, `date_column`, `amount_column` — column name mappings on the underlying
-  `analyze_rfm` function (mapped from `customer_column`/`date_column`/`value_column` at the tool
-  level)
+- The MCP tool takes exactly `connection_name`, `query`, `customer_column`, `date_column` and
+  `value_column`. The Python function beneath it also accepts an `analysis_date`, but **the tool
+  exposes no way to set it**, so recency is always measured against today. Two runs of the same
+  query on different days therefore produce different recency scores — pin the reference date in
+  the query itself (compute a day count against a literal date) if you need reproducibility.
 
 **Interpretation:** Customers in the Champions segment are high-value and recent — they should be
 rewarded and surveyed. At Risk customers had strong past behaviour but are lapsing — they warrant

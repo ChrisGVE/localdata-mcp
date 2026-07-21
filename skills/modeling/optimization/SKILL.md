@@ -36,7 +36,7 @@ Formulate and solve optimization problems from data — resource allocation, sch
    - Optimal objective value
    - Decision variable values at the optimum
    - Which constraints are binding (at their limit) vs. slack, from `binding_constraints` and `constraint_slack` on a linear program, or the `active` flag in `constraint_analysis` on a constrained solve
-   - Sensitivity is **not** computed: `objective_sensitivity` and `rhs_sensitivity` are always empty, `shadow_prices` is always empty, `dual_values` is populated only from equality constraints, and `lagrange_multipliers` is always null. To learn what relaxing a constraint is worth, re-solve with the constraint changed and compare the objective
+   - Shadow prices, when you need them: `objective_sensitivity`, `rhs_sensitivity` and `shadow_prices` are never populated, and `lagrange_multipliers` on a constrained solve is always null. The marginal value of a constraint comes from `dual_values`, which is populated **only for `=` rows** — so restate the row you care about as an equality and re-solve. Failing that, change the right-hand side, re-solve, and compare objectives
 
 7. **Validate against reality.** Call `execute_query` to compare the optimal solution against historical performance. Is the improvement realistic? Are there practical constraints the model does not capture?
 
@@ -44,5 +44,5 @@ Formulate and solve optimization problems from data — resource allocation, sch
    - Problem formulation summary
    - Optimal solution with all variable values
    - Objective value and improvement over baseline
-   - Binding constraints and sensitivity analysis
+   - Which constraints bind, and — where you obtained them from an equality row — the shadow prices
    - Implementation recommendations and caveats

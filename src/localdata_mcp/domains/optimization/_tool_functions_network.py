@@ -157,7 +157,6 @@ def solve_assignment_problem(
         Assignment problem results
     """
     try:
-
         # Load cost matrix data
         all_columns = cost_matrix_columns.copy()
         if agent_id_column:
@@ -175,11 +174,12 @@ def solve_assignment_problem(
         else:
             agent_ids = list(range(len(cost_matrix)))
 
-        if task_id_column:
-            # This would require a different table structure
-            task_ids = cost_matrix_columns
-        else:
-            task_ids = cost_matrix_columns
+        # The cost matrix is wide — one column per task — so the tasks are
+        # already named by `cost_matrix_columns`, and there is no column left
+        # for `task_id_column` to name. It is accepted for signature stability
+        # and deliberately ignored; naming tasks from a column would require a
+        # long-format table and a different solver entry point.
+        task_ids = cost_matrix_columns
 
         # Create and solve assignment
         solver = AssignmentSolver(

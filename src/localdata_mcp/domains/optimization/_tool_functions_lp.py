@@ -55,7 +55,6 @@ def solve_linear_program(
         Linear programming results with solution and analysis
     """
     try:
-
         # Load objective coefficients
         objective_query = f"SELECT {objective_column} FROM {table_name}"
         c = pd.read_sql(objective_query, engine)[objective_column].values
@@ -63,30 +62,54 @@ def solve_linear_program(
         # Build constraint matrix if provided
         A_ub = None
         b_ub = None
+        A_eq = None
+        b_eq = None
 
         if constraint_columns and constraint_values:
             constraint_query = (
                 f"SELECT {', '.join(constraint_columns)} FROM {table_name}"
             )
-            A_ub = pd.read_sql(
-                constraint_query, engine
-            ).values.T  # Transpose for proper shape
+            # Rows are read but never mutated: a `>=` row is negated into a new
+            # array below rather than in place. The previous version negated
+            # `.values.T` in place, which is a read-only view, so every `>=`
+            # problem failed with "assignment destination is read-only".
+            rows = pd.read_sql(constraint_query, engine).values.T
+            values = np.asarray(constraint_values, dtype=float)
+            types = list(constraint_types) if constraint_types else ["<="] * len(rows)
 
-            # Convert constraint types to standard form (Ax <= b)
-            b_ub = np.array(constraint_values)
-            if constraint_types:
-                for i, ctype in enumerate(constraint_types):
-                    if ctype == ">=":
-                        A_ub[i] = -A_ub[i]
-                        b_ub[i] = -b_ub[i]
-                    # '=' constraints would need A_eq, b_eq (not implemented here for simplicity)
+            unknown = sorted(set(types) - {"<=", ">=", "="})
+            if unknown:
+                raise ValueError(
+                    f"Unknown constraint_types {unknown}. Expected '<=', '>=' or '='."
+                )
+
+            # scipy takes inequalities as Ax <= b and equalities separately. A
+            # `>=` row becomes `<=` by negating both sides; an `=` row goes to
+            # A_eq. Equality rows used to be dropped on the floor here, so an
+            # equality-constrained problem silently solved as if unconstrained.
+            ub_rows, ub_vals, eq_rows, eq_vals = [], [], [], []
+            for row, value, ctype in zip(rows, values, types):
+                if ctype == "=":
+                    eq_rows.append(row)
+                    eq_vals.append(value)
+                elif ctype == ">=":
+                    ub_rows.append(-row)
+                    ub_vals.append(-value)
+                else:
+                    ub_rows.append(row)
+                    ub_vals.append(value)
+
+            if ub_rows:
+                A_ub, b_ub = np.array(ub_rows), np.array(ub_vals)
+            if eq_rows:
+                A_eq, b_eq = np.array(eq_rows), np.array(eq_vals)
 
         # Create and solve LP
         solver = LinearProgrammingSolver(
             method=method, integer_variables=integer_variables, bounds=bounds
         )
 
-        result = solver.solve(c, A_ub=A_ub, b_ub=b_ub)
+        result = solver.solve(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq)
 
         # Format results
         formatted_result = {
@@ -161,7 +184,6 @@ def optimize_constrained(
         Constrained optimization results
     """
     try:
-
         # Load data
         data = pd.read_sql(f"SELECT * FROM {table_name}", engine)
 

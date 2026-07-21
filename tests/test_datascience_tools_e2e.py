@@ -744,6 +744,60 @@ class TestSamplingTools:
 class TestOptimizationTools:
     """The optimization tools read a table directly rather than taking a query."""
 
+    def test_linear_program_honours_every_constraint_type(
+        self, db: DatabaseManager
+    ) -> None:
+        """`>=` and `=` must constrain the solution, not fail or be discarded.
+
+        `>=` rows are negated in place to reach scipy's `Ax <= b` standard form,
+        but the matrix came from `.values.T` — a read-only view — so every `>=`
+        problem returned `success: false` with "assignment destination is
+        read-only". `=` rows were dropped entirely with a comment saying so, and
+        the tool solved as if they had never been passed, which is why an
+        equality-constrained problem returned the unconstrained optimum.
+
+        Ground truth for this fixture (cost 3/5/2, cap1 1/2/1.5, cap2 2/1/1.5):
+        minimising under `>= 10` on both rows, the third variable satisfies both
+        at 1.5 per unit, so 10/1.5 = 6.667 units cost 13.33. Any mix of the
+        first two costs at least 26.7, so the optimum is unique.
+        """
+        _connect(db, "lpc", "ds_optimization.csv")
+
+        def solve(types: list) -> Dict[str, Any]:
+            return _json(
+                db.solve_linear_program(
+                    "lpc",
+                    "data_table",
+                    objective_column="cost",
+                    constraint_columns=["cap1", "cap2"],
+                    constraint_values=[10.0, 10.0],
+                    constraint_types=types,
+                )
+            )
+
+        lower_bounded = solve([">=", ">="])
+        assert (
+            lower_bounded["success"] is True
+        ), f"a >= problem must solve, got {lower_bounded.get('error')}"
+        assert lower_bounded["optimal_value"] == pytest.approx(13.333333, rel=1e-4)
+        assert lower_bounded["optimal_solution"] == pytest.approx(
+            [0.0, 0.0, 6.666667], abs=1e-4
+        )
+
+        # An equality constraint must bind, so it cannot agree with the
+        # unconstrained `<=` optimum of all-zeros.
+        equality = solve(["=", "="])
+        assert equality["success"] is True
+        assert equality["optimal_value"] == pytest.approx(13.333333, rel=1e-4)
+
+        upper_bounded = solve(["<=", "<="])
+        assert upper_bounded["optimal_value"] == pytest.approx(
+            0.0, abs=1e-9
+        ), "minimising non-negative costs under upper bounds is zero"
+        assert equality["optimal_value"] != pytest.approx(
+            upper_bounded["optimal_value"]
+        ), "an equality constraint that changes nothing is being discarded"
+
     def test_linear_program_finds_an_optimum(self, db: DatabaseManager) -> None:
         """Minimising non-negative costs under upper-bound constraints."""
         _connect(db, "lp", "ds_optimization.csv")

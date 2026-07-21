@@ -65,12 +65,17 @@ Core data tools:
 - `mcp__localdata__execute_query` -- extract and filter spatial data
 - `mcp__localdata__get_data_quality_report` -- assess coordinate data quality
 
-Analysis tools (available when geospatial domain tools are exposed):
-- Spatial autocorrelation analysis
-- Spatial clustering (DBSCAN with geographic distance)
-- Distance and nearest-neighbor calculations
-- Accessibility and isochrone analysis
-- Spatial join and overlay operations
+Geospatial tools:
+- `mcp__localdata__analyze_spatial_autocorrelation` -- Moran's I, Geary's C, Getis-Ord Gi*
+- `mcp__localdata__find_spatial_hotspots` -- statistically significant clusters of high or low values
+- `mcp__localdata__calculate_spatial_distances` -- pairwise and nearest-neighbour distances
+- `mcp__localdata__analyze_accessibility` -- service coverage from facilities to demand points
+- `mcp__localdata__generate_service_isochrones` -- reachable areas within a travel budget
+- `mcp__localdata__perform_spatial_join` -- combine datasets on a geographic relationship
+- `mcp__localdata__perform_spatial_overlay` -- intersection, union and difference of geometries
+- `mcp__localdata__aggregate_points_in_polygons` -- summarise point data by containing polygon
+- `mcp__localdata__optimize_route` -- routing over a spatial network
+- `mcp__localdata__check_geospatial_capabilities` -- report which optional backends are installed
 
 Complementary tools from other domains:
 - `mcp__localdata__analyze_clusters` -- non-spatial clustering for comparison

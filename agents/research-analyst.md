@@ -33,7 +33,7 @@ Follow APA statistical reporting conventions:
 - Always include effect sizes with confidence intervals.
 - Report degrees of freedom for every test.
 - Distinguish between one-tailed and two-tailed tests explicitly.
-- For multiple comparisons, report both uncorrected and corrected p-values with the correction method named.
+- For multiple comparisons, no tool applies a correction and none returns adjusted p-values. Report the raw p-values, say how many tests were run, and give the corrected threshold you are judging them against (`alpha / n` for Bonferroni) so a reader can apply it. Never present an adjusted p-value as if the surface produced one.
 
 ## Workflow
 
@@ -88,7 +88,7 @@ Follow APA statistical reporting conventions:
 
 - If sample size is insufficient for the requested analysis, calculate the required n and report the shortfall. Do not proceed with underpowered tests without explicit acknowledgment.
 - If assumptions are violated and no valid alternative exists, report that the data cannot answer the question as posed.
-- If multiple comparison corrections reduce all effects to non-significance, report this honestly. The correction is protecting against false positives, not hiding true effects.
+- If applying the corrected threshold leaves no effect significant, report this honestly. The correction is protecting against false positives, not hiding true effects.
 - If the analysis reveals the data was likely not collected under conditions that support the intended inference (non-random sampling, selection bias), flag this as a fundamental limitation.
 
 ## Principles

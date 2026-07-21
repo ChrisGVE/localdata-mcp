@@ -86,12 +86,21 @@ Solve a linear programming problem from database data.
 }
 ```
 
-Three of those fields carry less than their names suggest. `objective_sensitivity`
-and `rhs_sensitivity` are always empty objects and `shadow_prices` is always an
-empty list — no ranging analysis is computed. `dual_values` is populated only
-from equality-constraint marginals, so a problem stated entirely in `<=` or `>=`
-constraints returns `[]`. `binding_constraints` and `constraint_slack` are real.
-For shadow prices, re-solve with the constraint restated as an equality.
+What you get back depends on which constraint types you used, and two fields
+are always empty. `objective_sensitivity` and `rhs_sensitivity` are never
+populated and `shadow_prices` is always an empty list — no ranging analysis is
+computed anywhere.
+
+| Constraint types | `dual_values` | `constraint_slack` | `sensitivity_analysis` |
+|---|---|---|---|
+| all `<=` / `>=` | `[]` | per-constraint slack | present, with the empty fields above |
+| any `=` | one marginal per equality row | `[]` | `null` |
+
+So **shadow prices come only from equality constraints**. If you need the
+marginal value of a resource, restate that row as `=` and read `dual_values`:
+on the worked example above, the binding row returns `1.333`, meaning one more
+unit of capacity buys 1.333 of objective. `binding_constraints` and
+`constraint_slack` are real wherever they appear.
 
 ---
 
@@ -216,7 +225,7 @@ Solve a minimum-cost assignment (matching) problem.
 | `table_name` | str | required | Table with cost matrix data (one row per agent) |
 | `cost_matrix_columns` | list[str] | required | Columns representing task costs (one column per task) |
 | `agent_id_column` | str | None | Column with agent identifiers (uses row index if omitted) |
-| `task_id_column` | str | None | Column with task identifiers (uses column names if omitted) |
+| `task_id_column` | str | None | Accepted and ignored; tasks are named by `cost_matrix_columns` |
 | `method` | str | `"hungarian"` | Algorithm: `"hungarian"` (scipy linear_sum_assignment) |
 | `maximize` | bool | `False` | Maximise total value instead of minimising cost |
 
@@ -271,11 +280,14 @@ constraint row. Constraint directions `">="` are converted to `"<="` form by neg
 **Integer programming:** Pass `integer_variables` as a list of column indices. The solver uses
 branch-and-bound. Results include `is_integer_solution` and `integrality_gap`.
 
-**Sensitivity analysis:** Available in `sensitivity_analysis` for problems solved with HiGHS.
-Reports reduced costs, ranging for objective coefficients, and constraint right-hand-side ranges.
+**Sensitivity analysis:** The `sensitivity_analysis` block is returned for inequality problems
+but its `objective_sensitivity`, `rhs_sensitivity` and `shadow_prices` fields are never populated —
+no reduced costs and no ranging analysis are computed. Only `binding_constraints` carries
+information.
 
-**Dual values:** Shadow prices for each active constraint — the marginal value of relaxing a
-constraint by one unit.
+**Dual values:** Shadow prices — the marginal value of relaxing a constraint by one unit —
+are returned in `dual_values`, and **only for equality constraints**. State the row as `=` to
+obtain them.
 
 **When to use:**
 - Production planning (maximise output subject to resource limits)

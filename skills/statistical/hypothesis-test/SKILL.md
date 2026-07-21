@@ -25,12 +25,13 @@ Select and run the appropriate statistical test based on data characteristics, w
    - Sample balance: highly unequal group sizes affect test power
 
 4. **Select and run the test.** Based on the assessment:
-   - 2 groups, normal, equal variance: call `analyze_hypothesis_test` with independent t-test
-   - 2 groups, normal, unequal variance: call `analyze_hypothesis_test` with Welch's t-test
-   - 2 groups, non-normal: call `analyze_hypothesis_test` with Mann-Whitney U
-   - 2 groups, paired: call `analyze_hypothesis_test` with paired t-test or Wilcoxon signed-rank
-   - 3+ groups: call `analyze_anova` with appropriate post-hoc tests
-   - Categorical outcome: call `analyze_hypothesis_test` with chi-squared test
+   Call `analyze_hypothesis_test` with `test_type="auto"` (the default) and a `group_column`, and it selects the test from the data's own assumptions. There is no `test_type` value naming a specific test, so do not pass one:
+   - 2 groups, normal: Welch's or Student's t-test, chosen on Levene's test
+   - 2 groups, non-normal: Mann-Whitney U with a rank-biserial effect size
+   - 3+ groups, normal and homoscedastic: one-way ANOVA with eta squared
+   - 3+ groups otherwise: Kruskal-Wallis H with epsilon squared
+   - Paired designs are not supported -- there is no paired t-test and no Wilcoxon signed-rank on this surface
+   - For a full ANOVA table with Tukey post-hoc comparisons, call `analyze_anova` instead (it takes no `post_hoc` parameter; Tukey is the only one implemented)
 
 5. **Compute effect sizes.** Call `analyze_effect_sizes` with the same data. Report Cohen's d (two groups), eta-squared (ANOVA), or Cramer's V (chi-squared). Classify as small, medium, or large.
 

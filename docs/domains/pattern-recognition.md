@@ -75,16 +75,17 @@ Answers "which rows do not belong?" `method` selects `isolation_forest`
 (default), `lof`, `one_class_svm` or `statistical`. These are multivariate
 detectors over a set of columns; there is no single-column mode.
 
-`statistical` **is** the z-score and IQR method. Through `algorithm_params` it
-takes `method` (`"zscore"`, the default, or `"iqr"`) and `threshold_std`
-(default 3.0), and it flags a row when any column breaches the threshold. Reach
-for it when you want a rule you can explain to a stakeholder rather than a
-learned boundary.
+`statistical` **is** a z-score method: it flags a row whose value is more than
+three standard deviations from the mean on any column. Reach for it when you
+want a rule you can explain to a stakeholder rather than a learned boundary.
+The threshold is fixed and the IQR variant in the transformer is not selectable
+— the tool exposes no `algorithm_params`, so `method` and `contamination` are
+the only controls a client has.
 
 For the other three, `contamination` is the expected anomaly rate and defaults
 to 0.1 — a tenth of the rows will be flagged whatever the data looks like, so
 set it from what you actually expect. `statistical` ignores it and uses its
-threshold instead. Returns a
+own threshold. Returns a
 label per row (`-1` for anomaly), a continuous score, and the flagged indices.
 
 The tool ranks rows by unusualness; it does not know which unusual rows are

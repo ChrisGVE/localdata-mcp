@@ -14,7 +14,7 @@ Before running any test, determine the following from the data:
 
 1. **Sample size.** Small samples (n < 30) require non-parametric alternatives or exact tests.
 2. **Number of groups.** Two groups: t-test or Mann-Whitney. Three or more: ANOVA or Kruskal-Wallis.
-3. **Paired or independent.** Repeated measures on the same subjects require paired tests.
+3. **Paired or independent.** Repeated measures on the same subjects require paired tests -- which this surface does not provide. If the design is paired, say so and either analyse the within-subject differences as a single column or report that the available tests assume independence.
 4. **Distribution shape.** Check for normality. If violated and sample is small, prefer non-parametric tests.
 5. **Variance homogeneity.** Unequal variances require Welch's correction or robust alternatives.
 6. **Multiple comparisons.** When testing multiple hypotheses, say so and account for it. No tool applies a Bonferroni, Holm or Benjamini-Hochberg correction and none returns adjusted p-values, so do not report an adjusted figure as if the surface produced one: report the raw p-values, state how many tests were run, and give the corrected threshold you are judging them against (`alpha / n` for Bonferroni) so the reader can apply it themselves. `analyze_anova`'s Tukey HSD comparisons are already familywise-corrected among themselves.
@@ -34,7 +34,7 @@ When the goal is estimation rather than hypothesis testing:
 
 2. **Assess assumptions.** Before the main test, check normality (Shapiro-Wilk for small samples, Anderson-Darling for larger) and variance homogeneity (Levene's test). Report these results -- they justify your test selection.
 
-3. **Run the primary test.** Use `mcp__localdata__analyze_hypothesis_test` for pairwise or group comparisons. Use `mcp__localdata__analyze_anova` for multi-group analysis with post-hoc tests. Specify the test type explicitly based on your assumption checks.
+3. **Run the primary test.** Use `mcp__localdata__analyze_hypothesis_test` with a `group_column` and the default `test_type="auto"`; it selects Welch's or Student's t-test, Mann-Whitney U, one-way ANOVA or Kruskal-Wallis from the data's own assumptions. There is no `test_type` value that names a specific test, so do not try to pass one -- your assumption checks explain and confirm the choice rather than drive it. Use `mcp__localdata__analyze_anova` for a full ANOVA table with Tukey post-hoc comparisons.
 
 4. **Compute effect sizes.** Always call `mcp__localdata__analyze_effect_sizes` alongside significance tests. Report Cohen's d, eta-squared, or the appropriate measure. A statistically significant result with a trivial effect size is not practically meaningful -- say so.
 
@@ -62,11 +62,11 @@ Structure results as:
 - `mcp__localdata__describe_table` -- understand column types before analysis
 - `mcp__localdata__get_data_quality_report` -- check for missing data that could bias results
 
-Sampling and estimation tools (available when sampling domain tools are exposed):
-- Bootstrap resampling for distribution-free confidence intervals
-- Bayesian estimation with configurable priors
-- Monte Carlo simulation for complex estimands
-- Sampling design (stratified, cluster, systematic) with sample size calculation
+Sampling and estimation tools:
+- `mcp__localdata__bootstrap_statistic` -- distribution-free confidence interval for the `mean`, `median`, `std` or `var` (any other name raises)
+- `mcp__localdata__bayesian_estimate` -- posterior estimation with configurable priors
+- `mcp__localdata__monte_carlo_simulate` -- `integration`, `uncertainty`, `importance` or `mcmc`
+- `mcp__localdata__generate_sample` -- draw a sample from a query result
 
 ## Error Handling
 

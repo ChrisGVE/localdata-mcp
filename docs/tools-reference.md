@@ -772,7 +772,7 @@ find_path("network", "user-1", "user-5", algorithm="shortest")
 
 ### get_graph_stats
 
-Get advanced graph statistics including centrality measures.
+Get whole-graph structural statistics.
 
 **Parameters:**
 
@@ -780,7 +780,11 @@ Get advanced graph statistics including centrality measures.
 |------|------|----------|-------------|
 | `name` | string | Yes | Connection name |
 
-**Returns:** Graph metrics: node count, edge count, density, diameter, clustering (JSON)
+**Returns:** `node_count`, `edge_count`, `density`, `average_degree`,
+`connected_components`, `is_dag`, `max_in_degree` and `max_out_degree` (JSON).
+No centrality, diameter or clustering coefficient is computed here — for
+per-node centrality use `analyze_network`, which returns degree, betweenness
+and closeness.
 
 **Example:**
 ```python
@@ -1218,7 +1222,8 @@ Flag rows that do not fit the rest of the data.
 | `contamination` | number | No | Expected proportion of anomalies, 0.0 to 0.5 (default: 0.1) |
 
 These are multivariate detectors over a set of columns. There is no single
-`column` parameter, no `threshold`, and no z-score or IQR method.
+`column` parameter and no `threshold` parameter — `statistical` is the z-score
+method and applies a fixed three-sigma cut.
 
 **Returns:** Anomaly flags, scores, and the flagged rows (JSON)
 
@@ -1497,7 +1502,7 @@ The columns a solver does arithmetic on must be numeric: `analyze_network`'s
 source and target columns, and the objective, constraint and cost-matrix
 columns. A text column there is rejected by name rather than failing inside a
 float conversion. Columns that only carry labels — `agent_id_column`,
-`task_id_column` — may be text.
+`task_id_column` — may be text. `task_id_column` is ignored in any case.
 
 ### solve_linear_program
 
@@ -1582,7 +1587,7 @@ Assign agents to tasks at optimal total cost.
 | `table_name` | string | Yes | Table holding the cost matrix, one agent per row |
 | `cost_matrix_columns` | list | Yes | Numeric columns, one per task |
 | `agent_id_column` | string | No | Column naming each agent (default: row index) |
-| `task_id_column` | string | No | Column naming each task |
+| `task_id_column` | string | No | Accepted and ignored — the cost matrix is wide, so tasks are already named by `cost_matrix_columns` |
 | `method` | string | No | `hungarian` or `greedy` (default: `hungarian`) |
 | `maximize` | boolean | No | Maximise total value instead of minimising cost (default: false) |
 
