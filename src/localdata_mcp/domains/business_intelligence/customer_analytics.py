@@ -208,33 +208,67 @@ class RFMAnalysisTransformer(BaseEstimator, TransformerMixin):
 
         return rfm_data
 
+    #: The 1-4 RFM scale, and the score given to a dimension in which every
+    #: customer is tied. ``mean([1, 2, 3, 4])`` is 2.5; rounding it down keeps
+    #: the neutral score identical whichever direction the dimension is scored.
+    _RFM_SCALE = (1, 2, 3, 4)
+    _RFM_TIED_SCORE = 2
+
+    @classmethod
+    def _score_dimension(cls, values, thresholds, descending=False):
+        """Bucket one RFM dimension onto the 1-4 scale, tolerating tied quartiles.
+
+        Quartile thresholds collapse onto each other whenever the underlying
+        distribution is heavily tied: an order log in which every customer
+        placed the same number of orders yields frequency quartiles
+        ``[5, 5, 5]``. Passing those straight to :func:`pandas.cut` raises
+        ``ValueError: Bin edges must be unique``, which is how RFM scoring used
+        to abort on an ordinary transaction log. Collapsing the duplicate edges
+        and spreading the surviving buckets back over the same 1-4 scale keeps
+        a partially-tied dimension ranked and scores a fully-tied one neutrally,
+        instead of failing the whole analysis.
+
+        With three distinct thresholds this is exactly the original four-bucket
+        split, so unaffected data scores identically.
+        """
+        scale = list(reversed(cls._RFM_SCALE)) if descending else list(cls._RFM_SCALE)
+        edges = np.unique(np.asarray(thresholds, dtype=float))
+
+        if edges.size == 0:
+            # Every customer sits at the same point in this dimension; no
+            # ordering exists to express, so nobody is ranked above anybody.
+            return pd.Series(cls._RFM_TIED_SCORE, index=values.index, dtype=int)
+
+        # Spread the surviving buckets evenly across the scale so the extremes
+        # stay in use and the direction of the score is preserved.
+        positions = np.linspace(0, len(scale) - 1, edges.size + 1).round().astype(int)
+        labels = [scale[p] for p in positions]
+
+        return pd.cut(
+            values,
+            bins=[-np.inf, *edges.tolist(), np.inf],
+            labels=labels,
+            include_lowest=True,
+        ).astype(int)
+
     def _calculate_rfm_scores(self, rfm_data):
         """Calculate RFM scores based on thresholds."""
         rfm_scores = rfm_data.copy()
 
         # Recency score (lower recency = higher score)
-        rfm_scores["R"] = pd.cut(
-            rfm_scores["recency"],
-            bins=[-np.inf] + self.recency_thresholds_.tolist() + [np.inf],
-            labels=[4, 3, 2, 1],
-            include_lowest=True,
-        ).astype(int)
+        rfm_scores["R"] = self._score_dimension(
+            rfm_scores["recency"], self.recency_thresholds_, descending=True
+        )
 
         # Frequency score (higher frequency = higher score)
-        rfm_scores["F"] = pd.cut(
-            rfm_scores["frequency"],
-            bins=[-np.inf] + self.frequency_thresholds_.tolist() + [np.inf],
-            labels=[1, 2, 3, 4],
-            include_lowest=True,
-        ).astype(int)
+        rfm_scores["F"] = self._score_dimension(
+            rfm_scores["frequency"], self.frequency_thresholds_
+        )
 
         # Monetary score (higher monetary = higher score)
-        rfm_scores["M"] = pd.cut(
-            rfm_scores["monetary"],
-            bins=[-np.inf] + self.monetary_thresholds_.tolist() + [np.inf],
-            labels=[1, 2, 3, 4],
-            include_lowest=True,
-        ).astype(int)
+        rfm_scores["M"] = self._score_dimension(
+            rfm_scores["monetary"], self.monetary_thresholds_
+        )
 
         # Combined RFM score
         rfm_scores["RFM_Score"] = (

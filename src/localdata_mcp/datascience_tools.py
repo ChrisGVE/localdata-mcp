@@ -189,6 +189,56 @@ def tool_effect_sizes(
 # ---------------------------------------------------------------------------
 
 
+# The penalty names a caller reaches for, mapped onto the estimator names the
+# regression pipeline actually dispatches on.
+_REGULARIZATION_MODELS = {
+    "l1": "lasso",
+    "l2": "ridge",
+    "elastic_net": "elastic_net",
+}
+
+
+def _apply_regularization(model_type: str, regularization: Optional[str]):
+    """Resolve ``regularization`` into the model the pipeline will instantiate.
+
+    The pipeline selects its estimator from ``model_type`` alone and reads no
+    ``regularization`` key at all, so passing one straight through left the
+    parameter completely inert — ``l1``, ``l2``, ``elastic_net`` and even a
+    misspelling all returned the unpenalised fit, silently. Translating the
+    penalty into the estimator here is what makes the documented parameter do
+    what it says.
+
+    Returns the effective ``model_type`` and any extra pipeline keyword
+    arguments.
+    """
+    if not regularization:
+        return model_type, {}
+
+    penalty = _REGULARIZATION_MODELS.get(regularization)
+    if penalty is None:
+        raise ValueError(
+            f"Unknown regularization '{regularization}'. "
+            f"Expected one of: {', '.join(sorted(_REGULARIZATION_MODELS))}."
+        )
+
+    # Polynomial regression penalises the expanded basis, so the penalty is a
+    # parameter of that model rather than a replacement for it.
+    if model_type == "polynomial":
+        return model_type, {"model_params": {"regularization": penalty}}
+
+    if model_type in ("", "linear"):
+        return penalty, {}
+
+    if model_type == penalty:
+        return model_type, {}
+
+    raise ValueError(
+        f"model_type='{model_type}' and regularization='{regularization}' "
+        f"disagree: regularization='{regularization}' selects the "
+        f"'{penalty}' model. Pass one or the other."
+    )
+
+
 def tool_fit_regression(
     engine: Engine,
     query: str,
@@ -221,9 +271,7 @@ def tool_fit_regression(
                 f"Query returned columns: {list(df.columns)}"
             )
 
-    kwargs: Dict[str, Any] = {}
-    if regularization:
-        kwargs["regularization"] = regularization
+    model_type, kwargs = _apply_regularization(model_type, regularization)
     return _as_dict(
         fit_regression_model(
             data=df[[*feature_columns, target_column]],

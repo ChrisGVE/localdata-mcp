@@ -149,6 +149,25 @@ def datascience_fixtures() -> None:
             )
     pd.DataFrame(rows).to_csv(_fp("ds_transactions.csv"), index=False)
 
+    # The same shape of order log, but with every customer placing exactly the
+    # same number of orders. Frequency then has no spread at all, so its
+    # quartiles collapse onto one value — the case that used to abort RFM
+    # scoring with "Bin edges must be unique".
+    rows = []
+    for index in range(1, 21):
+        for offset in range(4):
+            order_date = pd.Timestamp("2024-01-01") + pd.Timedelta(
+                days=index * 7 + offset
+            )
+            rows.append(
+                {
+                    "customer_id": f"U{index:03d}",
+                    "order_date": order_date.strftime("%Y-%m-%d"),
+                    "amount": round(float(rng.gamma(4.0, 30.0)), 2),
+                }
+            )
+    pd.DataFrame(rows).to_csv(_fp("ds_transactions_uniform.csv"), index=False)
+
     # A 4-node cycle plus one chord, for network analysis. Node identifiers are
     # numeric because the analyzer builds a numeric array from the edge list.
     pd.DataFrame(
@@ -308,6 +327,64 @@ class TestRegressionTools:
         assert (
             r2 > 0.9
         ), f"a near-deterministic linear relation must fit well, got R2={r2}"
+
+    def test_regularization_changes_the_fit(self, db: DatabaseManager) -> None:
+        """`regularization` must select a penalised model, not be ignored.
+
+        It used to be forwarded to a pipeline that dispatches on ``model_type``
+        alone and reads no ``regularization`` key, so every value — including a
+        misspelling — returned the identical unpenalised fit. An L1 penalty
+        shrinks coefficients, so a penalised fit cannot equal the plain one.
+        """
+        _connect(db, "regz", "ds_regression.csv")
+        query = "SELECT x1, x2, x3, target FROM data_table"
+
+        def fit(**kwargs: Any) -> Dict[str, Any]:
+            return _json(
+                db.analyze_regression(
+                    "regz",
+                    query,
+                    target_column="target",
+                    feature_columns=["x1", "x2", "x3"],
+                    **kwargs,
+                )
+            )
+
+        plain = fit()
+        lasso = fit(regularization="l1")
+        ridge = fit(regularization="l2")
+
+        assert lasso != plain, "an L1 penalty must change the fit, not be ignored"
+        assert ridge != plain, "an L2 penalty must change the fit, not be ignored"
+        assert lasso != ridge, "L1 and L2 are different penalties"
+
+        # The penalised fits are still fits, not error payloads.
+        assert _find_number(lasso, "r2", "r_squared") > 0.8
+
+    def test_unknown_regularization_is_rejected(self, db: DatabaseManager) -> None:
+        """An unrecognised penalty must say so rather than silently fit plain OLS.
+
+        The analytical wrappers surface failures as exceptions rather than error
+        payloads (issue #29), so what is pinned here is the raise and the
+        message — which must name the accepted values, since the exception is
+        the caller's only chance to self-correct.
+        """
+        _connect(db, "regbad", "ds_regression.csv")
+
+        with pytest.raises(ValueError, match="ridge_regression") as excinfo:
+            db.analyze_regression(
+                "regbad",
+                "SELECT x1, x2, x3, target FROM data_table",
+                target_column="target",
+                feature_columns=["x1", "x2", "x3"],
+                regularization="ridge_regression",
+            )
+
+        message = str(excinfo.value)
+        for accepted in ("l1", "l2", "elastic_net"):
+            assert (
+                accepted in message
+            ), f"the error must name the accepted values, got: {message}"
 
     def test_evaluate_model_scores_stored_predictions(
         self, db: DatabaseManager
@@ -509,6 +586,43 @@ class TestBusinessIntelligenceTools:
 
         # Every customer lands in exactly one segment, so the summary must add up.
         assert sum(s["customer_count"] for s in result["segment_summary"]) == 40
+
+    def test_rfm_scores_an_order_log_with_no_frequency_spread(
+        self, db: DatabaseManager
+    ) -> None:
+        """Every customer placed exactly 4 orders, so frequency quartiles tie.
+
+        That collapses the three quartile boundaries onto a single value, which
+        used to reach ``pd.cut`` as duplicate bin edges and raise
+        ``ValueError: Bin edges must be unique`` — an ordinary order log
+        crashing a flagship tool. Scoring must survive and stay meaningful:
+        frequency ranks nobody above anybody, while monetary still varies.
+        """
+        _connect(db, "rfmu", "ds_transactions_uniform.csv")
+        result = _json(
+            db.analyze_rfm(
+                "rfmu",
+                ALL_ROWS,
+                customer_column="customer_id",
+                date_column="order_date",
+                value_column="amount",
+            )
+        )
+
+        scores = result["rfm_scores"]
+        assert len(scores) == 20, f"expected all 20 customers scored, got {len(scores)}"
+        assert {s["frequency"] for s in scores} == {
+            4
+        }, "the fixture gives every customer the same order count"
+
+        # A tied dimension ranks nobody; the ones that vary still discriminate.
+        assert (
+            len({s["F"] for s in scores}) == 1
+        ), f"tied frequency must score uniformly, got {sorted({s['F'] for s in scores})}"
+        assert (
+            len({s["M"] for s in scores}) > 1
+        ), "monetary value varies across customers, so it must still spread"
+        assert sum(s["customer_count"] for s in result["segment_summary"]) == 20
 
     def test_ab_test_detects_the_conversion_lift(self, db: DatabaseManager) -> None:
         """Conversion is 30% for A and 55% for B across 120 rows — a real lift."""
