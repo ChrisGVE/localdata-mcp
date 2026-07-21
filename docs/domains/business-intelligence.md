@@ -10,10 +10,9 @@ Use this domain when you need to:
 
 - Segment customers by engagement and value (RFM)
 - Measure the statistical significance of a product or marketing experiment (A/B testing)
-- Track how cohorts of customers retain over time
-- Estimate the lifetime value of customer segments
-- Attribute revenue across marketing touchpoints
-- Identify bottlenecks in a multi-step user funnel
+
+Cohort retention, lifetime value, marketing attribution and funnel analysis are implemented in the
+domain package but reachable only from Python — no MCP tool exposes them.
 
 All tools accept a SQL query, execute it against the named connection, and return a
 JSON-serializable result. Row loading is capped at 500,000 rows
@@ -132,11 +131,16 @@ RFM scores each customer on three dimensions calculated from transaction history
 - **Frequency** — total number of transactions
 - **Monetary** — total spend
 
-Each dimension is ranked into quartiles (1–5, higher is better for all three). The quartile
+Each dimension is ranked into quartiles (1–4, higher is better for all three). The quartile
 boundaries are stored in the result so segments are reproducible across runs.
 
+The three scores are concatenated, not summed: `RFM_Score` is a string like `"433"`, meaning R=4,
+F=3, M=3. A dimension in which every customer ties — an order log where all of them placed the same
+number of orders — carries no ordering, so every customer scores the neutral 2 on it and is
+separated by the other two.
+
 Customers are assigned to named segments based on combined score patterns. Common segments include
-Champions (5,5,5), At Risk (2–3 on recency with high F/M), and Lost (low on all three).
+Champions (4,4,4), At Risk (low recency score with high F/M), and Lost (low on all three).
 
 **When to use:** Initial customer health audit, churn prevention targeting, email list tiering,
 loyalty programme design.

@@ -25,7 +25,8 @@ Report the contamination rate assumption and how it affects results. Always retu
 ### Dimensionality Reduction
 - **PCA**: use for feature engineering, preprocessing, or when you need linear interpretability (loadings map back to original features). Always report explained variance ratio.
 - **t-SNE**: use for 2D/3D visualization of high-dimensional data. Not suitable for downstream modeling -- distances in the embedding are not globally meaningful.
-- **UMAP**: use when you need both visualization and a degree of global structure preservation. Faster than t-SNE on large datasets.
+- **ICA**: use when you want components that are statistically independent rather than merely uncorrelated -- separating mixed source signals is the classic case.
+- **UMAP**: accepted by the tool but **raises `ImportError`** -- `umap-learn` is neither a dependency nor an optional extra. Do not offer it unless the user has installed it themselves.
 
 ### Regression
 - **Linear regression**: always start here. It establishes a baseline and reveals which features have linear relationships with the target.
@@ -64,7 +65,7 @@ Report the contamination rate assumption and how it affects results. Always retu
 - `mcp__localdata__execute_query` -- extract and prepare data
 - `mcp__localdata__analyze_clusters` -- run clustering algorithms with evaluation metrics
 - `mcp__localdata__detect_anomalies` -- identify outliers with anomaly scoring
-- `mcp__localdata__reduce_dimensions` -- PCA, t-SNE, UMAP for dimensionality reduction
+- `mcp__localdata__reduce_dimensions` -- PCA, t-SNE, ICA for dimensionality reduction
 - `mcp__localdata__analyze_regression` -- fit linear, regularized, and polynomial models
 - `mcp__localdata__evaluate_model_performance` -- compute regression metrics and diagnostics
 - `mcp__localdata__describe_table` -- understand feature types

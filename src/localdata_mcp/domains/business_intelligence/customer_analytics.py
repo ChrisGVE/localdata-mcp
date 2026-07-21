@@ -232,11 +232,19 @@ class RFMAnalysisTransformer(BaseEstimator, TransformerMixin):
         split, so unaffected data scores identically.
         """
         scale = list(reversed(cls._RFM_SCALE)) if descending else list(cls._RFM_SCALE)
-        edges = np.unique(np.asarray(thresholds, dtype=float))
 
+        # Test the data for spread, not the thresholds for emptiness. Quartiles
+        # of a constant column are that constant — ``[4, 4, 4]`` deduplicates to
+        # ``[4]``, one edge rather than none — so every customer falls in the
+        # first bucket and takes whichever score sits at that end of the scale.
+        # For frequency that meant a population of identical customers was
+        # uniformly branded the worst, and for recency uniformly the best.
+        # Neither is a finding; the dimension simply carries no ordering.
+        if values.nunique() <= 1:
+            return pd.Series(cls._RFM_TIED_SCORE, index=values.index, dtype=int)
+
+        edges = np.unique(np.asarray(thresholds, dtype=float))
         if edges.size == 0:
-            # Every customer sits at the same point in this dimension; no
-            # ordering exists to express, so nobody is ranked above anybody.
             return pd.Series(cls._RFM_TIED_SCORE, index=values.index, dtype=int)
 
         # Spread the surviving buckets evenly across the scale so the extremes

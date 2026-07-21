@@ -1,6 +1,6 @@
 ---
 name: dimensionality-reduction
-description: Reduce high-dimensional data to fewer components for visualization or feature engineering using PCA, t-SNE, or UMAP. Use when data has many features and needs simplification.
+description: Reduce high-dimensional data to fewer components for visualization or feature engineering using PCA, t-SNE, or ICA. Use when data has many features and needs simplification.
 allowed-tools: mcp__localdata__describe_database mcp__localdata__execute_query mcp__localdata__reduce_dimensions mcp__localdata__get_data_quality_report
 argument-hint: "<database-name>"
 ---

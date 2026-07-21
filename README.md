@@ -246,15 +246,15 @@ Multi-sheet spreadsheets are supported: each sheet becomes a separately queryabl
 
 **Statistical Analysis** — t-tests, chi-squared, Mann-Whitney, Kruskal-Wallis, and related hypothesis tests; one-way ANOVA with post-hoc tests; Cohen's d, eta-squared, and other effect size measures.
 
-**Regression and Modeling** — linear, polynomial, logistic, ridge, lasso, and elastic net regression; model evaluation with R², RMSE, MAE, and classification metrics; automated feature selection.
+**Regression and Modeling** — linear, polynomial, logistic, ridge, lasso, and elastic net regression; model evaluation with R², RMSE, MAE, and classification metrics. `analyze_regression` reports coefficients and fit statistics but no per-coefficient standard errors, t-statistics or p-values. The feature-selection transformer in the domain package has no MCP tool; use a lasso fit to shrink weak coefficients instead.
 
-**Pattern Recognition** — K-means, DBSCAN, and hierarchical clustering; anomaly detection via isolation forest, LOF, and one-class SVM; dimensionality reduction with PCA, t-SNE, and UMAP.
+**Pattern Recognition** — K-means, DBSCAN, hierarchical, GMM and spectral clustering; anomaly detection via isolation forest, LOF, one-class SVM and a z-score/IQR method; dimensionality reduction with PCA, t-SNE and ICA. `umap` is accepted but raises `ImportError` — `umap-learn` is neither a dependency nor an extra, so install it yourself before reaching for it.
 
-**Time Series** — decomposition, stationarity testing, autocorrelation analysis; ARIMA and ETS forecasting; change point detection; multivariate analysis with VAR, Granger causality, and cointegration tests. `forecast_time_series` accepts `method="arima"` or `method="ets"`; the SARIMA and ensemble models in the domain package are not reachable through an MCP tool.
+**Time Series** — trend and seasonality summaries, stationarity testing, autocorrelation analysis; ARIMA and ETS forecasting. `analyze_time_series` reports how strong the trend and seasonal signals are rather than returning the decomposed series themselves. `forecast_time_series` accepts `method="arima"` or `method="ets"` only; the SARIMA and ensemble models, change point detection, VAR, Granger causality and cointegration all exist in the domain package with no MCP tool.
 
-**Business Intelligence** — A/B test statistical analysis; RFM customer segmentation; cohort analysis, CLV modeling, and funnel analysis.
+**Business Intelligence** — A/B test statistical analysis and RFM customer segmentation. Cohort analysis, CLV modeling, funnel analysis and attribution exist in the domain package but have no MCP tool.
 
-**Geospatial** — distance and coordinate calculations, spatial joins, interpolation, and network analysis.
+**Geospatial** — distance and coordinate calculations, spatial joins and overlays, hotspot and autocorrelation analysis, accessibility and routing. Spatial interpolation (IDW, kriging) has no MCP tool.
 
 **Optimization** — linear programming, constrained optimization, assignment problems, and network optimization.
 
@@ -284,8 +284,8 @@ Agents in `agents/` take on longer analyses that span several tools:
 | `data-scientist` | Composes multi-step pipelines across domains when the right approach is not obvious |
 | `statistical-analyst` | Hypothesis tests, ANOVA, effect sizes, sampling design, bootstrap estimation |
 | `ml-analyst` | Clustering, anomaly detection, dimensionality reduction, regression modeling |
-| `forecaster` | Decomposition, stationarity testing, ARIMA/ETS choice, forecasts with uncertainty bounds |
-| `bi-analyst` | A/B tests, cohort analysis, CLV, attribution, funnels |
+| `forecaster` | Trend and seasonality summaries, stationarity testing, ARIMA/ETS choice, forecasts with uncertainty bounds |
+| `bi-analyst` | A/B tests and RFM segmentation; explains what cohort, CLV and attribution work would need |
 | `graph-data-analyst` | Centrality, community detection, path finding, graph export |
 | `geospatial-analyst` | Coordinate systems, distances, spatial clustering, accessibility |
 | `operations-analyst` | Statistical process control, optimization, capacity planning |

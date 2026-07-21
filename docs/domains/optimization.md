@@ -75,11 +75,23 @@ Solve a linear programming problem from database data.
   "iterations": 8,
   "function_evaluations": 8,
   "is_integer_solution": false,
-  "sensitivity_analysis": {...},
-  "dual_values": [0.0, 4.2, 0.0],
-  "constraint_slack": [0.0, 0.0, 5.5]
+  "sensitivity_analysis": {
+    "objective_sensitivity": {},
+    "rhs_sensitivity": {},
+    "shadow_prices": [],
+    "binding_constraints": [false, false]
+  },
+  "dual_values": [],
+  "constraint_slack": [10.0, 10.0]
 }
 ```
+
+Three of those fields carry less than their names suggest. `objective_sensitivity`
+and `rhs_sensitivity` are always empty objects and `shadow_prices` is always an
+empty list — no ranging analysis is computed. `dual_values` is populated only
+from equality-constraint marginals, so a problem stated entirely in `<=` or `>=`
+constraints returns `[]`. `binding_constraints` and `constraint_slack` are real.
+For shadow prices, re-solve with the constraint restated as an equality.
 
 ---
 
@@ -112,11 +124,18 @@ Solve a nonlinear constrained optimisation problem.
   "execution_time": 0.045,
   "iterations": 23,
   "function_evaluations": 156,
-  "constraint_analysis": [...],
-  "constraint_violations": [0.0, 0.0],
-  "lagrange_multipliers": [3.1, 0.0]
+  "constraint_analysis": [
+    {"type": "eq", "active": true, "violation": 1.1e-16, "value": -1.1e-16}
+  ],
+  "constraint_violations": [1.1e-16],
+  "lagrange_multipliers": null
 }
 ```
+
+`lagrange_multipliers` is always `null`: it is read from a solver attribute that
+only `trust-constr` produces, and the accepted methods are `SLSQP` and `COBYLA`.
+Use `constraint_analysis` instead — its `active` flag tells you which
+constraints bind, which is what the multipliers would have been consulted for.
 
 ---
 
@@ -333,11 +352,25 @@ reports its version if you want to confirm.
 | TSP heuristic | Near-optimal tour visiting every node once | Delivery route optimisation |
 | Centrality measures | Degree, betweenness, closeness, eigenvector | Network importance ranking |
 
-Every applicable algorithm runs; there is no parameter to select a subset, which may be
-slow on large graphs (>1000 nodes).
+Every applicable algorithm runs and there is no parameter to select a subset, which can be slow on
+large graphs (>1000 nodes).
 
-**Graph properties** in the result include node count, edge count, density, connectivity status,
-and average degree.
+**Which algorithms apply depends on the graph**, so the top-level keys vary between calls:
+
+| Key | Present when |
+|---|---|
+| `shortest_paths` | Always |
+| `centrality_measures` | `include_centrality` is true (the default) |
+| `max_flow` | The graph is directed and has more than one node |
+| `minimum_spanning_tree` | The graph is undirected and connected |
+| `tsp_solution` | The graph has 20 nodes or fewer |
+
+A key that is absent means its algorithm did not apply, not that it failed. The sample above is an
+undirected graph, which is why it shows a spanning tree and no maximum flow.
+
+**Graph properties** in the result are `num_nodes`, `num_edges`, `is_directed`, `is_connected` and
+`density`. Average degree is not among them; derive it as `2 * num_edges / num_nodes` for an
+undirected graph.
 
 ---
 
@@ -398,8 +431,8 @@ Suppose a table `production_plan` has columns `profit` (objective), `labor_hours
   "arguments": {
     "connection_name": "supply_db",
     "table_name": "routes",
-    "source_column": "origin_hub",
-    "target_column": "destination_hub",
+    "source_column": "origin_hub_id",
+    "target_column": "destination_hub_id",
     "weight_column": "transit_days",
     "directed": true,
     "include_centrality": true

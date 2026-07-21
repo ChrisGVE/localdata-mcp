@@ -17,13 +17,13 @@ Build, evaluate, and compare regression models to predict a target variable from
 
 3. **Extract and inspect data.** Call `execute_query` to select the target column and candidate feature columns. Check for nulls, outliers, and sufficient row count (at least 30 observations per feature as a rule of thumb).
 
-4. **Build a linear baseline.** Call `analyze_regression` with the database name, target column, feature columns, and model type "linear". Review the results: R-squared, adjusted R-squared, coefficients, p-values, and residual diagnostics.
+4. **Build a linear baseline.** Call `analyze_regression` with the database name, target column, feature columns, and model type "linear". Review the results: R-squared, adjusted R-squared, the coefficients, and the residual diagnostics. The tool reports no per-coefficient standard errors, t-statistics or p-values, so judge a coefficient by its magnitude relative to the scale of its feature, never by a significance test you cannot obtain here.
 
 5. **Evaluate baseline performance.** Call `evaluate_model_performance` to get detailed metrics: RMSE, MAE, R-squared, and residual analysis. Assess whether the linear model captures the relationship adequately.
 
 6. **Interpret baseline results.** Check for:
    - R-squared below 0.3: poor fit, consider non-linear models
-   - Features with p-values above 0.05: candidates for removal
+   - Coefficients near zero once the feature's scale is accounted for: candidates for removal. Fit a "lasso" model to have that judgement made for you — it shrinks weak coefficients to exactly zero, which is the selection mechanism available here
    - Multicollinearity: correlated predictors inflating variance
    - Residual patterns: non-random residuals suggest model misspecification
 

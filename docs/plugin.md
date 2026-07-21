@@ -93,7 +93,7 @@ needs, and an `argument-hint` describing what to pass.
 | `regression` | Fit and evaluate models predicting a target variable |
 | `cluster-analysis` | Discover groupings, with cluster-count evaluation |
 | `anomaly-detection` | Flag outliers with isolation forest or local outlier factor |
-| `dimensionality-reduction` | Compress high-dimensional data with PCA, t-SNE, or UMAP |
+| `dimensionality-reduction` | Compress high-dimensional data with PCA, t-SNE, or ICA |
 | `forecast` | Analyze a time series and forecast forward with confidence intervals |
 | `geospatial` | Distances, geographic clusters, accessibility |
 | `optimization` | Resource allocation, scheduling, and process optimization under constraints |
@@ -124,10 +124,10 @@ analysis may run before it must report back.
 | `data-scientist` | 30 | Composes multi-step pipelines across domains when the right approach is unclear |
 | `statistical-analyst` | 20 | Hypothesis tests, ANOVA, effect sizes, sampling design, bootstrap estimation, non-parametric tests |
 | `ml-analyst` | 25 | Clustering, anomaly detection, dimensionality reduction, regression modeling |
-| `forecaster` | 20 | Decomposition, stationarity testing, ARIMA/ETS choice, forecasts with uncertainty bounds |
-| `bi-analyst` | 20 | A/B testing, cohort analysis, CLV, attribution, funnels; translates statistics into business recommendations |
+| `forecaster` | 20 | Trend and seasonality summaries, stationarity testing, ARIMA/ETS choice, forecasts with uncertainty bounds |
+| `bi-analyst` | 20 | A/B testing and RFM segmentation; translates statistics into business recommendations |
 | `graph-data-analyst` | 15 | Centrality, community detection, path finding, visualization export |
-| `geospatial-analyst` | 20 | Coordinate systems, spatial relationships, distances, clustering, interpolation, accessibility |
+| `geospatial-analyst` | 20 | Coordinate systems, spatial relationships, distances, hotspots, joins, overlays, accessibility |
 | `operations-analyst` | 20 | Statistical process control, optimization, capacity planning, efficiency analysis |
 | `research-analyst` | 25 | Methodological rigor: assumption documentation, power analysis, reproducible reporting |
 | `data-researcher` | 20 | Finds, downloads, and prepares public reference datasets to enrich user data |

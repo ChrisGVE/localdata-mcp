@@ -86,13 +86,16 @@ problems. Query the flagged indices back and look at them.
 
 Answers "can these many correlated columns be summarised in a few?" `method`
 selects `pca` (default), `tsne` or `ica`, and `n_components` sets the output
-width (default 2). PCA additionally reports explained variance, which says how
-much information survived the projection. The ICA and LDA transformers listed
-under *Available Analyses* have no MCP tool in this release.
+width (default 2). PCA additionally reports `explained_variance_ratio` and
+`cumulative_variance_ratio`, which say how much information survived the
+projection. The LDA transformer listed under *Available Analyses* has no MCP
+tool in this release; ICA does, through this `method` value.
 
 t-SNE and UMAP produce embeddings for looking at, not for feeding into a model:
-they distort distances by design. `umap` requires the optional `umap-learn`
-package.
+they distort distances by design. `umap` is accepted as a `method` but raises
+`ImportError` — `umap-learn` is neither a dependency of this package nor one of
+its optional extras, so it works only if you have installed it into the
+environment yourself.
 
 ---
 

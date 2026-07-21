@@ -1544,8 +1544,11 @@ Analyze a graph stored as an edge table.
 | `directed` | boolean | No | Treat edges as directed (default: false) |
 | `include_centrality` | boolean | No | Compute centrality measures (default: true) |
 
-**Returns:** Graph properties, centrality measures, shortest paths and a minimum
-spanning tree (JSON).
+**Returns:** Graph properties and shortest paths always; centrality measures
+unless `include_centrality` is false; then, depending on the graph, `max_flow`
+(directed, more than one node), `minimum_spanning_tree` (undirected and
+connected) and `tsp_solution` (20 nodes or fewer). A missing key means its
+algorithm did not apply, not that it failed (JSON).
 
 **Composition hints:** Distinct from the Graph Operations tools, which manage a
 stored graph. This one analyses an edge table that already exists as data.

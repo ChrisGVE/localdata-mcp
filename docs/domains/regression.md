@@ -65,11 +65,19 @@ you want rather than the estimator that carries it. Combined with
 `model_type="polynomial"` it penalises the expanded basis. Anything else raises,
 as does a `regularization` that contradicts an explicitly chosen `model_type`.
 
-Returns coefficients with their standard errors and p-values, R² and the other
-fit statistics, and — for every model except logistic — a `residual_analysis`
-block with the normality, homoscedasticity and influence diagnostics described
-below. Use `model_type="logistic"` when the target is binary; the tool does not
-infer that from the data.
+Returns the fitted coefficients as bare numbers alongside their feature names,
+the fit statistics (R², adjusted R², MSE, MAE, RMSE, AIC, BIC), and — for every
+model except logistic — a `residual_analysis` block with the normality,
+homoscedasticity and influence diagnostics described below. Use
+`model_type="logistic"` when the target is binary; the tool does not infer that
+from the data.
+
+**There is no per-coefficient inference.** The tool reports no standard errors,
+no t-statistics, no per-coefficient p-values and no model F-statistic, so it
+cannot tell you whether an individual coefficient differs from zero. The
+p-values that do appear live in `residual_analysis.diagnostic_tests` and belong
+to the normality and homoscedasticity tests, not to the coefficients. If you
+need significance testing on the coefficients, fit the model outside this tool.
 
 Fitting and scoring are separate concerns here: the model is not persisted, so
 there is nothing to call `predict` on afterwards.
@@ -91,12 +99,14 @@ including models fitted outside LocalData.
 
 ### Linear Regression (OLS)
 
-Fits ordinary least squares with `sklearn.linear_model.LinearRegression` and computes full statistical diagnostics via `statsmodels`.
+Fits ordinary least squares with `sklearn.linear_model.LinearRegression`. The
+`statsmodels` dependency backs the residual diagnostics below, not coefficient
+inference.
 
 Outputs include:
-- Coefficients with standard errors, t-statistics, and p-values for each feature
+- Coefficients, one per feature, as plain numbers paired with the feature names
 - R² and adjusted R²
-- F-statistic for overall model significance
+- MSE, MAE and RMSE
 - AIC and BIC for model comparison
 
 **Key parameters of `LinearRegressionTransformer`:**
@@ -133,7 +143,7 @@ All three variants use cross-validation to select the optimal regularisation str
 
 ### Logistic Regression
 
-`LogisticRegressionTransformer` fits a regularised logistic regression for binary or multiclass classification. Reports coefficients, odds ratios, and classification metrics (accuracy, precision, recall, F1, AUC-ROC).
+`LogisticRegressionTransformer` fits a regularised logistic regression for binary or multiclass classification. Through `analyze_regression` it reports coefficients and the same regression-style fit metrics as every other model — `r2_score`, `mse`, `mae` and `rmse` — computed against the 0/1 labels. It returns **no odds ratios and no classification metrics**: there is no accuracy, precision, recall, F1 or AUC-ROC in the payload, and no `residual_analysis` block either. To score a classifier, store its predictions and call `evaluate_model_performance` with `model_type="classification"`.
 
 ---
 
@@ -239,9 +249,11 @@ analyze_regression(
 )
 ```
 
-Read the coefficients with their p-values, then read the `residual_analysis`
-block before believing them: a Breusch-Pagan rejection means the standard errors
-— and therefore those p-values — are understated.
+Read the coefficients, then read the `residual_analysis` block before believing
+them. A Breusch-Pagan rejection means the errors are heteroscedastic, so the
+coefficients remain unbiased but their precision is worse than the fit
+statistics suggest — and because the tool reports no standard errors, nothing in
+the payload will show you that widening.
 
 ### Too many correlated predictors
 

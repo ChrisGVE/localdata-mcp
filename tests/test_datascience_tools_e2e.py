@@ -615,10 +615,14 @@ class TestBusinessIntelligenceTools:
             4
         }, "the fixture gives every customer the same order count"
 
-        # A tied dimension ranks nobody; the ones that vary still discriminate.
-        assert (
-            len({s["F"] for s in scores}) == 1
-        ), f"tied frequency must score uniformly, got {sorted({s['F'] for s in scores})}"
+        # A tied dimension ranks nobody, and must say so with the NEUTRAL score.
+        # Asserting only that the scores are uniform is not enough: the first
+        # version of this guard scored every tied customer 1 — the bottom of the
+        # scale — which is uniform and also a verdict the data does not support.
+        frequency_scores = {s["F"] for s in scores}
+        assert frequency_scores == {
+            2
+        }, f"a tied dimension must score neutrally, not at an extreme; got {sorted(frequency_scores)}"
         assert (
             len({s["M"] for s in scores}) > 1
         ), "monetary value varies across customers, so it must still spread"
