@@ -34,7 +34,7 @@ Open a connection to a database.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `name` | string | Yes | Unique connection identifier (e.g., "analytics_db", "user_data") |
-| `db_type` | string | Yes | Database type: sqlite, postgresql, mysql, duckdb, csv, json, yaml, toml, excel, ods, numbers, xml, ini, tsv, parquet, feather, arrow, hdf5, dot, gml, graphml, mermaid, turtle, ntriples, sparql |
+| `db_type` | string | Yes | Database type. **SQL:** sqlite, postgresql, mysql, duckdb, oracle, mssql. **Document/NoSQL:** mongodb, redis, elasticsearch, influxdb, neo4j, couchdb. **Files:** csv, tsv, excel, ods, numbers, xml, ini, json, yaml, toml, parquet, feather, arrow, hdf5. **Graph:** dot, gml, graphml, mermaid. **RDF:** turtle, ntriples, sparql |
 | `conn_string` | string | Yes | Connection string or file path |
 | `sheet_name` | string | No | Sheet name for Excel/ODS/Numbers or dataset name for HDF5 |
 | `auth` | string | No | JSON authentication config (e.g., `{"method": "wallet", "wallet_path": "/path"}`) |
@@ -1481,8 +1481,13 @@ was asked.
 
 These four tools differ from every other analytical tool in one way: they take a
 **table name**, not a query. The solvers read the columns they need from the
-table directly. Node and cost identifiers must be numeric — a text column is
-rejected by name rather than failing inside a float conversion.
+table directly.
+
+The columns a solver does arithmetic on must be numeric: `analyze_network`'s
+source and target columns, and the objective, constraint and cost-matrix
+columns. A text column there is rejected by name rather than failing inside a
+float conversion. Columns that only carry labels — `agent_id_column`,
+`task_id_column` — may be text.
 
 ### solve_linear_program
 

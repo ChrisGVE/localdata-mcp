@@ -588,10 +588,11 @@ catching patterns that embed a write inside an otherwise valid `SELECT`:
 
 Standard DML (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `TRUNCATE`) is already blocked by the query validator regardless of this setting.
 
-**The analytical tools do not honour this setting.** They hand their query
-straight to pandas, so a `CREATE TABLE ... AS SELECT` refused by `execute_query`
-is executed by `analyze_clusters` under the same configuration, and because that
-statement is DDL it commits and persists. Do not rely on `readonly` to protect a
+**Only `execute_query` and `analyze_query_preview` honour this setting.** Every
+other query-taking tool hands its query straight to pandas. A
+`CREATE TABLE ... AS SELECT` refused by `execute_query` is executed by
+`analyze_clusters`, and equally by the regex tools `search_data` and
+`transform_data`; because that statement is DDL it commits and persists. Do not rely on `readonly` to protect a
 database an agent can reach through an analytical tool; grant the connection
 read-only rights at the database instead. Tracked as issue #33, alongside #25.
 

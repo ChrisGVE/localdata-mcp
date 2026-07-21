@@ -2,7 +2,7 @@
 
 A data science plugin for LLM agents. Connects to 13 database types, 20+ file formats, graph and RDF sources, and provides 8 analytical domains through 71 MCP tools.
 
-LocalData MCP gives LLM agents direct access to local and remote data sources through the [Model Context Protocol](https://modelcontextprotocol.io/). Beyond data connectivity, it provides a full data science toolkit: statistical analysis, time series forecasting, regression modeling, clustering, business intelligence, geospatial analysis, optimization, and sampling methods. Every analytical tool takes a connection name and a SQL query, so an agent moves from raw source to result without a separate load step, and results come back as JSON, carrying an interpretation string wherever a statistic needs one. Chaining tools is the caller's work — a result carries no handle the next tool consumes.
+LocalData MCP gives LLM agents direct access to local and remote data sources through the [Model Context Protocol](https://modelcontextprotocol.io/). Beyond data connectivity, it provides a full data science toolkit: statistical analysis, time series forecasting, regression modeling, clustering, business intelligence, geospatial analysis, optimization, and sampling methods. Most analytical tools take a connection name and a SQL query, so an agent moves from raw source to result without a separate load step; the four optimization tools take a table name instead, because a solver needs the whole constraint set rather than a projection of it. and results come back as JSON, carrying an interpretation string wherever a statistic needs one. Chaining tools is the caller's work — a result carries no handle the next tool consumes.
 
 ## Key capabilities
 
@@ -14,7 +14,7 @@ LocalData MCP gives LLM agents direct access to local and remote data sources th
 - **RDF/SPARQL**: Turtle, N-Triples files and remote SPARQL endpoints
 - **Data science**: 8 analytical domains with 30 specialized tools
 - **Streaming**: Memory-bounded query execution with adaptive chunk sizing
-- **Security**: path restrictions, connection limits, and SELECT-only SQL validation on `execute_query` and `analyze_query_preview`. The analytical tools bypass that gate (issue #25)
+- **Security**: path restrictions, connection limits, and SELECT-only SQL validation on `execute_query` and `analyze_query_preview`. Every other query-taking tool — the analytical tools, and `search_data` and `transform_data` — bypasses that gate (issues #25 and #33)
 - **Claude Code plugin**: 18 skills and 11 agents that drive the tools
 
 ```{toctree}

@@ -539,10 +539,11 @@ tool descriptions:
 - **Results do not carry composition metadata.** Nothing in a result tells the
   next tool what upstream analysis produced it, so the chaining above is yours to
   do, not the server's. Tracked as issue #26.
-- **Analytical tools do not go through the SELECT-only gate.** That check guards
-  `execute_query` and `analyze_query_preview`. An analytical tool passes its
-  query straight through, so treat the query you hand one as you would any other
-  statement against that database. Tracked as issue #25.
+- **Most tools do not go through the SELECT-only gate.** That check guards
+  `execute_query` and `analyze_query_preview` only. The analytical tools, and
+  the regex tools `search_data` and `transform_data`, pass their query straight
+  through, so treat the query you hand any of them as you would any other
+  statement against that database. Tracked as issues #25 and #33.
 
 **Cross-connection joins are not supported.** Each query runs against one
 connection. To combine sources, query each one separately and join the results in

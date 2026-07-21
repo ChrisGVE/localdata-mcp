@@ -26,7 +26,7 @@ from localdata_mcp.error_handler import (
 
 
 class TestErrorCategoryExtensions:
-    """Verify that all PRD-specified categories were added."""
+    """Verify that all structured classification categories were added."""
 
     @pytest.mark.parametrize(
         "name,value",

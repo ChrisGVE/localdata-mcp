@@ -22,7 +22,7 @@ class ErrorCategory(Enum):
     PERMISSION = "permission"
     DATA_VALIDATION = "data_validation"
     SYSTEM = "system"
-    # PRD-specified structured error classification categories
+    # Structured error classification categories
     AUTH_ERROR = "auth_error"
     SCHEMA_ERROR = "schema_error"
     SYNTAX_ERROR = "syntax_error"

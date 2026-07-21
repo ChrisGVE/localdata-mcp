@@ -2615,7 +2615,7 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
 
         Args:
             name: A unique name to identify the connection (e.g., "analytics_db", "user_data").
-            db_type: The type of the database ("sqlite", "postgresql", "mysql", "duckdb", "csv", "json", "yaml", "toml", "excel", "ods", "numbers", "xml", "ini", "tsv", "parquet", "feather", "arrow", "hdf5", "dot", "gml", "graphml", "mermaid", "turtle", "ntriples", "sparql").
+            db_type: The type of the database. SQL databases: "sqlite", "postgresql", "mysql", "duckdb", "oracle", "mssql". Document and NoSQL stores: "mongodb", "redis", "elasticsearch", "influxdb", "neo4j", "couchdb". Files: "csv", "tsv", "excel", "ods", "numbers", "xml", "ini", "json", "yaml", "toml", "parquet", "feather", "arrow", "hdf5". Graphs: "dot", "gml", "graphml", "mermaid". RDF: "turtle", "ntriples", "sparql". Use "excel" for both .xlsx and .xls.
             conn_string: The connection string or file path for the database.
             sheet_name: Optional sheet name to load from Excel/ODS/Numbers files, or dataset name for HDF5 files. If not specified, all sheets/datasets are loaded.
             auth: Optional JSON string with authentication config. Example: '{"method": "wallet", "wallet_path": "/opt/oracle/wallet"}' or '{"method": "kerberos"}'.

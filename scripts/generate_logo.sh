@@ -14,12 +14,12 @@ if ! command -v magick &> /dev/null; then
     exit 1
 fi
 
-# Define source - this should be the high-quality icon2.png
-SOURCE_ICON="/Users/chris/Downloads/icon2.png"
+# Source artwork. Override with: SOURCE_ICON=/path/to/icon.png ./generate_logo.sh
+SOURCE_ICON="${SOURCE_ICON:-$(dirname "$0")/../assets/icon-source.png}"
 
 if [ ! -f "$SOURCE_ICON" ]; then
     echo "❌ Source icon not found at: $SOURCE_ICON"
-    echo "   Please ensure icon2.png is in ~/Downloads/"
+    echo "   Pass the artwork explicitly: SOURCE_ICON=/path/to/icon.png $0"
     exit 1
 fi
 

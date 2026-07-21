@@ -124,6 +124,33 @@ client that names tools explicitly needs no edit for the new ones to appear.
 
 ### Fixed
 
+- **`analyze_regression`'s `regularization` parameter did nothing at all.** It
+  was forwarded into the modelling pipeline, which selects its estimator from
+  `model_type` alone and never reads a `regularization` key, so `l1`, `l2`,
+  `elastic_net` and even a misspelled value all returned the identical
+  unpenalised fit. Anyone who reached for it to control overfitting on a wide
+  feature set received ordinary least squares and no indication of it. The
+  penalty now resolves to the estimator it names -- `l1` fits lasso, `l2` fits
+  ridge, `elastic_net` fits elastic net -- and refines the expanded basis when
+  combined with `model_type="polynomial"`. An unrecognised value, or one that
+  contradicts an explicitly chosen `model_type`, now raises with the accepted
+  values named.
+- **`analyze_rfm` aborted on an ordinary order log.** When every customer places
+  the same number of orders, the frequency quartiles collapse onto a single
+  value and `pandas.cut` rejects the duplicate bin edges with `ValueError: Bin
+  edges must be unique` -- an entirely normal shape for a subscription or
+  replenishment business, failing the whole analysis. Duplicate edges are now
+  collapsed and the surviving buckets spread back across the same 1-4 scale, and
+  a dimension with no spread at all scores every customer the neutral 2 rather
+  than branding them all with an extreme. Data with three distinct quartile
+  boundaries scores exactly as it did before.
+- **`analyze_network` never returned shortest paths.** NetworkX's
+  `floyd_warshall_predecessor_and_distance` returns a `(predecessors,
+  distances)` tuple, which was passed to `dict()`; that raised, the exception
+  was swallowed, and the result carried `{"algorithm": "failed"}` instead of any
+  paths. The Floyd-Warshall branch handles every graph of 100 nodes or fewer, so
+  the feature was dead for graphs of the size the tool is used on. Distances and
+  predecessors are now returned for every pair.
 - **`analyze_hypothesis_test` never compared the groups it was given.** With the
   default `test_type="auto"` and a `group_column`, it returned only Shapiro-Wilk
   and Kolmogorov-Smirnov normality tests -- no group comparison at any point.
