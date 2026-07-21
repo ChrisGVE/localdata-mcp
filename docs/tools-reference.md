@@ -1917,11 +1917,18 @@ All tools return a JSON string. There is no single envelope shared across the
 surface -- the shape is the one documented in each tool's own **Returns** line
 above, and reading it there is the only reliable way to know what you get.
 
-Two conventions do hold. `execute_query` and the streaming tools nest rows under
+One convention does hold: `execute_query` and the streaming tools nest rows under
 `data` alongside a `metadata` object carrying `query_id`, `total_rows` and
-`showing_rows`. And a failure surfaces as an object with an `error` key -- often
-with `error_type` and `is_retryable` -- rather than as an exception or an empty
-success.
+`showing_rows`.
+
+**Failures have no single shape, and you must be ready for three.** Some tools
+return an object with an `error` key, often with `error_type` and
+`is_retryable`. The database and streaming tools may instead return a bare
+string — a query refused by the SELECT-only validator comes back as
+`"Security Error: ..."`, not as JSON. The analytical tools mostly do neither and
+raise instead: an unknown method reaches the caller as `ValueError: Unknown
+algorithm: ...`, which an MCP client surfaces as a tool error rather than a
+result (issue #29). Handle all three; do not test only for an `error` key.
 
 ## Composition Patterns
 

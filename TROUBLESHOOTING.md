@@ -239,6 +239,46 @@ performance:
 
 The streaming executor processes results in chunks without loading entire result sets into memory.
 
+## Analytical tools
+
+The analytical tools report failures by raising, not by returning an error object, so an MCP client surfaces them as a tool error rather than a result. The message names the cause; these four account for most of them.
+
+### `Column(s) ['x'] not found in query results`
+
+The column name does not exist in what the query returned. The message lists the columns that do:
+
+```
+ValueError: Column(s) ['nope'] not found in query results. Available columns: ['x1']
+```
+
+Two common causes: the column was not selected (`SELECT x1` when you asked to model `target`), and a SQL alias renamed it. Select every column the tool needs, and remember that a CSV, Excel or Parquet connection loads into a single table named `data_table`.
+
+### `No numeric feature columns found besides '<target>'`
+
+`analyze_regression` was asked to fit against a result set whose only other columns are text:
+
+```
+ValueError: No numeric feature columns found besides 'amount'.
+Query returned columns: ['customer_id', 'amount']
+```
+
+Omitting `feature_columns` makes the tool use every *numeric* column except the target, so an identifier column leaves nothing to fit. Name the features explicitly, or cast in SQL.
+
+### `Unknown algorithm: <name>`
+
+A `method` value the tool does not accept. The exception does not list the valid ones, so check the tool's row in the [tools reference](https://localdata-mcp.readthedocs.io/en/latest/tools-reference.html). The common mistakes are spelling a method out in full where the tool wants the short token — `gmm` not `gaussian_mixture`, `lof` not `local_outlier_factor` — and `umap`, which is accepted but raises `ImportError` because `umap-learn` is not installed by this package.
+
+### `Column(s) [...] are not numeric. Optimization requires numeric values`
+
+The optimization and network tools do arithmetic on their columns, so identifiers must be numbers:
+
+```
+ValueError: Column(s) ['customer_id', 'order_date'] are not numeric.
+Optimization requires numeric values; map identifiers to numbers before analysis.
+```
+
+Map your node or entity identifiers to integers before calling, and map them back afterwards. Label-only columns — `agent_id_column`, `task_id_column` — are exempt and may stay text.
+
 ## Configuration
 
 ### Validate your config

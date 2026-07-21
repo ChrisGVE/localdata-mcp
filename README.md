@@ -314,6 +314,24 @@ LocalData MCP reads settings from a YAML config file, from environment variables
 
 Set them in your MCP server configuration under `"env"`, or in a `.env` file in the working directory. The full set — staging, memory budget, disk budget, per-database `LOCALDATA_DB_<NAME>_*` definitions — is documented in the [configuration reference](docs/configuration.md).
 
+## Security
+
+You are giving an LLM agent a live connection to your data. Two controls hold, and three do not.
+
+**Path restriction holds.** File connections are confined to `security.allowed_paths`, which defaults to `["."]` — the process working directory. A path outside it is refused.
+
+**SQL validation holds, but only on two tools.** `execute_query` and `analyze_query_preview` accept SELECT statements and common table expressions and refuse everything else. **No other tool is gated.** The analytical tools, and the regex tools `search_data` and `transform_data`, hand their query straight to pandas, so a statement those two would refuse executes through any of them — and a `CREATE TABLE ... AS SELECT` is DDL, so it commits and persists (issues #25 and #33).
+
+**Three documented settings do not enforce anything today** (issue #33):
+
+| Setting | What it does |
+| --- | --- |
+| `security.readonly` | Blocks writes disguised as reads on `execute_query` and `analyze_query_preview` only; every other tool executes them |
+| `security.max_query_length` | Parsed and validated at startup, then never applied |
+| `security.blocked_keywords` | Read by no code at all |
+
+**Grant the connection read-only rights at the database.** That is the control that actually constrains what an agent can do, and it is the one to rely on for any database where a write would matter. Treat the in-process settings as defence in depth, not as the boundary.
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md) — install, configure an MCP client, run the first queries
