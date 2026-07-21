@@ -322,11 +322,11 @@ You are giving an LLM agent a live connection to your data. Two controls hold, a
 
 **SQL validation holds, but only on two tools.** `execute_query` and `analyze_query_preview` accept SELECT statements and common table expressions and refuse everything else. **No other tool is gated.** The analytical tools, and the regex tools `search_data` and `transform_data`, hand their query straight to pandas, so a statement those two would refuse executes through any of them — and a `CREATE TABLE ... AS SELECT` is DDL, so it commits and persists (issues #25 and #33).
 
-**Three documented settings do not enforce anything today** (issue #33):
+**Three documented settings promise more than they deliver** (issue #33) — one is narrower than it reads, and two do nothing at all:
 
 | Setting | What it does |
 | --- | --- |
-| `security.readonly` | Blocks writes disguised as reads on `execute_query` and `analyze_query_preview` only; every other tool executes them |
+| `security.readonly` | Blocks writes disguised as reads, but only on `execute_query` and `analyze_query_preview`; every other tool executes them |
 | `security.max_query_length` | Parsed and validated at startup, then never applied |
 | `security.blocked_keywords` | Read by no code at all |
 

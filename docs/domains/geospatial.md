@@ -3,7 +3,7 @@
 ## Overview
 
 The geospatial domain provides spatial analysis capabilities covering distance measurement,
-coordinate transformations, spatial joins and overlays, interpolation, network routing, and
+coordinate transformations, spatial joins and overlays, network routing, and
 spatial statistics. It is built on geopandas, shapely, and pyproj as required dependencies,
 with optional enhancement from scikit-gstat (for advanced kriging) and networkx (for network
 analysis).
@@ -13,7 +13,6 @@ Use this domain when you need to:
 - Compute distances between geographic points (Haversine/great-circle or Euclidean)
 - Reproject data between coordinate reference systems (e.g. WGS84 to UTM)
 - Join point datasets to polygon datasets by spatial relationship
-- Interpolate values across a spatial grid from sparse point observations
 - Find shortest paths or service area isochrones on a road/graph network
 - Measure spatial autocorrelation (clustering vs dispersion) in attribute values
 
@@ -301,7 +300,6 @@ exhausted. Returns the set of reachable nodes per threshold.
 | After geospatial analysis | Chain to | Purpose |
 |---|---|---|
 | Distance matrix | Regression/Modeling | Spatial lag features for prediction |
-| Interpolated grid | Statistical Analysis | Test distribution of interpolated surface |
 | Moran's I result | Pattern Recognition | Cluster detection based on confirmed autocorrelation |
 | Isochrone coverage | Business Intelligence | Segment customers by accessibility |
 | Spatial join result | Statistical Analysis | Compare attribute distributions across spatial zones |

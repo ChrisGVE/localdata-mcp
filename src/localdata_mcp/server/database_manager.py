@@ -2442,7 +2442,7 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
             connection_name: Name of the connected database.
             query: SQL query returning data to cluster.
             columns: Columns to use for clustering (all numeric if omitted).
-            method: 'kmeans', 'dbscan', 'hierarchical', 'gaussian_mixture'.
+            method: 'kmeans' (default), 'dbscan', 'hierarchical', 'gmm' or 'spectral'.
             n_clusters: Number of clusters (auto-detected if omitted).
         """
         engine = self._get_connection(connection_name)
@@ -2465,7 +2465,7 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
             connection_name: Name of the connected database.
             query: SQL query returning data to analyze.
             columns: Columns to analyze (all numeric if omitted).
-            method: 'isolation_forest', 'local_outlier_factor', 'one_class_svm'.
+            method: 'isolation_forest' (default), 'lof', 'one_class_svm' or 'statistical' (three-sigma z-score).
             contamination: Expected proportion of anomalies (0.0-0.5).
         """
         engine = self._get_connection(connection_name)
@@ -2488,7 +2488,7 @@ class DatabaseManager(SamplingToolsMixin, OptimizationToolsMixin, GeospatialTool
             connection_name: Name of the connected database.
             query: SQL query returning data to reduce.
             columns: Columns to include (all numeric if omitted).
-            method: 'pca', 'tsne', 'umap'.
+            method: 'pca' (default), 'tsne' or 'ica'. 'umap' raises ImportError unless umap-learn is installed separately.
             n_components: Target number of dimensions.
         """
         engine = self._get_connection(connection_name)
