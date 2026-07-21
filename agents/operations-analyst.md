@@ -75,11 +75,11 @@ Statistical tools:
 - `mcp__localdata__analyze_anova` -- compare performance across shifts, machines, or operators
 - `mcp__localdata__analyze_effect_sizes` -- quantify the impact of process changes
 
-Analysis tools (available when optimization domain tools are exposed):
-- Linear programming solver
-- Constrained optimization
-- Network analysis (shortest path, max flow)
-- Assignment problem solver
+Optimization tools. These take a `table_name`, not a query, because a solver needs the whole constraint set rather than a projection of it. Every column they do arithmetic on must be numeric:
+- `mcp__localdata__solve_linear_program` -- allocate limited resources against a linear objective
+- `mcp__localdata__optimize_constrained` -- nonlinear objective under equality or inequality constraints (`SLSQP` or `COBYLA`)
+- `mcp__localdata__analyze_network` -- shortest paths, minimum spanning tree, max flow on a directed graph, TSP heuristic, centrality
+- `mcp__localdata__solve_assignment_problem` -- minimum-cost matching of agents to tasks
 
 Complementary tools:
 - `mcp__localdata__analyze_time_series` -- trend and seasonality in process metrics

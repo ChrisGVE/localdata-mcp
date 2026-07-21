@@ -1,7 +1,7 @@
 ---
 name: optimization
 description: Solve resource allocation, scheduling, and process optimization problems. Use when finding the best solution under constraints.
-allowed-tools: mcp__localdata__describe_database mcp__localdata__execute_query mcp__localdata__get_data_quality_report mcp__localdata__describe_table mcp__localdata__analyze_regression
+allowed-tools: mcp__localdata__describe_database mcp__localdata__execute_query mcp__localdata__get_data_quality_report mcp__localdata__describe_table mcp__localdata__analyze_regression mcp__localdata__solve_linear_program mcp__localdata__optimize_constrained mcp__localdata__solve_assignment_problem mcp__localdata__analyze_network
 argument-hint: "<database-name>"
 ---
 
@@ -26,17 +26,17 @@ Formulate and solve optimization problems from data — resource allocation, sch
    - Constraints (equality and inequality)
    - Report the formulation clearly before solving
 
-5. **Solve.** Apply the appropriate optimization approach (available when optimization domain tools are exposed):
-   - Linear programming for linear objectives and constraints
-   - Constrained optimization for nonlinear problems
-   - Assignment problems for matching tasks to resources
-   - Network optimization for flow and routing
+5. **Solve.** Call the tool that matches the formulation. All four take a `table_name` rather than a query — the solver reads the whole table, since it needs the full constraint set — and every column they compute on must be numeric:
+   - `solve_linear_program` for a linear objective under linear constraints. Pass `integer_variables` for a mixed-integer problem
+   - `optimize_constrained` for a nonlinear objective. `method` is `SLSQP` or `COBYLA`
+   - `solve_assignment_problem` for matching agents to tasks at minimum cost. `agent_id_column` and `task_id_column` may be text
+   - `analyze_network` for flow and routing. Node identifiers must be numeric, so map them to integers first and map them back for reporting
 
 6. **Analyze the solution.** Examine:
    - Optimal objective value
    - Decision variable values at the optimum
-   - Which constraints are binding (at their limit) vs. slack
-   - Sensitivity: how much would the objective change if a constraint were relaxed?
+   - Which constraints are binding (at their limit) vs. slack, from `binding_constraints` and `constraint_slack` on a linear program, or the `active` flag in `constraint_analysis` on a constrained solve
+   - Sensitivity is **not** computed: `objective_sensitivity` and `rhs_sensitivity` are always empty, `shadow_prices` is always empty, `dual_values` is populated only from equality constraints, and `lagrange_multipliers` is always null. To learn what relaxing a constraint is worth, re-solve with the constraint changed and compare the objective
 
 7. **Validate against reality.** Call `execute_query` to compare the optimal solution against historical performance. Is the improvement realistic? Are there practical constraints the model does not capture?
 

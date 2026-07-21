@@ -100,6 +100,15 @@ Execute a SQL query and return results as JSON with memory-aware streaming.
 execute_query("mydb", "SELECT * FROM users WHERE active = true", chunk_size=100)
 ```
 
+**On an RDF connection this tool runs SPARQL, not SQL.** Connect with `turtle`,
+`ntriples` or `sparql` and the query string is handed to the RDF store, so
+`SELECT ?s ?p ?o WHERE { ?s ?p ?o }` is the correct form and a SQL statement is
+not. The response envelope differs too — bindings come back under `results`
+alongside `success`, with no `data` or `metadata` object and no streaming, so
+`next_chunk` and `get_query_metadata` do not apply. Bound values are returned as
+plain strings holding the full IRI. `rdflib` and `SPARQLWrapper` are required
+dependencies, so this works in a default install with no extra.
+
 **Composition hints:** Use with `next_chunk` for large result sets, `get_query_metadata` for analysis.
 
 ---
@@ -1932,26 +1941,36 @@ result (issue #29). Handle all three; do not test only for an `error` key.
 
 ## Composition Patterns
 
-### Sequential Loading
+These are orders of work, not pipelines. No result carries a handle the next
+tool consumes, so what actually passes between steps is a **connection name and
+a SQL query you write** using what the previous step told you. The arrows below
+mean "then", not "feeds".
+
+**Exploring an unfamiliar source.** The one genuine chain, because each step
+narrows what you ask the next:
+
 ```
-execute_query() -> get_query_metadata() -> request_multiple_chunks()
+list_databases() -> describe_database() -> describe_table() -> execute_query()
 ```
 
-### Exploration Workflow
+`find_table()` substitutes for `describe_database()` when you know the table
+name but not which connection holds it.
+
+**Reading a large result.** Here the `query_id` in the first result really is
+consumed by the later calls — the only handle the surface passes:
+
 ```
-list_databases() -> describe_database() -> find_table() -> describe_table()
+execute_query() -> get_query_metadata() -> next_chunk() / request_data_chunk()
 ```
 
-### Data Transformation
+**Analysing.** Each analytical tool re-runs its own query against the
+connection, so they are siblings rather than a sequence. A realistic order is to
+inspect the data, then analyse it, then use what you learned to write the next
+query:
+
 ```
-execute_query() -> search_data() -> transform_data() -> export_schema()
+get_data_quality_report() -> analyze_clusters() -> execute_query(<query using the cluster sizes>)
 ```
 
-### Analysis Pipeline
-```
-execute_query() -> analyze_clusters() -> reduce_dimensions() -> get_graph_stats()
-```
-
----
-
-**For integration examples and advanced workflows, see the main documentation.**
+Passing one analytical result into another means reading the numbers out and
+writing them into your next query yourself (issue #26).
