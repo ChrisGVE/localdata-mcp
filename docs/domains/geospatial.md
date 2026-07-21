@@ -49,7 +49,7 @@ Python, but an MCP client never sees them.
 
 ## MCP Tool Reference
 
-The geospatial domain exposes ten MCP tools. Like every other analytical tool,
+The geospatial domain exposes ten MCP tools. Like every analytical tool except the four optimization tools,
 each takes the name of a live connection and one or more SQL queries — there is
 no data-frame parameter and no separate load step. The classes listed under
 *Available Analyses* above are the internal implementation those tools call;

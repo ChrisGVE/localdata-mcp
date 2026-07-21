@@ -46,7 +46,7 @@ studentised variant, and no parameter selects one.
 
 ## MCP Tool Reference
 
-The domain is reached through four MCP tools. Like every other analytical tool,
+The domain is reached through four MCP tools. Like every analytical tool except the four optimization tools,
 each takes the name of a live connection and a SQL query — there is no
 data-frame parameter and no separate load step, and column parameters name
 columns in the query's result set. The classes listed under *Available Analyses*
