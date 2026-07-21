@@ -2,9 +2,8 @@
 
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Optional
 
 import yaml
 from pydantic import ValidationError as PydanticValidationError
@@ -37,54 +36,29 @@ def deep_merge(target: Dict[str, Any], source: Dict[str, Any]) -> None:
             target[key] = value
 
 
-@dataclass
-class ConfigLayer:
-    """One configuration file that was found and parsed.
-
-    Keeping the layers separate rather than merging them on sight is what lets
-    the security resolution tell an operator floor from a project-local
-    request, and name the offending file when the two disagree.
-    """
-
-    path: str
-    location_type: str
-    data: Dict[str, Any]
-
-    @property
-    def is_project_local(self) -> bool:
-        """Was this file found in the working directory, beside the data?"""
-        return self.location_type == "project_local"
-
-
-def load_config_layers(
+def load_yaml_config(
     config_file: Optional[str],
     file_mtimes: Dict[str, float],
-) -> List[ConfigLayer]:
-    """Load every discoverable config file, highest priority first.
-
-    An explicit ``config_file`` (or ``LOCALDATA_CONFIG``) replaces discovery
-    entirely: the operator named the file to use, so no other file is consulted.
+    merge_callback: Callable[[Dict[str, Any]], None],
+) -> Optional[Dict[str, Any]]:
+    """Load configuration from YAML files with OS-aware discovery.
 
     Args:
         config_file: Explicit config file path, or None for auto-discovery.
         file_mtimes: Mutable dict tracking file modification times.
+        merge_callback: Callback to merge global config before returning project-local.
     """
     from ..config_paths import emit_deprecation_warning, get_config_paths
 
     if config_file:
-        data = _load_explicit_config(config_file, file_mtimes)
-        if data is None:
-            return []
-        return [
-            ConfigLayer(
-                path=str(Path(config_file).expanduser()),
-                location_type="explicit",
-                data=data,
-            )
-        ]
+        return _load_explicit_config(config_file, file_mtimes)
 
-    layers: List[ConfigLayer] = []
-    for info in get_config_paths():
+    infos = get_config_paths()
+
+    project_local = None
+    global_config = None
+
+    for info in infos:
         expanded = info.path.expanduser()
         if not expanded.exists():
             continue
@@ -95,40 +69,18 @@ def load_config_layers(
             file_mtimes[str(expanded)] = os.path.getmtime(expanded)
             if info.is_legacy:
                 emit_deprecation_warning(expanded)
+            if info.location_type.value == "project_local":
+                project_local = data
+            elif global_config is None:
+                global_config = data
         except Exception as e:
             print(f"Warning: Could not load config file {info.path}: {e}")
             continue
-        if data:
-            layers.append(
-                ConfigLayer(
-                    path=str(expanded),
-                    location_type=info.location_type.value,
-                    data=data,
-                )
-            )
 
-    return layers
-
-
-def select_effective_layers(
-    layers: List[ConfigLayer],
-) -> Tuple[Optional[ConfigLayer], Optional[ConfigLayer]]:
-    """Pick the layers whose ordinary settings apply: one operator, one local.
-
-    Settings come from the highest-priority operator layer and, on top of it,
-    the project-local file. Lower-priority operator files are not consulted for
-    settings -- longstanding behaviour, preserved here deliberately.
-
-    Note that security *floors* are handled differently: they are collected from
-    every operator layer, so a floor set in ``/etc`` cannot be dropped merely by
-    the existence of a higher-priority user config.
-
-    Returns:
-        ``(operator_layer, project_local_layer)``, either of which may be None.
-    """
-    operator = next((l for l in layers if not l.is_project_local), None)
-    project_local = next((l for l in layers if l.is_project_local), None)
-    return operator, project_local
+    if global_config and project_local:
+        merge_callback(global_config)
+        return project_local
+    return project_local or global_config
 
 
 def _load_explicit_config(
