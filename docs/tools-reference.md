@@ -1243,7 +1243,7 @@ Project numeric columns onto fewer dimensions.
 | `connection_name` | string | Yes | Database connection name |
 | `query` | string | Yes | SQL query returning the columns to reduce |
 | `columns` | list of strings | No | Columns to include. Omit to use every numeric column |
-| `method` | string | No | `pca`, `tsne`, `ica` (default: `pca`). `umap` needs the optional `umap-learn` package and raises `ImportError` without it |
+| `method` | string | No | `pca`, `tsne`, `ica` (default: `pca`). `umap` raises `ImportError` unless you install `umap-learn` yourself — it is not a dependency or an extra of this package |
 | `n_components` | integer | No | Target number of dimensions (default: 2) |
 
 **Returns:** The reduced components and, for PCA, explained variance (JSON)
@@ -1254,8 +1254,9 @@ reduce_dimensions("mydb", "SELECT * FROM gene_data", ["gene_a", "gene_b", "gene_
 ```
 
 **Composition hints:** Run before `analyze_clusters` on wide data. `pca` is
-reversible and cheap; `tsne` and `umap` are for visualization, not for feeding
-another model.
+reversible and cheap; `tsne` is for visualization, not for feeding another
+model. `umap` is accepted but raises `ImportError` unless you have installed
+`umap-learn` yourself -- it is not a dependency of this package.
 
 ---
 

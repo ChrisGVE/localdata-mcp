@@ -27,7 +27,7 @@ The pattern recognition domain provides clustering, dimensionality reduction, an
 | Spectral clustering | `ClusteringTransformer` | Graph-based clustering for non-convex structures |
 | PCA | `DimensionalityReductionTransformer` | Linear projection maximising variance |
 | t-SNE | `DimensionalityReductionTransformer` | Non-linear neighbourhood-preserving embedding |
-| UMAP | `DimensionalityReductionTransformer` | Fast non-linear embedding; preserves global structure better than t-SNE |
+| UMAP | `DimensionalityReductionTransformer` | Fast non-linear embedding; requires `umap-learn`, which this package does not install |
 | ICA | `DimensionalityReductionTransformer` | Independent component decomposition |
 | LDA | `DimensionalityReductionTransformer` | Supervised linear projection maximising class separability |
 | Isolation Forest | `AnomalyDetectionTransformer` | Anomaly detection via random feature splitting |
@@ -73,10 +73,18 @@ nearest group.
 
 Answers "which rows do not belong?" `method` selects `isolation_forest`
 (default), `lof`, `one_class_svm` or `statistical`. These are multivariate
-detectors over a set of columns: there is no single-column mode, no threshold
-parameter, and no z-score or IQR method. `contamination` is the
-expected anomaly rate and defaults to 0.1 — a tenth of the rows will be flagged
-whatever the data looks like, so set it from what you actually expect. Returns a
+detectors over a set of columns; there is no single-column mode.
+
+`statistical` **is** the z-score and IQR method. Through `algorithm_params` it
+takes `method` (`"zscore"`, the default, or `"iqr"`) and `threshold_std`
+(default 3.0), and it flags a row when any column breaches the threshold. Reach
+for it when you want a rule you can explain to a stakeholder rather than a
+learned boundary.
+
+For the other three, `contamination` is the expected anomaly rate and defaults
+to 0.1 — a tenth of the rows will be flagged whatever the data looks like, so
+set it from what you actually expect. `statistical` ignores it and uses its
+threshold instead. Returns a
 label per row (`-1` for anomaly), a continuous score, and the flagged indices.
 
 The tool ranks rows by unusualness; it does not know which unusual rows are
@@ -199,7 +207,7 @@ Non-linear manifold learning that is faster than t-SNE and preserves both local 
 | `min_dist` | `0.1` | Minimum distance between embedded points |
 | `metric` | `"euclidean"` | Distance metric |
 
-**Dependency note:** `umap` requires the optional `umap-learn` package. Without it the call raises `ImportError` -- there is no graceful fallback, so treat UMAP as unavailable unless you have installed it yourself.
+**Dependency note:** `umap-learn` is neither a dependency of this package nor one of its optional extras, so `pip install localdata-mcp[...]` will not bring it in under any combination. Without it the call raises `ImportError` and there is no graceful fallback. Treat UMAP as unavailable unless you have installed `umap-learn` into the environment yourself.
 
 ---
 
