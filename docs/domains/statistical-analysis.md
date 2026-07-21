@@ -29,7 +29,7 @@ The statistical analysis domain provides hypothesis testing, ANOVA, non-parametr
 | One-way ANOVA | `ANOVAAnalysisTransformer` | Compare means across three or more groups |
 | Two-way ANOVA | `ANOVAAnalysisTransformer` | Test main effects and interactions of two factors |
 | Tukey HSD post-hoc | `ANOVAAnalysisTransformer` | Pairwise comparisons after significant ANOVA |
-| Bonferroni post-hoc | `ANOVAAnalysisTransformer` | Conservative pairwise corrections |
+| Bonferroni post-hoc | `ANOVAAnalysisTransformer` | Named but not implemented; no MCP tool selects it |
 | Mann-Whitney U | `NonParametricTestTransformer` | Non-parametric two-group comparison |
 | Wilcoxon signed-rank | `NonParametricTestTransformer` | Non-parametric paired comparison |
 | Kruskal-Wallis H | `NonParametricTestTransformer` | Non-parametric multi-group comparison |
@@ -138,10 +138,9 @@ If p > alpha, data is treated as approximately normal.
 
 **One-way ANOVA**: Tests whether at least one group mean differs from the others. Uses `scipy.stats.f_oneway`. Assumptions are checked automatically (normality via Shapiro-Wilk per group; homoscedasticity via Levene's test).
 
-Post-hoc tests run only when ANOVA is significant and there are more than two groups:
-- **Tukey HSD** — controls familywise error rate; appropriate when group sizes are roughly equal
-- **Bonferroni** — more conservative; better when only a few specific comparisons are planned
-- **Scheffé** — most conservative; appropriate for all possible contrasts
+Post-hoc comparisons run only when the ANOVA is significant and there are more than two groups, and the test is always **Tukey HSD**, which controls the familywise error rate and suits roughly equal group sizes.
+
+`analyze_anova` exposes no `post_hoc` parameter, so the choice is not yours to make from an MCP client. The underlying transformer names `bonferroni` and `scheffe` as alternatives but implements neither — selecting one returns silently with no comparisons at all — so treat Tukey as the only post-hoc this domain performs.
 
 **Two-way ANOVA**: Uses `statsmodels` OLS with interaction term. Reports eta-squared and partial eta-squared per factor.
 
@@ -251,10 +250,15 @@ analyze_hypothesis_test(
 
 Shapiro-Wilk and Kolmogorov-Smirnov both run. If either rejects normality, a
 t-test on that column rests on an assumption the data does not meet. The
-non-parametric transformers listed under *Available Analyses* — Mann-Whitney,
-Wilcoxon, Kruskal-Wallis, Friedman — have no MCP tool of their own in this
-release; the rank correlation reported by `test_type="correlation"` is the only
-distribution-free test reachable from a client.
+non-parametric transformers listed under *Available Analyses* have no MCP tool
+of their own in this release, but two of them are reached automatically: with
+`test_type="auto"` and a `group_column`, non-normal data selects **Mann-Whitney
+U** for two groups (reported with a rank-biserial effect size) and
+**Kruskal-Wallis H** for three or more (with epsilon squared). You get the
+distribution-free test by letting the tool choose, not by naming it. Wilcoxon
+signed-rank and Friedman are not reachable at all, and neither is a paired
+design. The rank correlation reported by `test_type="correlation"` is
+distribution-free too.
 
 ### Is response time associated with payload size?
 

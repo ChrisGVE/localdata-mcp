@@ -17,7 +17,7 @@ Before running any test, determine the following from the data:
 3. **Paired or independent.** Repeated measures on the same subjects require paired tests.
 4. **Distribution shape.** Check for normality. If violated and sample is small, prefer non-parametric tests.
 5. **Variance homogeneity.** Unequal variances require Welch's correction or robust alternatives.
-6. **Multiple comparisons.** When testing multiple hypotheses, apply Bonferroni, Holm, or Benjamini-Hochberg correction. Always report both raw and adjusted p-values.
+6. **Multiple comparisons.** When testing multiple hypotheses, say so and account for it. No tool applies a Bonferroni, Holm or Benjamini-Hochberg correction and none returns adjusted p-values, so do not report an adjusted figure as if the surface produced one: report the raw p-values, state how many tests were run, and give the corrected threshold you are judging them against (`alpha / n` for Bonferroni) so the reader can apply it themselves. `analyze_anova`'s Tukey HSD comparisons are already familywise-corrected among themselves.
 
 ### Sampling and Estimation
 When the goal is estimation rather than hypothesis testing:
