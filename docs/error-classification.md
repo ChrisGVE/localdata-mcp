@@ -1,9 +1,17 @@
 # Error classification
 
-LocalData MCP classifies every database error into a structured response that
-tells LLM agents *what went wrong*, *whether it makes sense to retry*, and
-*what to do next*. Instead of parsing raw driver messages, agents receive a
-uniform JSON object they can act on programmatically.
+When a database or streaming tool catches a driver error, LocalData MCP
+classifies it into a structured response that tells LLM agents *what went
+wrong*, *whether it makes sense to retry*, and *what to do next* — a JSON object
+they can act on instead of parsing raw driver messages.
+
+This does not cover every failure, and an agent must be ready for three shapes
+(see the [tools reference](tools-reference.md)). A query refused by the
+SELECT-only validator comes back as a bare `"Security Error: ..."` string, not
+JSON. The analytical tools mostly raise instead of returning an object, so an
+unknown method reaches the caller as a `ValueError` surfaced as a tool error
+(issue #29). The categories below describe the first shape only — the classified
+error object.
 
 ## Error categories
 

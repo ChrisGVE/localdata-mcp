@@ -225,8 +225,8 @@ up as the pattern to avoid: `analyze_clusters` does take `n_clusters`, and
 `analyze_hypothesis_test` does take `alpha`.
 
 The first two are the project's design constitution and still govern how the
-interface evolves, which is why they are kept in the repository and cited from
-`CLAUDE.md`. That is a different job from documenting the server, and it does not
+interface evolves, which is why they are kept in the repository. That is a
+different job from documenting the server, and it does not
 earn them a place in the published docs: a reader who found a prescribed API here
 would go looking for tools that do not exist. Publishing a proposal as a
 description is the failure this page exists to correct, and the rule has to apply
