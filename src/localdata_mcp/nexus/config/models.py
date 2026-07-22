@@ -11,9 +11,17 @@ the field paths declared here.
 
 from __future__ import annotations
 
-from dataclasses import Field, dataclass, field, fields as dataclass_fields, replace
-from typing import Any, ClassVar, Iterator
+from dataclasses import (
+    Field,
+    dataclass,
+    field,
+    fields as dataclass_fields,
+    is_dataclass,
+    replace,
+)
+from typing import Any, ClassVar, Iterator, Mapping
 
+from .endpoints import EndpointDeclaration
 from .fields import DERIVED, META_DERIVE, META_PIN, cfg_field
 from .models_testbench import TestbenchConfig
 
@@ -141,6 +149,10 @@ class ConfigModel:
     response: ResponseConfig = field(default_factory=ResponseConfig)
     process: ProcessConfig = field(default_factory=ProcessConfig)
     testbench: TestbenchConfig = field(default_factory=TestbenchConfig)
+    # Endpoint entities (E1.4) — declarations by name, not a scalar
+    # section: no env encoding, introduction gated to operator layers
+    # and pinned per name by merge.py (ARCHITECTURE.md section 5).
+    endpoints: Mapping[str, EndpointDeclaration] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Resolve DERIVED fields from their declared derivations."""
@@ -162,8 +174,11 @@ def _resolve_derived(section: Any, model: ConfigModel) -> Any:
 
 
 def section_names() -> tuple[str, ...]:
-    """The section order as declared on ConfigModel."""
-    return tuple(f.name for f in dataclass_fields(ConfigModel))
+    """The scalar-section order as declared on ConfigModel (the
+    `endpoints` entity mapping is not a scalar section)."""
+    return tuple(
+        f.name for f in dataclass_fields(ConfigModel) if is_dataclass(f.default_factory)
+    )
 
 
 def section_class(section_name: str) -> type:
