@@ -17,6 +17,22 @@ from typing import TextIO
 
 import structlog
 
+from ..config.dsn_patterns import redact_credentials_text
+from .redaction import redact_event
+
+
+class RedactingFormatter(logging.Formatter):
+    """Applies the credential rewrite to the fully rendered record —
+    the true outbound edge. The structlog processor (redaction.py)
+    already covers chain events structure-aware; this formatter closes
+    the two paths that bypass the chain: stdlib-native records from
+    third-party libraries, and the exc_info traceback stdlib appends
+    after the rendered message.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_credentials_text(super().format(record))
+
 
 class StderrHandler(logging.StreamHandler):
     """A StreamHandler pinned to the CURRENT `sys.stderr`, late-bound.
@@ -69,7 +85,7 @@ def _configure_stdlib(numeric_level: int) -> None:
     ]
     root_logger.setLevel(numeric_level)
     handler = StderrHandler(numeric_level)
-    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.setFormatter(RedactingFormatter("%(message)s"))
     root_logger.addHandler(handler)
 
 
@@ -90,7 +106,10 @@ def _configure_structlog(*, debug: bool) -> None:
             structlog.stdlib.add_log_level,
             structlog.stdlib.PositionalArgumentsFormatter(),
             structlog.processors.StackInfoRenderer(),
+            # format_exc_info must precede redaction so exception text
+            # is already a string when the credential rewrite runs.
             structlog.processors.format_exc_info,
+            redact_event,
             renderer,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,

@@ -7,7 +7,8 @@ values are never inline (NFR-110): `credentials_ref` names an
 environment variable read at connection-issue time, and a DSN carrying
 literal credential material is refused. Neighbors: models.py composes
 the declarations into ConfigModel; merge.py applies the introduction
-and pinning rules; NX-5 consumes the declarations to build pools.
+and pinning rules; dsn_patterns.py is the one home of the credential
+shapes refused here; NX-5 consumes the declarations to build pools.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
+from .dsn_patterns import KEYWORD_CREDENTIAL_MARKER, URL_PASSWORD_AT_START
 from .errors import (
     InlineCredentialError,
     InvalidValueError,
@@ -30,12 +32,6 @@ POSTURES: tuple[Posture, ...] = ("read_only", "read_write")
 # "every endpoint's credentials_ref field is an environment-variable
 # name" — a shape check here; the battery scans for known literals).
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
-
-# Keyword credential markers in non-URL DSNs (ODBC-style strings).
-_KEYWORD_CREDENTIAL = re.compile(r"(?i)\b(password|pwd)\s*=")
-
-# URL userinfo carrying a password component: scheme://user:secret@host
-_URL_PASSWORD = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^/@]*:[^/@]+@")
 
 _KNOWN_KEYS = frozenset({"dsn", "posture", "credentials_ref"})
 
@@ -77,7 +73,7 @@ def endpoint_from_raw(
 
 def _refuse_inline_credentials(name: str, dsn: str, source: str) -> None:
     """NFR-110: no config source may carry a literal secret."""
-    if _URL_PASSWORD.search(dsn) or _KEYWORD_CREDENTIAL.search(dsn):
+    if URL_PASSWORD_AT_START.search(dsn) or KEYWORD_CREDENTIAL_MARKER.search(dsn):
         raise InlineCredentialError(
             f"endpoint {name!r} carries credential material in its DSN; "
             "declare a credentials_ref environment variable instead",
