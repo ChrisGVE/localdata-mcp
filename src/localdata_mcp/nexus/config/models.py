@@ -19,7 +19,8 @@ from dataclasses import (
     is_dataclass,
     replace,
 )
-from typing import Any, ClassVar, Iterator, Mapping
+from functools import lru_cache
+from typing import Any, ClassVar, Iterator, Mapping, get_type_hints
 
 from .endpoints import EndpointDeclaration
 from .fields import DERIVED, META_DERIVE, META_PIN, cfg_field
@@ -194,6 +195,18 @@ def iter_config_fields() -> Iterator[tuple[str, Field[Any]]]:
     for section_name in section_names():
         for fld in dataclass_fields(section_class(section_name)):
             yield section_name, fld
+
+
+@lru_cache(maxsize=None)
+def _section_hints(section_cls: type) -> Mapping[str, Any]:
+    return get_type_hints(section_cls)
+
+
+def field_type(section_name: str, field_name: str) -> Any:
+    """The resolved annotation of one model field — the single place
+    annotation strings become runtime types (env_derive.py and merge.py
+    both coerce through this)."""
+    return _section_hints(section_class(section_name))[field_name]
 
 
 def is_pin_eligible(section_name: str, fld: Field[Any]) -> bool:

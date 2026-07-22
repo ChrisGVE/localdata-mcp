@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import Field
-from typing import Any, Mapping, get_type_hints
+from typing import Any, Mapping
 
 from .errors import TypeMismatchError, UnknownFieldError
-from .models import iter_config_fields, section_class
+from .models import field_type, iter_config_fields
 
 ENV_PREFIX = "LOCALDATA"
 
@@ -58,7 +58,7 @@ def env_overrides(environ: Mapping[str, str]) -> dict[str, dict[str, Any]]:
 
 def _parse_env_value(raw: str, section: str, field_name: str) -> Any:
     """Parse one env string to the field's declared type."""
-    declared = _declared_type(section, field_name)
+    declared = field_type(section, field_name)
     try:
         if declared is int:
             return int(raw)
@@ -76,12 +76,6 @@ def _parse_env_value(raw: str, section: str, field_name: str) -> Any:
             source="env",
             attempted_value=raw,
         ) from error
-
-
-def _declared_type(section: str, field_name: str) -> Any:
-    """The resolved annotation of one model field."""
-    hints = get_type_hints(section_class(section))
-    return hints[field_name]
 
 
 def field_by_name(section: str, field_name: str) -> Field[Any]:
