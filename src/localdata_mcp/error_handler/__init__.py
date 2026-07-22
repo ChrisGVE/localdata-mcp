@@ -13,17 +13,8 @@ Key Features:
 - Integration with SecurityManager, ConnectionManager, and TimeoutManager
 """
 
-from .circuit_breaker import (
-    CircuitBreaker,
-    CircuitBreakerConfig,
-    CircuitBreakerRegistry,
-    CircuitBreakerStats,
-    circuit_breaker_protection,
-)
-from .error_logging import (
-    ErrorLogger,
-    ErrorMetrics,
-)
+# The exceptions module is pure stdlib and is what v3's kept feeder
+# (error_mappers.py -> ErrorCategory) needs; it imports unconditionally.
 from .exceptions import (
     CircuitState,
     ConfigurationError,
@@ -37,23 +28,42 @@ from .exceptions import (
     RetryStrategy,
     SecurityViolationError,
 )
-from .handler import (
-    ErrorHandler,
-    get_circuit_breaker,
-    get_error_handler,
-    handle_error,
-    initialize_error_handler,
-)
-from .recovery import (
-    ErrorRecoveryManager,
-    RecoveryAction,
-    RecoveryStrategy,
-)
-from .retry import (
-    RetryableOperation,
-    RetryPolicy,
-    retry_on_failure,
-)
+
+# The remaining legacy machinery depends on packages the v3 manifest no
+# longer declares (e.g. prometheus_client). Guarded like the package
+# root and server/__init__ (E0/E2 precedent): the legacy path degrades,
+# the kept feeder chain stays importable until E15 deletes the rest.
+try:
+    from .circuit_breaker import (
+        CircuitBreaker,
+        CircuitBreakerConfig,
+        CircuitBreakerRegistry,
+        CircuitBreakerStats,
+        circuit_breaker_protection,
+    )
+    from .error_logging import (
+        ErrorLogger,
+        ErrorMetrics,
+    )
+    from .handler import (
+        ErrorHandler,
+        get_circuit_breaker,
+        get_error_handler,
+        handle_error,
+        initialize_error_handler,
+    )
+    from .recovery import (
+        ErrorRecoveryManager,
+        RecoveryAction,
+        RecoveryStrategy,
+    )
+    from .retry import (
+        RetryableOperation,
+        RetryPolicy,
+        retry_on_failure,
+    )
+except ImportError:  # pragma: no cover - legacy-only dependency gap
+    pass
 
 __all__ = [
     # Enums
