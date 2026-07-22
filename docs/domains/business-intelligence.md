@@ -142,8 +142,14 @@ F=3, M=3. A dimension in which every customer ties — an order log where all of
 number of orders — carries no ordering, so every customer scores the neutral 2 on it and is
 separated by the other two.
 
-Customers are assigned to named segments based on combined score patterns. Common segments include
-Champions (4,4,4), At Risk (low recency score with high F/M), and Lost (low on all three).
+Customers are assigned to named segments by a fixed priority cascade over the three 1–4 scores,
+tested in order and stopping at the first match. Champions require R≥4, F≥4 and M≥3. At Risk reads
+like a catch-all from its rule alone, but by the time the cascade reaches it every customer scoring
+F≥2 or R≥3 is already claimed, so it captures exactly the infrequent, lapsed buyers — F=1 and R≤2 —
+not high-value ones. Two named segments never appear on the 1–4 scale: **Lost**, whose rule fires
+only when frequency or monetary scores 0, which the scoring never produces; and **Need Attention**,
+whose F≥3, M≥3 customers are always caught one step earlier by Loyal Customers. Both would surface
+only if the scoring range changed.
 
 **When to use:** Initial customer health audit, churn prevention targeting, email list tiering,
 loyalty programme design.
@@ -157,8 +163,9 @@ loyalty programme design.
   the query itself (compute a day count against a literal date) if you need reproducibility.
 
 **Interpretation:** Customers in the Champions segment are high-value and recent — they should be
-rewarded and surveyed. At Risk customers had strong past behaviour but are lapsing — they warrant
-intervention. Compare `segment_summary` counts across time periods to track portfolio health.
+rewarded and surveyed. At Risk customers scored lowest on frequency and are not recent — infrequent,
+lapsing buyers rather than former high-spenders — so they warrant win-back rather than premium
+retention effort. Compare `segment_summary` counts across time periods to track portfolio health.
 
 ---
 
