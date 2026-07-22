@@ -21,6 +21,14 @@ from localdata_mcp.server.mcp_app import app
 
 GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("ping", {}),
+    ("probe_table", {"rows": 3}),
+    ("probe_vector", {"length": 3}),
+    ("probe_matrix", {"size": 3}),
+    ("probe_model", {"points": 3}),
+    ("probe_graph", {"nodes": 3}),
+    ("probe_geo", {"points": 3}),
+    ("probe_chart", {"points": 3}),
+    ("probe_sink", {"text": "probe"}),
 )
 
 

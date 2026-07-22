@@ -30,4 +30,52 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain=None,
     ),
+    "probe_table": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain=None,
+    ),
+    "probe_vector": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.VECTOR,
+        streaming_capable=False,
+        domain=None,
+    ),
+    "probe_matrix": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.MATRIX,
+        streaming_capable=False,
+        domain=None,
+    ),
+    "probe_model": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.FITTED_MODEL,
+        streaming_capable=False,
+        domain=None,
+    ),
+    "probe_graph": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.GRAPH,
+        streaming_capable=False,
+        domain=None,
+    ),
+    "probe_geo": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.GEO,
+        streaming_capable=False,
+        domain=None,
+    ),
+    "probe_chart": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.CHART_SPEC,
+        streaming_capable=False,
+        domain=None,
+    ),
+    "probe_sink": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.NONE,
+        streaming_capable=False,
+        domain=None,
+    ),
 }
