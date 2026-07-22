@@ -18,6 +18,7 @@ from .manager import (
     logging_phase,
     reconfigure,
 )
+from .report import log_startup_report
 
 # Section 4e: stderr-only logging is active from first import — any
 # component that can log can only ever log to stderr, config or none.
@@ -28,6 +29,7 @@ __all__ = [
     "bootstrap",
     "get_logger",
     "log_context",
+    "log_startup_report",
     "logging_phase",
     "reconfigure",
 ]

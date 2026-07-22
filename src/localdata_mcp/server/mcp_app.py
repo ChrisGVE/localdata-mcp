@@ -21,7 +21,7 @@ from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
 
 from ..nexus.config import ConfigLoadResult, ConfigurationError, load_config
-from ..nexus.observability import get_logger, reconfigure
+from ..nexus.observability import get_logger, log_startup_report, reconfigure
 from .fd_guard import StdoutGuard, install_stdout_guard
 
 app = FastMCP("localdata")
@@ -72,9 +72,9 @@ def main() -> int:
     # Parameter-driven by design: PRD S8 declares no logging rows yet,
     # so reconfigure() applies its defaults until such rows exist.
     reconfigure()
+    log_startup_report(load_result)
     get_logger(__name__).info(
         "starting stdio transport",
-        refusals=len(load_result.refusals),
         endpoints=len(load_result.model.endpoints),
     )
     anyio.run(serve, guard)
