@@ -25,7 +25,10 @@ V3_PACKAGES: tuple[str, ...] = (
 # New-tree modules living beside legacy files in a non-gated package
 # (server/ keeps its legacy members until E15 deletes them); each is
 # swept individually. Extended as epics add guarded entry points.
-GUARDED_EXTRA_FILES: tuple[str, ...] = ()
+GUARDED_EXTRA_FILES: tuple[str, ...] = (
+    "server/fd_guard.py",
+    "server/mcp_app.py",
+)
 
 # src/localdata_mcp — the root the package names above resolve against.
 SRC_ROOT = Path(__file__).resolve().parents[1]

@@ -28,6 +28,9 @@ jobs:
       - name: Sync environment
         run: uv sync --frozen --extra dev
       - name: Type-check the v3 tree
+        # The two server/ files are E2's new-tree modules living beside
+        # legacy files (nexus/gated_tree.py GUARDED_EXTRA_FILES); the
+        # rest of server/ stays legacy-excluded until E15.
         run: >
           uv run mypy
           src/localdata_mcp/nexus
@@ -36,6 +39,8 @@ jobs:
           src/localdata_mcp/process
           src/localdata_mcp/visualize
           src/localdata_mcp/testbench
+          src/localdata_mcp/server/fd_guard.py
+          src/localdata_mcp/server/mcp_app.py
 
   tests:
     name: pytest + coverage floor (new paths)
