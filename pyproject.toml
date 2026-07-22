@@ -46,6 +46,7 @@ dependencies = [
   # Configuration and runtime plumbing
   "pyyaml>=5.4.0",
   "toml>=0.10.0",
+  "tomli>=2.0.1; python_version < '3.11'",  # NX-2 loaders: tomllib backport
   "psutil>=5.8.0",     # memory usage monitoring
   "pydantic>=2.0.0",   # I/O-boundary validation
   "python-dotenv>=1.0.0",
@@ -85,6 +86,7 @@ dev = [
   "pandas-stubs",
   "types-toml",
   "types-PyYAML",
+  "hypothesis>=6.0.0", # NFR-507 property suites (merge/pin/env round-trip)
 ]
 geospatial = [
   # Native-code, heaviest footprint — the whole geospatial domain is opt-in.
