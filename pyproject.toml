@@ -1,6 +1,6 @@
 [project]
 name = "localdata-mcp"
-version = "2.1.0"
+version = "3.0.0.dev0"
 description = "MCP server giving LLM agents access to databases, files, graphs, and a full data science toolkit — 71 tools across 13 database types and 20+ file formats."
 readme = "README.md"
 authors = [
@@ -27,62 +27,84 @@ keywords = [
   "data-science", "llm", "claude", "anthropic", "ai-agent",
   "chatgpt", "copilot", "gemini", "cursor", "windsurf",
 ]
+# Core tier per ARCHITECTURE.md 7.1 — SQL engines, core file formats,
+# kv/graph/tree stores, the scientific stack, and the two version-pinned
+# security-critical libraries (asteval, sqlglot). Deliberately absent:
+# prometheus_client / python-json-logger (metrics capability dropped in v3),
+# tiktoken / ijson / ruptures (deferred — not in the 7.1 core list), and the
+# geospatial set (moved to the [geospatial] extra).
 dependencies = [
+  # MCP framework and data backbone
   "fastmcp>=3.0.0",
   "pandas>=1.3.0",
+  "numpy>=1.21.0",
+  # SQL engines (core floor: SQLite via stdlib, PostgreSQL, MySQL, DuckDB)
   "sqlalchemy>=1.4.0",
   "psycopg2-binary",
   "mysql-connector-python",
+  "duckdb>=1.0.0",     # newly declared — was used but undeclared pre-v3
+  # Configuration and runtime plumbing
   "pyyaml>=5.4.0",
   "toml>=0.10.0",
-  "psutil>=5.8.0",     # Memory usage monitoring
-  "tiktoken>=0.5.0",   # Token counting for query analysis
-  "pydantic>=2.0.0",   # Configuration validation and schema
-  "python-dotenv>=1.0.0", # Enhanced environment variable handling
-  # Spreadsheet format support
-  "openpyxl>=3.0.0",   # Excel .xlsx/.xlsm support
-  "defusedxml>=0.7.0", # Security for XML-based formats
-  "xlrd>=2.0.0",       # Legacy Excel .xls support
-  "odfpy>=1.4.0",      # LibreOffice Calc .ods support
-  "pyarrow>=10.0.0",   # Parquet/Feather analytical formats
-  "lxml>=4.6.0",       # XML format support
-  "numbers-parser>=4.0.0", # Apple Numbers .numbers support
-  "h5py>=3.0.0",       # HDF5 scientific data format support
-  "ijson>=3.2.0",      # Streaming JSON processing for memory efficiency
-  "structlog>=23.0.0",  # Structured logging with JSON output
-  "prometheus_client>=0.17.0",  # Metrics collection and exposition
-  "python-json-logger>=2.0.0",  # Additional JSON logging capabilities
-  # Graph and RDF/SPARQL support
-  "networkx>=3.0",              # Graph algorithms and DOT/GML/GraphML I/O
-  "pydot>=2.0.0",               # DOT (Graphviz) format parsing (pure Python)
-  "rdflib>=7.0.0",              # RDF storage and SPARQL for local files
-  "SPARQLWrapper>=2.0.0",       # SPARQL endpoint HTTP client
-  # Data science / pipeline framework (v2)
+  "psutil>=5.8.0",     # memory usage monitoring
+  "pydantic>=2.0.0",   # I/O-boundary validation
+  "python-dotenv>=1.0.0",
+  # Core file formats
+  "openpyxl>=3.0.0",   # Excel .xlsx/.xlsm
+  "defusedxml>=0.7.0", # XML parse hardening
+  "xlrd>=2.0.0",       # legacy Excel .xls
+  "odfpy>=1.4.0",      # LibreOffice Calc .ods
+  "numbers-parser>=4.0.0", # Apple Numbers
+  "h5py>=3.0.0",       # HDF5
+  "pyarrow>=10.0.0",   # CSV/Parquet/Feather/Arrow
+  "lxml>=4.6.0",       # XML
+  # Logging
+  "structlog>=23.0.0", # structured logging, stderr-only in v3
+  # Graph/tree and RDF/SPARQL stores (core, not extras-gated)
+  "networkx>=3.0",
+  "pydot>=2.0.0",
+  "rdflib>=7.0.0",
+  "SPARQLWrapper>=2.0.0",
+  # Scientific stack
   "scipy>=1.9.0",
   "scikit-learn>=1.1.0",
   "statsmodels>=0.13.0",
-  "numpy>=1.21.0",
-  # Change point detection
-  "ruptures>=1.1.0",
-  # Geospatial analysis
+  # Security-critical, exact-pinned; CI asserts pin shape and lock agreement
+  "asteval==1.0.9",    # safe-AST expression evaluation
+  "sqlglot==30.13.0",  # SQL AST allow-list validation
+  # Visualization
+  "matplotlib>=3.8.0", # Agg headless backend, OO API only
+]
+
+# Extras tiers per ARCHITECTURE.md 7.1 — one extra, one concern.
+[project.optional-dependencies]
+dev = [
+  "pytest>=6.0.0",
+  "pytest-cov",
+  "mypy",              # blocking in v3 CI, not advisory
+  "pandas-stubs",
+  "types-toml",
+  "types-PyYAML",
+]
+geospatial = [
+  # Native-code, heaviest footprint — the whole geospatial domain is opt-in.
+  "rasterio>=1.3.0",
+  "rtree>=1.0.0",
+  "scikit-gstat>=1.0.0",    # imports as `skgstat` (geostatistics/variograms)
   "geopandas>=0.12.0",
   "shapely>=2.0.0",
   "fiona>=1.9.0",
   "pyproj>=3.4.0",
 ]
-
-[project.optional-dependencies]
-dev = [
-  "pytest>=6.0.0",
-  "pytest-cov",
-  "black",
-  "isort",
-  "flake8",
-  "mypy",
-  "numbers-parser>=4.15.0", # Apple Numbers .numbers support (optional)
-  "pandas-stubs",
-  "types-toml",
-  "types-PyYAML",
+umap = [
+  "umap-learn>=0.5.0",      # UMAP dimensionality reduction
+]
+mssql = [
+  "pyodbc>=5.0.0",          # MS SQL Server via ODBC
+  "pymssql>=2.2.0",         # MS SQL Server native driver
+]
+enterprise = [
+  "oracledb>=2.0.0",        # Oracle Database (licensed test target)
 ]
 modern-databases = [
   "redis>=6.0.0",           # Redis key-value store
@@ -91,10 +113,6 @@ modern-databases = [
   "influxdb-client>=1.40.0", # InfluxDB time-series database
   "neo4j>=5.0.0",           # Neo4j graph database
   "couchdb>=1.2.0",         # CouchDB document database
-]
-enterprise = [
-  "oracledb>=2.0.0",        # Oracle Database support
-  "pymssql>=2.2.0",         # MS SQL Server support
 ]
 
 [project.urls]

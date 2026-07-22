@@ -15,6 +15,14 @@ except PackageNotFoundError:  # running from a source tree with nothing installe
 __author__ = "Christian C. Berclaz"
 __email__ = "christian.berclaz@mac.com"
 
-from .localdata_mcp import DatabaseManager, main
+# The legacy v2 server is scaffolded beside the v3 tree until E15 deletes it.
+# Its import chain reaches dependencies the v3 manifest removed, so a hard
+# import here would break every v3 subpackage (importing localdata_mcp.nexus
+# first executes this file). Legacy stays importable where its dependencies
+# happen to exist, and is skipped otherwise.
+try:
+    from .localdata_mcp import DatabaseManager, main
 
-__all__ = ["DatabaseManager", "main"]
+    __all__ = ["DatabaseManager", "main"]
+except ImportError:  # legacy dependencies absent under the v3 manifest
+    __all__ = []
