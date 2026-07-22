@@ -205,15 +205,8 @@ def _project_endpoint(
 ) -> None:
     """A project layer may only downgrade a declared posture."""
     if name not in declared:
-        refusals.append(
-            IntroductionRefusedError(
-                f"{src.name} may not mint endpoint {name!r} "
-                "(operator-trust layers only)",
-                field_path=f"endpoints.{name}",
-                source=src.name,
-                attempted_value=dict(table),
-            )
-        )
+        refusal = _minting_refusal(name, table, src)
+        refusals.append(refusal)
         contributions[name].append(
             Contribution(src.name, src.layer, dict(table), "introduction_refused")
         )
@@ -225,16 +218,31 @@ def _project_endpoint(
             Contribution(src.name, src.layer, dict(table), "narrowed")
         )
         return
-    refusals.append(
-        PinShadowingError(
-            f"{src.name} may only narrow endpoint {name!r} to "
-            "posture = read_only; anything else shadows the operator "
-            "declaration",
-            field_path=f"endpoints.{name}",
-            source=src.name,
-            attempted_value=dict(table),
-        )
-    )
+    refusals.append(_narrowing_refusal(name, table, src))
     contributions[name].append(
         Contribution(src.name, src.layer, dict(table), "pin_refused")
+    )
+
+
+def _minting_refusal(
+    name: str, table: Mapping[str, Any], src: LayerSource
+) -> ConfigurationError:
+    return IntroductionRefusedError(
+        f"{src.name} may not mint endpoint {name!r} (operator-trust layers only)",
+        field_path=f"endpoints.{name}",
+        source=src.name,
+        attempted_value=dict(table),
+    )
+
+
+def _narrowing_refusal(
+    name: str, table: Mapping[str, Any], src: LayerSource
+) -> ConfigurationError:
+    return PinShadowingError(
+        f"{src.name} may only narrow endpoint {name!r} to "
+        "posture = read_only; anything else shadows the operator "
+        "declaration",
+        field_path=f"endpoints.{name}",
+        source=src.name,
+        attempted_value=dict(table),
     )
