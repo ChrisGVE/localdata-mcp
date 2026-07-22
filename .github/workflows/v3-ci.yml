@@ -1,0 +1,97 @@
+# v3 CI — gates for the NEW tree only (src/localdata_mcp/{nexus,ingest,
+# explore,process,visualize,testbench} and tests/v3). Legacy packages are
+# excluded from every job here until E15 deletes them; the legacy workflows
+# keep serving main.
+#
+# Two numeric gates live HERE and only here (their single configuration home):
+#   - coverage floor: 85 (--cov-fail-under below) — never restated in test code
+#   - CVE gate: PR-blocking at CVSS >= 7.0 (--threshold below), all severities
+#     reported by the checker script
+name: v3 CI
+
+on:
+  push:
+    branches: [v3, main]
+  pull_request:
+    branches: [v3, main]
+
+env:
+  UV_PYTHON: "3.12"
+
+jobs:
+  mypy:
+    name: mypy (new paths, blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync environment
+        run: uv sync --frozen --extra dev
+      - name: Type-check the v3 tree
+        run: >
+          uv run mypy
+          src/localdata_mcp/nexus
+          src/localdata_mcp/ingest
+          src/localdata_mcp/explore
+          src/localdata_mcp/process
+          src/localdata_mcp/visualize
+          src/localdata_mcp/testbench
+
+  tests:
+    name: pytest + coverage floor (new paths)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync environment
+        run: uv sync --frozen --extra dev
+      - name: Run the v3 suite with the coverage floor
+        run: >
+          uv run pytest tests/v3/
+          --cov=src/localdata_mcp/nexus
+          --cov=src/localdata_mcp/ingest
+          --cov=src/localdata_mcp/explore
+          --cov=src/localdata_mcp/process
+          --cov=src/localdata_mcp/visualize
+          --cov=src/localdata_mcp/testbench
+          --cov-report=term-missing
+          --cov-fail-under=85
+
+  pip-audit:
+    name: dependency CVE gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Export the locked dependency closure
+        run: uv export --frozen --all-extras --no-emit-project -o requirements-audit.txt
+      - name: Audit the locked closure
+        # pip-audit exits non-zero on ANY finding; the threshold gate below
+        # decides blocking, so findings must not fail this step directly.
+        run: >
+          uvx pip-audit -r requirements-audit.txt --no-deps -f json -o audit.json
+          || echo "pip-audit reported findings; threshold gate decides"
+      - name: Apply the CVSS threshold gate
+        run: >
+          uv run --no-project --with cvss python
+          scripts/check_audit_severity.py --report audit.json --threshold 7.0
+
+  pin-drift:
+    name: exact-pin drift check (sqlglot, asteval)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert exact pins agree with uv.lock
+        run: python3 scripts/check_pin_drift.py
+
+  drift-check:
+    name: generated-artifact drift (placeholder)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "placeholder until E3/E14 - contract and inventory drift checks land with NX-1"
+
+  batteries:
+    name: battery bench (placeholder)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "placeholder until E3/E14 - the assembled battery bench lands in E14"
