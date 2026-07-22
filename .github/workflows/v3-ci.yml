@@ -90,10 +90,15 @@ jobs:
         run: python3 scripts/check_pin_drift.py
 
   drift-check:
-    name: generated-artifact drift (placeholder)
+    name: generated-artifact drift (NX-1)
     runs-on: ubuntu-latest
     steps:
-      - run: echo "placeholder until E3/E14 - contract and inventory drift checks land with NX-1"
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync environment
+        run: uv sync --frozen --extra dev
+      - name: Regenerate and compare the committed NX-1 artifacts
+        run: uv run python -m localdata_mcp.nexus.contract.check_drift
 
   batteries:
     name: battery bench (placeholder)
