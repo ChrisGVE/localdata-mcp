@@ -28,6 +28,8 @@ V3_PACKAGES: tuple[str, ...] = (
 GUARDED_EXTRA_FILES: tuple[str, ...] = (
     "server/fd_guard.py",
     "server/mcp_app.py",
+    "server/skeleton_tools.py",
+    "server/tools_generated.py",
 )
 
 # src/localdata_mcp — the root the package names above resolve against.

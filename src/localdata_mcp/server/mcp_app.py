@@ -5,10 +5,12 @@ logging up in stderr-only bootstrap mode, load NX-2's layered config,
 reconfigure logging from it, then serve the stdio transport over the
 guarded descriptor — driving FastMCP's low-level `_mcp_server.run`
 inside `mcp.server.stdio.stdio_server(stdout=...)`, bypassing the
-argless `run_stdio_async` (PRD S5.3). WALKING SKELETON: the single
-`ping` tool below is transport-proving wiring only — NX-1's generated
-tool registry replaces it in E3. Neighbors: fd_guard.py supplies the
-guard; nexus/observability and nexus/config are the booted nexuses.
+argless `run_stdio_async` (PRD S5.3). Tools come EXCLUSIVELY from the
+NX-1 generated wrapper module (tools_generated.py, artifact 1 of
+ARCHITECTURE.md section 6.1) — startup imports it, never generates.
+Neighbors: fd_guard.py supplies the guard; skeleton_tools.py declares
+the walking-skeleton ToolSpecs the wrapper currently registers;
+nexus/observability and nexus/config are the booted nexuses.
 """
 
 from __future__ import annotations
@@ -23,14 +25,10 @@ from mcp.server.stdio import stdio_server
 from ..nexus.config import ConfigLoadResult, ConfigurationError, load_config
 from ..nexus.observability import get_logger, log_startup_report, reconfigure
 from .fd_guard import StdoutGuard, install_stdout_guard
+from .tools_generated import register_tools
 
 app = FastMCP("localdata")
-
-
-@app.tool
-def ping() -> str:
-    """Walking-skeleton connectivity probe (replaced by NX-1 in E3)."""
-    return "pong"
+register_tools(app)
 
 
 async def serve(guard: StdoutGuard) -> None:
