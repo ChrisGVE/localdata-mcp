@@ -43,7 +43,7 @@ connect_database("cfg", "toml", "./config.toml")
 get_node("cfg")               # Root summary: node count, depth, property count
 get_node("cfg", "server")     # Properties of the "server" node and child count
 get_children("cfg", "server") # Paginated list of child nodes
-get_value("cfg", "server", "port")  # → 8080
+get_value("cfg", "server", "port")  # -> 8080
 ```
 
 ### Editing
