@@ -23,22 +23,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from ..gated_tree import iter_v3_sources
 from .models import ConfigModel, iter_config_fields
-
-# The v3 packages the gate covers — the same set v3-ci.yml gates.
-_V3_PACKAGES = (
-    "nexus",
-    "ingest",
-    "explore",
-    "process",
-    "visualize",
-    "testbench",
-)
 
 # The one legitimate home of the defaults (plus its testbench section).
 _HOME_FILES = {"models.py", "models_testbench.py"}
-
-_SRC_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)
@@ -83,13 +72,11 @@ def _split_by_distinctiveness() -> tuple[set[float], set[int]]:
 
 def check_one_default_site(root: Path | None = None) -> list[Violation]:
     """Scan the v3 tree; a non-empty result is an NFR-403 failure."""
-    base = _SRC_ROOT if root is None else root
     violations: list[Violation] = []
-    for package in _V3_PACKAGES:
-        for path in sorted((base / package).rglob("*.py")):
-            if path.name in _HOME_FILES and path.parent.name == "config":
-                continue
-            violations.extend(scan_source(path.read_text(encoding="utf-8"), str(path)))
+    for path in iter_v3_sources(root):
+        if path.name in _HOME_FILES and path.parent.name == "config":
+            continue
+        violations.extend(scan_source(path.read_text(encoding="utf-8"), str(path)))
     return violations
 
 
