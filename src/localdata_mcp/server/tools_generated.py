@@ -14,6 +14,7 @@ from fastmcp import FastMCP
 
 from localdata_mcp.nexus.contract.registry import default_registry
 from localdata_mcp.nexus.contract.spec_modules import load_spec_modules
+from localdata_mcp.nexus.response.shaping import shaped_call
 
 
 def register_tools(app: FastMCP) -> None:
@@ -31,7 +32,7 @@ def register_tools(app: FastMCP) -> None:
         Output shape: SCALAR.
         Streaming-capable: no.
         """
-        return _impl_ping()
+        return shaped_call("ping", _impl_ping, {})
 
     app.tool(ping)
 
@@ -48,7 +49,7 @@ def register_tools(app: FastMCP) -> None:
         Args:
             rows: How many rows the probe table carries.
         """
-        return _impl_probe_table(rows=rows)
+        return shaped_call("probe_table", _impl_probe_table, {"rows": rows})
 
     app.tool(probe_table)
 
@@ -65,7 +66,7 @@ def register_tools(app: FastMCP) -> None:
         Args:
             length: How many entries the series carries.
         """
-        return _impl_probe_vector(length=length)
+        return shaped_call("probe_vector", _impl_probe_vector, {"length": length})
 
     app.tool(probe_vector)
 
@@ -82,7 +83,7 @@ def register_tools(app: FastMCP) -> None:
         Args:
             size: Row and column count of the matrix.
         """
-        return _impl_probe_matrix(size=size)
+        return shaped_call("probe_matrix", _impl_probe_matrix, {"size": size})
 
     app.tool(probe_matrix)
 
@@ -99,7 +100,7 @@ def register_tools(app: FastMCP) -> None:
         Args:
             points: Sample size drawn from y = 2n + 1.
         """
-        return _impl_probe_model(points=points)
+        return shaped_call("probe_model", _impl_probe_model, {"points": points})
 
     app.tool(probe_model)
 
@@ -116,7 +117,7 @@ def register_tools(app: FastMCP) -> None:
         Args:
             nodes: How many nodes the path graph carries.
         """
-        return _impl_probe_graph(nodes=nodes)
+        return shaped_call("probe_graph", _impl_probe_graph, {"nodes": nodes})
 
     app.tool(probe_graph)
 
@@ -133,7 +134,7 @@ def register_tools(app: FastMCP) -> None:
         Args:
             points: How many geometry-bearing rows to emit.
         """
-        return _impl_probe_geo(points=points)
+        return shaped_call("probe_geo", _impl_probe_geo, {"points": points})
 
     app.tool(probe_geo)
 
@@ -150,7 +151,7 @@ def register_tools(app: FastMCP) -> None:
         Args:
             points: How many x/y pairs the chart spec plots.
         """
-        return _impl_probe_chart(points=points)
+        return shaped_call("probe_chart", _impl_probe_chart, {"points": points})
 
     app.tool(probe_chart)
 
@@ -167,6 +168,6 @@ def register_tools(app: FastMCP) -> None:
         Args:
             text: Payload whose size the sink reports.
         """
-        return _impl_probe_sink(text=text)
+        return shaped_call("probe_sink", _impl_probe_sink, {"text": text})
 
     app.tool(probe_sink)

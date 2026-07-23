@@ -13,6 +13,7 @@ the child it launches.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -75,7 +76,11 @@ class TestL3RoundTrip:
     ) -> None:
         response = l3_session.responses_by_id()[2]
         content = response["result"]["content"]
-        assert content[0]["text"] == "pong"
+        # E7.2: the wrapper ships the FR-403 envelope; `inline` carries
+        # the scalar the tool produced.
+        envelope = json.loads(content[0]["text"])
+        assert envelope["inline"] == "pong"
+        assert envelope["error"] is None
 
     def test_logs_went_to_stderr_not_stdout(self, l3_session: SessionResult) -> None:
         assert b"starting stdio transport" in l3_session.stderr

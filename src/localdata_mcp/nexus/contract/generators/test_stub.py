@@ -39,6 +39,7 @@ hand edits fail CI through nexus/contract/check_drift.py.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import anyio
@@ -54,6 +55,20 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
 
 _FOOTER = """)
 
+_ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}
+
+
+def _envelope_of(result: Any) -> "dict[str, Any]":
+    \"\"\"The wire envelope from a client result: structured content when
+    the transport carries it, else the JSON text block.\"\"\"
+    if isinstance(result.structured_content, dict) and (
+        set(result.structured_content) >= _ENVELOPE_REGIONS
+    ):
+        return result.structured_content
+    payload = json.loads(result.content[0].text)
+    assert isinstance(payload, dict)
+    return payload
+
 
 @pytest.mark.parametrize(
     ("name", "arguments"),
@@ -65,6 +80,16 @@ def test_tool_answers_well_formed(name: str, arguments: "dict[str, Any]") -> Non
         async with Client(app) as client:
             result = await client.call_tool(name, arguments)
             assert not result.is_error
+            envelope = _envelope_of(result)
+            # FR-403: the four-region schema on every tool, and error
+            # exclusive with the other regions.
+            assert set(envelope) >= _ENVELOPE_REGIONS
+            if envelope["error"] is None:
+                assert envelope["inline"] is not None
+            else:
+                assert envelope["inline"] is None
+                assert envelope["data"] is None
+                assert envelope["composition_metadata"] is None
 
     anyio.run(session)
 

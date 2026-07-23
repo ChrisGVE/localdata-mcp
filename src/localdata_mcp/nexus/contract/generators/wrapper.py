@@ -33,6 +33,7 @@ from fastmcp import FastMCP
 
 from localdata_mcp.nexus.contract.registry import default_registry
 from localdata_mcp.nexus.contract.spec_modules import load_spec_modules
+from localdata_mcp.nexus.response.shaping import shaped_call
 
 '''
 
@@ -48,13 +49,16 @@ def _render_one(spec: ToolSpec) -> str:
     signature = ", ".join(
         f"{param.name}: {param.annotation.__name__}" for param in spec.params
     )
-    forward = ", ".join(f"{param.name}={param.name}" for param in spec.params)
+    arguments = ", ".join(f'"{param.name}": {param.name}' for param in spec.params)
     return (
         f'    _impl_{spec.name} = registry.lookup("{spec.name}").func\n'
         f"\n"
         f"    def {spec.name}({signature}) -> Any:\n"
         f"{_indent_docstring(render_docstring(spec))}\n"
-        f"        return _impl_{spec.name}({forward})\n"
+        # Envelope-shaping is wrapper-applied, never opt-in (E7.2/O-1):
+        # every call routes through the one shaping seam.
+        f'        return shaped_call("{spec.name}", _impl_{spec.name}, '
+        f"{{{arguments}}})\n"
         f"\n"
         f"    app.tool({spec.name})\n"
     )

@@ -11,6 +11,7 @@ the wiring the stubs assume.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import anyio
@@ -27,6 +28,18 @@ def _run(coro_fn: Any) -> Any:
     return anyio.run(coro_fn)
 
 
+def _envelope_of(result: Any) -> dict[str, Any]:
+    """The wire envelope from a client result: structured content when
+    the transport carries it, else the JSON text block."""
+    if isinstance(result.structured_content, dict) and "inline" in (
+        result.structured_content
+    ):
+        return result.structured_content
+    payload = json.loads(result.content[0].text)
+    assert isinstance(payload, dict)
+    return payload
+
+
 class TestGeneratedRegistration:
     def test_ping_served_through_generated_wrapper(self) -> None:
         async def session() -> Any:
@@ -38,9 +51,13 @@ class TestGeneratedRegistration:
         tools, result = _run(session)
         assert "ping" in tools
         assert not result.is_error
-        # Wrappers return `Any` (no structured-output schema), so the
-        # scalar rides the text content block.
-        assert result.content[0].text == "pong"  # type: ignore[union-attr]
+        # E7.2: the wrapper applies envelope shaping — the payload is
+        # the four-region FR-403 envelope, `inline` carrying the scalar.
+        envelope = _envelope_of(result)
+        assert set(envelope) >= {"inline", "data", "composition_metadata", "error"}
+        assert envelope["inline"] == "pong"
+        assert envelope["data"] == "pong"
+        assert envelope["error"] is None
 
     def test_every_registered_spec_is_served(self) -> None:
         load_spec_modules()

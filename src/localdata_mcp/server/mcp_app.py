@@ -23,7 +23,9 @@ from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
 
 from ..nexus.config import ConfigLoadResult, ConfigurationError, load_config
+from ..nexus.contract.registry import default_registry
 from ..nexus.observability import get_logger, log_startup_report, reconfigure
+from ..nexus.response.shaping import configure_shaping
 from .fd_guard import StdoutGuard, install_stdout_guard
 from .tools_generated import register_tools
 
@@ -70,6 +72,9 @@ def main() -> int:
     # Parameter-driven by design: PRD S8 declares no logging rows yet,
     # so reconfigure() applies its defaults until such rows exist.
     reconfigure()
+    # E7.2: install the loaded model as the envelope shaper's config —
+    # before this call the shaper enforces the declared S8 defaults.
+    configure_shaping(load_result.model, default_registry())
     log_startup_report(load_result)
     get_logger(__name__).info(
         "starting stdio transport",
