@@ -735,3 +735,98 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("find_table", _impl_find_table, arguments)
 
     app.tool(find_table)
+
+    _impl_profile_data = registry.lookup("profile_data").func
+
+    def profile_data(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None) -> Any:
+        """
+        Profile a tabular source's data quality: per-column null counts, inferred types, numeric ranges, and cardinality. Address with exactly one of endpoint= or path=; endpoint sources take exactly one of table= or query=.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: explore.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        return shaped_call("profile_data", _impl_profile_data, arguments)
+
+    app.tool(profile_data)
+
+    _impl_search_data = registry.lookup("search_data").func
+
+    def search_data(query: str, endpoint: str | None = None, path: str | None = None, target: str | None = None, columns: str | None = None, case_sensitive: bool | None = None) -> Any:
+        """
+        Regex-search a tabular source's cell values. Address with exactly one of endpoint= or path=; target= is the table or SQL statement to search (omit for a document/table file); query= is the search pattern.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: explore.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            target (optional): What to search: a table name or SQL statement on an endpoint; a SQL statement on a database file; omit for a document/table format file.
+            query: The search pattern (a regular expression).
+            columns (optional): Comma-separated column names to search (omitted = all).
+            case_sensitive (optional): Case-sensitive matching (default true).
+        """
+        arguments: dict[str, Any] = {"query": query}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if target is not None:
+            arguments["target"] = target
+        if columns is not None:
+            arguments["columns"] = columns
+        if case_sensitive is not None:
+            arguments["case_sensitive"] = case_sensitive
+        return shaped_call("search_data", _impl_search_data, arguments)
+
+    app.tool(search_data)
+
+    _impl_map_categories = registry.lookup("map_categories").func
+
+    def map_categories(column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None) -> Any:
+        """
+        Map one column's categorical values: distinct values with frequencies and a suggested encoding (label vs one-hot) — a report only, nothing is transformed or persisted. Address with exactly one of endpoint= or path=.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: explore.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            column: The column whose categories to map.
+        """
+        arguments: dict[str, Any] = {"column": column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        return shaped_call("map_categories", _impl_map_categories, arguments)
+
+    app.tool(map_categories)

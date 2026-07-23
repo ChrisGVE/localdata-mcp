@@ -24,6 +24,9 @@ SPEC_MODULES: Final[tuple[str, ...]] = (
     "localdata_mcp.ingest.connectors.graph_tree.tools",
     "localdata_mcp.ingest.connectors.graph_tree.graph_tools",
     "localdata_mcp.explore.tools",
+    "localdata_mcp.explore.quality",
+    "localdata_mcp.explore.search",
+    "localdata_mcp.explore.categorical",
 )
 
 

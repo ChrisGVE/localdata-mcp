@@ -55,6 +55,9 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("describe_database", {"endpoint": "probe"}),
     ("describe_table", {"endpoint": "probe", "table": "probe"}),
     ("find_table", {"endpoint": "probe", "name_pattern": "probe"}),
+    ("profile_data", {}),
+    ("search_data", {"query": "probe"}),
+    ("map_categories", {"column": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

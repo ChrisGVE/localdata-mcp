@@ -504,6 +504,28 @@ class Chokepoint:
         with self._wired(endpoint_name, record.backend_kind):
             return introspection.table_names(record)
 
+    def read_table(self, endpoint_name: str, table: str) -> "Result | None":
+        """A whole-table read for the Explore family (X-2/X-4's
+        `table=` slot): membership verified against the catalog FIRST,
+        the identifier quoted by the dialect's own preparer, the fetch
+        admission-gated like every read. None when the table does not
+        exist; store kinds refused as catalog reads."""
+        record = self._persistence.record(endpoint_name)
+        self._refuse_store_catalog(endpoint_name, record.backend_kind)
+        with self._wired(endpoint_name, record.backend_kind):
+            if table not in introspection.table_names(record):
+                return None
+            statement = introspection.quoted_select(record, table)
+            with self._persistence.connection(endpoint_name) as connection:
+                columns, rows = fetch_bounded(
+                    connection,
+                    statement,
+                    None,
+                    self._bounds,
+                    self._config.query.default_chunk_size,
+                )
+        return Result(columns=columns, rows=rows, category="query")
+
     def _refuse_store_catalog(self, endpoint_name: str, backend_kind: str) -> None:
         if backend_kind in ("kv", "tree", "graph", "rdf"):
             raise GuardRefusedError(

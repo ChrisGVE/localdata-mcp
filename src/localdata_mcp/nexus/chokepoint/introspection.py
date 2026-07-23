@@ -225,3 +225,16 @@ def _rdf_summary(record: ConnectionRecord) -> dict[str, Any]:
         "predicate_count": predicate_count,
         "hint": "Query with query(endpoint, SPARQL).",
     }
+
+
+def quoted_select(record: ConnectionRecord, table: str) -> str:
+    """A whole-table SELECT with the identifier quoted by the
+    dialect's own rules — `table` has already been verified against
+    the catalog (guard.read_table), so quoting guards injection via a
+    crafted catalog name, not membership."""
+    if record.backend_kind == "duckdb":
+        quoted = '"' + table.replace('"', '""') + '"'
+    else:
+        engine = _engine_of(record)
+        quoted = engine.dialect.identifier_preparer.quote(table)
+    return f"SELECT * FROM {quoted}"  # nosec B608

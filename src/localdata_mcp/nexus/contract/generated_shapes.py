@@ -228,4 +228,22 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='explore',
     ),
+    "profile_data": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='explore',
+    ),
+    "search_data": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='explore',
+    ),
+    "map_categories": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='explore',
+    ),
 }

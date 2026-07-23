@@ -76,6 +76,26 @@ def missing_entity_refusal(detail: str, discovery_hint: str) -> GuardedExecution
     )
 
 
+def invalid_source_refusal(detail: str) -> GuardedExecutionError:
+    """X-2's exactly-one-source contract (E9): zero or both of the two
+    addressing parameters — or of a tool's second slot — is a
+    structured invalid-arguments refusal NAMING the parameters, never
+    a string-sniffing overload."""
+    return GuardedExecutionError(
+        StructuredError(
+            error_type=ErrorType.DATA_VALIDATION,
+            message=detail,
+            suggestion=(
+                "Supply exactly one source: endpoint= (an operator-declared "
+                "endpoint name — discover with list_endpoints()) OR path= (a "
+                "local file inside allowed_paths). For endpoint sources, "
+                "supply exactly one of table= or query=."
+            ),
+            retryable=False,
+        )
+    )
+
+
 def stream_refusal(failure: Exception) -> GuardedExecutionError:
     """I-4's structured stream refusals: the registry's own message
     (already caller-actionable) with the recovery path as the
