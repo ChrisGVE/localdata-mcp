@@ -59,6 +59,19 @@ _TOOL_PERMITTED = (
     "localdata_mcp.nexus.response",
 )
 
+# The composition engine's scoped widening (§6.3): NX-1 owns BOTH
+# halves of the FR-606 compatibility mechanism — the ToolSpec registry
+# and the declared adjacency table — and the composition engine is
+# their one declared consumer among tool packages. Only modules under
+# process/composition/ may import these two seams; contract.errors
+# rides along (the registry's typed refusals cross its lookups).
+_COMPOSITION_HOME = SRC_ROOT / "process" / "composition"
+_COMPOSITION_PERMITTED = _TOOL_PERMITTED + (
+    "localdata_mcp.nexus.contract.compatibility",
+    "localdata_mcp.nexus.contract.errors",
+    "localdata_mcp.nexus.contract.registry",
+)
+
 # Nexus-internal module sets: importing these from OUTSIDE the owning
 # package is a reachability violation (the seam is the package's other
 # modules or a named entry above).
@@ -106,7 +119,11 @@ class TestToolPackagesImportOnlyTheDeclaredSeams:
             and not any(
                 _resolved(module, symbol).startswith(permitted)
                 or module.startswith(permitted)
-                for permitted in _TOOL_PERMITTED
+                for permitted in (
+                    _COMPOSITION_PERMITTED
+                    if path.is_relative_to(_COMPOSITION_HOME)
+                    else _TOOL_PERMITTED
+                )
             )
         ]
         assert offenders == [], offenders
