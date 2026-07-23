@@ -25,6 +25,7 @@ from typing import Any, Callable, Mapping
 from localdata_mcp.nexus.chokepoint.guard import GuardedExecutionError
 from localdata_mcp.nexus.config.models import ConfigModel
 from localdata_mcp.nexus.contract.registry import ToolRegistry, default_registry
+from localdata_mcp.nexus.error.model import StructuredError
 from localdata_mcp.nexus.error.wire import wrap
 
 from .envelope import ResponseShaper, error_envelope
@@ -76,6 +77,28 @@ def shaped_call(
         return error_envelope(failure.structured).to_wire()
     except Exception as failure:
         return error_envelope(wrap(failure, "generic")).to_wire()
+    tripped = inspect(raw, config.process.sentinel_max_condition_number)
+    if tripped is not None:
+        return error_envelope(tripped).to_wire()
+    return shaper.shape_envelope(raw, spec).to_wire()
+
+
+def stage_sentinel(raw: Any) -> "StructuredError | None":
+    """The E11 engine's per-stage degenerate check: the shared sentinel
+    at the configured threshold, behind this seam so the composition
+    package never reads NX-2 (section 6.2). A tripped mid-chain result
+    becomes a stage failure instead of silently feeding downstream."""
+    _shaper, config, _registry = _STATE.current()
+    return inspect(raw, config.process.sentinel_max_condition_number)
+
+
+def shaped_stage_envelope(tool_name: str, raw: Any) -> dict[str, Any]:
+    """One leaf of the E11 multi-leaf response map: the standard
+    sentinel-checked NX-7 envelope for an ALREADY-RUN implementation
+    result (section 6.3 — one envelope per terminal stage, shaped by
+    the same rules as a standalone call of the same tool)."""
+    shaper, config, registry = _STATE.current()
+    spec = registry.lookup(tool_name)
     tripped = inspect(raw, config.process.sentinel_max_condition_number)
     if tripped is not None:
         return error_envelope(tripped).to_wire()
