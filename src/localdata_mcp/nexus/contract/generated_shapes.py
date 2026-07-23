@@ -306,4 +306,16 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='process',
     ),
+    "analyze_time_series": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "forecast_time_series": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.VECTOR,
+        streaming_capable=False,
+        domain='process',
+    ),
 }

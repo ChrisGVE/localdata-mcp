@@ -30,6 +30,7 @@ SPEC_MODULES: Final[tuple[str, ...]] = (
     "localdata_mcp.process.domains.statistical_analysis.tools",
     "localdata_mcp.process.domains.regression_modeling.tools",
     "localdata_mcp.process.domains.pattern_recognition.tools",
+    "localdata_mcp.process.domains.time_series.tools",
 )
 
 

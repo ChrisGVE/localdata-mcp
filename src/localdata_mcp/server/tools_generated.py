@@ -1241,3 +1241,82 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("transform_data", _impl_transform_data, arguments)
 
     app.tool(transform_data)
+
+    _impl_analyze_time_series = registry.lookup("analyze_time_series").func
+
+    def analyze_time_series(date_column: str, value_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, frequency: str | None = None) -> Any:
+        """
+        Analyze a time series on an addressed tabular source: trend direction and slope, ADF stationarity, autocorrelation with significant lags, and calendar seasonality strength.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            date_column: The timestamp column.
+            value_column: The numeric value column.
+            frequency (optional): Pandas frequency alias to align the series on (e.g. 'D', 'MS').
+        """
+        arguments: dict[str, Any] = {"date_column": date_column, "value_column": value_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if frequency is not None:
+            arguments["frequency"] = frequency
+        return shaped_call("analyze_time_series", _impl_analyze_time_series, arguments)
+
+    app.tool(analyze_time_series)
+
+    _impl_forecast_time_series = registry.lookup("forecast_time_series").func
+
+    def forecast_time_series(date_column: str, value_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, horizon: int | None = None, method: str | None = None, order: list | None = None, seasonal_order: list | None = None) -> Any:
+        """
+        Forecast a time series on an addressed tabular source: method arima (default, order= [p,d,q]), sarima (seasonal_order= [P,D,Q,s], defaulted from the calendar frequency), auto_arima (AIC grid search), or ets. Returns the forecast with confidence intervals and the solver's convergence verdict.
+
+        Input shape: TABULAR.
+        Output shape: VECTOR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            date_column: The timestamp column.
+            value_column: The numeric value column.
+            horizon (optional): Steps ahead to forecast (implementation default 10).
+            method (optional): arima (default), sarima, auto_arima, or ets.
+            order (optional): ARIMA order [p, d, q] (default [1,1,1]).
+            seasonal_order (optional): Seasonal order [P, D, Q, s] for sarima.
+        """
+        arguments: dict[str, Any] = {"date_column": date_column, "value_column": value_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if horizon is not None:
+            arguments["horizon"] = horizon
+        if method is not None:
+            arguments["method"] = method
+        if order is not None:
+            arguments["order"] = order
+        if seasonal_order is not None:
+            arguments["seasonal_order"] = seasonal_order
+        return shaped_call("forecast_time_series", _impl_forecast_time_series, arguments)
+
+    app.tool(forecast_time_series)

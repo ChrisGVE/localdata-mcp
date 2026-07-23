@@ -68,6 +68,8 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("detect_anomalies", {}),
     ("reduce_dimensions", {}),
     ("transform_data", {"column": "probe", "find": "probe", "replace": "probe"}),
+    ("analyze_time_series", {"date_column": "probe", "value_column": "probe"}),
+    ("forecast_time_series", {"date_column": "probe", "value_column": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}
