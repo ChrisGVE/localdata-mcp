@@ -172,3 +172,57 @@ class TestRuntimeSeam:
             query("any", "SELECT 1")
         assert refusal.value.structured.error_type.value == "configuration"
         assert "startup" in refusal.value.structured.message
+
+
+class TestListEndpointsAcrossKinds:
+    def test_store_kinds_enumerate_beside_sql(self, tmp_path: Path) -> None:
+        """I-1's acceptance: kv/graph/tree/rdf endpoints appear beside
+        SQL ones, each under its declared backend_kind (E8.3)."""
+        ttl = tmp_path / "g.ttl"
+        ttl.write_text("@prefix ex: <http://example.org/> .\n")
+        config = ConfigModel(
+            endpoints={
+                "warehouse": EndpointDeclaration(
+                    name="warehouse",
+                    dsn=f"sqlite:///{tmp_path / 'w.db'}",
+                    posture="read_write",
+                ),
+                "notes": EndpointDeclaration(
+                    name="notes",
+                    dsn=f"kv+sqlite:///{tmp_path / 'kv.db'}",
+                    posture="read_write",
+                ),
+                "conf": EndpointDeclaration(
+                    name="conf",
+                    dsn=f"tree+sqlite:///{tmp_path / 'tree.db'}",
+                    posture="read_write",
+                ),
+                "social": EndpointDeclaration(
+                    name="social",
+                    dsn=f"graph+sqlite:///{tmp_path / 'graph.db'}",
+                    posture="read_write",
+                ),
+                "kb": EndpointDeclaration(
+                    name="kb",
+                    dsn=f"rdf+turtle:///{ttl}",
+                    posture="read_only",
+                ),
+            }
+        )
+        guard = Chokepoint.boot(config, environ={})
+        runtime.configure_ingest(guard)
+        try:
+            result = list_endpoints()
+            kinds = {row[0]: row[1] for row in result.rows}
+            assert kinds == {
+                "warehouse": "sqlite",
+                "notes": "kv",
+                "conf": "tree",
+                "social": "graph",
+                "kb": "rdf",
+            }
+            healthy = {row[0]: row[3] for row in result.rows}
+            assert all(healthy.values())
+        finally:
+            runtime._CHOKEPOINT = None
+            guard.shutdown()

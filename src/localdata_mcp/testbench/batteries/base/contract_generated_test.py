@@ -35,6 +35,21 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("write_query", {"endpoint": "probe", "sql": "probe"}),
     ("read_file", {"path": "probe", "format": "probe"}),
     ("query_file", {"path": "probe", "sql": "probe"}),
+    ("get_value", {"endpoint": "probe", "path": "probe", "key": "probe"}),
+    ("set_value", {"endpoint": "probe", "path": "probe", "key": "probe", "value": "probe", "value_type": "probe"}),
+    ("delete_key", {"endpoint": "probe", "path": "probe", "key": "probe"}),
+    ("list_keys", {"endpoint": "probe", "path": "probe", "offset": 3, "limit": 3}),
+    ("get_node", {"endpoint": "probe", "path": "probe"}),
+    ("set_node", {"endpoint": "probe", "path": "probe", "label": "probe"}),
+    ("delete_node", {"endpoint": "probe", "path": "probe"}),
+    ("get_children", {"endpoint": "probe", "path": "probe", "offset": 3, "limit": 3}),
+    ("move_node", {"endpoint": "probe", "path": "probe", "new_parent": "probe"}),
+    ("get_neighbors", {"endpoint": "probe", "node_id": "probe", "direction": "probe", "offset": 3, "limit": 3}),
+    ("get_edges", {"endpoint": "probe", "node_id": "probe", "offset": 3, "limit": 3}),
+    ("add_edge", {"endpoint": "probe", "source": "probe", "target": "probe", "label": "probe", "weight": 1.0}),
+    ("remove_edge", {"endpoint": "probe", "source": "probe", "target": "probe", "label": "probe"}),
+    ("find_path", {"endpoint": "probe", "source": "probe", "target": "probe", "algorithm": "probe"}),
+    ("get_graph_stats", {"endpoint": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

@@ -262,3 +262,310 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("query_file", _impl_query_file, {"path": path, "sql": sql})
 
     app.tool(query_file)
+
+    _impl_get_value = registry.lookup("get_value").func
+
+    def get_value(endpoint: str, path: str, key: str) -> Any:
+        """
+        Get one property value from a node of a declared kv, tree, or graph store endpoint (path addresses the node; node_id for graph stores).
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared store endpoint name.
+            path: The node's dot-path (or graph node_id).
+            key: The property key.
+        """
+        return shaped_call("get_value", _impl_get_value, {"endpoint": endpoint, "path": path, "key": key})
+
+    app.tool(get_value)
+
+    _impl_set_value = registry.lookup("set_value").func
+
+    def set_value(endpoint: str, path: str, key: str, value: str, value_type: str) -> Any:
+        """
+        Set (upsert) one property on a node of a declared read-write store endpoint, auto-creating the node; string values infer their type unless value_type names one.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared store endpoint name.
+            path: The node's dot-path (or graph node_id).
+            key: The property key.
+            value: The value to store.
+            value_type: Optional explicit type: string, integer, float, boolean, array, null, or datetime.
+        """
+        return shaped_call("set_value", _impl_set_value, {"endpoint": endpoint, "path": path, "key": key, "value": value, "value_type": value_type})
+
+    app.tool(set_value)
+
+    _impl_delete_key = registry.lookup("delete_key").func
+
+    def delete_key(endpoint: str, path: str, key: str) -> Any:
+        """
+        Delete one property from a node of a declared read-write store endpoint.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared store endpoint name.
+            path: The node's dot-path (or graph node_id).
+            key: The property key.
+        """
+        return shaped_call("delete_key", _impl_delete_key, {"endpoint": endpoint, "path": path, "key": key})
+
+    app.tool(delete_key)
+
+    _impl_list_keys = registry.lookup("list_keys").func
+
+    def list_keys(endpoint: str, path: str, offset: int, limit: int) -> Any:
+        """
+        List a node's properties (key, value, value_type) from a declared kv, tree, or graph store endpoint, key-ordered.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared store endpoint name.
+            path: The node's dot-path (or graph node_id).
+            offset: Pagination offset (default 0).
+            limit: Optional page size; omitted serves all rows.
+        """
+        return shaped_call("list_keys", _impl_list_keys, {"endpoint": endpoint, "path": path, "offset": offset, "limit": limit})
+
+    app.tool(list_keys)
+
+    _impl_get_node = registry.lookup("get_node").func
+
+    def get_node(endpoint: str, path: str) -> Any:
+        """
+        Get node details from a declared tree or graph store endpoint (counts and addressing; properties via list_keys); omit path for the store-level summary.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared store endpoint name.
+            path: The node's dot-path (or graph node_id); omit for a summary.
+        """
+        return shaped_call("get_node", _impl_get_node, {"endpoint": endpoint, "path": path})
+
+    app.tool(get_node)
+
+    _impl_set_node = registry.lookup("set_node").func
+
+    def set_node(endpoint: str, path: str, label: str) -> Any:
+        """
+        Create a node on a declared read-write store endpoint: tree kinds create the path (and missing ancestors), graph kinds upsert the node with an optional label.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared store endpoint name.
+            path: The node's dot-path (or graph node_id).
+            label: Optional label (graph stores only).
+        """
+        return shaped_call("set_node", _impl_set_node, {"endpoint": endpoint, "path": path, "label": label})
+
+    app.tool(set_node)
+
+    _impl_delete_node = registry.lookup("delete_node").func
+
+    def delete_node(endpoint: str, path: str) -> Any:
+        """
+        Delete a node from a declared read-write store endpoint: tree kinds delete the whole subtree (properties cascade), graph kinds cascade the node's edges and properties.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared store endpoint name.
+            path: The node's dot-path (or graph node_id).
+        """
+        return shaped_call("delete_node", _impl_delete_node, {"endpoint": endpoint, "path": path})
+
+    app.tool(delete_node)
+
+    _impl_get_children = registry.lookup("get_children").func
+
+    def get_children(endpoint: str, path: str, offset: int, limit: int) -> Any:
+        """
+        List direct children of a tree-store node (root nodes when path is omitted), name-ordered with counts.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared store endpoint name.
+            path: The parent's dot-path; omit for root nodes.
+            offset: Pagination offset (default 0).
+            limit: Optional page size; omitted serves all rows.
+        """
+        return shaped_call("get_children", _impl_get_children, {"endpoint": endpoint, "path": path, "offset": offset, "limit": limit})
+
+    app.tool(get_children)
+
+    _impl_move_node = registry.lookup("move_node").func
+
+    def move_node(endpoint: str, path: str, new_parent: str) -> Any:
+        """
+        Move a tree-store node and its whole subtree under a new parent (or to root level when new_parent is omitted).
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared store endpoint name.
+            path: The node's dot-path.
+            new_parent: Target parent path; omit for root.
+        """
+        return shaped_call("move_node", _impl_move_node, {"endpoint": endpoint, "path": path, "new_parent": new_parent})
+
+    app.tool(move_node)
+
+    _impl_get_neighbors = registry.lookup("get_neighbors").func
+
+    def get_neighbors(endpoint: str, node_id: str, direction: str, offset: int, limit: int) -> Any:
+        """
+        List a graph node's neighbors with edge label/weight and direction ('in', 'out', or 'both').
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared graph endpoint name.
+            node_id: The node whose neighbors to list.
+            direction: 'in', 'out', or 'both' (default).
+            offset: Pagination offset (default 0).
+            limit: Optional page size; omitted serves all rows.
+        """
+        return shaped_call("get_neighbors", _impl_get_neighbors, {"endpoint": endpoint, "node_id": node_id, "direction": direction, "offset": offset, "limit": limit})
+
+    app.tool(get_neighbors)
+
+    _impl_get_edges = registry.lookup("get_edges").func
+
+    def get_edges(endpoint: str, node_id: str, offset: int, limit: int) -> Any:
+        """
+        List a graph store's edges (source, target, label, weight), optionally filtered to those touching one node.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared graph endpoint name.
+            node_id: Optional node filter.
+            offset: Pagination offset (default 0).
+            limit: Optional page size; omitted serves all rows.
+        """
+        return shaped_call("get_edges", _impl_get_edges, {"endpoint": endpoint, "node_id": node_id, "offset": offset, "limit": limit})
+
+    app.tool(get_edges)
+
+    _impl_add_edge = registry.lookup("add_edge").func
+
+    def add_edge(endpoint: str, source: str, target: str, label: str, weight: float) -> Any:
+        """
+        Add (or re-weight) a directed edge on a declared read-write graph endpoint, auto-creating missing nodes; returns the harvested integrity warnings (self-loop, duplicates, contradictory reverse edge).
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared graph endpoint name.
+            source: The edge's source node id.
+            target: The edge's target node id.
+            label: Optional edge label.
+            weight: Optional edge weight.
+        """
+        return shaped_call("add_edge", _impl_add_edge, {"endpoint": endpoint, "source": source, "target": target, "label": label, "weight": weight})
+
+    app.tool(add_edge)
+
+    _impl_remove_edge = registry.lookup("remove_edge").func
+
+    def remove_edge(endpoint: str, source: str, target: str, label: str) -> Any:
+        """
+        Remove a directed edge (and its properties) from a declared read-write graph endpoint; warns when a node becomes an orphan.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared graph endpoint name.
+            source: The edge's source node id.
+            target: The edge's target node id.
+            label: Optional edge label (NULL-labeled when omitted).
+        """
+        return shaped_call("remove_edge", _impl_remove_edge, {"endpoint": endpoint, "source": source, "target": target, "label": label})
+
+    app.tool(remove_edge)
+
+    _impl_find_path = registry.lookup("find_path").func
+
+    def find_path(endpoint: str, source: str, target: str, algorithm: str) -> Any:
+        """
+        Find path(s) between two graph nodes: the shortest path, or all simple paths (bounded enumeration).
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared graph endpoint name.
+            source: The start node id.
+            target: The end node id.
+            algorithm: 'shortest' (default) or 'all'.
+        """
+        return shaped_call("find_path", _impl_find_path, {"endpoint": endpoint, "source": source, "target": target, "algorithm": algorithm})
+
+    app.tool(find_path)
+
+    _impl_get_graph_stats = registry.lookup("get_graph_stats").func
+
+    def get_graph_stats(endpoint: str) -> Any:
+        """
+        Summary statistics for a declared graph endpoint: node, edge, and property counts plus density.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared graph endpoint name.
+        """
+        return shaped_call("get_graph_stats", _impl_get_graph_stats, {"endpoint": endpoint})
+
+    app.tool(get_graph_stats)

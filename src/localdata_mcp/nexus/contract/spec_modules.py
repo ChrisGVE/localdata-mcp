@@ -19,6 +19,9 @@ SPEC_MODULES: Final[tuple[str, ...]] = (
     "localdata_mcp.ingest.endpoints",
     "localdata_mcp.ingest.connectors.sql.tools",
     "localdata_mcp.ingest.connectors.file.tools",
+    "localdata_mcp.ingest.connectors.kv.tools",
+    "localdata_mcp.ingest.connectors.graph_tree.tools",
+    "localdata_mcp.ingest.connectors.graph_tree.graph_tools",
 )
 
 
