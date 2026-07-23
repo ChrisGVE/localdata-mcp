@@ -18,7 +18,9 @@ from . import (
     json,
     markdown,
     parquet,
+    png,
     schema,
+    svg,
     tree,
 )
 
@@ -32,6 +34,8 @@ _MODULES: tuple[ModuleType, ...] = (
     schema,
     graph,
     tree,
+    svg,
+    png,
 )
 
 RENDERERS: Mapping[str, ModuleType] = {module.FORMAT: module for module in _MODULES}

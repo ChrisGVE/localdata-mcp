@@ -172,9 +172,7 @@ class TestRenderers:
 
         back = pd.read_parquet(io.BytesIO(render(frame, "parquet")))
         assert back.equals(frame)
-        table = pyarrow.ipc.open_file(
-            io.BytesIO(render(frame, "arrow"))
-        ).read_all()
+        table = pyarrow.ipc.open_file(io.BytesIO(render(frame, "arrow"))).read_all()
         assert table.to_pandas().equals(frame)
 
     def test_json_tabular_is_records(self, frame: pd.DataFrame) -> None:
@@ -246,6 +244,12 @@ class TestRenderers:
         from localdata_mcp.nexus.export.renderers import RENDERERS
 
         tabular_ok = {"csv", "parquet", "arrow", "json", "excel", "markdown"}
-        assert set(RENDERERS) == tabular_ok | {"schema", "graph", "tree"}
+        assert set(RENDERERS) == tabular_ok | {
+            "schema",
+            "graph",
+            "tree",
+            "svg",
+            "png",
+        }
         for name in tabular_ok:
             assert render(frame, name)
