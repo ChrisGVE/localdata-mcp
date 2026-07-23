@@ -18,8 +18,10 @@ here; ingest/refusals.py owns the wording.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pandas as pd
 
@@ -48,6 +50,28 @@ _ENGINE_SUFFIXES = {
 }
 
 
+# The E11 stage-injection channel: while a composition pipeline runs a
+# DEPENDENT stage, the engine parks the upstream stage's output here
+# and calls the stage tool with NO source parameters; resolve_frame
+# picks it up below. Context-local by construction — a standalone call
+# (empty context) still gets the X-2 exactly-one-source refusal, and
+# the seam stays inside the ONE addressing home (E9.2).
+_PIPELINE_INPUT: "contextvars.ContextVar[tuple[pd.DataFrame, str] | None]" = (
+    contextvars.ContextVar("pipeline_input", default=None)
+)
+
+
+@contextlib.contextmanager
+def pipeline_input(frame: pd.DataFrame, label: str) -> Iterator[None]:
+    """Inject `frame` as the addressed data for tool calls made inside
+    this context — the composition engine's stage-handoff seam."""
+    token = _PIPELINE_INPUT.set((frame, label))
+    try:
+        yield
+    finally:
+        _PIPELINE_INPUT.reset(token)
+
+
 def resolve_frame(
     endpoint: str | None,
     path: str | None,
@@ -55,6 +79,13 @@ def resolve_frame(
     query: str | None,
 ) -> tuple[pd.DataFrame, str]:
     """The addressed data as a DataFrame plus a source label."""
+    if endpoint is None and path is None:
+        injected = _PIPELINE_INPUT.get()
+        if injected is not None:
+            frame, label = injected
+            # A copy: a stage must not mutate its upstream sibling's
+            # input (fan-out hands the same frame to several stages).
+            return frame.copy(), label
     if (endpoint is None) == (path is None):
         raise invalid_source_refusal(
             "Exactly one of endpoint= and path= must be supplied "

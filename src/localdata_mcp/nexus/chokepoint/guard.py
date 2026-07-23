@@ -75,6 +75,7 @@ __all__ = [
     "StreamOpened",
     "ServedChunk",
     "ProcessDefaults",
+    "CompositionLimits",
     "ExpressionRefusedError",
 ]
 
@@ -135,6 +136,15 @@ class ProcessDefaults:
 
     bootstrap_resamples: int
     monte_carlo_iterations: int
+
+
+@dataclass(frozen=True)
+class CompositionLimits:
+    """The S8 composition bounds (row 14) as a plain value — what
+    `composition_limits()` hands the E11 engine, so the ConfigModel
+    stays behind the seam (section 6.2), mirroring ProcessDefaults."""
+
+    max_pipeline_length: int
 
 
 @dataclass(frozen=True)
@@ -506,6 +516,28 @@ class Chokepoint:
             bootstrap_resamples=self._config.process.bootstrap_default_resamples,
             monte_carlo_iterations=self._config.process.monte_carlo_default_iterations,
         )
+
+    # -- the composition seams (E11, section 6.3) ---------------------
+
+    def composition_limits(self) -> "CompositionLimits":
+        """The S8 composition bound (row 14) as a plain value — the
+        seam the E11 engine reads `composition.max_pipeline_length`
+        through (tool packages never read NX-2 directly)."""
+        return CompositionLimits(
+            max_pipeline_length=self._config.composition.max_pipeline_length,
+        )
+
+    def charge_composition(self, pipeline_id: str, resident_bytes: int) -> None:
+        """NFR-105's aggregate accounting for a running pipeline's
+        inter-stage data: the whole chain charges ONE ledger entry
+        against the process-wide ceiling (section 6.3 — N stages
+        cannot each sit under the single-operation bound while jointly
+        exceeding it). Raises ResourceRefusedError over the ceiling."""
+        self._bounds.charge(f"composition:{pipeline_id}", resident_bytes)
+
+    def release_composition(self, pipeline_id: str) -> None:
+        """Drop a pipeline's ledger entry (idempotent teardown)."""
+        self._bounds.release(f"composition:{pipeline_id}")
 
     # -- the schema-discovery seam (X-1, E9.1) ------------------------
 
