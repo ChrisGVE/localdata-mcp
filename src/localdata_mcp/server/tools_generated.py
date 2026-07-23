@@ -171,3 +171,56 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("probe_sink", _impl_probe_sink, {"text": text})
 
     app.tool(probe_sink)
+
+    _impl_list_endpoints = registry.lookup("list_endpoints").func
+
+    def list_endpoints() -> Any:
+        """
+        Enumerate every operator-declared endpoint (SQL, key-value, and graph/tree alike) with its backend kind, posture, and health.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: ingest.
+        """
+        return shaped_call("list_endpoints", _impl_list_endpoints, {})
+
+    app.tool(list_endpoints)
+
+    _impl_query = registry.lookup("query").func
+
+    def query(endpoint: str, sql: str) -> Any:
+        """
+        Run a read-only SQL statement against a declared endpoint and return the rows (guarded: allow-list validated, any posture).
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared endpoint name.
+            sql: One read-only SQL statement.
+        """
+        return shaped_call("query", _impl_query, {"endpoint": endpoint, "sql": sql})
+
+    app.tool(query)
+
+    _impl_write_query = registry.lookup("write_query").func
+
+    def write_query(endpoint: str, sql: str) -> Any:
+        """
+        Run a mutating SQL statement (INSERT/UPDATE/DELETE or a write-side local-file construct) against a declared read-write endpoint (guarded: posture enforced, allow-list validated).
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            endpoint: The operator-declared endpoint name.
+            sql: One mutating SQL statement.
+        """
+        return shaped_call("write_query", _impl_write_query, {"endpoint": endpoint, "sql": sql})
+
+    app.tool(write_query)

@@ -22,6 +22,10 @@ from fastmcp import FastMCP
 from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
 
+import os
+
+from ..ingest.runtime import configure_ingest
+from ..nexus.chokepoint.guard import Chokepoint
 from ..nexus.config import ConfigLoadResult, ConfigurationError, load_config
 from ..nexus.contract.registry import default_registry
 from ..nexus.observability import get_logger, log_startup_report, reconfigure
@@ -75,12 +79,19 @@ def main() -> int:
     # E7.2: install the loaded model as the envelope shaper's config —
     # before this call the shaper enforces the declared S8 defaults.
     configure_shaping(load_result.model, default_registry())
+    # E8.1/§4e: boot NX-5 through the guard (warm-up per declared
+    # endpoint) and hand the tool layer its one chokepoint handle.
+    guarded_access = Chokepoint.boot(load_result.model, dict(os.environ))
+    configure_ingest(guarded_access)
     log_startup_report(load_result)
     get_logger(__name__).info(
         "starting stdio transport",
         endpoints=len(load_result.model.endpoints),
     )
-    anyio.run(serve, guard)
+    try:
+        anyio.run(serve, guard)
+    finally:
+        guarded_access.shutdown()
     return 0
 
 

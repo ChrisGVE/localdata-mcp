@@ -35,7 +35,10 @@ import pandas as pd
 from localdata_mcp.nexus.config.models import ConfigModel
 from localdata_mcp.nexus.error.model import StructuredError
 from localdata_mcp.nexus.error.wire import wrap
-from localdata_mcp.nexus.persistence.manager import PersistenceNexus
+from localdata_mcp.nexus.persistence.manager import (
+    PersistenceNexus,
+    UnknownEndpointError,
+)
 
 from .execution import execute_mutation, fetch_bounded, iter_frames
 from .chunk_registry import (
@@ -48,6 +51,10 @@ from .resource_bounds import ResourceBounds, ResourceRefusedError
 from .sparql_validate import screen_read, screen_update
 from .sql_validate.cache import ValidationCache
 from .sql_validate.walker import SqlClassification
+
+# Re-exported at the seam: tool modules catch the NFR-114 name miss
+# through the guard, never by importing NX-5 (FR-802's import rule).
+__all__ = ["UnknownEndpointError"]
 
 Language = Literal["sql", "sparql"]
 
@@ -79,6 +86,20 @@ class Result:
         return len(self.rows)
 
 
+@dataclass(frozen=True)
+class EndpointSummary:
+    """One declared endpoint's caller-visible state (I-1) — name,
+    kind, posture, last-known health. Capability-narrow like every
+    guard return (GP3): the health detail is the ALREADY-REDACTED
+    NX-5 text (E5's at-construction redaction), never a DSN."""
+
+    name: str
+    backend_kind: str
+    posture: str
+    healthy: bool | None
+    health_detail: str
+
+
 class GuardRefusedError(PermissionError):
     """An entrypoint or posture refusal (NFR-113) — structured, named,
     shaped through NX-3 by the tool wrapper."""
@@ -96,6 +117,20 @@ class GuardedExecutionError(RuntimeError):
 
 class Chokepoint:
     """The one guarded data-access surface (§6.2's `NX6`)."""
+
+    @classmethod
+    def boot(cls, config: ConfigModel, environ: Mapping[str, str]) -> "Chokepoint":
+        """§4e: build NX-5 from the loaded model, warm it up, and wrap
+        it — the entrypoint constructs persistence THROUGH the guard,
+        so NX-5 stays reachable by NX-6 exclusively even at boot
+        (FR-802 covers construction, not only queries)."""
+        persistence = PersistenceNexus(config, environ)
+        persistence.warm_up()
+        return cls(config, persistence)
+
+    def shutdown(self) -> None:
+        """§4e teardown: every record closed, every pool disposed."""
+        self._persistence.close_all()
 
     def __init__(self, config: ConfigModel, persistence: PersistenceNexus) -> None:
         self._config = config
@@ -185,6 +220,27 @@ class Chokepoint:
 
     def evict_idle_streams(self) -> tuple[str, ...]:
         return self._registry.evict_idle()
+
+    # -- the endpoint-enumeration seam (I-1) --------------------------
+
+    def endpoint_summaries(self) -> tuple[EndpointSummary, ...]:
+        """Every declared endpoint's summary, backend-kind-agnostic —
+        the one discovery surface NFR-114 refusals point callers to
+        (list_endpoints reaches NX-5's state through here, §6.2)."""
+        summaries = []
+        for name in self._persistence.endpoint_names():
+            record = self._persistence.record(name)
+            health = record.health
+            summaries.append(
+                EndpointSummary(
+                    name=record.name,
+                    backend_kind=record.backend_kind,
+                    posture=record.posture,
+                    healthy=None if health is None else health.healthy,
+                    health_detail="" if health is None else health.detail,
+                )
+            )
+        return tuple(summaries)
 
     # -- NX-6's standalone path-containment service (GP3) -------------
 

@@ -88,6 +88,12 @@ class PersistenceNexus:
                 )
         return results
 
+    def endpoint_names(self) -> tuple[str, ...]:
+        """Every declared endpoint's name, in declaration order — the
+        enumeration NX-6's summary seam reads (I-1's list_endpoints)."""
+        with self._lock:
+            return tuple(self._records)
+
     def record(self, name: str) -> ConnectionRecord:
         """The named record, for NX-6's resolution and for probes."""
         with self._lock:

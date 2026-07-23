@@ -14,7 +14,11 @@ from __future__ import annotations
 import importlib
 from typing import Final
 
-SPEC_MODULES: Final[tuple[str, ...]] = ("localdata_mcp.server.skeleton_tools",)
+SPEC_MODULES: Final[tuple[str, ...]] = (
+    "localdata_mcp.server.skeleton_tools",
+    "localdata_mcp.ingest.endpoints",
+    "localdata_mcp.ingest.connectors.sql.tools",
+)
 
 
 def load_spec_modules() -> None:

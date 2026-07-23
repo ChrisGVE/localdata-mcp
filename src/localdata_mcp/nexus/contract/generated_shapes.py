@@ -78,4 +78,22 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain=None,
     ),
+    "list_endpoints": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='ingest',
+    ),
+    "query": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='ingest',
+    ),
+    "write_query": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='ingest',
+    ),
 }
