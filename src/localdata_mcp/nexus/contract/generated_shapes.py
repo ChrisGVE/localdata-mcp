@@ -246,4 +246,28 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='explore',
     ),
+    "analyze_hypothesis_test": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "analyze_anova": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "analyze_effect_sizes": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "analyze_ab_test": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
 }

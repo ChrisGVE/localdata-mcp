@@ -830,3 +830,162 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("map_categories", _impl_map_categories, arguments)
 
     app.tool(map_categories)
+
+    _impl_analyze_hypothesis_test = registry.lookup("analyze_hypothesis_test").func
+
+    def analyze_hypothesis_test(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, test_type: str | None = None, column: str | None = None, second_column: str | None = None, group_column: str | None = None, popmean: float | None = None, alpha: float | None = None, alternative: str | None = None) -> Any:
+        """
+        Run a hypothesis test on an addressed tabular source. test_type auto (default) selects from the supplied columns: group_column= compares two groups, second_column= correlates two columns, column= alone tests normality. Explicit types: ttest_1samp, ttest_ind, ttest_rel, mann_whitney, wilcoxon, chi2, normality, correlation.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            test_type (optional): Test to run (default auto — selected from the supplied columns).
+            column (optional): The primary value column.
+            second_column (optional): Second column for paired/correlation/chi2 tests.
+            group_column (optional): Column defining the two groups for two-sample tests.
+            popmean (optional): Population mean for ttest_1samp (implementation default 0.0).
+            alpha (optional): Significance level for the verdict (implementation default 0.05).
+            alternative (optional): Alternative hypothesis: two-sided (default), greater, or less.
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if test_type is not None:
+            arguments["test_type"] = test_type
+        if column is not None:
+            arguments["column"] = column
+        if second_column is not None:
+            arguments["second_column"] = second_column
+        if group_column is not None:
+            arguments["group_column"] = group_column
+        if popmean is not None:
+            arguments["popmean"] = popmean
+        if alpha is not None:
+            arguments["alpha"] = alpha
+        if alternative is not None:
+            arguments["alternative"] = alternative
+        return shaped_call("analyze_hypothesis_test", _impl_analyze_hypothesis_test, arguments)
+
+    app.tool(analyze_hypothesis_test)
+
+    _impl_analyze_anova = registry.lookup("analyze_anova").func
+
+    def analyze_anova(dependent_var: str, group_var: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, alpha: float | None = None) -> Any:
+        """
+        One-way ANOVA across every group of group_var on an addressed tabular source: F statistic, p-value, eta squared, per-group summary, and Tukey HSD post-hoc when significant.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            dependent_var: The numeric outcome column.
+            group_var: The column defining the groups.
+            alpha (optional): Significance level for the verdict (implementation default 0.05).
+        """
+        arguments: dict[str, Any] = {"dependent_var": dependent_var, "group_var": group_var}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if alpha is not None:
+            arguments["alpha"] = alpha
+        return shaped_call("analyze_anova", _impl_analyze_anova, arguments)
+
+    app.tool(analyze_anova)
+
+    _impl_analyze_effect_sizes = registry.lookup("analyze_effect_sizes").func
+
+    def analyze_effect_sizes(column: str, group_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None) -> Any:
+        """
+        Effect sizes for a grouping on an addressed tabular source: Cohen's d, Hedges' g, Glass's delta, and Cliff's delta for two groups; eta and omega squared for three or more.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            column: The numeric value column.
+            group_column: The column defining the groups.
+        """
+        arguments: dict[str, Any] = {"column": column, "group_column": group_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        return shaped_call("analyze_effect_sizes", _impl_analyze_effect_sizes, arguments)
+
+    app.tool(analyze_effect_sizes)
+
+    _impl_analyze_ab_test = registry.lookup("analyze_ab_test").func
+
+    def analyze_ab_test(metric_column: str, variant_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, test_type: str | None = None, alpha: float | None = None, alternative: str | None = None) -> Any:
+        """
+        A/B test between the exactly-two variants of variant_column on an addressed tabular source. test_type auto (default) picks the two-proportion z-test for a binary metric, Welch's t-test otherwise; mann_whitney on request. Names the winner and lift.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            metric_column: The outcome metric column.
+            variant_column: The column assigning the two variants.
+            test_type (optional): auto (default), proportion, t_test, or mann_whitney.
+            alpha (optional): Significance level for the verdict (implementation default 0.05).
+            alternative (optional): Alternative hypothesis: two-sided (default), greater, or less.
+        """
+        arguments: dict[str, Any] = {"metric_column": metric_column, "variant_column": variant_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if test_type is not None:
+            arguments["test_type"] = test_type
+        if alpha is not None:
+            arguments["alpha"] = alpha
+        if alternative is not None:
+            arguments["alternative"] = alternative
+        return shaped_call("analyze_ab_test", _impl_analyze_ab_test, arguments)
+
+    app.tool(analyze_ab_test)

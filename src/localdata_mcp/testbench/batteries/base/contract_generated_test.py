@@ -58,6 +58,10 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("profile_data", {}),
     ("search_data", {"query": "probe"}),
     ("map_categories", {"column": "probe"}),
+    ("analyze_hypothesis_test", {}),
+    ("analyze_anova", {"dependent_var": "probe", "group_var": "probe"}),
+    ("analyze_effect_sizes", {"column": "probe", "group_column": "probe"}),
+    ("analyze_ab_test", {"metric_column": "probe", "variant_column": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

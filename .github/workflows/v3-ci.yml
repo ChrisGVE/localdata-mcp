@@ -52,11 +52,13 @@ jobs:
         run: uv sync --frozen --extra dev
       - name: Run the v3 suite with the coverage floor
         # The base battery's accreted slices (E8.5, incl. the generated
-        # contract stubs) and the perf smoke tier (E9.5's discovery
-        # floor) run per-PR alongside the unit suite — S7.4's cadence;
-        # E14.3 adds the randomized mode and the full nightly tier.
+        # contract stubs), the domain battery's E10 slices, and the perf
+        # smoke tier (E9.5's discovery floor) run per-PR alongside the
+        # unit suite — S7.4's cadence; E14.3 adds the randomized mode
+        # and the full nightly tier.
         run: >
           uv run pytest tests/v3/ src/localdata_mcp/testbench/batteries/base/
+          src/localdata_mcp/testbench/batteries/domain/
           src/localdata_mcp/testbench/batteries/perf_memory/
           --cov=src/localdata_mcp/nexus
           --cov=src/localdata_mcp/ingest
