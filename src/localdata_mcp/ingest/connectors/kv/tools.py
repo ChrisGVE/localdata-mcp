@@ -9,7 +9,8 @@ and respects posture (NFR-113) inside the access layers; this file is
 tool surface and kind dispatch ONLY (§3's connector boundary — no
 SQL, no security logic). `set_value` infers a string value's type
 (`"42"` → integer) unless `value_type` names one explicitly, matching
-`main`. Neighbors: tree_store.py/graph_store.py execute;
+`main`. Neighbors: tree_props.py/graph_props.py execute the
+property statements (tree_store/graph_store own structure);
 store_dispatch.py resolves kinds; refusals.py shapes the misses.
 """
 
@@ -21,7 +22,9 @@ from localdata_mcp.nexus.chokepoint.guard import Result
 from localdata_mcp.nexus.contract.spec import Param, TypeShape, tool_spec
 
 from ...refusals import missing_entity_refusal
-from .. import graph_store, tree_store
+from .. import graph_props, tree_props
+from ..graph_store import node_exists as graph_node_exists
+from ..tree_store import node_exists as tree_node_exists
 from ..store_dispatch import PROPERTY_KINDS, resolve_store_kind
 from ..values import ValueType, deserialize_value, infer_value_type_from_string
 
@@ -64,9 +67,9 @@ def _typed(value: Any, value_type: str | None) -> tuple[Any, ValueType | None]:
 def get_value(endpoint: str, path: str, key: str) -> Any:
     kind = resolve_store_kind(endpoint, PROPERTY_KINDS)
     if kind == "graph":
-        found = graph_store.get_property(endpoint, path, key)
+        found = graph_props.get_property(endpoint, path, key)
     else:
-        found = tree_store.get_property(endpoint, path, key)
+        found = tree_props.get_property(endpoint, path, key)
     if found is None:
         raise missing_entity_refusal(
             f"Property {key!r} not found on node {path!r}.", _LIST_KEYS_HINT
@@ -107,8 +110,8 @@ def set_value(
     kind = resolve_store_kind(endpoint, PROPERTY_KINDS)
     python_value, declared = _typed(value, value_type)
     if kind == "graph":
-        return graph_store.set_property(endpoint, path, key, python_value, declared)
-    return tree_store.set_property(endpoint, path, key, python_value, declared)
+        return graph_props.set_property(endpoint, path, key, python_value, declared)
+    return tree_props.set_property(endpoint, path, key, python_value, declared)
 
 
 @tool_spec(
@@ -128,9 +131,9 @@ def set_value(
 def delete_key(endpoint: str, path: str, key: str) -> Any:
     kind = resolve_store_kind(endpoint, PROPERTY_KINDS)
     if kind == "graph":
-        deleted = graph_store.delete_property(endpoint, path, key)
+        deleted = graph_props.delete_property(endpoint, path, key)
     else:
-        deleted = tree_store.delete_property(endpoint, path, key)
+        deleted = tree_props.delete_property(endpoint, path, key)
     if not deleted:
         raise missing_entity_refusal(
             f"Property {key!r} not found on node {path!r}.", _LIST_KEYS_HINT
@@ -162,17 +165,17 @@ def list_keys(
 ) -> Any:
     kind = resolve_store_kind(endpoint, PROPERTY_KINDS)
     if kind == "graph":
-        if not graph_store.node_exists(endpoint, path):
+        if not graph_node_exists(endpoint, path):
             raise missing_entity_refusal(f"Node not found: {path}", _LIST_KEYS_HINT)
-        raw = graph_store.list_properties(endpoint, path, offset, limit)
+        raw = graph_props.list_properties(endpoint, path, offset, limit)
         rows = [
             (row[0], deserialize_value(row[1], ValueType(row[2])), row[2])
             for row in raw.rows
         ]
     else:
-        if not tree_store.node_exists(endpoint, path):
+        if not tree_node_exists(endpoint, path):
             raise missing_entity_refusal(f"Node not found: {path}", _LIST_KEYS_HINT)
-        raw = tree_store.list_properties(endpoint, path, offset, limit)
+        raw = tree_props.list_properties(endpoint, path, offset, limit)
         rows = [
             (row[0], deserialize_value(row[1], ValueType(row[2]), row[3]), row[2])
             for row in raw.rows
