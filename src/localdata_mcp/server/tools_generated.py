@@ -1070,3 +1070,174 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("evaluate_model_performance", _impl_evaluate_model_performance, arguments)
 
     app.tool(evaluate_model_performance)
+
+    _impl_analyze_clusters = registry.lookup("analyze_clusters").func
+
+    def analyze_clusters(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, columns: list | None = None, method: str | None = None, n_clusters: int | None = None, seed: int | None = None, algorithm_params: dict | None = None) -> Any:
+        """
+        Cluster an addressed tabular source: method kmeans (default), hierarchical, dbscan, gmm, or spectral. Without n_clusters= a silhouette sweep picks k. Reports labels, cluster sizes, and silhouette score; seed= pins stochastic initialization.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            columns (optional): Columns to analyze (default: every numeric column).
+            method (optional): kmeans (default), hierarchical, dbscan, gmm, spectral.
+            n_clusters (optional): Cluster count (default: silhouette sweep over 2..8).
+            seed (optional): Random seed pinning stochastic steps (default: library behavior).
+            algorithm_params (optional): Estimator constructor parameters, passed through verbatim.
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if columns is not None:
+            arguments["columns"] = columns
+        if method is not None:
+            arguments["method"] = method
+        if n_clusters is not None:
+            arguments["n_clusters"] = n_clusters
+        if seed is not None:
+            arguments["seed"] = seed
+        if algorithm_params is not None:
+            arguments["algorithm_params"] = algorithm_params
+        return shaped_call("analyze_clusters", _impl_analyze_clusters, arguments)
+
+    app.tool(analyze_clusters)
+
+    _impl_detect_anomalies = registry.lookup("detect_anomalies").func
+
+    def detect_anomalies(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, columns: list | None = None, method: str | None = None, contamination: float | None = None, seed: int | None = None, algorithm_params: dict | None = None) -> Any:
+        """
+        Find anomalous rows in an addressed tabular source: method isolation_forest (default), lof, or zscore (three-sigma rule). Reports anomaly indices, share, and a score summary.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            columns (optional): Columns to analyze (default: every numeric column).
+            method (optional): isolation_forest (default), lof, or zscore.
+            contamination (optional): Expected anomaly share (implementation default 0.1).
+            seed (optional): Random seed pinning stochastic steps (default: library behavior).
+            algorithm_params (optional): Estimator constructor parameters, passed through verbatim.
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if columns is not None:
+            arguments["columns"] = columns
+        if method is not None:
+            arguments["method"] = method
+        if contamination is not None:
+            arguments["contamination"] = contamination
+        if seed is not None:
+            arguments["seed"] = seed
+        if algorithm_params is not None:
+            arguments["algorithm_params"] = algorithm_params
+        return shaped_call("detect_anomalies", _impl_detect_anomalies, arguments)
+
+    app.tool(detect_anomalies)
+
+    _impl_reduce_dimensions = registry.lookup("reduce_dimensions").func
+
+    def reduce_dimensions(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, columns: list | None = None, method: str | None = None, n_components: int | None = None, seed: int | None = None, algorithm_params: dict | None = None) -> Any:
+        """
+        Embed an addressed tabular source into fewer dimensions: method pca (default, always reports explained_variance_ratio) or tsne (reports trustworthiness against the original data).
+
+        Input shape: TABULAR.
+        Output shape: MATRIX.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            columns (optional): Columns to analyze (default: every numeric column).
+            method (optional): pca (default) or tsne.
+            n_components (optional): Target dimensionality (implementation default 2).
+            seed (optional): Random seed pinning stochastic steps (default: library behavior).
+            algorithm_params (optional): Estimator constructor parameters, passed through verbatim.
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if columns is not None:
+            arguments["columns"] = columns
+        if method is not None:
+            arguments["method"] = method
+        if n_components is not None:
+            arguments["n_components"] = n_components
+        if seed is not None:
+            arguments["seed"] = seed
+        if algorithm_params is not None:
+            arguments["algorithm_params"] = algorithm_params
+        return shaped_call("reduce_dimensions", _impl_reduce_dimensions, arguments)
+
+    app.tool(reduce_dimensions)
+
+    _impl_transform_data = registry.lookup("transform_data").func
+
+    def transform_data(column: str, find: str, replace: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, case_sensitive: bool | None = None) -> Any:
+        """
+        Regex find/replace over one column of an addressed tabular source (pattern crosses the hardened safety screen). Returns the rewritten relation plus a change summary — composable into downstream stages.
+
+        Input shape: TABULAR.
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            column: The column to rewrite.
+            find: The regex pattern to find (safety-screened).
+            replace: The replacement text (backrefs allowed).
+            case_sensitive (optional): Match case-sensitively (implementation default true).
+        """
+        arguments: dict[str, Any] = {"column": column, "find": find, "replace": replace}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if case_sensitive is not None:
+            arguments["case_sensitive"] = case_sensitive
+        return shaped_call("transform_data", _impl_transform_data, arguments)
+
+    app.tool(transform_data)

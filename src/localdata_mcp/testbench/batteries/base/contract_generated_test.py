@@ -64,6 +64,10 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("analyze_ab_test", {"metric_column": "probe", "variant_column": "probe"}),
     ("analyze_regression", {"target_column": "probe"}),
     ("evaluate_model_performance", {"target_column": "probe", "prediction_column": "probe"}),
+    ("analyze_clusters", {}),
+    ("detect_anomalies", {}),
+    ("reduce_dimensions", {}),
+    ("transform_data", {"column": "probe", "find": "probe", "replace": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

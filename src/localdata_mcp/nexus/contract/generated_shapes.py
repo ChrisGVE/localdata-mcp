@@ -282,4 +282,28 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='process',
     ),
+    "analyze_clusters": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "detect_anomalies": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "reduce_dimensions": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.MATRIX,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "transform_data": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='process',
+    ),
 }

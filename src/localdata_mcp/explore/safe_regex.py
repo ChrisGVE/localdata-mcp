@@ -10,7 +10,9 @@ for the WHOLE scan, not `main`'s per-execution thread pool (the
 static screen refuses the pathological class; the timeout catches
 what static analysis cannot prove, at one thread's cost). Caps are
 named non-config constants: legibility bounds on a screen, not
-operator resource knobs. Neighbors: search.py is the only consumer.
+operator resource knobs. Consumers: search.py (FR-203 search) and
+process/domains/pattern_recognition/transform.py (E10's regex
+rewrite) — every caller-supplied pattern crosses this one screen.
 """
 
 from __future__ import annotations
