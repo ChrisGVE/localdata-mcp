@@ -40,6 +40,21 @@ class Tier(enum.Enum):
     EXTRA = "extra"
 
 
+class StreamingClass(enum.Enum):
+    """The section 5 honest-capability classification the NFR-202
+    matrix asserts per entry: GENUINELY_STREAMING sources hold a live
+    database cursor across chunk retrievals (NX-5 pooled
+    `ConnectionRecord` engines); LOAD_THEN_SERVE sources are read
+    whole under the memory-admission gate and sliced from that
+    admitted buffer (file formats, `EphemeralFileConnection`-backed
+    `query_file`, and the local store families) — the chunk-registry
+    cursor semantics apply identically to both, only the upstream
+    truth differs."""
+
+    GENUINELY_STREAMING = "genuinely_streaming"
+    LOAD_THEN_SERVE = "load_then_serve"
+
+
 @dataclass(frozen=True)
 class InventoryEntry:
     """One connector or format declaration.
@@ -57,6 +72,7 @@ class InventoryEntry:
     family: str = ""
     extra_group: str | None = None
     driver_packages: tuple[str, ...] = ()
+    streaming: StreamingClass = StreamingClass.LOAD_THEN_SERVE
 
     def __post_init__(self) -> None:
         if not self.family:
@@ -64,18 +80,34 @@ class InventoryEntry:
 
 
 def _core(name: str, kind: Kind, *drivers: str, family: str = "") -> InventoryEntry:
+    streaming = (
+        StreamingClass.GENUINELY_STREAMING
+        if kind is Kind.SQL_ENGINE
+        else StreamingClass.LOAD_THEN_SERVE
+    )
     return InventoryEntry(
-        name=name, kind=kind, tier=Tier.CORE, family=family, driver_packages=drivers
+        name=name,
+        kind=kind,
+        tier=Tier.CORE,
+        family=family,
+        driver_packages=drivers,
+        streaming=streaming,
     )
 
 
 def _extra(name: str, kind: Kind, group: str, *drivers: str) -> InventoryEntry:
+    streaming = (
+        StreamingClass.GENUINELY_STREAMING
+        if kind is Kind.SQL_ENGINE
+        else StreamingClass.LOAD_THEN_SERVE
+    )
     return InventoryEntry(
         name=name,
         kind=kind,
         tier=Tier.EXTRA,
         extra_group=group,
         driver_packages=drivers,
+        streaming=streaming,
     )
 
 

@@ -84,10 +84,22 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='ingest',
     ),
+    "fetch_chunk": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=True,
+        domain='ingest',
+    ),
+    "close_stream": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='ingest',
+    ),
     "query": ShapeEntry(
         input_shape=TypeShape.NONE,
         output_shape=TypeShape.TABULAR,
-        streaming_capable=False,
+        streaming_capable=True,
         domain='ingest',
     ),
     "write_query": ShapeEntry(
@@ -99,13 +111,13 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
     "read_file": ShapeEntry(
         input_shape=TypeShape.NONE,
         output_shape=TypeShape.TABULAR,
-        streaming_capable=False,
+        streaming_capable=True,
         domain='ingest',
     ),
     "query_file": ShapeEntry(
         input_shape=TypeShape.NONE,
         output_shape=TypeShape.TABULAR,
-        streaming_capable=False,
+        streaming_capable=True,
         domain='ingest',
     ),
     "get_value": ShapeEntry(

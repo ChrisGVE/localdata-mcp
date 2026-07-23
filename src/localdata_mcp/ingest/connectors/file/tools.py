@@ -60,6 +60,7 @@ _ENGINE_SUFFIXES: dict[str, EphemeralEngineKind] = {
     ),
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.TABULAR,
+    streaming_capable=True,
     domain="ingest",
 )
 def read_file(path: str, format: str = "auto") -> Any:
@@ -67,11 +68,14 @@ def read_file(path: str, format: str = "auto") -> Any:
     format_name = resolve_format(real, format)
     loaded = read_path(real, format_name)
     if isinstance(loaded, pd.DataFrame):
-        return Result(
+        result = Result(
             columns=tuple(str(column) for column in loaded.columns),
             rows=tuple(tuple(row) for row in loaded.itertuples(index=False)),
             category="local_file_read",
         )
+        # I-4: beyond the inline budget the guard registers the loaded
+        # frame as a load-then-serve stream (I-2's classification).
+        return chokepoint().serve_result(result, str(real))
     return loaded
 
 
@@ -88,6 +92,7 @@ def read_file(path: str, format: str = "auto") -> Any:
     ),
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.TABULAR,
+    streaming_capable=True,
     domain="ingest",
 )
 def query_file(path: str, sql: str) -> Any:
@@ -99,8 +104,12 @@ def query_file(path: str, sql: str) -> Any:
             "document and table formats"
         )
     try:
-        return chokepoint().guarded_file_query(
+        admitted = chokepoint().guarded_file_query(
             path, QueryRequest(text=sql), engine_kind
         )
     except ResourceRefusedError as refusal:
         raise over_budget_refusal(str(refusal)) from refusal
+    # Load-then-serve by declaration (I-2): the whole result was read
+    # under the admission gate; past the inline budget it is served
+    # chunk by chunk from that admitted buffer.
+    return chokepoint().serve_result(admitted, path)

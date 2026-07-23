@@ -17,6 +17,7 @@ from typing import Final
 SPEC_MODULES: Final[tuple[str, ...]] = (
     "localdata_mcp.server.skeleton_tools",
     "localdata_mcp.ingest.endpoints",
+    "localdata_mcp.ingest.streams",
     "localdata_mcp.ingest.connectors.sql.tools",
     "localdata_mcp.ingest.connectors.file.tools",
     "localdata_mcp.ingest.connectors.kv.tools",

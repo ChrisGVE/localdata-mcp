@@ -5,10 +5,12 @@
 | Tool | Summary | Input shape | Output shape | Streaming | Params |
 |---|---|---|---|---|---|
 | `list_endpoints` | Enumerate every operator-declared endpoint (SQL, key-value, and graph/tree alike) with its backend kind, posture, and health. | NONE | TABULAR | no | — |
-| `query` | Run a read-only SQL statement against a declared endpoint and return the rows (guarded: allow-list validated, any posture). | NONE | TABULAR | no | `endpoint`, `sql` |
+| `fetch_chunk` | Retrieve the next servable chunk of a streamed result (cursor semantics: a served chunk leaves the buffer). Once the source is exhausted the answer reports the final total and the stream closes. | NONE | TABULAR | yes | `stream_id` |
+| `close_stream` | Release a streamed result ahead of the idle TTL, returning its buffer memory (and any pinned connection) immediately. Idempotent. | NONE | SCALAR | no | `stream_id` |
+| `query` | Run a read-only SQL statement against a declared endpoint and return the rows (guarded: allow-list validated, any posture). | NONE | TABULAR | yes | `endpoint`, `sql` |
 | `write_query` | Run a mutating SQL statement (INSERT/UPDATE/DELETE or a write-side local-file construct) against a declared read-write endpoint (guarded: posture enforced, allow-list validated). | NONE | TABULAR | no | `endpoint`, `sql` |
-| `read_file` | Read a local data file (14 core formats: CSV, TSV, JSON, YAML, TOML, INI, XML, Excel, ODS, Numbers, Parquet, Feather, Arrow, HDF5) inside the operator's allowed paths. | NONE | TABULAR | no | `path`, `format` |
-| `query_file` | Run a read-only SQL statement over a local SQLite or DuckDB file (ad-hoc, contained, read-only unless the operator grants otherwise; results are read whole under the memory budget). | NONE | TABULAR | no | `path`, `sql` |
+| `read_file` | Read a local data file (14 core formats: CSV, TSV, JSON, YAML, TOML, INI, XML, Excel, ODS, Numbers, Parquet, Feather, Arrow, HDF5) inside the operator's allowed paths. | NONE | TABULAR | yes | `path`, `format` |
+| `query_file` | Run a read-only SQL statement over a local SQLite or DuckDB file (ad-hoc, contained, read-only unless the operator grants otherwise; results are read whole under the memory budget). | NONE | TABULAR | yes | `path`, `sql` |
 | `get_value` | Get one property value from a node of a declared kv, tree, or graph store endpoint (path addresses the node; node_id for graph stores). | NONE | SCALAR | no | `endpoint`, `path`, `key` |
 | `set_value` | Set (upsert) one property on a node of a declared read-write store endpoint, auto-creating the node; string values infer their type unless value_type names one. | NONE | SCALAR | no | `endpoint`, `path`, `key`, `value`, `value_type` |
 | `delete_key` | Delete one property from a node of a declared read-write store endpoint. | NONE | SCALAR | no | `endpoint`, `path`, `key` |

@@ -187,6 +187,42 @@ def register_tools(app: FastMCP) -> None:
 
     app.tool(list_endpoints)
 
+    _impl_fetch_chunk = registry.lookup("fetch_chunk").func
+
+    def fetch_chunk(stream_id: str) -> Any:
+        """
+        Retrieve the next servable chunk of a streamed result (cursor semantics: a served chunk leaves the buffer). Once the source is exhausted the answer reports the final total and the stream closes.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: yes.
+        Domain: ingest.
+
+        Args:
+            stream_id: The stream reference a large result returned.
+        """
+        return shaped_call("fetch_chunk", _impl_fetch_chunk, {"stream_id": stream_id})
+
+    app.tool(fetch_chunk)
+
+    _impl_close_stream = registry.lookup("close_stream").func
+
+    def close_stream(stream_id: str) -> Any:
+        """
+        Release a streamed result ahead of the idle TTL, returning its buffer memory (and any pinned connection) immediately. Idempotent.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            stream_id: The stream reference to release.
+        """
+        return shaped_call("close_stream", _impl_close_stream, {"stream_id": stream_id})
+
+    app.tool(close_stream)
+
     _impl_query = registry.lookup("query").func
 
     def query(endpoint: str, sql: str) -> Any:
@@ -195,7 +231,7 @@ def register_tools(app: FastMCP) -> None:
 
         Input shape: NONE (chain endpoint — composes with nothing).
         Output shape: TABULAR.
-        Streaming-capable: no.
+        Streaming-capable: yes.
         Domain: ingest.
 
         Args:
@@ -233,7 +269,7 @@ def register_tools(app: FastMCP) -> None:
 
         Input shape: NONE (chain endpoint — composes with nothing).
         Output shape: TABULAR.
-        Streaming-capable: no.
+        Streaming-capable: yes.
         Domain: ingest.
 
         Args:
@@ -252,7 +288,7 @@ def register_tools(app: FastMCP) -> None:
 
         Input shape: NONE (chain endpoint — composes with nothing).
         Output shape: TABULAR.
-        Streaming-capable: no.
+        Streaming-capable: yes.
         Domain: ingest.
 
         Args:

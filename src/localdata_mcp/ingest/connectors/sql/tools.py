@@ -1,8 +1,10 @@
 """localdata_mcp/ingest/connectors/sql/tools.py — the SQL family (E8.1).
 
 I-1's two statements tools, THIN over NX-6 by design: `query` crosses
-`guarded_query` (any posture), `write_query` crosses `guarded_mutation`
-(read-write posture only, NFR-113) — every screen (E6.2 allow-list,
+the guard's I-4 cutover seam (`query_or_stream` — an inline-budget
+result comes back whole, a larger one as a `StreamOpened` reference
+served by fetch_chunk, any posture), `write_query` crosses
+`guarded_mutation` (read-write posture only, NFR-113) — every screen (E6.2 allow-list,
 containment, admission, posture) lives in the guard, none here (§3's
 connector boundary: no cross-connector knowledge, no security logic).
 An undeclared endpoint name becomes the one NFR-114 refusal whose
@@ -18,11 +20,12 @@ from typing import Any
 
 from localdata_mcp.nexus.chokepoint.guard import (
     QueryRequest,
+    StreamAdmissionRefusedError,
     UnknownEndpointError,
 )
 from localdata_mcp.nexus.contract.spec import Param, TypeShape, tool_spec
 
-from ...refusals import unknown_endpoint_refusal
+from ...refusals import stream_refusal, unknown_endpoint_refusal
 from ...runtime import chokepoint
 
 
@@ -38,13 +41,16 @@ from ...runtime import chokepoint
     ),
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.TABULAR,
+    streaming_capable=True,
     domain="ingest",
 )
 def query(endpoint: str, sql: str) -> Any:
     try:
-        return chokepoint().guarded_query(endpoint, QueryRequest(text=sql))
+        return chokepoint().query_or_stream(endpoint, QueryRequest(text=sql))
     except UnknownEndpointError:
         raise unknown_endpoint_refusal(endpoint) from None
+    except StreamAdmissionRefusedError as refused:
+        raise stream_refusal(refused) from refused
 
 
 @tool_spec(

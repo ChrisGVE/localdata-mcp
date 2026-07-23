@@ -76,6 +76,40 @@ def missing_entity_refusal(detail: str, discovery_hint: str) -> GuardedExecution
     )
 
 
+def stream_refusal(failure: Exception) -> GuardedExecutionError:
+    """I-4's structured stream refusals: the registry's own message
+    (already caller-actionable) with the recovery path as the
+    suggestion — expiry and served-chunk misses recover by re-issuing
+    the originating query, admission by closing a finished stream."""
+    text = str(failure)
+    if "close_stream" in text or "admission" in text:
+        suggestion = (
+            "Call close_stream(stream_id) on a finished stream to free a "
+            "slot, then re-issue the request. The per-endpoint stream cap "
+            "is operator configuration "
+            "(query.max_concurrent_streams_per_endpoint)."
+        )
+    elif "look-ahead" in text:
+        suggestion = (
+            "Retrieve the currently-servable chunks with fetch_chunk "
+            "first — the look-ahead buffer tops up as chunks are consumed."
+        )
+    else:
+        suggestion = (
+            "Re-issue the originating query (or read_file/query_file "
+            "call) to open a fresh stream — served chunks and expired "
+            "streams are not resumable (cursor semantics)."
+        )
+    return GuardedExecutionError(
+        StructuredError(
+            error_type=ErrorType.RESOURCE_ERROR,
+            message=text,
+            suggestion=suggestion,
+            retryable=False,
+        )
+    )
+
+
 def over_budget_refusal(detail: str) -> GuardedExecutionError:
     """I-2's over-budget admission refusal: the suggestion names the
     CALLER-side recovery (narrow the SQL) and states that the ceiling

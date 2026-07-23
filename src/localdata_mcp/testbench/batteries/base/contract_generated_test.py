@@ -31,6 +31,8 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("probe_chart", {"points": 3}),
     ("probe_sink", {"text": "probe"}),
     ("list_endpoints", {}),
+    ("fetch_chunk", {"stream_id": "probe"}),
+    ("close_stream", {"stream_id": "probe"}),
     ("query", {"endpoint": "probe", "sql": "probe"}),
     ("write_query", {"endpoint": "probe", "sql": "probe"}),
     ("read_file", {"path": "probe", "format": "probe"}),
