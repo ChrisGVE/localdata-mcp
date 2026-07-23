@@ -96,6 +96,14 @@ class SecurityConfig:
     allowed_paths: tuple[str, ...] = cfg_field(
         (), doc="S8 row 19", introduction_gated=True
     )
+    # ARCHITECTURE section 5 (E5.3): the operator rw grant for ephemeral
+    # file connections — read-only is the unconditional default, and
+    # only an operator-trust layer may key a canonical path or contained
+    # prefix read-write (introduction-gated like allowed_paths: a
+    # project-layer file may narrow, never mint).
+    ephemeral_write_paths: tuple[str, ...] = cfg_field(
+        (), doc="ARCHITECTURE.md section 5 / E5.3", introduction_gated=True
+    )
 
 
 @dataclass(frozen=True)

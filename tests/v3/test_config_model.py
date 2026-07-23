@@ -47,6 +47,8 @@ EXPECTED_DEFAULTS = {
     # security — S8 rows 11, 19
     "security.validation_cache_entries": 1024,
     "security.allowed_paths": (),
+    # security — the E5.3 ephemeral rw grant (ARCHITECTURE section 5)
+    "security.ephemeral_write_paths": (),
     # composition — S8 row 14
     "composition.max_pipeline_length": 4,
     # response — S8 rows 23a, 23b
