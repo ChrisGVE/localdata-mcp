@@ -35,6 +35,47 @@ def unknown_endpoint_refusal(endpoint_name: str) -> GuardedExecutionError:
     )
 
 
+def store_kind_refusal(
+    endpoint_name: str, backend_kind: str, expected_kinds: tuple[str, ...]
+) -> GuardedExecutionError:
+    """E8.3's kind-mismatch refusal: a store-family tool was pointed at
+    an endpoint whose declared kind it does not serve (the successor of
+    `main`'s "'X' is not a tree-structured connection" errors, shaped
+    through NX-3 with the NFR-114 discovery guidance)."""
+    return GuardedExecutionError(
+        StructuredError(
+            error_type=ErrorType.CONFIGURATION,
+            message=(
+                f"endpoint {endpoint_name!r} is declared "
+                f"backend_kind={backend_kind!r}; this tool serves "
+                f"{' / '.join(expected_kinds)} endpoints"
+            ),
+            suggestion=(
+                "Call list_endpoints() to see each declared endpoint's "
+                "backend_kind. SQL endpoints are served by query/"
+                "write_query, kv/tree/graph stores by the kv and "
+                "graph/tree tool families, and rdf stores by query/"
+                "write_query with SPARQL text."
+            ),
+            retryable=False,
+        )
+    )
+
+
+def missing_entity_refusal(detail: str, discovery_hint: str) -> GuardedExecutionError:
+    """A named node/property/edge does not exist in the store — the
+    structured successor of `main`'s `{"error": "... not found"}` dict
+    returns, with the discovery tool named for recovery."""
+    return GuardedExecutionError(
+        StructuredError(
+            error_type=ErrorType.DATA_VALIDATION,
+            message=detail,
+            suggestion=discovery_hint,
+            retryable=False,
+        )
+    )
+
+
 def over_budget_refusal(detail: str) -> GuardedExecutionError:
     """I-2's over-budget admission refusal: the suggestion names the
     CALLER-side recovery (narrow the SQL) and states that the ceiling
