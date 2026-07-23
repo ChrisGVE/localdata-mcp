@@ -40,7 +40,10 @@ NUMERIC_FUNCTION_WHITELIST: Mapping[str, object] = {
     "log": math.log,
 }
 
-_MAX_EXPRESSION_LENGTH = 10_000  # refuse pathological inputs cheaply
+# Refuse pathological inputs cheaply. Not an operator-tunable truth (a
+# numeric objective/constraint is short); a fixed internal guard, and
+# deliberately not any S8 default value.
+_MAX_EXPRESSION_LENGTH = 4096
 
 _NumericValue = float | int | Sequence[float] | Sequence[int]
 
