@@ -28,6 +28,7 @@ SPEC_MODULES: Final[tuple[str, ...]] = (
     "localdata_mcp.explore.search",
     "localdata_mcp.explore.categorical",
     "localdata_mcp.process.domains.statistical_analysis.tools",
+    "localdata_mcp.process.domains.regression_modeling.tools",
 )
 
 

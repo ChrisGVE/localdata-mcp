@@ -270,4 +270,16 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='process',
     ),
+    "analyze_regression": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.FITTED_MODEL,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "evaluate_model_performance": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
 }

@@ -989,3 +989,84 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("analyze_ab_test", _impl_analyze_ab_test, arguments)
 
     app.tool(analyze_ab_test)
+
+    _impl_analyze_regression = registry.lookup("analyze_regression").func
+
+    def analyze_regression(target_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, feature_columns: list | None = None, model_type: str | None = None, regularization: str | None = None, degree: int | None = None, algorithm_params: dict | None = None) -> Any:
+        """
+        Fit a regression model on an addressed tabular source: model_type linear (default), ridge, lasso, elastic_net, logistic, or polynomial (regularization l1/l2/elastic_net maps onto the penalised estimators). Reports coefficients, fit metrics, and design-matrix health (rank, condition number); algorithm_params passes tuning straight to the estimator.
+
+        Input shape: TABULAR.
+        Output shape: FITTED_MODEL.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            target_column: The numeric outcome column to fit.
+            feature_columns (optional): Feature columns (default: every other numeric column).
+            model_type (optional): linear (default), ridge, lasso, elastic_net, logistic, polynomial.
+            regularization (optional): Penalty spelling l1, l2, or elastic_net — maps onto the estimator.
+            degree (optional): Polynomial expansion degree (implementation default 2).
+            algorithm_params (optional): Estimator constructor parameters, passed through verbatim (FR-306).
+        """
+        arguments: dict[str, Any] = {"target_column": target_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if feature_columns is not None:
+            arguments["feature_columns"] = feature_columns
+        if model_type is not None:
+            arguments["model_type"] = model_type
+        if regularization is not None:
+            arguments["regularization"] = regularization
+        if degree is not None:
+            arguments["degree"] = degree
+        if algorithm_params is not None:
+            arguments["algorithm_params"] = algorithm_params
+        return shaped_call("analyze_regression", _impl_analyze_regression, arguments)
+
+    app.tool(analyze_regression)
+
+    _impl_evaluate_model_performance = registry.lookup("evaluate_model_performance").func
+
+    def evaluate_model_performance(target_column: str, prediction_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, model_type: str | None = None) -> Any:
+        """
+        Score stored predictions against actuals on an addressed tabular source: regression metrics (r2, mse, rmse, mae, residual summary) for a numeric pair, weighted classification metrics (accuracy, precision, recall, f1) on request.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            target_column: The actual-values column.
+            prediction_column: The predicted-values column.
+            model_type (optional): regression (default) or classification.
+        """
+        arguments: dict[str, Any] = {"target_column": target_column, "prediction_column": prediction_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if model_type is not None:
+            arguments["model_type"] = model_type
+        return shaped_call("evaluate_model_performance", _impl_evaluate_model_performance, arguments)
+
+    app.tool(evaluate_model_performance)
