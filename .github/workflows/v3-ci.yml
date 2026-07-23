@@ -51,8 +51,11 @@ jobs:
       - name: Sync environment
         run: uv sync --frozen --extra dev
       - name: Run the v3 suite with the coverage floor
+        # The base battery's accreted slices (E8.5, incl. the generated
+        # contract stubs) run per-PR alongside the unit suite — S7.4's
+        # base-battery cadence; E14.3 adds the randomized mode.
         run: >
-          uv run pytest tests/v3/
+          uv run pytest tests/v3/ src/localdata_mcp/testbench/batteries/base/
           --cov=src/localdata_mcp/nexus
           --cov=src/localdata_mcp/ingest
           --cov=src/localdata_mcp/explore
