@@ -19,6 +19,7 @@ V3_PACKAGES: tuple[str, ...] = (
     "explore",
     "process",
     "visualize",
+    "output",
     "testbench",
 )
 

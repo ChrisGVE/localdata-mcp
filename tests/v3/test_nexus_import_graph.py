@@ -43,8 +43,10 @@ from localdata_mcp.nexus.gated_tree import SRC_ROOT, iter_v3_sources
 
 _NEXUS_PREFIX = "localdata_mcp.nexus"
 
-# The four data-touching domain packages §6.2 constrains.
-_TOOL_PACKAGES = ("ingest", "explore", "process", "visualize")
+# The data-touching capability packages §6.2 constrains: the four
+# domain packages plus the E13 Output capability (export_result reaches
+# the NX-8 export seam, never a renderer or a backend directly).
+_TOOL_PACKAGES = ("ingest", "explore", "process", "visualize", "output")
 
 # What a tool module may import from the nexus tree — §6.2's declared
 # seam set plus the two established cross-cutting seams (NX-1 spec

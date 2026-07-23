@@ -72,6 +72,23 @@ def pipeline_input(frame: pd.DataFrame, label: str) -> Iterator[None]:
         _PIPELINE_INPUT.reset(token)
 
 
+def current_pipeline_input() -> "tuple[pd.DataFrame, str] | None":
+    """The upstream stage's injected output, or None outside a pipeline.
+
+    The read seam for the terminal-leaf tools (render_chart, E12;
+    export_result, E13) that take NO addressing parameters and receive
+    their data from the composition engine: they consult this instead
+    of reaching for the contextvar directly, so the injection channel
+    stays inside the ONE addressing home (E9.2). A copy is returned —
+    a terminal must not mutate its upstream sibling's input under
+    fan-out."""
+    injected = _PIPELINE_INPUT.get()
+    if injected is None:
+        return None
+    frame, label = injected
+    return frame.copy(), label
+
+
 def resolve_frame(
     endpoint: str | None,
     path: str | None,

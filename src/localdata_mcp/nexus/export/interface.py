@@ -76,6 +76,15 @@ def renderer_for(format_name: str) -> Renderer:
         ) from None
 
 
+def supported_formats() -> tuple[str, ...]:
+    """The registered format names, sorted — the FR-902 roster as
+    declared data, for the export tool's up-front validation and its
+    caller-facing format list."""
+    from .renderers import RENDERERS
+
+    return tuple(sorted(RENDERERS))
+
+
 def render(payload: Any, format_name: str) -> bytes:
     """`payload` as `format_name` bytes (§6.2's `NX8.render`)."""
     return renderer_for(format_name).render(payload)

@@ -130,6 +130,70 @@ def stream_refusal(failure: Exception) -> GuardedExecutionError:
     )
 
 
+def export_source_refusal(detail: str) -> GuardedExecutionError:
+    """E13's exactly-one-source contract for `export_result`: the tool
+    exports inline `source=`, a `stream_id=`, or a composition leaf
+    (the upstream stage's output, injected when it runs as a pipeline
+    terminal). Zero or more than one of the explicit slots — or neither
+    slot with no upstream stage — is a structured refusal NAMING the
+    slots, the addressing precedent (E9) applied to the write surface."""
+    return GuardedExecutionError(
+        StructuredError(
+            error_type=ErrorType.DATA_VALIDATION,
+            message=detail,
+            suggestion=(
+                "Supply exactly one export source: source= (inline data — a "
+                "records list, a mapping, or a rendered artifact envelope) OR "
+                "stream_id= (a buffered result to drain to the file). As a "
+                "composition terminal, supply neither — the upstream stage's "
+                "output is injected automatically."
+            ),
+            retryable=False,
+        )
+    )
+
+
+def unknown_format_refusal(detail: str) -> GuardedExecutionError:
+    """E13's format-name guard for `export_result`: an unregistered
+    format is a caller-fixable argument error, not an internal lookup
+    failure — the structured refusal names the requested format and the
+    supported set (the NX-3 shape, the render_chart format precedent)."""
+    return GuardedExecutionError(
+        StructuredError(
+            error_type=ErrorType.DATA_VALIDATION,
+            message=detail,
+            suggestion=(
+                "Pass one of the supported export formats. Tabular data "
+                "renders as csv, parquet, arrow, json, excel, or markdown; a "
+                "schema mapping as schema; a graph or tree structure as graph "
+                "or tree; a rendered chart as svg or png."
+            ),
+            retryable=False,
+        )
+    )
+
+
+def export_shape_refusal(detail: str) -> GuardedExecutionError:
+    """E13's payload-shape guard: a renderer refused the export source
+    because it is the wrong shape for the requested format (a chart
+    handed to a tabular format, a DataFrame handed to svg). The
+    renderer's own message already names the mismatch; the suggestion
+    points at the format-to-shape mapping."""
+    return GuardedExecutionError(
+        StructuredError(
+            error_type=ErrorType.DATA_VALIDATION,
+            message=detail,
+            suggestion=(
+                "Match the format to the source shape: tabular data (records "
+                "or a result) to csv/parquet/arrow/json/excel/markdown, a "
+                "schema mapping to schema, a graph/tree mapping to graph/tree, "
+                "and a rendered chart artifact to svg/png."
+            ),
+            retryable=False,
+        )
+    )
+
+
 def over_budget_refusal(detail: str) -> GuardedExecutionError:
     """I-2's over-budget admission refusal: the suggestion names the
     CALLER-side recovery (narrow the SQL) and states that the ceiling

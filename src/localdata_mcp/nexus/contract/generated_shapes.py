@@ -486,4 +486,10 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='visualize',
     ),
+    "export_result": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.NONE,
+        streaming_capable=False,
+        domain='output',
+    ),
 }

@@ -2385,3 +2385,32 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("render_chart", _impl_render_chart, arguments)
 
     app.tool(render_chart)
+
+    _impl_export_result = registry.lookup("export_result").func
+
+    def export_result(format: str, path: str, source: object | None = None, stream_id: str | None = None, overwrite: bool | None = None) -> Any:
+        """
+        Write a result to a file in any supported format. format is one of csv, parquet, arrow, json, excel, markdown (tabular data), schema (a table mapping), graph or tree (a structure mapping), or svg/png (a rendered chart artifact). path is the destination file (inside allowed_paths). The source is exactly one of: source (inline data — a records list, a mapping, or a rendered chart envelope), stream_id (a buffered result drained to the file), or — as a composition terminal — the upstream stage's output, injected automatically when both are omitted. An existing target is refused unless overwrite=true. Round-trip fidelity is type-preserving for parquet/arrow, documented-lossy for markdown.
+
+        Input shape: TABULAR.
+        Output shape: NONE (chain endpoint — composes with nothing).
+        Streaming-capable: no.
+        Domain: output.
+
+        Args:
+            format: Output format: csv, parquet, arrow, json, excel, markdown, schema, graph, tree, svg, or png.
+            path: Destination file path inside allowed_paths.
+            source (optional): Inline data to export: a records list, a mapping (schema / graph / tree / key-value), or a rendered chart artifact envelope. Omit when exporting a stream_id or a composition leaf.
+            stream_id (optional): A buffered result to drain to the file (cursor semantics — the stream is consumed). Omit when exporting inline source or a composition leaf.
+            overwrite (optional): Replace an existing target file (NFR-115: destructive operations need the explicit disambiguator). Defaults to refusing an existing target.
+        """
+        arguments: dict[str, Any] = {"format": format, "path": path}
+        if source is not None:
+            arguments["source"] = source
+        if stream_id is not None:
+            arguments["stream_id"] = stream_id
+        if overwrite is not None:
+            arguments["overwrite"] = overwrite
+        return shaped_call("export_result", _impl_export_result, arguments)
+
+    app.tool(export_result)

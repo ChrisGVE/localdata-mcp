@@ -38,6 +38,7 @@ jobs:
           src/localdata_mcp/explore
           src/localdata_mcp/process
           src/localdata_mcp/visualize
+          src/localdata_mcp/output
           src/localdata_mcp/testbench
           src/localdata_mcp/server/fd_guard.py
           src/localdata_mcp/server/mcp_app.py

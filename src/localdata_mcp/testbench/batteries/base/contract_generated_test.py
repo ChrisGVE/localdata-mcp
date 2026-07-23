@@ -98,6 +98,7 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("clean_then_regress", {"target": "probe"}),
     ("cluster_then_chart", {}),
     ("render_chart", {"kind": "probe"}),
+    ("export_result", {"format": "probe", "path": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}
