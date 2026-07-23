@@ -346,3 +346,55 @@ def graph_stats(endpoint: str) -> dict[str, Any]:
         "density": min(density, 1.0),
     }
 
+
+
+# -- integrity-signal queries (harvested edge/casing warnings) --------
+
+
+def parallel_edge_count(
+    endpoint: str, source: str, target: str, label: Optional[str]
+) -> int:
+    """How many edges share (source, target, label) — the harvested
+    duplicate-edge signal (label NULL-safe)."""
+    return int(
+        one_value(
+            _query(
+                endpoint,
+                "SELECT COUNT(*) FROM graph_edges "
+                "WHERE source_id = :s AND target_id = :t "
+                "AND (label = :l OR (label IS NULL AND :l IS NULL))",
+                {"s": source, "t": target, "l": label},
+            )
+        )
+    )
+
+
+def reverse_labeled_edge_exists(
+    endpoint: str, source: str, target: str, label: str
+) -> bool:
+    """Whether target→source carries the same label — the harvested
+    contradictory-edge signal."""
+    return bool(
+        one_value(
+            _query(
+                endpoint,
+                "SELECT EXISTS(SELECT 1 FROM graph_edges "
+                "WHERE source_id = :t AND target_id = :s AND label = :l)",
+                {"s": source, "t": target, "l": label},
+            )
+        )
+    )
+
+
+def casing_variants(endpoint: str, node_id: str) -> list[str]:
+    """Other node ids differing only by case — the harvested
+    duplicate-casing signal."""
+    return [
+        str(row[0])
+        for row in _query(
+            endpoint,
+            "SELECT node_id FROM graph_nodes "
+            "WHERE LOWER(node_id) = LOWER(:nid) AND node_id != :nid",
+            {"nid": node_id},
+        ).rows
+    ]
