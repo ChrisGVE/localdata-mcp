@@ -35,5 +35,10 @@ def render_docstring(spec: ToolSpec) -> str:
         lines.append(f"Domain: {spec.domain}.")
     if spec.params:
         lines.extend(["", "Args:"])
-        lines.extend(f"    {param.name}: {param.description}" for param in spec.params)
+        lines.extend(
+            f"    {param.name}"
+            + ("" if param.required else " (optional)")
+            + f": {param.description}"
+            for param in spec.params
+        )
     return "\n".join(lines)

@@ -56,6 +56,7 @@ _ENGINE_SUFFIXES: dict[str, EphemeralEngineKind] = {
             "format",
             str,
             'The format name, or "auto" to infer from the suffix.',
+            required=False,
         ),
     ),
     input_shape=TypeShape.NONE,

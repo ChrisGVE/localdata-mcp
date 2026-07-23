@@ -76,6 +76,7 @@ def _graph_node_detail(endpoint: str, node_id: str) -> dict[str, Any]:
             "path",
             str,
             "The node's dot-path (or graph node_id); omit for a summary.",
+            required=False,
         ),
     ),
     input_shape=TypeShape.NONE,
@@ -103,7 +104,9 @@ def get_node(endpoint: str, path: str | None = None) -> Any:
     params=(
         Param("endpoint", str, "The operator-declared store endpoint name."),
         Param("path", str, "The node's dot-path (or graph node_id)."),
-        Param("label", str, "Optional label (graph stores only)."),
+        Param(
+            "label", str, "Optional label (graph stores only).", required=False
+        ),
     ),
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.SCALAR,
@@ -185,9 +188,19 @@ def delete_node(endpoint: str, path: str) -> Any:
     ),
     params=(
         Param("endpoint", str, "The operator-declared store endpoint name."),
-        Param("path", str, "The parent's dot-path; omit for root nodes."),
-        Param("offset", int, "Pagination offset (default 0)."),
-        Param("limit", int, "Optional page size; omitted serves all rows."),
+        Param(
+            "path",
+            str,
+            "The parent's dot-path; omit for root nodes.",
+            required=False,
+        ),
+        Param("offset", int, "Pagination offset (default 0).", required=False),
+        Param(
+            "limit",
+            int,
+            "Optional page size; omitted serves all rows.",
+            required=False,
+        ),
     ),
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.TABULAR,
@@ -214,7 +227,9 @@ def get_children(
     params=(
         Param("endpoint", str, "The operator-declared store endpoint name."),
         Param("path", str, "The node's dot-path."),
-        Param("new_parent", str, "Target parent path; omit for root."),
+        Param(
+            "new_parent", str, "Target parent path; omit for root.", required=False
+        ),
     ),
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.SCALAR,

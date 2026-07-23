@@ -32,7 +32,8 @@ def register_tools(app: FastMCP) -> None:
         Output shape: SCALAR.
         Streaming-capable: no.
         """
-        return shaped_call("ping", _impl_ping, {})
+        arguments: dict[str, Any] = {}
+        return shaped_call("ping", _impl_ping, arguments)
 
     app.tool(ping)
 
@@ -49,7 +50,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             rows: How many rows the probe table carries.
         """
-        return shaped_call("probe_table", _impl_probe_table, {"rows": rows})
+        arguments: dict[str, Any] = {"rows": rows}
+        return shaped_call("probe_table", _impl_probe_table, arguments)
 
     app.tool(probe_table)
 
@@ -66,7 +68,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             length: How many entries the series carries.
         """
-        return shaped_call("probe_vector", _impl_probe_vector, {"length": length})
+        arguments: dict[str, Any] = {"length": length}
+        return shaped_call("probe_vector", _impl_probe_vector, arguments)
 
     app.tool(probe_vector)
 
@@ -83,7 +86,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             size: Row and column count of the matrix.
         """
-        return shaped_call("probe_matrix", _impl_probe_matrix, {"size": size})
+        arguments: dict[str, Any] = {"size": size}
+        return shaped_call("probe_matrix", _impl_probe_matrix, arguments)
 
     app.tool(probe_matrix)
 
@@ -100,7 +104,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             points: Sample size drawn from y = 2n + 1.
         """
-        return shaped_call("probe_model", _impl_probe_model, {"points": points})
+        arguments: dict[str, Any] = {"points": points}
+        return shaped_call("probe_model", _impl_probe_model, arguments)
 
     app.tool(probe_model)
 
@@ -117,7 +122,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             nodes: How many nodes the path graph carries.
         """
-        return shaped_call("probe_graph", _impl_probe_graph, {"nodes": nodes})
+        arguments: dict[str, Any] = {"nodes": nodes}
+        return shaped_call("probe_graph", _impl_probe_graph, arguments)
 
     app.tool(probe_graph)
 
@@ -134,7 +140,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             points: How many geometry-bearing rows to emit.
         """
-        return shaped_call("probe_geo", _impl_probe_geo, {"points": points})
+        arguments: dict[str, Any] = {"points": points}
+        return shaped_call("probe_geo", _impl_probe_geo, arguments)
 
     app.tool(probe_geo)
 
@@ -151,7 +158,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             points: How many x/y pairs the chart spec plots.
         """
-        return shaped_call("probe_chart", _impl_probe_chart, {"points": points})
+        arguments: dict[str, Any] = {"points": points}
+        return shaped_call("probe_chart", _impl_probe_chart, arguments)
 
     app.tool(probe_chart)
 
@@ -168,7 +176,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             text: Payload whose size the sink reports.
         """
-        return shaped_call("probe_sink", _impl_probe_sink, {"text": text})
+        arguments: dict[str, Any] = {"text": text}
+        return shaped_call("probe_sink", _impl_probe_sink, arguments)
 
     app.tool(probe_sink)
 
@@ -183,7 +192,8 @@ def register_tools(app: FastMCP) -> None:
         Streaming-capable: no.
         Domain: ingest.
         """
-        return shaped_call("list_endpoints", _impl_list_endpoints, {})
+        arguments: dict[str, Any] = {}
+        return shaped_call("list_endpoints", _impl_list_endpoints, arguments)
 
     app.tool(list_endpoints)
 
@@ -201,7 +211,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             stream_id: The stream reference a large result returned.
         """
-        return shaped_call("fetch_chunk", _impl_fetch_chunk, {"stream_id": stream_id})
+        arguments: dict[str, Any] = {"stream_id": stream_id}
+        return shaped_call("fetch_chunk", _impl_fetch_chunk, arguments)
 
     app.tool(fetch_chunk)
 
@@ -219,7 +230,8 @@ def register_tools(app: FastMCP) -> None:
         Args:
             stream_id: The stream reference to release.
         """
-        return shaped_call("close_stream", _impl_close_stream, {"stream_id": stream_id})
+        arguments: dict[str, Any] = {"stream_id": stream_id}
+        return shaped_call("close_stream", _impl_close_stream, arguments)
 
     app.tool(close_stream)
 
@@ -238,7 +250,8 @@ def register_tools(app: FastMCP) -> None:
             endpoint: The operator-declared endpoint name.
             sql: One read-only SQL statement.
         """
-        return shaped_call("query", _impl_query, {"endpoint": endpoint, "sql": sql})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "sql": sql}
+        return shaped_call("query", _impl_query, arguments)
 
     app.tool(query)
 
@@ -257,13 +270,14 @@ def register_tools(app: FastMCP) -> None:
             endpoint: The operator-declared endpoint name.
             sql: One mutating SQL statement.
         """
-        return shaped_call("write_query", _impl_write_query, {"endpoint": endpoint, "sql": sql})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "sql": sql}
+        return shaped_call("write_query", _impl_write_query, arguments)
 
     app.tool(write_query)
 
     _impl_read_file = registry.lookup("read_file").func
 
-    def read_file(path: str, format: str) -> Any:
+    def read_file(path: str, format: str | None = None) -> Any:
         """
         Read a local data file (14 core formats: CSV, TSV, JSON, YAML, TOML, INI, XML, Excel, ODS, Numbers, Parquet, Feather, Arrow, HDF5) inside the operator's allowed paths.
 
@@ -274,9 +288,12 @@ def register_tools(app: FastMCP) -> None:
 
         Args:
             path: The file path (must lie inside allowed_paths).
-            format: The format name, or "auto" to infer from the suffix.
+            format (optional): The format name, or "auto" to infer from the suffix.
         """
-        return shaped_call("read_file", _impl_read_file, {"path": path, "format": format})
+        arguments: dict[str, Any] = {"path": path}
+        if format is not None:
+            arguments["format"] = format
+        return shaped_call("read_file", _impl_read_file, arguments)
 
     app.tool(read_file)
 
@@ -295,7 +312,8 @@ def register_tools(app: FastMCP) -> None:
             path: The database file path (inside allowed_paths).
             sql: One SQL statement.
         """
-        return shaped_call("query_file", _impl_query_file, {"path": path, "sql": sql})
+        arguments: dict[str, Any] = {"path": path, "sql": sql}
+        return shaped_call("query_file", _impl_query_file, arguments)
 
     app.tool(query_file)
 
@@ -315,13 +333,14 @@ def register_tools(app: FastMCP) -> None:
             path: The node's dot-path (or graph node_id).
             key: The property key.
         """
-        return shaped_call("get_value", _impl_get_value, {"endpoint": endpoint, "path": path, "key": key})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "path": path, "key": key}
+        return shaped_call("get_value", _impl_get_value, arguments)
 
     app.tool(get_value)
 
     _impl_set_value = registry.lookup("set_value").func
 
-    def set_value(endpoint: str, path: str, key: str, value: str, value_type: str) -> Any:
+    def set_value(endpoint: str, path: str, key: str, value: str, value_type: str | None = None) -> Any:
         """
         Set (upsert) one property on a node of a declared read-write store endpoint, auto-creating the node; string values infer their type unless value_type names one.
 
@@ -335,9 +354,12 @@ def register_tools(app: FastMCP) -> None:
             path: The node's dot-path (or graph node_id).
             key: The property key.
             value: The value to store.
-            value_type: Optional explicit type: string, integer, float, boolean, array, null, or datetime.
+            value_type (optional): Optional explicit type: string, integer, float, boolean, array, null, or datetime.
         """
-        return shaped_call("set_value", _impl_set_value, {"endpoint": endpoint, "path": path, "key": key, "value": value, "value_type": value_type})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "path": path, "key": key, "value": value}
+        if value_type is not None:
+            arguments["value_type"] = value_type
+        return shaped_call("set_value", _impl_set_value, arguments)
 
     app.tool(set_value)
 
@@ -357,13 +379,14 @@ def register_tools(app: FastMCP) -> None:
             path: The node's dot-path (or graph node_id).
             key: The property key.
         """
-        return shaped_call("delete_key", _impl_delete_key, {"endpoint": endpoint, "path": path, "key": key})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "path": path, "key": key}
+        return shaped_call("delete_key", _impl_delete_key, arguments)
 
     app.tool(delete_key)
 
     _impl_list_keys = registry.lookup("list_keys").func
 
-    def list_keys(endpoint: str, path: str, offset: int, limit: int) -> Any:
+    def list_keys(endpoint: str, path: str, offset: int | None = None, limit: int | None = None) -> Any:
         """
         List a node's properties (key, value, value_type) from a declared kv, tree, or graph store endpoint, key-ordered.
 
@@ -375,16 +398,21 @@ def register_tools(app: FastMCP) -> None:
         Args:
             endpoint: The operator-declared store endpoint name.
             path: The node's dot-path (or graph node_id).
-            offset: Pagination offset (default 0).
-            limit: Optional page size; omitted serves all rows.
+            offset (optional): Pagination offset (default 0).
+            limit (optional): Optional page size; omitted serves all rows.
         """
-        return shaped_call("list_keys", _impl_list_keys, {"endpoint": endpoint, "path": path, "offset": offset, "limit": limit})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "path": path}
+        if offset is not None:
+            arguments["offset"] = offset
+        if limit is not None:
+            arguments["limit"] = limit
+        return shaped_call("list_keys", _impl_list_keys, arguments)
 
     app.tool(list_keys)
 
     _impl_get_node = registry.lookup("get_node").func
 
-    def get_node(endpoint: str, path: str) -> Any:
+    def get_node(endpoint: str, path: str | None = None) -> Any:
         """
         Get node details from a declared tree or graph store endpoint (counts and addressing; properties via list_keys); omit path for the store-level summary.
 
@@ -395,15 +423,18 @@ def register_tools(app: FastMCP) -> None:
 
         Args:
             endpoint: The operator-declared store endpoint name.
-            path: The node's dot-path (or graph node_id); omit for a summary.
+            path (optional): The node's dot-path (or graph node_id); omit for a summary.
         """
-        return shaped_call("get_node", _impl_get_node, {"endpoint": endpoint, "path": path})
+        arguments: dict[str, Any] = {"endpoint": endpoint}
+        if path is not None:
+            arguments["path"] = path
+        return shaped_call("get_node", _impl_get_node, arguments)
 
     app.tool(get_node)
 
     _impl_set_node = registry.lookup("set_node").func
 
-    def set_node(endpoint: str, path: str, label: str) -> Any:
+    def set_node(endpoint: str, path: str, label: str | None = None) -> Any:
         """
         Create a node on a declared read-write store endpoint: tree kinds create the path (and missing ancestors), graph kinds upsert the node with an optional label.
 
@@ -415,9 +446,12 @@ def register_tools(app: FastMCP) -> None:
         Args:
             endpoint: The operator-declared store endpoint name.
             path: The node's dot-path (or graph node_id).
-            label: Optional label (graph stores only).
+            label (optional): Optional label (graph stores only).
         """
-        return shaped_call("set_node", _impl_set_node, {"endpoint": endpoint, "path": path, "label": label})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "path": path}
+        if label is not None:
+            arguments["label"] = label
+        return shaped_call("set_node", _impl_set_node, arguments)
 
     app.tool(set_node)
 
@@ -436,13 +470,14 @@ def register_tools(app: FastMCP) -> None:
             endpoint: The operator-declared store endpoint name.
             path: The node's dot-path (or graph node_id).
         """
-        return shaped_call("delete_node", _impl_delete_node, {"endpoint": endpoint, "path": path})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "path": path}
+        return shaped_call("delete_node", _impl_delete_node, arguments)
 
     app.tool(delete_node)
 
     _impl_get_children = registry.lookup("get_children").func
 
-    def get_children(endpoint: str, path: str, offset: int, limit: int) -> Any:
+    def get_children(endpoint: str, path: str | None = None, offset: int | None = None, limit: int | None = None) -> Any:
         """
         List direct children of a tree-store node (root nodes when path is omitted), name-ordered with counts.
 
@@ -453,17 +488,24 @@ def register_tools(app: FastMCP) -> None:
 
         Args:
             endpoint: The operator-declared store endpoint name.
-            path: The parent's dot-path; omit for root nodes.
-            offset: Pagination offset (default 0).
-            limit: Optional page size; omitted serves all rows.
+            path (optional): The parent's dot-path; omit for root nodes.
+            offset (optional): Pagination offset (default 0).
+            limit (optional): Optional page size; omitted serves all rows.
         """
-        return shaped_call("get_children", _impl_get_children, {"endpoint": endpoint, "path": path, "offset": offset, "limit": limit})
+        arguments: dict[str, Any] = {"endpoint": endpoint}
+        if path is not None:
+            arguments["path"] = path
+        if offset is not None:
+            arguments["offset"] = offset
+        if limit is not None:
+            arguments["limit"] = limit
+        return shaped_call("get_children", _impl_get_children, arguments)
 
     app.tool(get_children)
 
     _impl_move_node = registry.lookup("move_node").func
 
-    def move_node(endpoint: str, path: str, new_parent: str) -> Any:
+    def move_node(endpoint: str, path: str, new_parent: str | None = None) -> Any:
         """
         Move a tree-store node and its whole subtree under a new parent (or to root level when new_parent is omitted).
 
@@ -475,15 +517,18 @@ def register_tools(app: FastMCP) -> None:
         Args:
             endpoint: The operator-declared store endpoint name.
             path: The node's dot-path.
-            new_parent: Target parent path; omit for root.
+            new_parent (optional): Target parent path; omit for root.
         """
-        return shaped_call("move_node", _impl_move_node, {"endpoint": endpoint, "path": path, "new_parent": new_parent})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "path": path}
+        if new_parent is not None:
+            arguments["new_parent"] = new_parent
+        return shaped_call("move_node", _impl_move_node, arguments)
 
     app.tool(move_node)
 
     _impl_get_neighbors = registry.lookup("get_neighbors").func
 
-    def get_neighbors(endpoint: str, node_id: str, direction: str, offset: int, limit: int) -> Any:
+    def get_neighbors(endpoint: str, node_id: str, direction: str | None = None, offset: int | None = None, limit: int | None = None) -> Any:
         """
         List a graph node's neighbors with edge label/weight and direction ('in', 'out', or 'both').
 
@@ -495,17 +540,24 @@ def register_tools(app: FastMCP) -> None:
         Args:
             endpoint: The operator-declared graph endpoint name.
             node_id: The node whose neighbors to list.
-            direction: 'in', 'out', or 'both' (default).
-            offset: Pagination offset (default 0).
-            limit: Optional page size; omitted serves all rows.
+            direction (optional): 'in', 'out', or 'both' (default).
+            offset (optional): Pagination offset (default 0).
+            limit (optional): Optional page size; omitted serves all rows.
         """
-        return shaped_call("get_neighbors", _impl_get_neighbors, {"endpoint": endpoint, "node_id": node_id, "direction": direction, "offset": offset, "limit": limit})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "node_id": node_id}
+        if direction is not None:
+            arguments["direction"] = direction
+        if offset is not None:
+            arguments["offset"] = offset
+        if limit is not None:
+            arguments["limit"] = limit
+        return shaped_call("get_neighbors", _impl_get_neighbors, arguments)
 
     app.tool(get_neighbors)
 
     _impl_get_edges = registry.lookup("get_edges").func
 
-    def get_edges(endpoint: str, node_id: str, offset: int, limit: int) -> Any:
+    def get_edges(endpoint: str, node_id: str | None = None, offset: int | None = None, limit: int | None = None) -> Any:
         """
         List a graph store's edges (source, target, label, weight), optionally filtered to those touching one node.
 
@@ -516,17 +568,24 @@ def register_tools(app: FastMCP) -> None:
 
         Args:
             endpoint: The operator-declared graph endpoint name.
-            node_id: Optional node filter.
-            offset: Pagination offset (default 0).
-            limit: Optional page size; omitted serves all rows.
+            node_id (optional): Optional node filter.
+            offset (optional): Pagination offset (default 0).
+            limit (optional): Optional page size; omitted serves all rows.
         """
-        return shaped_call("get_edges", _impl_get_edges, {"endpoint": endpoint, "node_id": node_id, "offset": offset, "limit": limit})
+        arguments: dict[str, Any] = {"endpoint": endpoint}
+        if node_id is not None:
+            arguments["node_id"] = node_id
+        if offset is not None:
+            arguments["offset"] = offset
+        if limit is not None:
+            arguments["limit"] = limit
+        return shaped_call("get_edges", _impl_get_edges, arguments)
 
     app.tool(get_edges)
 
     _impl_add_edge = registry.lookup("add_edge").func
 
-    def add_edge(endpoint: str, source: str, target: str, label: str, weight: float) -> Any:
+    def add_edge(endpoint: str, source: str, target: str, label: str | None = None, weight: float | None = None) -> Any:
         """
         Add (or re-weight) a directed edge on a declared read-write graph endpoint, auto-creating missing nodes; returns the harvested integrity warnings (self-loop, duplicates, contradictory reverse edge).
 
@@ -539,16 +598,21 @@ def register_tools(app: FastMCP) -> None:
             endpoint: The operator-declared graph endpoint name.
             source: The edge's source node id.
             target: The edge's target node id.
-            label: Optional edge label.
-            weight: Optional edge weight.
+            label (optional): Optional edge label.
+            weight (optional): Optional edge weight.
         """
-        return shaped_call("add_edge", _impl_add_edge, {"endpoint": endpoint, "source": source, "target": target, "label": label, "weight": weight})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "source": source, "target": target}
+        if label is not None:
+            arguments["label"] = label
+        if weight is not None:
+            arguments["weight"] = weight
+        return shaped_call("add_edge", _impl_add_edge, arguments)
 
     app.tool(add_edge)
 
     _impl_remove_edge = registry.lookup("remove_edge").func
 
-    def remove_edge(endpoint: str, source: str, target: str, label: str) -> Any:
+    def remove_edge(endpoint: str, source: str, target: str, label: str | None = None) -> Any:
         """
         Remove a directed edge (and its properties) from a declared read-write graph endpoint; warns when a node becomes an orphan.
 
@@ -561,15 +625,18 @@ def register_tools(app: FastMCP) -> None:
             endpoint: The operator-declared graph endpoint name.
             source: The edge's source node id.
             target: The edge's target node id.
-            label: Optional edge label (NULL-labeled when omitted).
+            label (optional): Optional edge label (NULL-labeled when omitted).
         """
-        return shaped_call("remove_edge", _impl_remove_edge, {"endpoint": endpoint, "source": source, "target": target, "label": label})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "source": source, "target": target}
+        if label is not None:
+            arguments["label"] = label
+        return shaped_call("remove_edge", _impl_remove_edge, arguments)
 
     app.tool(remove_edge)
 
     _impl_find_path = registry.lookup("find_path").func
 
-    def find_path(endpoint: str, source: str, target: str, algorithm: str) -> Any:
+    def find_path(endpoint: str, source: str, target: str, algorithm: str | None = None) -> Any:
         """
         Find path(s) between two graph nodes: the shortest path, or all simple paths (bounded enumeration).
 
@@ -582,9 +649,12 @@ def register_tools(app: FastMCP) -> None:
             endpoint: The operator-declared graph endpoint name.
             source: The start node id.
             target: The end node id.
-            algorithm: 'shortest' (default) or 'all'.
+            algorithm (optional): 'shortest' (default) or 'all'.
         """
-        return shaped_call("find_path", _impl_find_path, {"endpoint": endpoint, "source": source, "target": target, "algorithm": algorithm})
+        arguments: dict[str, Any] = {"endpoint": endpoint, "source": source, "target": target}
+        if algorithm is not None:
+            arguments["algorithm"] = algorithm
+        return shaped_call("find_path", _impl_find_path, arguments)
 
     app.tool(find_path)
 
@@ -602,6 +672,7 @@ def register_tools(app: FastMCP) -> None:
         Args:
             endpoint: The operator-declared graph endpoint name.
         """
-        return shaped_call("get_graph_stats", _impl_get_graph_stats, {"endpoint": endpoint})
+        arguments: dict[str, Any] = {"endpoint": endpoint}
+        return shaped_call("get_graph_stats", _impl_get_graph_stats, arguments)
 
     app.tool(get_graph_stats)

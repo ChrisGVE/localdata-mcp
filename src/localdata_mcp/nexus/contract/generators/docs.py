@@ -25,7 +25,13 @@ _TABLE_HEAD = (
 
 
 def _row(spec: ToolSpec) -> str:
-    params = ", ".join(f"`{param.name}`" for param in spec.params) or "—"
+    params = (
+        ", ".join(
+            f"`{param.name}`" if param.required else f"`{param.name}?`"
+            for param in spec.params
+        )
+        or "—"
+    )
     streaming = "yes" if spec.streaming_capable else "no"
     return (
         f"| `{spec.name}` | {spec.summary} | {spec.input_shape.name} "

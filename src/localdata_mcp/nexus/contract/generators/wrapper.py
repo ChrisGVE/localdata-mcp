@@ -46,19 +46,36 @@ def _indent_docstring(text: str) -> str:
 
 
 def _render_one(spec: ToolSpec) -> str:
+    # Required params first (Python signature rule), optional params as
+    # `type | None = None` — the MCP schema itself carries optionality
+    # (E8.5). An omitted optional is NOT forwarded, so the registered
+    # implementation's own default governs (one default site, NFR-403).
+    ordered = sorted(spec.params, key=lambda param: not param.required)
     signature = ", ".join(
-        f"{param.name}: {param.annotation.__name__}" for param in spec.params
+        f"{param.name}: {param.annotation.__name__}"
+        if param.required
+        else f"{param.name}: {param.annotation.__name__} | None = None"
+        for param in ordered
     )
-    arguments = ", ".join(f'"{param.name}": {param.name}' for param in spec.params)
+    required_pairs = ", ".join(
+        f'"{param.name}": {param.name}' for param in spec.params if param.required
+    )
+    optional_forwards = "".join(
+        f"        if {param.name} is not None:\n"
+        f'            arguments["{param.name}"] = {param.name}\n'
+        for param in spec.params
+        if not param.required
+    )
     return (
         f'    _impl_{spec.name} = registry.lookup("{spec.name}").func\n'
         f"\n"
         f"    def {spec.name}({signature}) -> Any:\n"
         f"{_indent_docstring(render_docstring(spec))}\n"
+        f"        arguments: dict[str, Any] = {{{required_pairs}}}\n"
+        f"{optional_forwards}"
         # Envelope-shaping is wrapper-applied, never opt-in (E7.2/O-1):
         # every call routes through the one shaping seam.
-        f'        return shaped_call("{spec.name}", _impl_{spec.name}, '
-        f"{{{arguments}}})\n"
+        f'        return shaped_call("{spec.name}", _impl_{spec.name}, arguments)\n'
         f"\n"
         f"    app.tool({spec.name})\n"
     )

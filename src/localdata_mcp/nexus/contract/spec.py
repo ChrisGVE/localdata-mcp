@@ -45,11 +45,18 @@ class TypeShape(enum.Enum):
 
 @dataclass(frozen=True)
 class Param:
-    """One declared tool parameter: name, Python annotation, prose."""
+    """One declared tool parameter: name, Python annotation, prose.
+
+    `required=False` declares a caller-omittable parameter (E8.5): the
+    generated wrapper exposes it as `type | None = None` and forwards
+    it ONLY when supplied, so the implementation's own default governs
+    — progressive disclosure at the MCP schema itself (FP #3), never
+    a wrapper-invented default value (one default site, NFR-403)."""
 
     name: str
     annotation: type
     description: str
+    required: bool = True
 
 
 @dataclass(frozen=True)

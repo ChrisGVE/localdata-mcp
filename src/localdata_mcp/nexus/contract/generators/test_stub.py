@@ -106,8 +106,12 @@ def test_every_registered_spec_has_a_generated_entry() -> None:
 
 
 def _sample_arguments(spec: ToolSpec) -> str:
+    # Required params only: the stub also PROVES every optional param
+    # is genuinely caller-omittable at the wire (E8.5).
     pairs = []
     for param in spec.params:
+        if not param.required:
+            continue
         literal = _SAMPLE_LITERALS.get(param.annotation)
         if literal is None:
             raise ToolContractError(

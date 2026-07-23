@@ -94,6 +94,7 @@ def get_value(endpoint: str, path: str, key: str) -> Any:
             str,
             "Optional explicit type: string, integer, float, boolean, "
             "array, null, or datetime.",
+            required=False,
         ),
     ),
     input_shape=TypeShape.NONE,
@@ -150,8 +151,13 @@ def delete_key(endpoint: str, path: str, key: str) -> Any:
     params=(
         Param("endpoint", str, "The operator-declared store endpoint name."),
         Param("path", str, "The node's dot-path (or graph node_id)."),
-        Param("offset", int, "Pagination offset (default 0)."),
-        Param("limit", int, "Optional page size; omitted serves all rows."),
+        Param("offset", int, "Pagination offset (default 0).", required=False),
+        Param(
+            "limit",
+            int,
+            "Optional page size; omitted serves all rows.",
+            required=False,
+        ),
     ),
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.TABULAR,
