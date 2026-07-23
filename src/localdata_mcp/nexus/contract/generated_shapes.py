@@ -456,4 +456,16 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='composition',
     ),
+    "clean_then_profile": ShapeEntry(
+        input_shape=TypeShape.DYNAMIC,
+        output_shape=TypeShape.DYNAMIC,
+        streaming_capable=False,
+        domain='composition',
+    ),
+    "clean_then_regress": ShapeEntry(
+        input_shape=TypeShape.DYNAMIC,
+        output_shape=TypeShape.DYNAMIC,
+        streaming_capable=False,
+        domain='composition',
+    ),
 }

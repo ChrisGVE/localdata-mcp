@@ -2185,3 +2185,70 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("compose_pipeline", _impl_compose_pipeline, arguments)
 
     app.tool(compose_pipeline)
+
+    _impl_clean_then_profile = registry.lookup("clean_then_profile").func
+
+    def clean_then_profile(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, missing_strategy: str | None = None) -> Any:
+        """
+        Convenience pipeline: prepare_missing_values -> profile_data on one addressed source. missing_strategy defaults to drop (fabricates nothing); callable with a source alone. Equivalent to the explicit two-stage compose_pipeline.
+
+        Input shape: DYNAMIC (validated per submitted dag_spec).
+        Output shape: DYNAMIC (validated per submitted dag_spec).
+        Streaming-capable: no.
+        Domain: composition.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            missing_strategy (optional): drop (default), mean, median, mode, forward_fill, constant.
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if missing_strategy is not None:
+            arguments["missing_strategy"] = missing_strategy
+        return shaped_call("clean_then_profile", _impl_clean_then_profile, arguments)
+
+    app.tool(clean_then_profile)
+
+    _impl_clean_then_regress = registry.lookup("clean_then_regress").func
+
+    def clean_then_regress(target: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, missing_strategy: str | None = None) -> Any:
+        """
+        Convenience pipeline: prepare_missing_values -> analyze_regression on one addressed source, predicting target. missing_strategy defaults to drop. Equivalent to the explicit two-stage compose_pipeline.
+
+        Input shape: DYNAMIC (validated per submitted dag_spec).
+        Output shape: DYNAMIC (validated per submitted dag_spec).
+        Streaming-capable: no.
+        Domain: composition.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            target: The regression target column.
+            missing_strategy (optional): drop (default), mean, median, mode, forward_fill, constant.
+        """
+        arguments: dict[str, Any] = {"target": target}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if missing_strategy is not None:
+            arguments["missing_strategy"] = missing_strategy
+        return shaped_call("clean_then_regress", _impl_clean_then_regress, arguments)
+
+    app.tool(clean_then_regress)

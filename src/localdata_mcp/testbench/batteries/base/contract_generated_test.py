@@ -93,6 +93,8 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("prepare_missing_values", {}),
     ("convert_types", {"conversions": {}}),
     ("compose_pipeline", {"dag_spec": ["probe"]}),
+    ("clean_then_profile", {}),
+    ("clean_then_regress", {"target": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}
