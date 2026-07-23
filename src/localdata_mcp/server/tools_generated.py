@@ -2252,3 +2252,43 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("clean_then_regress", _impl_clean_then_regress, arguments)
 
     app.tool(clean_then_regress)
+
+    _impl_render_chart = registry.lookup("render_chart").func
+
+    def render_chart(kind: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, encoding: dict | None = None, format: str | None = None, title: str | None = None) -> Any:
+        """
+        Render an addressed tabular source as a chart image. kind is one of histogram, heatmap, scatter_fit, line_timeseries, geo_map, network_layout (one per analysis domain). encoding maps the kind's visual channels to columns (e.g. {'x': col, 'y': col}; heatmap defaults to all numeric columns). format is svg (default, sanitized to an inert document) or png. The artifact is returned inline in the envelope, extractable through the Output surface.
+
+        Input shape: TABULAR.
+        Output shape: NONE (chain endpoint — composes with nothing).
+        Streaming-capable: no.
+        Domain: visualize.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            kind: Chart kind: histogram, heatmap, scatter_fit, line_timeseries, geo_map, or network_layout.
+            encoding (optional): Visual-channel to column map for the kind (e.g. {'x': <col>, 'y': <col>}); heatmap accepts {'columns': [<col>, …]} or omits it for all numeric columns.
+            format (optional): Image format: svg (default, inert-sanitized) or png.
+            title (optional): Chart title drawn above the plot.
+        """
+        arguments: dict[str, Any] = {"kind": kind}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if encoding is not None:
+            arguments["encoding"] = encoding
+        if format is not None:
+            arguments["format"] = format
+        if title is not None:
+            arguments["title"] = title
+        return shaped_call("render_chart", _impl_render_chart, arguments)
+
+    app.tool(render_chart)

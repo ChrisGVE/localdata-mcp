@@ -95,6 +95,7 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("compose_pipeline", {"dag_spec": ["probe"]}),
     ("clean_then_profile", {}),
     ("clean_then_regress", {"target": "probe"}),
+    ("render_chart", {"kind": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

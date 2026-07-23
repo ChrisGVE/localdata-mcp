@@ -468,4 +468,10 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='composition',
     ),
+    "render_chart": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.NONE,
+        streaming_capable=False,
+        domain='visualize',
+    ),
 }

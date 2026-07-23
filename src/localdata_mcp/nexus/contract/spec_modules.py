@@ -40,6 +40,7 @@ SPEC_MODULES: Final[tuple[str, ...]] = (
     "localdata_mcp.process.preprocessing.tools",
     "localdata_mcp.process.composition.tools",
     "localdata_mcp.process.composition.wrappers",
+    "localdata_mcp.visualize.tools",
 )
 
 
