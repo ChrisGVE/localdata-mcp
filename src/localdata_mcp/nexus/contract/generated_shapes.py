@@ -210,4 +210,22 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='ingest',
     ),
+    "describe_database": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='explore',
+    ),
+    "describe_table": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='explore',
+    ),
+    "find_table": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='explore',
+    ),
 }

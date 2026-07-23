@@ -676,3 +676,62 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("get_graph_stats", _impl_get_graph_stats, arguments)
 
     app.tool(get_graph_stats)
+
+    _impl_describe_database = registry.lookup("describe_database").func
+
+    def describe_database(endpoint: str) -> Any:
+        """
+        Describe a declared endpoint's schema: SQL kinds return the table catalog (columns, keys, row counts), kv/tree stores their key-space shape, graph stores their node/edge shape, rdf stores their triple shape.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: explore.
+
+        Args:
+            endpoint: The operator-declared endpoint name.
+        """
+        arguments: dict[str, Any] = {"endpoint": endpoint}
+        return shaped_call("describe_database", _impl_describe_database, arguments)
+
+    app.tool(describe_database)
+
+    _impl_describe_table = registry.lookup("describe_table").func
+
+    def describe_table(endpoint: str, table: str) -> Any:
+        """
+        Describe one table of a declared SQL-kind endpoint: columns with types and nullability, primary key, row count.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: explore.
+
+        Args:
+            endpoint: The operator-declared endpoint name.
+            table: The table name (as the catalog lists it).
+        """
+        arguments: dict[str, Any] = {"endpoint": endpoint, "table": table}
+        return shaped_call("describe_table", _impl_describe_table, arguments)
+
+    app.tool(describe_table)
+
+    _impl_find_table = registry.lookup("find_table").func
+
+    def find_table(endpoint: str, name_pattern: str) -> Any:
+        """
+        Find tables on a declared SQL-kind endpoint whose names match a glob pattern (e.g. 'sales_*').
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: explore.
+
+        Args:
+            endpoint: The operator-declared endpoint name.
+            name_pattern: A glob pattern matched against table names.
+        """
+        arguments: dict[str, Any] = {"endpoint": endpoint, "name_pattern": name_pattern}
+        return shaped_call("find_table", _impl_find_table, arguments)
+
+    app.tool(find_table)

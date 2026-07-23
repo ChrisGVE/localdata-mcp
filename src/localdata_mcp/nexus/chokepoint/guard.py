@@ -43,6 +43,7 @@ from localdata_mcp.nexus.persistence.manager import (
 
 from itertools import chain
 
+from . import introspection
 from .execution import execute_mutation, fetch_bounded, iter_frames
 from .chunk_registry import (
     ChunkAlreadyServedError,
@@ -471,6 +472,46 @@ class Chokepoint:
             healthy=None if health is None else health.healthy,
             health_detail="" if health is None else health.detail,
         )
+
+    # -- the schema-discovery seam (X-1, E9.1) ------------------------
+
+    def describe_endpoint(self, endpoint_name: str) -> dict[str, Any]:
+        """The endpoint's schema summary, by DECLARED kind: SQL kinds
+        answer with the table catalog (columns, keys, row counts),
+        store kinds with their semantic shape (key space, graph shape,
+        triple counts) — plain data only, the inspector never crosses
+        the seam (FR-802)."""
+        record = self._persistence.record(endpoint_name)
+        with self._wired(endpoint_name, record.backend_kind):
+            return introspection.endpoint_schema(record)
+
+    def describe_endpoint_table(
+        self, endpoint_name: str, table: str
+    ) -> dict[str, Any] | None:
+        """One table's schema on a SQL-kind endpoint, or None when the
+        table does not exist; store kinds are refused (their discovery
+        surfaces are the store tools, not a table catalog)."""
+        record = self._persistence.record(endpoint_name)
+        self._refuse_store_catalog(endpoint_name, record.backend_kind)
+        with self._wired(endpoint_name, record.backend_kind):
+            return introspection.table_schema(record, table)
+
+    def endpoint_table_names(self, endpoint_name: str) -> tuple[str, ...]:
+        """The SQL-kind endpoint's table catalog (find_table's search
+        space); store kinds refused as above."""
+        record = self._persistence.record(endpoint_name)
+        self._refuse_store_catalog(endpoint_name, record.backend_kind)
+        with self._wired(endpoint_name, record.backend_kind):
+            return introspection.table_names(record)
+
+    def _refuse_store_catalog(self, endpoint_name: str, backend_kind: str) -> None:
+        if backend_kind in ("kv", "tree", "graph", "rdf"):
+            raise GuardRefusedError(
+                f"endpoint {endpoint_name!r} is a {backend_kind} store — "
+                "its schema is semantic, not a table catalog; use "
+                "describe_database for the store summary and the store "
+                "tool family to browse"
+            )
 
     # -- NX-6's standalone path-containment service (GP3) -------------
 

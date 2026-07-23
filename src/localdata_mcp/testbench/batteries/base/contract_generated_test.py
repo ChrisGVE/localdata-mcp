@@ -52,6 +52,9 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("remove_edge", {"endpoint": "probe", "source": "probe", "target": "probe"}),
     ("find_path", {"endpoint": "probe", "source": "probe", "target": "probe"}),
     ("get_graph_stats", {"endpoint": "probe"}),
+    ("describe_database", {"endpoint": "probe"}),
+    ("describe_table", {"endpoint": "probe", "table": "probe"}),
+    ("find_table", {"endpoint": "probe", "name_pattern": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}
