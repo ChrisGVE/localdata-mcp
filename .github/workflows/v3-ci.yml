@@ -108,3 +108,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "placeholder until E3/E14 - the assembled battery bench lands in E14"
+
+  cold-start-smoke:
+    # E8.6: process-launch -> serve-ready against the E8 import graph,
+    # matplotlib font cache pre-seeded (the S8 row-17 measurement
+    # condition). NON-GATING until E16.3's re-baseline (no --gate);
+    # the 5.0 bound below is row 17's declared home (CI assertion).
+    name: cold-start smoke (non-gating drift signal)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync environment
+        run: uv sync --frozen --extra dev
+      - name: Measure cold start against the row-17 bound
+        run: uv run python scripts/cold_start_smoke.py --bound 5.0
