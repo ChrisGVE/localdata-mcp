@@ -70,6 +70,10 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("transform_data", {"column": "probe", "find": "probe", "replace": "probe"}),
     ("analyze_time_series", {"date_column": "probe", "value_column": "probe"}),
     ("forecast_time_series", {"date_column": "probe", "value_column": "probe"}),
+    ("generate_sample", {}),
+    ("bootstrap_statistic", {"column": "probe"}),
+    ("monte_carlo_simulate", {"column": "probe"}),
+    ("bayesian_estimate", {"column": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

@@ -1320,3 +1320,174 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("forecast_time_series", _impl_forecast_time_series, arguments)
 
     app.tool(forecast_time_series)
+
+    _impl_generate_sample = registry.lookup("generate_sample").func
+
+    def generate_sample(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, sampling_method: str | None = None, sample_size: float | None = None, stratify_column: str | None = None, cluster_column: str | None = None, weight_column: str | None = None, seed: int | None = None) -> Any:
+        """
+        Draw a sample from an addressed tabular source: sampling_method simple_random (default), stratified, systematic, cluster, or weighted. sample_size: integer = row count, fraction = share (default 0.1). Returns the drawn relation plus the design summary.
+
+        Input shape: TABULAR.
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            sampling_method (optional): simple_random (default), stratified, systematic, cluster, weighted.
+            sample_size (optional): Integer row count, or fractional share (implementation default 0.1).
+            stratify_column (optional): Stratum column (stratified).
+            cluster_column (optional): Cluster column (cluster).
+            weight_column (optional): Weight column (weighted).
+            seed (optional): Random seed pinning every draw (default: fresh entropy).
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if sampling_method is not None:
+            arguments["sampling_method"] = sampling_method
+        if sample_size is not None:
+            arguments["sample_size"] = sample_size
+        if stratify_column is not None:
+            arguments["stratify_column"] = stratify_column
+        if cluster_column is not None:
+            arguments["cluster_column"] = cluster_column
+        if weight_column is not None:
+            arguments["weight_column"] = weight_column
+        if seed is not None:
+            arguments["seed"] = seed
+        return shaped_call("generate_sample", _impl_generate_sample, arguments)
+
+    app.tool(generate_sample)
+
+    _impl_bootstrap_statistic = registry.lookup("bootstrap_statistic").func
+
+    def bootstrap_statistic(column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, statistic: str | None = None, resamples: int | None = None, confidence_level: float | None = None, seed: int | None = None) -> Any:
+        """
+        Percentile-bootstrap a statistic (mean, median, std, var) of one column on an addressed tabular source: estimate, confidence interval, and standard error. resamples defaults to the operator-configured count (S8 row 30).
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            column: The numeric column to bootstrap.
+            statistic (optional): mean (default), median, std, or var.
+            resamples (optional): Bootstrap resamples (default: the configured S8 row-30 count).
+            confidence_level (optional): Interval coverage (implementation default 0.95).
+            seed (optional): Random seed pinning every draw (default: fresh entropy).
+        """
+        arguments: dict[str, Any] = {"column": column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if statistic is not None:
+            arguments["statistic"] = statistic
+        if resamples is not None:
+            arguments["resamples"] = resamples
+        if confidence_level is not None:
+            arguments["confidence_level"] = confidence_level
+        if seed is not None:
+            arguments["seed"] = seed
+        return shaped_call("bootstrap_statistic", _impl_bootstrap_statistic, arguments)
+
+    app.tool(bootstrap_statistic)
+
+    _impl_monte_carlo_simulate = registry.lookup("monte_carlo_simulate").func
+
+    def monte_carlo_simulate(column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, simulation_type: str | None = None, iterations: int | None = None, bounds: list | None = None, seed: int | None = None) -> Any:
+        """
+        Monte Carlo over one column of an addressed tabular source: simulation_type uncertainty (default — resampled distribution of the mean) or integration (probability mass inside bounds=[lower, upper] under the fitted normal). iterations defaults to the operator-configured count (S8 row 31).
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            column: The numeric column to simulate over.
+            simulation_type (optional): uncertainty (default) or integration.
+            iterations (optional): Simulation draws (default: the configured S8 row-31 count).
+            bounds (optional): [lower, upper] integration bounds (integration only).
+            seed (optional): Random seed pinning every draw (default: fresh entropy).
+        """
+        arguments: dict[str, Any] = {"column": column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if simulation_type is not None:
+            arguments["simulation_type"] = simulation_type
+        if iterations is not None:
+            arguments["iterations"] = iterations
+        if bounds is not None:
+            arguments["bounds"] = bounds
+        if seed is not None:
+            arguments["seed"] = seed
+        return shaped_call("monte_carlo_simulate", _impl_monte_carlo_simulate, arguments)
+
+    app.tool(monte_carlo_simulate)
+
+    _impl_bayesian_estimate = registry.lookup("bayesian_estimate").func
+
+    def bayesian_estimate(column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, prior_distribution: str | None = None, credible_level: float | None = None) -> Any:
+        """
+        Conjugate-normal Bayesian posterior of one column's mean on an addressed tabular source (noninformative prior): posterior mean, scale, and the Student-t credible interval.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            column: The numeric column to estimate.
+            prior_distribution (optional): Conjugate prior family (normal — the launch set).
+            credible_level (optional): Interval coverage (implementation default 0.95).
+        """
+        arguments: dict[str, Any] = {"column": column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if prior_distribution is not None:
+            arguments["prior_distribution"] = prior_distribution
+        if credible_level is not None:
+            arguments["credible_level"] = credible_level
+        return shaped_call("bayesian_estimate", _impl_bayesian_estimate, arguments)
+
+    app.tool(bayesian_estimate)

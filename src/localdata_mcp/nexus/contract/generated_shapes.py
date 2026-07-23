@@ -318,4 +318,28 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='process',
     ),
+    "generate_sample": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "bootstrap_statistic": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "monte_carlo_simulate": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "bayesian_estimate": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
 }

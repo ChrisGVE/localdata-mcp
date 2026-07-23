@@ -73,6 +73,7 @@ __all__ = [
     "ChunkNotServableError",
     "StreamOpened",
     "ServedChunk",
+    "ProcessDefaults",
 ]
 
 Language = Literal["sql", "sparql"]
@@ -122,6 +123,16 @@ class EndpointSummary:
     posture: str
     healthy: bool | None
     health_detail: str
+
+
+@dataclass(frozen=True)
+class ProcessDefaults:
+    """The S8 process-domain default counts (rows 30/31) as a plain
+    value — what `process_defaults()` hands E10's stochastic tools,
+    so the ConfigModel stays behind the seam (section 6.2)."""
+
+    bootstrap_resamples: int
+    monte_carlo_iterations: int
 
 
 @dataclass(frozen=True)
@@ -471,6 +482,16 @@ class Chokepoint:
             posture=record.posture,
             healthy=None if health is None else health.healthy,
             health_detail="" if health is None else health.detail,
+        )
+
+    def process_defaults(self) -> "ProcessDefaults":
+        """The S8 process-domain defaults (rows 30/31) as a plain
+        value — the seam E10's stochastic tools read their
+        operator-tunable counts through (tool packages never read
+        NX-2 directly, section 6.2)."""
+        return ProcessDefaults(
+            bootstrap_resamples=self._config.process.bootstrap_default_resamples,
+            monte_carlo_iterations=self._config.process.monte_carlo_default_iterations,
         )
 
     # -- the schema-discovery seam (X-1, E9.1) ------------------------
