@@ -742,7 +742,7 @@ def register_tools(app: FastMCP) -> None:
         """
         Profile a tabular source's data quality: per-column null counts, inferred types, numeric ranges, and cardinality. Address with exactly one of endpoint= or path=; endpoint sources take exactly one of table= or query=.
 
-        Input shape: NONE (chain endpoint — composes with nothing).
+        Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
         Domain: explore.
@@ -772,7 +772,7 @@ def register_tools(app: FastMCP) -> None:
         """
         Regex-search a tabular source's cell values. Address with exactly one of endpoint= or path=; target= is the table or SQL statement to search (omit for a document/table file); query= is the search pattern.
 
-        Input shape: NONE (chain endpoint — composes with nothing).
+        Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
         Domain: explore.
@@ -806,7 +806,7 @@ def register_tools(app: FastMCP) -> None:
         """
         Map one column's categorical values: distinct values with frequencies and a suggested encoding (label vs one-hot) — a report only, nothing is transformed or persisted. Address with exactly one of endpoint= or path=.
 
-        Input shape: NONE (chain endpoint — composes with nothing).
+        Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
         Domain: explore.
@@ -840,7 +840,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: statistical_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -891,7 +891,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: statistical_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -926,7 +926,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: statistical_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -958,7 +958,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: statistical_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -999,7 +999,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: FITTED_MODEL.
         Streaming-capable: no.
-        Domain: process.
+        Domain: regression_modeling.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1045,7 +1045,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: regression_modeling.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1080,7 +1080,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: pattern_recognition.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1125,7 +1125,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: pattern_recognition.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1170,7 +1170,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: MATRIX.
         Streaming-capable: no.
-        Domain: process.
+        Domain: pattern_recognition.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1215,7 +1215,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: TABULAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: pattern_recognition.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1251,7 +1251,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: time_series.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1286,7 +1286,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: VECTOR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: time_series.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1330,7 +1330,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: TABULAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: sampling_estimation.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1378,7 +1378,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: sampling_estimation.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1421,7 +1421,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: sampling_estimation.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1464,7 +1464,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: sampling_estimation.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1501,7 +1501,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: business_intelligence.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1534,7 +1534,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: business_intelligence.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1570,7 +1570,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: network_graph.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1611,7 +1611,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: optimization.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1657,7 +1657,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: optimization.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1698,7 +1698,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: optimization.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1732,7 +1732,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: NONE (chain endpoint — composes with nothing).
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
         """
         arguments: dict[str, Any] = {}
         return shaped_call("check_geospatial_capabilities", _impl_check_geospatial_capabilities, arguments)
@@ -1748,7 +1748,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1788,7 +1788,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1828,7 +1828,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1864,7 +1864,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1899,7 +1899,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: GEO.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1934,7 +1934,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -1975,7 +1975,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -2019,7 +2019,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: SCALAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -2064,7 +2064,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: GEO.
         Streaming-capable: no.
-        Domain: process.
+        Domain: geospatial_analysis.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -2106,7 +2106,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: TABULAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: preprocessing.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -2145,7 +2145,7 @@ def register_tools(app: FastMCP) -> None:
         Input shape: TABULAR.
         Output shape: TABULAR.
         Streaming-capable: no.
-        Domain: process.
+        Domain: preprocessing.
 
         Args:
             endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
@@ -2166,3 +2166,22 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("convert_types", _impl_convert_types, arguments)
 
     app.tool(convert_types)
+
+    _impl_compose_pipeline = registry.lookup("compose_pipeline").func
+
+    def compose_pipeline(dag_spec: list) -> Any:
+        """
+        Compose registered tools into one validated pipeline: dag_spec is an ordered list of {stage, tool, params, depends_on} entries (linear chains with fan-out; a chain-initial stage addresses its own source, a dependent stage consumes its upstream stage's output). The whole chain is validated against the tool contracts and the type-shape adjacency table BEFORE anything runs — an incompatible chain is rejected naming the offending stage, with no partial run. Returns one envelope per terminal stage under a single provenance chain.
+
+        Input shape: DYNAMIC (validated per submitted dag_spec).
+        Output shape: DYNAMIC (validated per submitted dag_spec).
+        Streaming-capable: no.
+        Domain: composition.
+
+        Args:
+            dag_spec: Ordered stage entries: {stage: name, tool: registered tool, params: tool arguments, depends_on: [upstream stage]}.
+        """
+        arguments: dict[str, Any] = {"dag_spec": dag_spec}
+        return shaped_call("compose_pipeline", _impl_compose_pipeline, arguments)
+
+    app.tool(compose_pipeline)

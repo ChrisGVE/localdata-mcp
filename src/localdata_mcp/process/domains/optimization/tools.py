@@ -65,7 +65,7 @@ from .linear import solve_assignment, solve_lp
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="optimization",
 )
 def solve_linear_program(
     objective_column: str,
@@ -124,7 +124,7 @@ def solve_linear_program(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="optimization",
 )
 def optimize_constrained(
     objective_expression: str,
@@ -163,7 +163,7 @@ def optimize_constrained(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="optimization",
 )
 def solve_assignment_problem(
     cost_columns: list[str],

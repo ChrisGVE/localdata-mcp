@@ -36,7 +36,7 @@ _Y = Param("y_column", str, "The y/latitude column (default 'y').", required=Fal
     params=(),
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def check_geospatial_capabilities() -> Any:
     return check_capabilities()
@@ -63,7 +63,7 @@ def check_geospatial_capabilities() -> Any:
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def analyze_spatial_autocorrelation(
     value_column: str,
@@ -100,7 +100,7 @@ def analyze_spatial_autocorrelation(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def find_spatial_hotspots(
     value_column: str,
@@ -126,7 +126,7 @@ def find_spatial_hotspots(
     params=(*source_params(), _X, _Y),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def calculate_spatial_distances(
     endpoint: str | None = None,

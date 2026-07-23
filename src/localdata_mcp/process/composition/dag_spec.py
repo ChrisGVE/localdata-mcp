@@ -34,9 +34,18 @@ from .scheduler import (
     terminal_stages,
 )
 
-# The X-2 addressing parameters a DEPENDENT stage must not carry: its
-# input is its upstream stage's output, not a freshly addressed source.
-_SOURCE_PARAMS = ("endpoint", "path", "table", "query")
+# The X-2 source-selector parameters a DEPENDENT stage must not carry:
+# its input is its upstream stage's output, not a freshly addressed
+# source. Only the UNAMBIGUOUS selectors are listed — `endpoint`/`path`
+# are the two primary selectors the injection channel keys on, and
+# `table`/`target` are the secondary-slot selectors. `query` is
+# deliberately EXCLUDED: it is overloaded — a SQL source for the raw
+# addressing tools but the search PATTERN for search_data (whose own
+# source slot is `target`) — so name alone cannot tell a re-addressing
+# mistake from a legitimate search term. Guarding the four unambiguous
+# names catches the real "I addressed my own source" error without the
+# false positive.
+_SOURCE_PARAMS = ("endpoint", "path", "table", "target")
 
 _SUGGESTION = (
     "Fix the dag_spec and resubmit: each entry is {stage, tool, params, "

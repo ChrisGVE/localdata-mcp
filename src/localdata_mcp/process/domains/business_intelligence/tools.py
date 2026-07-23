@@ -32,7 +32,7 @@ _VALUE = Param("value_column", str, "The transaction amount column.")
     params=(*source_params(), _CUSTOMER, _DATE, _VALUE),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="business_intelligence",
 )
 def analyze_rfm(
     customer_column: str,
@@ -73,7 +73,7 @@ def analyze_rfm(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="business_intelligence",
 )
 def calculate_clv(
     customer_column: str,

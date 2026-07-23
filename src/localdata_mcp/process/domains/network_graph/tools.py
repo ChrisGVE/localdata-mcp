@@ -46,7 +46,7 @@ from .network import analyze_edge_list
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="network_graph",
 )
 def analyze_network(
     source_column: str,

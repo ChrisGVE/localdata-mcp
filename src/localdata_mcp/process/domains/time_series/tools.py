@@ -42,7 +42,7 @@ _VALUE = Param("value_column", str, "The numeric value column.")
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="time_series",
 )
 def analyze_time_series(
     date_column: str,
@@ -96,7 +96,7 @@ def analyze_time_series(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.VECTOR,
-    domain="process",
+    domain="time_series",
 )
 def forecast_time_series(
     date_column: str,

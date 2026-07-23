@@ -65,7 +65,7 @@ from .regression import fit_regression
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.FITTED_MODEL,
-    domain="process",
+    domain="regression_modeling",
 )
 def analyze_regression(
     target_column: str,
@@ -102,7 +102,7 @@ def analyze_regression(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="regression_modeling",
 )
 def evaluate_model_performance(
     target_column: str,

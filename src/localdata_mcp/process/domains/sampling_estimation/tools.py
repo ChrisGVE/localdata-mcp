@@ -61,7 +61,7 @@ _SEED = Param(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.TABULAR,
-    domain="process",
+    domain="sampling_estimation",
 )
 def generate_sample(
     endpoint: str | None = None,
@@ -109,7 +109,7 @@ def generate_sample(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="sampling_estimation",
 )
 def bootstrap_statistic(
     column: str,
@@ -162,7 +162,7 @@ def bootstrap_statistic(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="sampling_estimation",
 )
 def monte_carlo_simulate(
     column: str,
@@ -209,7 +209,7 @@ def monte_carlo_simulate(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="sampling_estimation",
 )
 def bayesian_estimate(
     column: str,

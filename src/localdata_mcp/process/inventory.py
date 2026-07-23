@@ -18,6 +18,28 @@ from __future__ import annotations
 
 from typing import Final
 
+# The process-inventory domain vocabulary (E11 made ToolSpec.domain
+# carry the FAMILY name, so the battery's launch domain set derives
+# from registry declarations, §6.3): the nine P-1 analysis families
+# plus the FR-303 preprocessing stage family. The composition surface
+# (FR-6xx: compose_pipeline and its wrappers, domain="composition") is
+# deliberately NOT inventoried here — it composes domain tools, it is
+# not a domain function FR-703 could orphan.
+PROCESS_INVENTORY_DOMAINS: Final[frozenset[str]] = frozenset(
+    {
+        "statistical_analysis",
+        "regression_modeling",
+        "pattern_recognition",
+        "time_series",
+        "geospatial_analysis",
+        "optimization",
+        "sampling_estimation",
+        "business_intelligence",
+        "network_graph",
+        "preprocessing",
+    }
+)
+
 # The 34 process-domain tools that ship at launch (PRD S3.3's P-1
 # families plus the FR-303 preprocessing stages). The inventory gate
 # asserts the live registry's process surface equals this set exactly,

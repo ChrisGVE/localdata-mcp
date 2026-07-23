@@ -47,7 +47,7 @@ def _column_profile(series: "pd.Series[Any]") -> dict[str, Any]:
         "sources take exactly one of table= or query=."
     ),
     params=source_params(),
-    input_shape=TypeShape.NONE,
+    input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
     domain="explore",
 )

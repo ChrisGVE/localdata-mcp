@@ -18,13 +18,18 @@ from localdata_mcp.nexus.contract.spec_modules import load_spec_modules
 from localdata_mcp.process.inventory import (
     DEFERRED_DOMAIN_CAPABILITIES,
     LAUNCH_PROCESS_TOOLS,
+    PROCESS_INVENTORY_DOMAINS,
     deferred_without_rationale,
 )
 
 
 def test_live_process_surface_equals_the_declared_inventory() -> None:
     load_spec_modules()
-    registered = {spec.name for spec in default_registry() if spec.domain == "process"}
+    registered = {
+        spec.name
+        for spec in default_registry()
+        if spec.domain in PROCESS_INVENTORY_DOMAINS
+    }
     assert registered == set(LAUNCH_PROCESS_TOOLS), (
         "the live process tool surface diverged from the FR-703 inventory; "
         "register the new tool and add it to LAUNCH_PROCESS_TOOLS, or "
@@ -36,3 +41,18 @@ def test_live_process_surface_equals_the_declared_inventory() -> None:
 def test_every_deferred_capability_carries_a_rationale() -> None:
     assert deferred_without_rationale() == []
     assert DEFERRED_DOMAIN_CAPABILITIES, "the deferred-items list must not be empty"
+
+
+def test_declared_domain_vocabulary_matches_live_declarations() -> None:
+    """The inventory's domain vocabulary and the live registry's
+    process-package domain declarations agree — the battery's launch
+    domain set derives from these declarations (§6.3), so a family
+    rename or addition must land in both in one reviewed change."""
+    load_spec_modules()
+    live = {
+        spec.domain
+        for spec in default_registry()
+        if spec.func.__module__.startswith("localdata_mcp.process.")
+        and spec.domain != "composition"
+    }
+    assert live == PROCESS_INVENTORY_DOMAINS

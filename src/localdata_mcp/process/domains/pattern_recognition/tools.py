@@ -70,7 +70,7 @@ _ALGORITHM_PARAMS = Param(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="pattern_recognition",
 )
 def analyze_clusters(
     endpoint: str | None = None,
@@ -112,7 +112,7 @@ def analyze_clusters(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="pattern_recognition",
 )
 def detect_anomalies(
     endpoint: str | None = None,
@@ -149,7 +149,7 @@ def detect_anomalies(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.MATRIX,
-    domain="process",
+    domain="pattern_recognition",
 )
 def reduce_dimensions(
     endpoint: str | None = None,
@@ -186,7 +186,7 @@ def reduce_dimensions(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.TABULAR,
-    domain="process",
+    domain="pattern_recognition",
 )
 def transform_data(
     column: str,

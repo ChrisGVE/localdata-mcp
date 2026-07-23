@@ -47,7 +47,7 @@ from .stages import convert_types, prepare_missing_values
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.TABULAR,
-    domain="process",
+    domain="preprocessing",
 )
 def prepare_missing_values_tool(
     endpoint: str | None = None,
@@ -80,7 +80,7 @@ def prepare_missing_values_tool(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.TABULAR,
-    domain="process",
+    domain="preprocessing",
 )
 def convert_types_tool(
     conversions: dict[str, str],

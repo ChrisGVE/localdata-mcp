@@ -70,7 +70,7 @@ _MATCH_CAP = 128
             required=False,
         ),
     ),
-    input_shape=TypeShape.NONE,
+    input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
     domain="explore",
 )

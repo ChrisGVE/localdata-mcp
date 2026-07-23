@@ -38,6 +38,7 @@ SPEC_MODULES: Final[tuple[str, ...]] = (
     "localdata_mcp.process.domains.geospatial_analysis.tools",
     "localdata_mcp.process.domains.geospatial_analysis.geo_tools",
     "localdata_mcp.process.preprocessing.tools",
+    "localdata_mcp.process.composition.tools",
 )
 
 

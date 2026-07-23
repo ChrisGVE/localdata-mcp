@@ -56,7 +56,7 @@ _NY = Param("y_column", str, "The y column (default 'y').", required=False)
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def perform_spatial_join(
     geometry_column: str,
@@ -93,7 +93,7 @@ def perform_spatial_join(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.GEO,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def perform_spatial_overlay(
     geometry_column: str,
@@ -131,7 +131,7 @@ def perform_spatial_overlay(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def aggregate_points_in_polygons(
     value_column: str,
@@ -172,7 +172,7 @@ def aggregate_points_in_polygons(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def optimize_route_tool(
     edges: list[Any],
@@ -213,7 +213,7 @@ def optimize_route_tool(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def analyze_accessibility_tool(
     edges: list[Any],
@@ -251,7 +251,7 @@ def analyze_accessibility_tool(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.GEO,
-    domain="process",
+    domain="geospatial_analysis",
 )
 def generate_service_isochrones_tool(
     edges: list[Any],

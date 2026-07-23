@@ -92,6 +92,7 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("generate_service_isochrones", {"edges": ["probe"], "service_locations": ["probe"], "time_bands": ["probe"]}),
     ("prepare_missing_values", {}),
     ("convert_types", {"conversions": {}}),
+    ("compose_pipeline", {"dag_spec": ["probe"]}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

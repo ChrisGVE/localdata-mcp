@@ -82,7 +82,7 @@ _ALTERNATIVE = Param(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="statistical_analysis",
 )
 def analyze_hypothesis_test(
     endpoint: str | None = None,
@@ -112,7 +112,7 @@ def analyze_hypothesis_test(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="statistical_analysis",
 )
 def analyze_anova(
     dependent_var: str,
@@ -143,7 +143,7 @@ def analyze_anova(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="statistical_analysis",
 )
 def analyze_effect_sizes(
     column: str,
@@ -182,7 +182,7 @@ def analyze_effect_sizes(
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
-    domain="process",
+    domain="statistical_analysis",
 )
 def analyze_ab_test(
     metric_column: str,

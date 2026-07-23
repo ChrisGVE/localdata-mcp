@@ -40,7 +40,7 @@ _VALUE_LISTING_CAP = 64
         *source_params(),
         Param("column", str, "The column whose categories to map."),
     ),
-    input_shape=TypeShape.NONE,
+    input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.SCALAR,
     domain="explore",
 )
