@@ -77,6 +77,9 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("analyze_rfm", {"customer_column": "probe", "date_column": "probe", "value_column": "probe"}),
     ("calculate_clv", {"customer_column": "probe", "date_column": "probe", "value_column": "probe"}),
     ("analyze_network", {"source_column": "probe", "target_column": "probe"}),
+    ("solve_linear_program", {"objective_column": "probe"}),
+    ("optimize_constrained", {"objective_expression": "probe", "initial_guess_column": "probe"}),
+    ("solve_assignment_problem", {"cost_columns": ["probe"]}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

@@ -34,6 +34,7 @@ SPEC_MODULES: Final[tuple[str, ...]] = (
     "localdata_mcp.process.domains.sampling_estimation.tools",
     "localdata_mcp.process.domains.business_intelligence.tools",
     "localdata_mcp.process.domains.network_graph.tools",
+    "localdata_mcp.process.domains.optimization.tools",
 )
 
 

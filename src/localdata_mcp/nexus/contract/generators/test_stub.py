@@ -26,6 +26,8 @@ _SAMPLE_LITERALS: dict[type, str] = {
     int: "3",
     float: "1.0",
     bool: "True",
+    list: '["probe"]',
+    dict: "{}",
 }
 
 _HEADER = f'''"""MACHINE-WRITTEN by {GENERATOR_NAME} — DO NOT EDIT.

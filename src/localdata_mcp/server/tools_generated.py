@@ -1601,3 +1601,124 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("analyze_network", _impl_analyze_network, arguments)
 
     app.tool(analyze_network)
+
+    _impl_solve_linear_program = registry.lookup("solve_linear_program").func
+
+    def solve_linear_program(objective_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, constraint_columns: list | None = None, constraint_values: list | None = None, constraint_types: list | None = None, bounds: list | None = None, integer_variables: list | None = None) -> Any:
+        """
+        Minimise a linear objective on an addressed tabular source: rows are decision variables, objective_column the cost vector, each constraint column one constraint's coefficients with its constraint_values right-hand side and constraint_types (<=, >=, =). HiGHS solver; reports the solution, objective value, and solver status.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            objective_column: The cost-vector column.
+            constraint_columns (optional): Constraint coefficient columns (one per constraint).
+            constraint_values (optional): Right-hand sides, one per constraint column.
+            constraint_types (optional): Per-constraint <= (default), >=, or =.
+            bounds (optional): Per-variable [lower, upper] pairs (default: x >= 0).
+            integer_variables (optional): Indices of variables constrained to integers.
+        """
+        arguments: dict[str, Any] = {"objective_column": objective_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if constraint_columns is not None:
+            arguments["constraint_columns"] = constraint_columns
+        if constraint_values is not None:
+            arguments["constraint_values"] = constraint_values
+        if constraint_types is not None:
+            arguments["constraint_types"] = constraint_types
+        if bounds is not None:
+            arguments["bounds"] = bounds
+        if integer_variables is not None:
+            arguments["integer_variables"] = integer_variables
+        return shaped_call("solve_linear_program", _impl_solve_linear_program, arguments)
+
+    app.tool(solve_linear_program)
+
+    _impl_optimize_constrained = registry.lookup("optimize_constrained").func
+
+    def optimize_constrained(objective_expression: str, initial_guess_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, constraint_expressions: list | None = None, constraint_types: list | None = None, method: str | None = None) -> Any:
+        """
+        Minimise a nonlinear objective expression over the decision vector x (e.g. '(x[0]-1)**2 + x[1]'), starting from initial_guess_column on an addressed tabular source. Expressions are evaluated by the deny-by-default numeric grammar — no host code can run. Optional constraint expressions (ineq: >= 0, or eq).
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            objective_expression: Numeric expression over x, evaluated by the safe grammar.
+            initial_guess_column: Column holding the starting decision vector.
+            constraint_expressions (optional): Constraint expressions over x (safe grammar).
+            constraint_types (optional): Per-constraint ineq (default, >= 0) or eq.
+            method (optional): scipy minimize method (implementation default SLSQP).
+        """
+        arguments: dict[str, Any] = {"objective_expression": objective_expression, "initial_guess_column": initial_guess_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if constraint_expressions is not None:
+            arguments["constraint_expressions"] = constraint_expressions
+        if constraint_types is not None:
+            arguments["constraint_types"] = constraint_types
+        if method is not None:
+            arguments["method"] = method
+        return shaped_call("optimize_constrained", _impl_optimize_constrained, arguments)
+
+    app.tool(optimize_constrained)
+
+    _impl_solve_assignment_problem = registry.lookup("solve_assignment_problem").func
+
+    def solve_assignment_problem(cost_columns: list, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, agent_column: str | None = None) -> Any:
+        """
+        Optimal agent-task assignment (Hungarian algorithm) on an addressed tabular source: rows are agents, cost_columns the per-task cost columns; optional agent_column names the agents. Reports the assignment and total cost.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            cost_columns: Per-task cost columns.
+            agent_column (optional): Column naming the agents (default: row index).
+        """
+        arguments: dict[str, Any] = {"cost_columns": cost_columns}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if agent_column is not None:
+            arguments["agent_column"] = agent_column
+        return shaped_call("solve_assignment_problem", _impl_solve_assignment_problem, arguments)
+
+    app.tool(solve_assignment_problem)

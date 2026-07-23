@@ -360,4 +360,22 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='process',
     ),
+    "solve_linear_program": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "optimize_constrained": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "solve_assignment_problem": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
 }

@@ -43,7 +43,8 @@ from localdata_mcp.nexus.persistence.manager import (
 
 from itertools import chain
 
-from . import introspection
+from . import expr_eval, introspection
+from .expr_eval import ExpressionRefusedError
 from .execution import execute_mutation, fetch_bounded, iter_frames
 from .chunk_registry import (
     ChunkAlreadyServedError,
@@ -74,6 +75,7 @@ __all__ = [
     "StreamOpened",
     "ServedChunk",
     "ProcessDefaults",
+    "ExpressionRefusedError",
 ]
 
 Language = Literal["sql", "sparql"]
@@ -483,6 +485,17 @@ class Chokepoint:
             healthy=None if health is None else health.healthy,
             health_detail="" if health is None else health.detail,
         )
+
+    def evaluate_numeric_expression(
+        self, expression: str, columns: "Mapping[str, Any]"
+    ) -> float:
+        """FR-305's ONE evaluation surface for caller-supplied numeric
+        expressions (NX-6's asteval service, deny-by-default symbol
+        table): E10's optimization tools reach expr_eval exclusively
+        through here — the module itself stays chokepoint-internal.
+        Raises `ExpressionRefusedError` on any unsafe or non-numeric
+        input."""
+        return expr_eval.evaluate_numeric_expression(expression, columns)
 
     def process_defaults(self) -> "ProcessDefaults":
         """The S8 process-domain defaults (rows 30/31) as a plain
