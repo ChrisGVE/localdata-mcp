@@ -58,6 +58,16 @@ EXPECTED_DEFAULTS = {
     "process.bootstrap_default_resamples": 1000,
     "process.monte_carlo_default_iterations": 10000,
     "process.sentinel_max_condition_number": 1e10,
+    # visualize — chart styling defaults (FR-503 styling layer, E12.6)
+    "visualize.default_palette": "colorblind",
+    "visualize.default_sequential_cmap": "viridis",
+    "visualize.figure_width_inches": 6.4,
+    "visualize.figure_height_inches": 4.8,
+    "visualize.figure_dpi": 100,
+    "visualize.grid": True,
+    "visualize.despine": True,
+    "visualize.fit_line_color": "#d55e00",
+    "visualize.edge_color": "#8c8c8c",
     # testbench — S8 rows 15a-f, 20, 21, 22, 25, 27, 28, 29
     "testbench.tol_closed_form_rtol": 1e-6,
     "testbench.tol_iterative_rtol": 1e-2,

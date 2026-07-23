@@ -151,9 +151,13 @@ def _coerce(value: Any, section: str, field_name: str, src: LayerSource) -> Any:
 
 def _typed_value(value: Any, declared: Any) -> Any:
     """The value as `declared`, or _MISSING when it cannot be read so.
-    bool is never an int here (TOML distinguishes them)."""
+    A bool declaration reads only a bool; conversely a TOML bool never
+    satisfies int/float/str (TOML distinguishes them, and bool is an int
+    subclass in Python)."""
+    if declared is bool:
+        return value if isinstance(value, bool) else _MISSING
     if isinstance(value, bool):
-        return _MISSING  # no bool fields exist in the model
+        return _MISSING  # a bool must not be read as int/float/str
     if declared is int:
         return value if isinstance(value, int) else _MISSING
     if declared is float:

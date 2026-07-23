@@ -139,6 +139,43 @@ class ProcessDefaults:
 
 
 @dataclass(frozen=True)
+class VisualizeDefaults:
+    """The S8 `visualize.*` styling defaults as a plain value — what
+    `visualize_defaults()` hands E12's render_chart, so the ConfigModel
+    stays behind the seam (section 6.2), mirroring ProcessDefaults. The
+    render tool folds these with per-call palette/style overrides into a
+    StyleSpec."""
+
+    default_palette: str
+    default_sequential_cmap: str
+    figure_width_inches: float
+    figure_height_inches: float
+    figure_dpi: int
+    grid: bool
+    despine: bool
+    fit_line_color: str
+    edge_color: str
+
+    @classmethod
+    def from_config(cls, visualize: Any) -> "VisualizeDefaults":
+        """Project a `VisualizeConfig` section onto the plain seam value —
+        the one place NX-2's visualize section becomes the value E12
+        reads (used by `visualize_defaults()` and by the testbench render
+        callers that stand outside the chokepoint)."""
+        return cls(
+            default_palette=visualize.default_palette,
+            default_sequential_cmap=visualize.default_sequential_cmap,
+            figure_width_inches=visualize.figure_width_inches,
+            figure_height_inches=visualize.figure_height_inches,
+            figure_dpi=visualize.figure_dpi,
+            grid=visualize.grid,
+            despine=visualize.despine,
+            fit_line_color=visualize.fit_line_color,
+            edge_color=visualize.edge_color,
+        )
+
+
+@dataclass(frozen=True)
 class CompositionLimits:
     """The S8 composition bounds (row 14) as a plain value — what
     `composition_limits()` hands the E11 engine, so the ConfigModel
@@ -516,6 +553,12 @@ class Chokepoint:
             bootstrap_resamples=self._config.process.bootstrap_default_resamples,
             monte_carlo_iterations=self._config.process.monte_carlo_default_iterations,
         )
+
+    def visualize_defaults(self) -> "VisualizeDefaults":
+        """The S8 `visualize.*` styling defaults as a plain value — the
+        seam E12's render_chart reads its palette and figure defaults
+        through (tool packages never read NX-2 directly, section 6.2)."""
+        return VisualizeDefaults.from_config(self._config.visualize)
 
     # -- the composition seams (E11, section 6.3) ---------------------
 

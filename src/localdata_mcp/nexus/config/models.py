@@ -148,6 +148,37 @@ class ProcessConfig:
 
 
 @dataclass(frozen=True)
+class VisualizeConfig:
+    """`visualize.*` — chart styling defaults (the one home for the
+    palette, figure geometry, and the Tufte frame treatment; the FR-503
+    styling layer). Not security-classed: a palette or figure size is a
+    presentation choice, never a resource or trust boundary. Each field
+    is a per-call override target on `render_chart` — config supplies
+    the default, the call may override (progressive disclosure)."""
+
+    SECURITY_CLASSED: ClassVar[bool] = False
+
+    # Qualitative (categorical) cycle: seaborn's colorblind palette is the
+    # accessible, honest default (First Principle: clarity; Tufte spirit).
+    default_palette: str = cfg_field("colorblind", doc="qualitative palette preset")
+    # Continuous channels (heatmap, colour-by-value): perceptually uniform,
+    # colourblind-safe — the launch heatmap already used it.
+    default_sequential_cmap: str = cfg_field("viridis", doc="sequential colormap")
+    # matplotlib's own default figure geometry — a neutral 4:3-ish canvas.
+    figure_width_inches: float = cfg_field(6.4, doc="figure width (inches)")
+    figure_height_inches: float = cfg_field(4.8, doc="figure height (inches)")
+    figure_dpi: int = cfg_field(100, doc="raster (PNG) resolution")
+    # A light y-grid behind the marks aids reading without competing with
+    # data ink; top/right spines are non-data ink and dropped (Tufte).
+    grid: bool = cfg_field(True, doc="light y-grid behind the marks")
+    despine: bool = cfg_field(True, doc="drop top/right frame spines (Tufte)")
+    # Secondary/annotation ink, de-emphasised from the primary palette:
+    # the regression fit accent and the network-edge ink.
+    fit_line_color: str = cfg_field("#d55e00", doc="regression fit accent")
+    edge_color: str = cfg_field("#8c8c8c", doc="network edge ink")
+
+
+@dataclass(frozen=True)
 class ConfigModel:
     """The one config model — every operator-tunable truth, one home."""
 
@@ -157,6 +188,7 @@ class ConfigModel:
     composition: CompositionConfig = field(default_factory=CompositionConfig)
     response: ResponseConfig = field(default_factory=ResponseConfig)
     process: ProcessConfig = field(default_factory=ProcessConfig)
+    visualize: VisualizeConfig = field(default_factory=VisualizeConfig)
     testbench: TestbenchConfig = field(default_factory=TestbenchConfig)
     # Endpoint entities (E1.4) — declarations by name, not a scalar
     # section: no env encoding, introduction gated to operator layers

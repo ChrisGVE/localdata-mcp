@@ -114,12 +114,18 @@ class TestEnvRoundTrip:
     ) -> None:
         section, field_name = field_path
         declared = field_type(section, field_name)
-        if declared is int:
+        if declared is bool:
+            value = data.draw(st.booleans())
+            raw = "true" if value else "false"
+        elif declared is int:
             value = data.draw(_values)
             raw = str(value)
         elif declared is float:
             value = data.draw(st.floats(allow_nan=False, allow_infinity=False))
             raw = repr(value)  # repr round-trips floats exactly
+        elif declared is str:
+            value = data.draw(_path_text)  # a plain scalar string field
+            raw = value
         else:  # tuple[str, ...] path lists
             value = tuple(data.draw(st.lists(_path_text, min_size=1, max_size=4)))
             raw = os.pathsep.join(value)

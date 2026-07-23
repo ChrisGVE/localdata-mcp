@@ -60,6 +60,8 @@ def _parse_env_value(raw: str, section: str, field_name: str) -> Any:
     """Parse one env string to the field's declared type."""
     declared = field_type(section, field_name)
     try:
+        if declared is bool:
+            return _parse_bool(raw)
         if declared is int:
             return int(raw)
         if declared is float:
@@ -76,6 +78,17 @@ def _parse_env_value(raw: str, section: str, field_name: str) -> Any:
             source="env",
             attempted_value=raw,
         ) from error
+
+
+def _parse_bool(raw: str) -> bool:
+    """One env string as a bool — the usual truthy/falsy spellings; any
+    other value is a ValueError the caller maps to a TypeMismatchError."""
+    lowered = raw.strip().lower()
+    if lowered in ("true", "1", "yes", "on"):
+        return True
+    if lowered in ("false", "0", "no", "off"):
+        return False
+    raise ValueError(raw)
 
 
 def field_by_name(section: str, field_name: str) -> Field[Any]:

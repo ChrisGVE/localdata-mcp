@@ -75,6 +75,7 @@ dependencies = [
   "sqlglot==30.13.0",  # SQL AST allow-list validation
   # Visualization
   "matplotlib>=3.8.0", # Agg headless backend, OO API only
+  "seaborn>=0.13.0",   # palette provider only (pure color lists), never global set_theme
 ]
 
 # Extras tiers per ARCHITECTURE.md 7.1 — one extra, one concern.
