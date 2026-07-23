@@ -1722,3 +1722,377 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("solve_assignment_problem", _impl_solve_assignment_problem, arguments)
 
     app.tool(solve_assignment_problem)
+
+    _impl_check_geospatial_capabilities = registry.lookup("check_geospatial_capabilities").func
+
+    def check_geospatial_capabilities() -> Any:
+        """
+        Report which geospatial backend libraries are installed and what the geospatial extra enables — answers unconditionally.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+        """
+        arguments: dict[str, Any] = {}
+        return shaped_call("check_geospatial_capabilities", _impl_check_geospatial_capabilities, arguments)
+
+    app.tool(check_geospatial_capabilities)
+
+    _impl_analyze_spatial_autocorrelation = registry.lookup("analyze_spatial_autocorrelation").func
+
+    def analyze_spatial_autocorrelation(value_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, x_column: str | None = None, y_column: str | None = None, k_neighbors: int | None = None) -> Any:
+        """
+        Global Moran's I on an addressed point source: whether nearby locations hold similar value_column values, over a k-nearest-neighbour neighbourhood. Reports I, z-score, and p-value.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            value_column: The measured value column.
+            x_column (optional): The x/longitude column (default 'x').
+            y_column (optional): The y/latitude column (default 'y').
+            k_neighbors (optional): Neighbours per point (implementation default 8).
+        """
+        arguments: dict[str, Any] = {"value_column": value_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if x_column is not None:
+            arguments["x_column"] = x_column
+        if y_column is not None:
+            arguments["y_column"] = y_column
+        if k_neighbors is not None:
+            arguments["k_neighbors"] = k_neighbors
+        return shaped_call("analyze_spatial_autocorrelation", _impl_analyze_spatial_autocorrelation, arguments)
+
+    app.tool(analyze_spatial_autocorrelation)
+
+    _impl_find_spatial_hotspots = registry.lookup("find_spatial_hotspots").func
+
+    def find_spatial_hotspots(value_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, x_column: str | None = None, y_column: str | None = None, significance_level: float | None = None) -> Any:
+        """
+        Getis-Ord Gi* hot- and cold-spots on an addressed point source: the statistically significant clusters of high or low value_column at the significance level.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            value_column: The measured value column.
+            x_column (optional): The x/longitude column (default 'x').
+            y_column (optional): The y/latitude column (default 'y').
+            significance_level (optional): Two-sided significance (implementation default 0.05).
+        """
+        arguments: dict[str, Any] = {"value_column": value_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if x_column is not None:
+            arguments["x_column"] = x_column
+        if y_column is not None:
+            arguments["y_column"] = y_column
+        if significance_level is not None:
+            arguments["significance_level"] = significance_level
+        return shaped_call("find_spatial_hotspots", _impl_find_spatial_hotspots, arguments)
+
+    app.tool(find_spatial_hotspots)
+
+    _impl_calculate_spatial_distances = registry.lookup("calculate_spatial_distances").func
+
+    def calculate_spatial_distances(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, x_column: str | None = None, y_column: str | None = None) -> Any:
+        """
+        Summarize pairwise Euclidean distances between the points of an addressed source (min/max/mean/median), bounded by point count to keep the matrix legible.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            x_column (optional): The x/longitude column (default 'x').
+            y_column (optional): The y/latitude column (default 'y').
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if x_column is not None:
+            arguments["x_column"] = x_column
+        if y_column is not None:
+            arguments["y_column"] = y_column
+        return shaped_call("calculate_spatial_distances", _impl_calculate_spatial_distances, arguments)
+
+    app.tool(calculate_spatial_distances)
+
+    _impl_perform_spatial_join = registry.lookup("perform_spatial_join").func
+
+    def perform_spatial_join(geometry_column: str, right_geometries: list, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, predicate: str | None = None) -> Any:
+        """
+        Attach the addressed source's rows to the inline right_geometries they spatially relate to (predicate intersects (default), within, or contains). The addressed source's geometry_column holds WKT.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            geometry_column: Column of WKT geometries in the addressed source.
+            right_geometries: The second geometry set as WKT strings.
+            predicate (optional): intersects (default), within, or contains.
+        """
+        arguments: dict[str, Any] = {"geometry_column": geometry_column, "right_geometries": right_geometries}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if predicate is not None:
+            arguments["predicate"] = predicate
+        return shaped_call("perform_spatial_join", _impl_perform_spatial_join, arguments)
+
+    app.tool(perform_spatial_join)
+
+    _impl_perform_spatial_overlay = registry.lookup("perform_spatial_overlay").func
+
+    def perform_spatial_overlay(geometry_column: str, right_geometries: list, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, operation: str | None = None) -> Any:
+        """
+        Set operation (intersection (default), union, difference, symmetric_difference) between the addressed source's WKT geometry_column and the inline right_geometries.
+
+        Input shape: TABULAR.
+        Output shape: GEO.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            geometry_column: Column of WKT geometries in the addressed source.
+            right_geometries: The second geometry set as WKT strings.
+            operation (optional): intersection (default), union, difference, symmetric_difference.
+        """
+        arguments: dict[str, Any] = {"geometry_column": geometry_column, "right_geometries": right_geometries}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if operation is not None:
+            arguments["operation"] = operation
+        return shaped_call("perform_spatial_overlay", _impl_perform_spatial_overlay, arguments)
+
+    app.tool(perform_spatial_overlay)
+
+    _impl_aggregate_points_in_polygons = registry.lookup("aggregate_points_in_polygons").func
+
+    def aggregate_points_in_polygons(value_column: str, polygons: list, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, x_column: str | None = None, y_column: str | None = None, aggregations: list | None = None) -> Any:
+        """
+        Summarize an addressed point source's value_column inside each inline polygon (WKT list): mean/sum/count by default.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            value_column: The point measurement column.
+            polygons: Containing polygons as WKT strings.
+            x_column (optional): The x column (default 'x').
+            y_column (optional): The y column (default 'y').
+            aggregations (optional): Aggregations to apply (default mean, sum, count).
+        """
+        arguments: dict[str, Any] = {"value_column": value_column, "polygons": polygons}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if x_column is not None:
+            arguments["x_column"] = x_column
+        if y_column is not None:
+            arguments["y_column"] = y_column
+        if aggregations is not None:
+            arguments["aggregations"] = aggregations
+        return shaped_call("aggregate_points_in_polygons", _impl_aggregate_points_in_polygons, arguments)
+
+    app.tool(aggregate_points_in_polygons)
+
+    _impl_optimize_route = registry.lookup("optimize_route").func
+
+    def optimize_route(edges: list, waypoints: list, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, node_id_column: str | None = None, x_column: str | None = None, y_column: str | None = None, return_to_start: bool | None = None) -> Any:
+        """
+        Order waypoints greedily and connect them by shortest path over a network whose nodes are the addressed source (id, x, y) and whose edges arrive inline. Reports the order, path, and total distance.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            edges: Network edges as [source, target] or [source, target, weight].
+            waypoints: Node ids to visit.
+            node_id_column (optional): The node-id column (default 'id').
+            x_column (optional): The x column (default 'x').
+            y_column (optional): The y column (default 'y').
+            return_to_start (optional): Close the loop back to the first waypoint (default false).
+        """
+        arguments: dict[str, Any] = {"edges": edges, "waypoints": waypoints}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if node_id_column is not None:
+            arguments["node_id_column"] = node_id_column
+        if x_column is not None:
+            arguments["x_column"] = x_column
+        if y_column is not None:
+            arguments["y_column"] = y_column
+        if return_to_start is not None:
+            arguments["return_to_start"] = return_to_start
+        return shaped_call("optimize_route", _impl_optimize_route, arguments)
+
+    app.tool(optimize_route)
+
+    _impl_analyze_accessibility = registry.lookup("analyze_accessibility").func
+
+    def analyze_accessibility(edges: list, service_locations: list, demand_locations: list, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, node_id_column: str | None = None, x_column: str | None = None, y_column: str | None = None, max_travel_time: float | None = None) -> Any:
+        """
+        Score demand nodes by travel time to their nearest service node over a network (addressed nodes, inline edges), optionally capped at max_travel_time.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            edges: Network edges as [source, target] or [source, target, weight].
+            service_locations: Service node ids.
+            demand_locations: Demand node ids.
+            node_id_column (optional): The node-id column (default 'id').
+            x_column (optional): The x column (default 'x').
+            y_column (optional): The y column (default 'y').
+            max_travel_time (optional): Reachability cap (default: unbounded).
+        """
+        arguments: dict[str, Any] = {"edges": edges, "service_locations": service_locations, "demand_locations": demand_locations}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if node_id_column is not None:
+            arguments["node_id_column"] = node_id_column
+        if x_column is not None:
+            arguments["x_column"] = x_column
+        if y_column is not None:
+            arguments["y_column"] = y_column
+        if max_travel_time is not None:
+            arguments["max_travel_time"] = max_travel_time
+        return shaped_call("analyze_accessibility", _impl_analyze_accessibility, arguments)
+
+    app.tool(analyze_accessibility)
+
+    _impl_generate_service_isochrones = registry.lookup("generate_service_isochrones").func
+
+    def generate_service_isochrones(edges: list, service_locations: list, time_bands: list, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, node_id_column: str | None = None, x_column: str | None = None, y_column: str | None = None) -> Any:
+        """
+        The node set reachable from the service nodes within each travel-time band, with its convex-hull footprint, over a network (addressed nodes, inline edges).
+
+        Input shape: TABULAR.
+        Output shape: GEO.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            edges: Network edges as [source, target] or [source, target, weight].
+            service_locations: Service node ids.
+            time_bands: Travel-time bands to map.
+            node_id_column (optional): The node-id column (default 'id').
+            x_column (optional): The x column (default 'x').
+            y_column (optional): The y column (default 'y').
+        """
+        arguments: dict[str, Any] = {"edges": edges, "service_locations": service_locations, "time_bands": time_bands}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if node_id_column is not None:
+            arguments["node_id_column"] = node_id_column
+        if x_column is not None:
+            arguments["x_column"] = x_column
+        if y_column is not None:
+            arguments["y_column"] = y_column
+        return shaped_call("generate_service_isochrones", _impl_generate_service_isochrones, arguments)
+
+    app.tool(generate_service_isochrones)

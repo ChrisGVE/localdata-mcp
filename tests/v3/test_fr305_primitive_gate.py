@@ -52,6 +52,21 @@ _ALLOWED: dict[tuple[str, str], str] = {
         "reached only through NX-6 after the E6.2b construct screen; "
         "not pandas' expression evaluator"
     ),
+    (
+        "process/domains/geospatial_analysis/capabilities.py",
+        "import_module",
+    ): (
+        "probes each library name from the fixed _GEO_LIBRARIES tuple — "
+        "a literal roster, never caller input (the geospatial extra "
+        "capability check)"
+    ),
+    (
+        "process/domains/geospatial_analysis/weights.py",
+        "query",
+    ): (
+        "scipy cKDTree.query — the k-NN spatial index lookup, not "
+        "pandas' expression evaluator; no caller string is involved"
+    ),
 }
 
 

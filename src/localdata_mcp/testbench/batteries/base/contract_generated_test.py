@@ -80,6 +80,16 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("solve_linear_program", {"objective_column": "probe"}),
     ("optimize_constrained", {"objective_expression": "probe", "initial_guess_column": "probe"}),
     ("solve_assignment_problem", {"cost_columns": ["probe"]}),
+    ("check_geospatial_capabilities", {}),
+    ("analyze_spatial_autocorrelation", {"value_column": "probe"}),
+    ("find_spatial_hotspots", {"value_column": "probe"}),
+    ("calculate_spatial_distances", {}),
+    ("perform_spatial_join", {"geometry_column": "probe", "right_geometries": ["probe"]}),
+    ("perform_spatial_overlay", {"geometry_column": "probe", "right_geometries": ["probe"]}),
+    ("aggregate_points_in_polygons", {"value_column": "probe", "polygons": ["probe"]}),
+    ("optimize_route", {"edges": ["probe"], "waypoints": ["probe"]}),
+    ("analyze_accessibility", {"edges": ["probe"], "service_locations": ["probe"], "demand_locations": ["probe"]}),
+    ("generate_service_isochrones", {"edges": ["probe"], "service_locations": ["probe"], "time_bands": ["probe"]}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}
