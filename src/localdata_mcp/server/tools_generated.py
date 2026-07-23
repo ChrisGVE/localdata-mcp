@@ -1116,6 +1116,51 @@ def register_tools(app: FastMCP) -> None:
 
     app.tool(analyze_clusters)
 
+    _impl_assign_clusters = registry.lookup("assign_clusters").func
+
+    def assign_clusters(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, columns: list | None = None, method: str | None = None, n_clusters: int | None = None, seed: int | None = None, algorithm_params: dict | None = None) -> Any:
+        """
+        Cluster an addressed tabular source and return the clustered rows tagged with an integer cluster label — the composable (TABULAR) counterpart to analyze_clusters' verdict, so a clustering result feeds a downstream stage (e.g. a chart coloured by cluster). method kmeans (default), hierarchical, dbscan, gmm, spectral; without n_clusters a silhouette sweep picks k; seed pins stochastic initialization.
+
+        Input shape: TABULAR.
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: pattern_recognition.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            columns (optional): Columns to analyze (default: every numeric column).
+            method (optional): kmeans (default), hierarchical, dbscan, gmm, spectral.
+            n_clusters (optional): Cluster count (default: silhouette sweep over 2..8).
+            seed (optional): Random seed pinning stochastic steps (default: library behavior).
+            algorithm_params (optional): Estimator constructor parameters, passed through verbatim.
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if columns is not None:
+            arguments["columns"] = columns
+        if method is not None:
+            arguments["method"] = method
+        if n_clusters is not None:
+            arguments["n_clusters"] = n_clusters
+        if seed is not None:
+            arguments["seed"] = seed
+        if algorithm_params is not None:
+            arguments["algorithm_params"] = algorithm_params
+        return shaped_call("assign_clusters", _impl_assign_clusters, arguments)
+
+    app.tool(assign_clusters)
+
     _impl_detect_anomalies = registry.lookup("detect_anomalies").func
 
     def detect_anomalies(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, columns: list | None = None, method: str | None = None, contamination: float | None = None, seed: int | None = None, algorithm_params: dict | None = None) -> Any:
@@ -2252,6 +2297,45 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("clean_then_regress", _impl_clean_then_regress, arguments)
 
     app.tool(clean_then_regress)
+
+    _impl_cluster_then_chart = registry.lookup("cluster_then_chart").func
+
+    def cluster_then_chart(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, k: int | None = None, seed: int | None = None, format: str | None = None) -> Any:
+        """
+        Convenience pipeline: assign_clusters -> render_chart(scatter_fit). Clusters an addressed source, then scatters its first two numeric feature columns coloured by cluster. k pins the cluster count (default: silhouette sweep); format is svg (default) or png. Equivalent to the explicit two-stage compose_pipeline.
+
+        Input shape: DYNAMIC (validated per submitted dag_spec).
+        Output shape: DYNAMIC (validated per submitted dag_spec).
+        Streaming-capable: no.
+        Domain: composition.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            k (optional): Cluster count (default: silhouette sweep over 2..8).
+            seed (optional): Random seed pinning the clustering (default: library behavior) — set it for a reproducible chart.
+            format (optional): Chart image format: svg (default) or png.
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if k is not None:
+            arguments["k"] = k
+        if seed is not None:
+            arguments["seed"] = seed
+        if format is not None:
+            arguments["format"] = format
+        return shaped_call("cluster_then_chart", _impl_cluster_then_chart, arguments)
+
+    app.tool(cluster_then_chart)
 
     _impl_render_chart = registry.lookup("render_chart").func
 

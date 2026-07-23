@@ -22,20 +22,58 @@ from .columns import channel_column, numeric_frame
 def _scatter_fit_data(
     frame: pd.DataFrame, encoding: Mapping[str, Any]
 ) -> "dict[str, Any]":
-    """Aligned x/y points and the least-squares line over them."""
-    x_col = channel_column(encoding, "x", "scatter_fit")
-    y_col = channel_column(encoding, "y", "scatter_fit")
+    """Aligned x/y points and the least-squares line over them. x and y
+    are optional — omitted, they default to the first two numeric
+    columns (excluding an optional `color` column), so a
+    just-clustered relation charts with no column knowledge (the
+    cluster_then_chart wrapper). An optional `color` channel colours the
+    points by a category column (e.g. `cluster`)."""
+    color_col = encoding.get("color")
+    x_col, y_col = _resolve_axes(frame, encoding, color_col)
     aligned = numeric_frame(frame, [x_col, y_col])
     xs = aligned[x_col].to_numpy(dtype=float)
     ys = aligned[y_col].to_numpy(dtype=float)
-    fit = _least_squares(xs, ys)
-    return {
+    data: dict[str, Any] = {
         "x": [float(v) for v in xs],
         "y": [float(v) for v in ys],
-        "fit": fit,
+        "fit": _least_squares(xs, ys),
         "x_label": x_col,
         "y_label": y_col,
     }
+    if color_col is not None:
+        from .columns import require_column
+
+        require_column(frame, str(color_col))
+        colors = frame.loc[aligned.index, str(color_col)]
+        data["color"] = [None if pd.isna(v) else v for v in colors]
+        data["color_label"] = str(color_col)
+    return data
+
+
+def _resolve_axes(
+    frame: pd.DataFrame, encoding: Mapping[str, Any], color_col: Any
+) -> "tuple[str, str]":
+    """The x/y columns: the supplied channels, or the first two numeric
+    columns (never the colour column) when omitted."""
+    x_given, y_given = encoding.get("x"), encoding.get("y")
+    if x_given is not None and y_given is not None:
+        return str(x_given), str(y_given)
+    excluded = {str(color_col)} if color_col is not None else set()
+    numeric = [
+        str(name)
+        for name in frame.columns
+        if str(name) not in excluded
+        and pd.to_numeric(frame[name], errors="coerce").notna().any()
+    ]
+    if len(numeric) < 2:
+        from localdata_mcp.ingest.refusals import invalid_source_refusal
+
+        raise invalid_source_refusal(
+            "scatter_fit needs two numeric columns — supply "
+            "encoding={'x': <col>, 'y': <col>} or an addressed source "
+            f"with two numeric columns (found {numeric})."
+        )
+    return numeric[0], numeric[1]
 
 
 def _least_squares(xs: "np.ndarray", ys: "np.ndarray") -> "dict[str, Any]":

@@ -45,7 +45,13 @@ def draw_heatmap(ax: Axes, data: Mapping[str, Any]) -> None:
 def draw_scatter_fit(ax: Axes, data: Mapping[str, Any]) -> None:
     xs = np.asarray(data["x"], dtype=float)
     ys = np.asarray(data["y"], dtype=float)
-    points = ax.scatter(xs, ys)
+    if "color" in data:
+        # categorical colouring: distinct values -> integer codes so a
+        # cluster label (or any category) paints the points.
+        codes = _category_codes(data["color"])
+        points = ax.scatter(xs, ys, c=codes, cmap="viridis")
+    else:
+        points = ax.scatter(xs, ys)
     points.set_gid("localdata-points")
     fit = data["fit"]
     if fit["slope"] is not None and xs.size:
@@ -93,6 +99,13 @@ def draw_network_layout(ax: Axes, data: Mapping[str, Any]) -> None:
         nodes.set_gid("localdata-points")
     ax.set_axis_off()
     ax.autoscale_view()
+
+
+def _category_codes(values: "list[Any]") -> "np.ndarray":
+    """Distinct category values mapped to stable integer codes (sorted
+    by string form), so colouring is deterministic across renders."""
+    order = {label: code for code, label in enumerate(sorted({str(v) for v in values}))}
+    return np.array([order[str(v)] for v in values], dtype=float)
 
 
 def _time_axis(values: "list[Any]", is_time: bool) -> "np.ndarray":

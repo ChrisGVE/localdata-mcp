@@ -65,6 +65,7 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("analyze_regression", {"target_column": "probe"}),
     ("evaluate_model_performance", {"target_column": "probe", "prediction_column": "probe"}),
     ("analyze_clusters", {}),
+    ("assign_clusters", {}),
     ("detect_anomalies", {}),
     ("reduce_dimensions", {}),
     ("transform_data", {"column": "probe", "find": "probe", "replace": "probe"}),
@@ -95,6 +96,7 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("compose_pipeline", {"dag_spec": ["probe"]}),
     ("clean_then_profile", {}),
     ("clean_then_regress", {"target": "probe"}),
+    ("cluster_then_chart", {}),
     ("render_chart", {"kind": "probe"}),
 )
 

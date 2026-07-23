@@ -147,3 +147,68 @@ class TestCleanThenRegress:
         assert envelope["error"] is None, envelope["error"]
         assert set(envelope["data"]["results"]) == {"regress"}
         assert envelope["data"]["results"]["regress"]["error"] is None
+
+
+def _cluster_csv(tmp_path: Path) -> str:
+    """Two separated 2-D blobs — clustering into k=2 is unambiguous."""
+    target = tmp_path / "blobs.csv"
+    pd.DataFrame(
+        {
+            "f1": [0.0, 0.1, 0.2, 0.0, 10.0, 10.1, 10.2, 10.0],
+            "f2": [0.0, 0.2, 0.1, 0.1, 10.0, 10.2, 10.1, 10.1],
+        }
+    ).to_csv(target, index=False)
+    return str(target)
+
+
+class TestAssignClusters:
+    """The composable TABULAR counterpart to analyze_clusters (E12.5)."""
+
+    def test_returns_labeled_frame(self, bench: Path) -> None:
+        path = _cluster_csv(bench)
+        envelope = _call("assign_clusters", {"path": path, "n_clusters": 2})
+        assert envelope["error"] is None, envelope["error"]
+        data = envelope["data"]
+        assert "cluster" in data["columns"]
+        assert data["n_clusters"] == 2
+        assert data["total_rows"] == 8
+
+
+class TestClusterThenChart:
+    def test_equals_explicit_compose(self, bench: Path) -> None:
+        path = _cluster_csv(bench)
+        # a seed pins clustering so the two calls are bit-for-bit equal
+        wrapper = _call("cluster_then_chart", {"path": path, "k": 2, "seed": 7})
+        explicit = _call(
+            "compose_pipeline",
+            {
+                "dag_spec": [
+                    {
+                        "stage": "cluster",
+                        "tool": "assign_clusters",
+                        "params": {"path": path, "n_clusters": 2, "seed": 7},
+                    },
+                    {
+                        "stage": "chart",
+                        "tool": "render_chart",
+                        "params": {
+                            "kind": "scatter_fit",
+                            "encoding": {"color": "cluster"},
+                        },
+                        "depends_on": ["cluster"],
+                    },
+                ]
+            },
+        )
+        assert _drop_volatile(wrapper) == _drop_volatile(explicit)
+
+    def test_produces_a_cluster_scatter(self, bench: Path) -> None:
+        path = _cluster_csv(bench)
+        envelope = _call("cluster_then_chart", {"path": path, "k": 2})
+        assert envelope["error"] is None, envelope["error"]
+        chart = envelope["data"]["results"]["chart"]
+        leaf = chart["data"] if "data" in chart else chart["inline"]
+        assert leaf["kind"] == "scatter_fit"
+        assert leaf["source"] == "pipeline:cluster"
+        assert leaf["encoding"] == {"color": "cluster"}
+        assert "<svg" in leaf["artifact"]["content"]

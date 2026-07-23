@@ -16,6 +16,7 @@ ChartSpec; tools.py hands the bytes to NX-8; marks.py draws.
 from __future__ import annotations
 
 from io import BytesIO
+from typing import Any
 
 import matplotlib
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -43,12 +44,24 @@ def render_spec(spec: ChartSpec, image_format: str) -> bytes:
     try:
         axes = figure.subplots()
         drawer(axes, spec.data)
+        _tufte_style(axes)
         if spec.title:
             axes.set_title(spec.title)
         figure.tight_layout()
         return _export(figure, image_format)
     finally:
         figure.clear()
+
+
+def _tufte_style(axes: "Any") -> None:
+    """A restrained data-ink-ratio pass (Tufte): drop the top/right
+    frame spines — non-data ink — and keep any grid behind the marks.
+    Safe for every kind (a no-op where the drawer turned the axis off)."""
+    for side in ("top", "right"):
+        spine = axes.spines.get(side)
+        if spine is not None:
+            spine.set_visible(False)
+    axes.set_axisbelow(True)
 
 
 def _export(figure: Figure, image_format: str) -> bytes:
@@ -58,9 +71,14 @@ def _export(figure: Figure, image_format: str) -> bytes:
         # svg.fonttype='none' keeps text as escaped <text> nodes (not
         # glyph paths), so matplotlib's XML-escaping of titles/labels/
         # data-derived values is FR-501's first defense layer and the
-        # text is structurally present. rc_context scopes the setting —
-        # no global pyplot state leaks (§6c). PNG is unaffected.
-        with matplotlib.rc_context({"svg.fonttype": "none"}):
+        # text is structurally present. svg.hashsalt fixes matplotlib's
+        # otherwise per-render id hashes so the SVG is byte-reproducible
+        # (the C-2 wrapper equality acceptance, and stable goldens).
+        # rc_context scopes both — no global pyplot state leaks (§6c).
+        # PNG is unaffected.
+        with matplotlib.rc_context(
+            {"svg.fonttype": "none", "svg.hashsalt": "localdata"}
+        ):
             FigureCanvasSVG(figure).print_svg(buffer)
     else:
         FigureCanvasAgg(figure).print_png(buffer)

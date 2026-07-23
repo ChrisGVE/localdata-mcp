@@ -24,7 +24,7 @@ from localdata_mcp.testbench.fixtures.chart_goldens import golden_frame
 from localdata_mcp.visualize.charts import build_chart_spec
 from localdata_mcp.visualize.render import render_spec
 
-_WARMUP = 25  # untimed renders that absorb import/font-cache/arena cost
+_WARMUP = 20  # untimed renders that absorb import/font-cache/arena cost
 _BYTES_PER_MIB = 1024 * 1024
 
 

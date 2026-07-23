@@ -106,9 +106,32 @@ class TestScatterFit:
         assert spec.data["fit"]["slope"] is None
         assert spec.data["fit"]["intercept"] is None
 
-    def test_missing_y_channel_refused(self, frame: pd.DataFrame) -> None:
+    def test_auto_axes_when_encoding_omitted(self) -> None:
+        # progressive disclosure: no x/y -> first two numeric columns
+        auto = pd.DataFrame({"a": [1.0, 2.0, 3.0], "b": [2.0, 4.0, 6.0]})
+        spec = build_chart_spec("scatter_fit", auto, {}, None)
+        assert spec.data["x_label"] == "a"
+        assert spec.data["y_label"] == "b"
+
+    def test_color_channel_carries_categories(self) -> None:
+        clustered = pd.DataFrame(
+            {
+                "a": [1.0, 2.0, 3.0, 4.0],
+                "b": [1.0, 2.0, 1.0, 2.0],
+                "cluster": [0, 1, 0, 1],
+            }
+        )
+        spec = build_chart_spec("scatter_fit", clustered, {"color": "cluster"}, None)
+        # x/y auto-selected from the non-colour numeric columns
+        assert spec.data["x_label"] == "a"
+        assert spec.data["y_label"] == "b"
+        assert spec.data["color"] == [0, 1, 0, 1]
+        assert spec.data["color_label"] == "cluster"
+
+    def test_too_few_numeric_columns_refused(self) -> None:
+        one = pd.DataFrame({"a": [1.0, 2.0], "label": ["x", "y"]})
         with pytest.raises(GuardedExecutionError):
-            build_chart_spec("scatter_fit", frame, {"x": "x"}, None)
+            build_chart_spec("scatter_fit", one, {}, None)
 
 
 class TestLineTimeseries:

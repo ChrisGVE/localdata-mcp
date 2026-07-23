@@ -30,14 +30,9 @@ WRAPPER_CHAIN_EDGES = {
         (TypeShape.TABULAR, TypeShape.TABULAR),
         (TypeShape.TABULAR, TypeShape.TABULAR),
     ],
-    # cluster TABULAR->VECTOR (labels) or TABULAR, then a TABULAR-input
-    # chart stage emits CHART_SPEC — both variants must be legal
-    "cluster_then_chart_vector": [
-        (TypeShape.TABULAR, TypeShape.TABULAR),
-        (TypeShape.VECTOR, TypeShape.TABULAR),
-    ],
-    "cluster_then_chart_tabular": [
-        (TypeShape.TABULAR, TypeShape.TABULAR),
+    # assign_clusters (TABULAR: features + cluster column) -> render_chart
+    # (TABULAR input, NONE terminal sink) — the one stage-to-stage edge
+    "cluster_then_chart": [
         (TypeShape.TABULAR, TypeShape.TABULAR),
     ],
 }

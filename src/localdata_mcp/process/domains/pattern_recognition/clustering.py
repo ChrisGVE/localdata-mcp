@@ -61,6 +61,30 @@ def perform_clustering(
     return result
 
 
+def assign_cluster_frame(frame: pd.DataFrame, **knobs: Any) -> dict[str, Any]:
+    """The clustered rows as a composable TABULAR relation: the numeric
+    feature columns that were clustered, each row tagged with its
+    integer `cluster` label. This is the composition counterpart to
+    `perform_clustering`'s SCALAR verdict — the labeled data a
+    downstream stage (e.g. render_chart) consumes, FR-504's pipe leg.
+    The rows are exactly those `perform_clustering` clustered (the
+    numeric_matrix drop-NaN subset, same order), so labels align by
+    position; the cluster count and method ride along for the caller."""
+    result = perform_clustering(frame, **knobs)
+    used = result["columns"]
+    features = frame[used].apply(pd.to_numeric, errors="coerce").dropna()
+    labeled = features.copy()
+    labeled["cluster"] = result["labels"]  # positional — same drop-NaN order
+    cleaned = labeled.astype(object).where(pd.notna(labeled), None)
+    return {
+        "columns": [str(name) for name in cleaned.columns],
+        "rows": cleaned.to_numpy().tolist(),
+        "total_rows": int(len(cleaned)),
+        "n_clusters": result["n_clusters"],
+        "method": result["method"],
+    }
+
+
 def _fit_labels(
     matrix: "np.ndarray[Any, Any]",
     method: str,

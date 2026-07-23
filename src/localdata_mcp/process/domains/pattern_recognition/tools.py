@@ -1,7 +1,9 @@
 """localdata_mcp/process/domains/pattern_recognition/tools.py — E10.c ToolSpecs.
 
-The pattern family's four tools, carried by name from `main`
-(DR GP2): `analyze_clusters`, `detect_anomalies`, `reduce_dimensions`
+The pattern family's tools, carried by name from `main`
+(DR GP2): `analyze_clusters` (SCALAR verdict), `assign_clusters` (its
+TABULAR composable counterpart — labeled rows a downstream stage
+consumes, E12.5), `detect_anomalies`, `reduce_dimensions`
 (FR-308's explained-variance closure), `transform_data` (regex column
 rewrite, TABULAR out — a composable stage). Thin over
 clustering/anomalies/reduction/transform.py with the X-2 addressing
@@ -18,7 +20,7 @@ from localdata_mcp.nexus.contract.spec import Param, TypeShape, tool_spec
 
 from ..support import addressed_frame, source_params
 from .anomalies import find_anomalies
-from .clustering import perform_clustering
+from .clustering import assign_cluster_frame, perform_clustering
 from .reduction import reduce_to_components
 from .transform import transform_column
 
@@ -81,6 +83,52 @@ def analyze_clusters(
 ) -> Any:
     frame, source = addressed_frame(endpoint, path, table, query)
     result = perform_clustering(frame, **knobs)
+    result["source"] = source
+    return result
+
+
+@tool_spec(
+    name="assign_clusters",
+    summary=(
+        "Cluster an addressed tabular source and return the clustered "
+        "rows tagged with an integer cluster label — the composable "
+        "(TABULAR) counterpart to analyze_clusters' verdict, so a "
+        "clustering result feeds a downstream stage (e.g. a chart "
+        "coloured by cluster). method kmeans (default), hierarchical, "
+        "dbscan, gmm, spectral; without n_clusters a silhouette sweep "
+        "picks k; seed pins stochastic initialization."
+    ),
+    params=(
+        *source_params(),
+        _COLUMNS,
+        Param(
+            "method",
+            str,
+            "kmeans (default), hierarchical, dbscan, gmm, spectral.",
+            required=False,
+        ),
+        Param(
+            "n_clusters",
+            int,
+            "Cluster count (default: silhouette sweep over 2..8).",
+            required=False,
+        ),
+        _SEED,
+        _ALGORITHM_PARAMS,
+    ),
+    input_shape=TypeShape.TABULAR,
+    output_shape=TypeShape.TABULAR,
+    domain="pattern_recognition",
+)
+def assign_clusters(
+    endpoint: str | None = None,
+    path: str | None = None,
+    table: str | None = None,
+    query: str | None = None,
+    **knobs: Any,
+) -> Any:
+    frame, source = addressed_frame(endpoint, path, table, query)
+    result = assign_cluster_frame(frame, **knobs)
     result["source"] = source
     return result
 

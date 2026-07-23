@@ -288,6 +288,12 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='pattern_recognition',
     ),
+    "assign_clusters": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='pattern_recognition',
+    ),
     "detect_anomalies": ShapeEntry(
         input_shape=TypeShape.TABULAR,
         output_shape=TypeShape.SCALAR,
@@ -463,6 +469,12 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         domain='composition',
     ),
     "clean_then_regress": ShapeEntry(
+        input_shape=TypeShape.DYNAMIC,
+        output_shape=TypeShape.DYNAMIC,
+        streaming_capable=False,
+        domain='composition',
+    ),
+    "cluster_then_chart": ShapeEntry(
         input_shape=TypeShape.DYNAMIC,
         output_shape=TypeShape.DYNAMIC,
         streaming_capable=False,

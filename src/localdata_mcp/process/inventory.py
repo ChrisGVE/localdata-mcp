@@ -40,8 +40,10 @@ PROCESS_INVENTORY_DOMAINS: Final[frozenset[str]] = frozenset(
     }
 )
 
-# The 34 process-domain tools that ship at launch (PRD S3.3's P-1
-# families plus the FR-303 preprocessing stages). The inventory gate
+# The process-domain tools that ship at launch (PRD S3.3's P-1
+# families plus the FR-303 preprocessing stages, and assign_clusters —
+# the composable TABULAR counterpart to analyze_clusters, E12.5). The
+# inventory gate
 # asserts the live registry's process surface equals this set exactly,
 # so a new tool or a dropped one forces a reviewed edit here.
 LAUNCH_PROCESS_TOOLS: Final[frozenset[str]] = frozenset(
@@ -56,6 +58,7 @@ LAUNCH_PROCESS_TOOLS: Final[frozenset[str]] = frozenset(
         "evaluate_model_performance",
         # pattern_recognition
         "analyze_clusters",
+        "assign_clusters",
         "detect_anomalies",
         "reduce_dimensions",
         "transform_data",
