@@ -199,6 +199,13 @@ class ChunkRegistry:
                 return
             self._release(stream_id, stream)
 
+    def close_all(self) -> None:
+        """§4e teardown: release every live stream — each pinned NX-5
+        connection returns to its pool BEFORE the pools dispose."""
+        with self._lock:
+            for stream_id in tuple(self._streams):
+                self._release(stream_id, self._streams.pop(stream_id))
+
     def evict_idle(self) -> tuple[str, ...]:
         """Evict every stream idle past the TTL (S8 row 10), under the
         retrieval lock — returning each one's NX-5 connection (via
@@ -246,6 +253,22 @@ class ChunkRegistry:
             if stream.source_kind == "streaming":
                 self._top_up(stream_id, stream)
             return payload
+
+    def serve_next(self, stream_id: str) -> tuple[int, pd.DataFrame] | None:
+        """Serve the lowest servable chunk (I-4's `fetch_chunk` shape):
+        the cursor semantics of `request_chunk` under the same lock,
+        with the NEXT id derived from the live buffer — None once the
+        source is exhausted and the buffer is drained (the caller
+        reports the final total as metadata, §5/T10)."""
+        with self._lock:
+            stream = self._checked_stream(stream_id)
+            if not stream.buffer and not stream.exhausted:
+                self._pull_one(stream_id, stream)
+            if not stream.buffer:
+                stream.last_access = self._clock()
+                return None
+            chunk_id = min(stream.buffer)
+            return chunk_id, self.request_chunk(stream_id, chunk_id)
 
     def advertised_count(self, stream_id: str) -> int:
         """T10: the count of currently-servable chunks, derived from

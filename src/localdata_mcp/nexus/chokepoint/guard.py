@@ -41,10 +41,15 @@ from localdata_mcp.nexus.persistence.manager import (
     UnknownEndpointError,
 )
 
+from itertools import chain
+
 from .execution import execute_mutation, fetch_bounded, iter_frames
 from .chunk_registry import (
+    ChunkAlreadyServedError,
+    ChunkNotServableError,
     ChunkRegistry,
     StreamAdmissionRefusedError,
+    StreamExpiredError,
     StreamStatus,
 )
 from .path_contain import AccessMode, contain
@@ -61,6 +66,12 @@ __all__ = [
     "UnknownEndpointError",
     "EphemeralEngineKind",
     "ResourceRefusedError",
+    "StreamAdmissionRefusedError",
+    "StreamExpiredError",
+    "ChunkAlreadyServedError",
+    "ChunkNotServableError",
+    "StreamOpened",
+    "ServedChunk",
 ]
 
 Language = Literal["sql", "sparql"]
@@ -112,6 +123,35 @@ class EndpointSummary:
     health_detail: str
 
 
+@dataclass(frozen=True)
+class StreamOpened:
+    """The streaming half of the I-4 cutover: a result too large for
+    the inline budget is registered with the ChunkRegistry and the
+    caller receives this reference — stream id, the column names, and
+    the currently-servable count (T10: derived from the live buffer,
+    never a promised total)."""
+
+    stream_id: str
+    columns: tuple[str, ...]
+    advertised_chunks: int
+
+
+@dataclass(frozen=True)
+class ServedChunk:
+    """One `fetch_chunk` answer: the chunk's rows plus the stream's
+    live state — `total_chunks` is populated only once the source is
+    exhausted (§5: the buffer never claims a total it cannot know)."""
+
+    stream_id: str
+    chunk_id: int | None
+    columns: tuple[str, ...]
+    rows: tuple[tuple[Any, ...], ...]
+    advertised_chunks: int
+    exhausted: bool
+    total_chunks: int | None
+    closed: bool = False
+
+
 class GuardRefusedError(PermissionError):
     """An entrypoint or posture refusal (NFR-113) — structured, named,
     shaped through NX-3 by the tool wrapper."""
@@ -141,7 +181,11 @@ class Chokepoint:
         return cls(config, persistence)
 
     def shutdown(self) -> None:
-        """§4e teardown: every record closed, every pool disposed."""
+        """§4e teardown: every live stream released (returning its
+        pinned connection), then every record closed and pool disposed
+        — order matters, a disposed pool cannot take a connection
+        back."""
+        self._registry.close_all()
         self._persistence.close_all()
 
     def __init__(self, config: ConfigModel, persistence: PersistenceNexus) -> None:
@@ -220,6 +264,128 @@ class Chokepoint:
             stack.close()
             raise
         return stream_id
+
+    def query_or_stream(
+        self, endpoint_name: str, request: QueryRequest
+    ) -> "Result | StreamOpened":
+        """I-4's cutover for the genuinely-streaming SQL path: peek the
+        result through the same pull source `open_query_stream` uses;
+        a result inside the inline budget (S8 rows 23a/23b) comes back
+        as a plain `Result` and the connection returns immediately, a
+        larger one is registered as a stream with the peeked frames
+        re-chained (nothing is re-executed). The byte side is a
+        conservative rendered-text estimate — the envelope's exact
+        markdown measurement still governs final rendering."""
+        record = self._persistence.record(endpoint_name)
+        category = self._screen_read_side(request, record.backend_kind)
+        max_rows = self._config.response.inline_max_rows
+        max_bytes = self._config.response.inline_max_bytes
+        stack = ExitStack()
+        try:
+            with self._wired(endpoint_name, record.backend_kind):
+                connection = stack.enter_context(
+                    self._persistence.connection(endpoint_name)
+                )
+                frames = iter_frames(
+                    connection,
+                    request.text,
+                    request.parameters,
+                    self._config.query.default_chunk_size,
+                )
+                peeked: list[pd.DataFrame] = []
+                row_count = 0
+                byte_estimate = 0
+                exhausted = True
+                for frame in frames:
+                    peeked.append(frame)
+                    row_count += len(frame)
+                    byte_estimate += _approx_render_bytes(frame)
+                    if row_count > max_rows or byte_estimate > max_bytes:
+                        exhausted = False
+                        break
+                if exhausted:
+                    stack.close()
+                    return _result_from_frames(peeked, category)
+                stream_id = f"{endpoint_name}:{uuid.uuid4().hex}"
+                self._registry.open_stream(
+                    stream_id,
+                    endpoint_name,
+                    chain(iter(peeked), frames),
+                    "streaming",
+                    on_close=stack.close,
+                )
+        except BaseException:
+            stack.close()
+            raise
+        return StreamOpened(
+            stream_id=stream_id,
+            columns=tuple(str(column) for column in peeked[0].columns),
+            advertised_chunks=self._registry.advertised_count(stream_id),
+        )
+
+    def serve_result(self, result: Result, source_name: str) -> "Result | StreamOpened":
+        """I-2/I-4's cutover for load-then-serve sources (`read_file`,
+        `query_file`): the ALREADY-ADMITTED result passes through
+        inside the inline budget, beyond it its rows are sliced into
+        chunk-registry frames served from the admitted in-memory
+        buffer. The stream pins no NX-5 connection, so the row-24
+        per-endpoint cap deliberately does not apply (the stream id
+        doubles as its own registry endpoint name) — aggregate memory
+        admission and the idle TTL are the operative bounds (I-2)."""
+        max_rows = self._config.response.inline_max_rows
+        max_bytes = self._config.response.inline_max_bytes
+        frame = pd.DataFrame(list(result.rows), columns=list(result.columns))
+        if len(result.rows) <= max_rows and _approx_render_bytes(frame) <= max_bytes:
+            return result
+        chunk_size = self._config.query.default_chunk_size
+        slices = [
+            frame.iloc[start : start + chunk_size]
+            for start in range(0, len(frame), chunk_size)
+        ]
+        stream_id = f"file:{Path(source_name).name}:{uuid.uuid4().hex}"
+        self._registry.open_stream(
+            stream_id,
+            stream_id,  # its own cap bucket — see docstring
+            iter(slices),
+            "load_then_serve",
+            on_close=lambda: None,
+        )
+        return StreamOpened(
+            stream_id=stream_id,
+            columns=result.columns,
+            advertised_chunks=self._registry.advertised_count(stream_id),
+        )
+
+    def fetch_next_chunk(self, stream_id: str) -> ServedChunk:
+        """I-4's `fetch_chunk`: serve the next chunk under cursor
+        semantics. Once the source is exhausted and drained the answer
+        carries the final total as metadata and the stream is CLOSED
+        (its pinned connection released ahead of the TTL) — a further
+        fetch is the structured expired refusal."""
+        served = self._registry.serve_next(stream_id)
+        status = self._registry.stream_status(stream_id)
+        if served is None:
+            self._registry.close_stream(stream_id)
+            return ServedChunk(
+                stream_id=stream_id,
+                chunk_id=None,
+                columns=(),
+                rows=(),
+                advertised_chunks=0,
+                exhausted=True,
+                total_chunks=status.total_chunks,
+                closed=True,
+            )
+        chunk_id, payload = served
+        return ServedChunk(
+            stream_id=stream_id,
+            chunk_id=chunk_id,
+            columns=tuple(str(column) for column in payload.columns),
+            rows=tuple(tuple(row) for row in payload.itertuples(index=False)),
+            advertised_chunks=status.advertised_chunks,
+            exhausted=status.exhausted,
+            total_chunks=status.total_chunks,
+        )
 
     def request_chunk(self, stream_id: str, chunk_id: int) -> pd.DataFrame:
         return self._registry.request_chunk(stream_id, chunk_id)
@@ -382,3 +548,30 @@ class Chokepoint:
                 record_id=endpoint_name,
             )
             raise GuardedExecutionError(structured) from failure
+
+
+def _approx_render_bytes(frame: pd.DataFrame) -> int:
+    """A conservative estimate of a frame's rendered-text weight (the
+    inline_max_bytes side of the S8 23a/23b cutover): per-cell string
+    length plus separator overhead. The envelope's exact markdown
+    measurement remains the rendering authority — this estimate only
+    decides whether a stream is opened."""
+    if frame.empty:
+        return 0
+    cells = int(frame.map(lambda value: len(str(value))).to_numpy().sum())
+    separators = frame.shape[0] * (3 * frame.shape[1] + 1)
+    return cells + separators
+
+
+def _result_from_frames(frames: list[pd.DataFrame], category: str) -> Result:
+    """The peeked frames as one capability-narrow inline Result; an
+    empty peek is the explicit zero-row result (columns unknowable
+    without a cursor description — the envelope renders the zero
+    statement)."""
+    if not frames:
+        return Result(columns=(), rows=(), category=category)
+    columns = tuple(str(column) for column in frames[0].columns)
+    rows = tuple(
+        tuple(row) for frame in frames for row in frame.itertuples(index=False)
+    )
+    return Result(columns=columns, rows=rows, category=category)

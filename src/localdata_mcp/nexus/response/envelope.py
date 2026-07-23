@@ -106,6 +106,10 @@ class ResponseShaper:
         explicitly.
         """
         metadata = self._metadata_for(tool_spec)
+        if hasattr(result, "chunk_id"):
+            return self._shape_chunk(result, metadata)
+        if hasattr(result, "stream_id") and hasattr(result, "advertised_chunks"):
+            return self._stream_reference(result, metadata)
         tabular = _as_tabular(result)
         if tabular is not None:
             return self._shape_tabular(tabular, tool_spec, metadata, stream_id)
@@ -143,6 +147,65 @@ class ResponseShaper:
         return ResponseEnvelope(
             inline=table,
             data={"columns": list(columns), "rows": [list(row) for row in rows]},
+            composition_metadata=metadata,
+        )
+
+    def _stream_reference(
+        self, opened: Any, metadata: CompositionMetadata
+    ) -> ResponseEnvelope:
+        """A guard `StreamOpened` (I-4): the result exceeded the inline
+        budget at the source, so the envelope carries the stream
+        reference and the currently-servable count — never a promised
+        total (T10)."""
+        return ResponseEnvelope(
+            inline=(
+                "The result exceeds the inline budget — retrieve it chunk "
+                f"by chunk: fetch_chunk(stream_id={opened.stream_id!r}); "
+                f"{opened.advertised_chunks} chunk(s) currently servable."
+            ),
+            data={
+                "stream_id": opened.stream_id,
+                "columns": list(opened.columns),
+                "advertised_chunks": opened.advertised_chunks,
+            },
+            composition_metadata=metadata,
+        )
+
+    def _shape_chunk(
+        self, served: Any, metadata: CompositionMetadata
+    ) -> ResponseEnvelope:
+        """A guard `ServedChunk` (I-4/FR-404): the chunk's rows as an
+        inline table with the stream's live state appended; once the
+        source is exhausted and drained, the final total arrives as
+        metadata and the closure of the stream is stated."""
+        data = {
+            "stream_id": served.stream_id,
+            "chunk_id": served.chunk_id,
+            "columns": list(served.columns),
+            "rows": [list(row) for row in served.rows],
+            "advertised_chunks": served.advertised_chunks,
+            "exhausted": served.exhausted,
+            "total_chunks": served.total_chunks,
+        }
+        if served.chunk_id is None:
+            inline = (
+                f"Stream {served.stream_id!r} is exhausted — every chunk "
+                f"was served (final total: {served.total_chunks}); the "
+                "stream is now closed."
+            )
+            return ResponseEnvelope(
+                inline=inline, data=data, composition_metadata=metadata
+            )
+        status = (
+            f"Chunk {served.chunk_id} of stream {served.stream_id!r}; "
+            f"{served.advertised_chunks} more chunk(s) currently servable"
+        )
+        if served.exhausted and served.total_chunks is not None:
+            status += f"; source exhausted — final total {served.total_chunks}"
+        table = _markdown_table(served.columns, served.rows)
+        return ResponseEnvelope(
+            inline=f"{table}\n\n{status}.",
+            data=data,
             composition_metadata=metadata,
         )
 
