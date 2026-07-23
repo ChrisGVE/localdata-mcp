@@ -175,11 +175,20 @@ class ChunkRegistry:
             )
             self._streams[stream_id] = stream
             self._bounds.charge(stream_id, 0)
-            if source_kind == "load_then_serve":
-                while not stream.exhausted:
-                    self._pull_one(stream_id, stream)
-            else:
-                self._top_up(stream_id, stream)
+            try:
+                if source_kind == "load_then_serve":
+                    while not stream.exhausted:
+                        self._pull_one(stream_id, stream)
+                else:
+                    self._top_up(stream_id, stream)
+            except BaseException:
+                # A priming failure (a bad statement surfacing on the
+                # first pull, a refused whole-load) unregisters the
+                # stream; the CALLER still owns the connection during
+                # open, so `on_close` is deliberately not called here.
+                self._streams.pop(stream_id, None)
+                self._bounds.release(stream_id)
+                raise
 
     def close_stream(self, stream_id: str) -> None:
         """Explicit release (I-4's `close_stream`): idempotent — the

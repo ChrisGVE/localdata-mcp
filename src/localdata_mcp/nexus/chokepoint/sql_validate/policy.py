@@ -105,6 +105,11 @@ SHARED_DENIED_NODES: frozenset[str] = frozenset({"Command", "Install", "Use"})
 # transaction control, unknown constructs) is refused by absence.
 SHARED_ALLOWED_NODES: frozenset[str] = frozenset(
     {
+        # bind-parameter slots (`:name`, `?`, `$n`) — the guard's
+        # mandated pattern: values bind through the driver, never
+        # splice into text; the slot itself is inert.
+        "Placeholder",
+        "Parameter",
         # statement scaffolding
         "Select",
         "Union",
