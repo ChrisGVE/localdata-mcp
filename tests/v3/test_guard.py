@@ -345,3 +345,28 @@ def test_result_shape_is_plain_data() -> None:
     result = Result(columns=("a",), rows=((1,),), category="query")
     assert result.row_count == 1
     assert result.affected_rows is None
+
+
+class TestEndpointSummaryAccessor:
+    def test_single_summary_carries_kind_and_posture(self, tmp_path: Path) -> None:
+        guard, _ = build_stack(tmp_path)
+        summary = guard.endpoint_summary("rw")
+        assert summary.backend_kind == "sqlite"
+        assert summary.posture == "read_write"
+
+    def test_unknown_name_raises_the_one_resolution_error(
+        self, tmp_path: Path
+    ) -> None:
+        from localdata_mcp.nexus.chokepoint.guard import UnknownEndpointError
+
+        guard, _ = build_stack(tmp_path)
+        with pytest.raises(UnknownEndpointError):
+            guard.endpoint_summary("never-declared")
+
+    def test_summaries_are_the_per_name_view_aggregated(
+        self, tmp_path: Path
+    ) -> None:
+        guard, _ = build_stack(tmp_path)
+        assert guard.endpoint_summaries() == tuple(
+            guard.endpoint_summary(name) for name in ("rw", "ro")
+        )

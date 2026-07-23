@@ -287,20 +287,24 @@ class Chokepoint:
         """Every declared endpoint's summary, backend-kind-agnostic —
         the one discovery surface NFR-114 refusals point callers to
         (list_endpoints reaches NX-5's state through here, §6.2)."""
-        summaries = []
-        for name in self._persistence.endpoint_names():
-            record = self._persistence.record(name)
-            health = record.health
-            summaries.append(
-                EndpointSummary(
-                    name=record.name,
-                    backend_kind=record.backend_kind,
-                    posture=record.posture,
-                    healthy=None if health is None else health.healthy,
-                    health_detail="" if health is None else health.detail,
-                )
-            )
-        return tuple(summaries)
+        return tuple(
+            self.endpoint_summary(name) for name in self._persistence.endpoint_names()
+        )
+
+    def endpoint_summary(self, name: str) -> EndpointSummary:
+        """One named endpoint's summary (E8.3) — the capability-narrow
+        kind/posture view store-family tools dispatch on (a kv call
+        against a graph endpoint speaks graph tables); raises the same
+        `UnknownEndpointError` every guard resolution raises."""
+        record = self._persistence.record(name)
+        health = record.health
+        return EndpointSummary(
+            name=record.name,
+            backend_kind=record.backend_kind,
+            posture=record.posture,
+            healthy=None if health is None else health.healthy,
+            health_detail="" if health is None else health.detail,
+        )
 
     # -- NX-6's standalone path-containment service (GP3) -------------
 
