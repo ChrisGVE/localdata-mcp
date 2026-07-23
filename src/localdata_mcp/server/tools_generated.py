@@ -1491,3 +1491,72 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("bayesian_estimate", _impl_bayesian_estimate, arguments)
 
     app.tool(bayesian_estimate)
+
+    _impl_analyze_rfm = registry.lookup("analyze_rfm").func
+
+    def analyze_rfm(customer_column: str, date_column: str, value_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None) -> Any:
+        """
+        RFM customer segmentation on an addressed tabular source: quintile recency/frequency/monetary scores and the named segment cascade (Champions ... Lost — every segment reachable). Returns per-customer scores and per-segment summaries.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            customer_column: The customer identifier column.
+            date_column: The transaction date column.
+            value_column: The transaction amount column.
+        """
+        arguments: dict[str, Any] = {"customer_column": customer_column, "date_column": date_column, "value_column": value_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        return shaped_call("analyze_rfm", _impl_analyze_rfm, arguments)
+
+    app.tool(analyze_rfm)
+
+    _impl_calculate_clv = registry.lookup("calculate_clv").func
+
+    def calculate_clv(customer_column: str, date_column: str, value_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, gross_margin: float | None = None) -> Any:
+        """
+        Historical customer lifetime value on an addressed tabular source: per-customer average order value x purchase frequency x gross_margin, annualized. The customer identifier column is whatever customer_column names.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            customer_column: The customer identifier column.
+            date_column: The transaction date column.
+            value_column: The transaction amount column.
+            gross_margin (optional): Gross margin share applied to revenue (implementation default 0.2).
+        """
+        arguments: dict[str, Any] = {"customer_column": customer_column, "date_column": date_column, "value_column": value_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if gross_margin is not None:
+            arguments["gross_margin"] = gross_margin
+        return shaped_call("calculate_clv", _impl_calculate_clv, arguments)
+
+    app.tool(calculate_clv)

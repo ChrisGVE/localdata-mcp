@@ -74,6 +74,8 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("bootstrap_statistic", {"column": "probe"}),
     ("monte_carlo_simulate", {"column": "probe"}),
     ("bayesian_estimate", {"column": "probe"}),
+    ("analyze_rfm", {"customer_column": "probe", "date_column": "probe", "value_column": "probe"}),
+    ("calculate_clv", {"customer_column": "probe", "date_column": "probe", "value_column": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}
