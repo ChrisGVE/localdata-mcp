@@ -21,11 +21,13 @@ import base64
 from typing import Any
 
 from localdata_mcp.explore.addressing import resolve_frame, source_params
+from localdata_mcp.ingest.runtime import chokepoint
 from localdata_mcp.nexus.contract.spec import Param, TypeShape, tool_spec
 from localdata_mcp.nexus.export.interface import render as export_render
 
 from .charts import build_chart_spec
 from .render import render_spec
+from .style import resolve_style
 
 _MEDIA_TYPES = {"svg": "image/svg+xml", "png": "image/png"}
 
@@ -39,7 +41,11 @@ _MEDIA_TYPES = {"svg": "image/svg+xml", "png": "image/png"}
         "maps the kind's visual channels to columns "
         "(e.g. {'x': col, 'y': col}; heatmap defaults to all numeric "
         "columns). format is svg (default, sanitized to an inert "
-        "document) or png. The artifact is returned inline in the "
+        "document) or png. Styling is progressive: palette names a "
+        "qualitative preset (deep, muted, pastel, bright, dark, "
+        "colorblind — the default), colors supplies a custom color "
+        "cycle instead, and style tunes figure size, dpi, grid, and the "
+        "sequential colormap. The artifact is returned inline in the "
         "envelope, extractable through the Output surface."
     ),
     params=(
@@ -65,6 +71,29 @@ _MEDIA_TYPES = {"svg": "image/svg+xml", "png": "image/png"}
             required=False,
         ),
         Param("title", str, "Chart title drawn above the plot.", required=False),
+        Param(
+            "palette",
+            str,
+            "Qualitative palette preset for categorical marks: deep, "
+            "muted, pastel, bright, dark, or colorblind (the configured "
+            "default). Ignored when colors is supplied.",
+            required=False,
+        ),
+        Param(
+            "colors",
+            list,
+            "Custom categorical color cycle (hex like '#1b9e77' or "
+            "named matplotlib colors) — overrides palette when given.",
+            required=False,
+        ),
+        Param(
+            "style",
+            dict,
+            "Fine styling overrides: figure_width_inches, "
+            "figure_height_inches, dpi, grid, despine, sequential_cmap "
+            "(the continuous colormap), fit_color, edge_color.",
+            required=False,
+        ),
     ),
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.NONE,
@@ -79,11 +108,21 @@ def render_chart(
     encoding: "dict[str, Any] | None" = None,
     format: str | None = None,
     title: str | None = None,
+    palette: str | None = None,
+    colors: "list[str] | None" = None,
+    style: "dict[str, Any] | None" = None,
 ) -> "dict[str, Any]":
     image_format = _resolve_format(format)
     frame, source = resolve_frame(endpoint, path, table, query)
     spec = build_chart_spec(kind, frame, encoding, title)
-    raw_bytes = render_spec(spec, image_format)
+    # A custom color cycle overrides a named preset; either resolves the
+    # StyleSpec together with the config-backed visualize defaults (read
+    # through the NX-6 seam, never NX-2 directly).
+    palette_choice = colors if colors is not None else palette
+    spec_style = resolve_style(
+        chokepoint().visualize_defaults(), palette=palette_choice, style=style
+    )
+    raw_bytes = render_spec(spec, image_format, spec_style)
     artifact_bytes = export_render(raw_bytes, image_format)  # NX-8 sanitize/validate
     return {
         "kind": spec.kind,

@@ -19,10 +19,12 @@ import gc
 
 import psutil
 
+from localdata_mcp.nexus.chokepoint.guard import VisualizeDefaults
 from localdata_mcp.nexus.config.models import ConfigModel
 from localdata_mcp.testbench.fixtures.chart_goldens import golden_frame
 from localdata_mcp.visualize.charts import build_chart_spec
 from localdata_mcp.visualize.render import render_spec
+from localdata_mcp.visualize.style import resolve_style
 
 _WARMUP = 20  # untimed renders that absorb import/font-cache/arena cost
 _BYTES_PER_MIB = 1024 * 1024
@@ -38,6 +40,7 @@ def test_repeated_render_does_not_leak_resident_memory() -> None:
     max_drift = config.leak_loop_max_drift_mib
 
     frame = golden_frame()
+    style = resolve_style(VisualizeDefaults.from_config(ConfigModel().visualize))
     # Two specs, two canvas paths — a scatter (Line2D + PathCollection)
     # and a heatmap (QuadMesh), rendered SVG and PNG in turn.
     specs = [
@@ -49,7 +52,7 @@ def test_repeated_render_does_not_leak_resident_memory() -> None:
     def render_once(index: int) -> None:
         spec = specs[index % len(specs)]
         image_format = formats[index % len(formats)]
-        render_spec(spec, image_format)
+        render_spec(spec, image_format, style)
 
     for index in range(_WARMUP):
         render_once(index)

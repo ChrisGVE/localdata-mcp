@@ -31,8 +31,11 @@ from localdata_mcp.testbench.image_similarity import (
     render_stack_fingerprint,
     ssim,
 )
+from localdata_mcp.nexus.chokepoint.guard import VisualizeDefaults
+from localdata_mcp.nexus.config.models import ConfigModel
 from localdata_mcp.visualize.charts import build_chart_spec
 from localdata_mcp.visualize.render import render_spec
+from localdata_mcp.visualize.style import resolve_style
 
 _THRESHOLD = _TestbenchConfig().png_ssim_threshold
 _REGEN = (
@@ -43,7 +46,8 @@ _REGEN = (
 
 def _rendered_png(kind: str) -> bytes:
     spec = build_chart_spec(kind, golden_frame(), dict(GOLDEN_CASES[kind]), None)
-    return render_spec(spec, "png")
+    style = resolve_style(VisualizeDefaults.from_config(ConfigModel().visualize))
+    return render_spec(spec, "png", style)
 
 
 class TestSsimMachinery:

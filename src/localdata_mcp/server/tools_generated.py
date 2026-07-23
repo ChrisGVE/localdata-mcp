@@ -2339,9 +2339,9 @@ def register_tools(app: FastMCP) -> None:
 
     _impl_render_chart = registry.lookup("render_chart").func
 
-    def render_chart(kind: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, encoding: dict | None = None, format: str | None = None, title: str | None = None) -> Any:
+    def render_chart(kind: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, encoding: dict | None = None, format: str | None = None, title: str | None = None, palette: str | None = None, colors: list | None = None, style: dict | None = None) -> Any:
         """
-        Render an addressed tabular source as a chart image. kind is one of histogram, heatmap, scatter_fit, line_timeseries, geo_map, network_layout (one per analysis domain). encoding maps the kind's visual channels to columns (e.g. {'x': col, 'y': col}; heatmap defaults to all numeric columns). format is svg (default, sanitized to an inert document) or png. The artifact is returned inline in the envelope, extractable through the Output surface.
+        Render an addressed tabular source as a chart image. kind is one of histogram, heatmap, scatter_fit, line_timeseries, geo_map, network_layout (one per analysis domain). encoding maps the kind's visual channels to columns (e.g. {'x': col, 'y': col}; heatmap defaults to all numeric columns). format is svg (default, sanitized to an inert document) or png. Styling is progressive: palette names a qualitative preset (deep, muted, pastel, bright, dark, colorblind — the default), colors supplies a custom color cycle instead, and style tunes figure size, dpi, grid, and the sequential colormap. The artifact is returned inline in the envelope, extractable through the Output surface.
 
         Input shape: TABULAR.
         Output shape: NONE (chain endpoint — composes with nothing).
@@ -2357,6 +2357,9 @@ def register_tools(app: FastMCP) -> None:
             encoding (optional): Visual-channel to column map for the kind (e.g. {'x': <col>, 'y': <col>}); heatmap accepts {'columns': [<col>, …]} or omits it for all numeric columns.
             format (optional): Image format: svg (default, inert-sanitized) or png.
             title (optional): Chart title drawn above the plot.
+            palette (optional): Qualitative palette preset for categorical marks: deep, muted, pastel, bright, dark, or colorblind (the configured default). Ignored when colors is supplied.
+            colors (optional): Custom categorical color cycle (hex like '#1b9e77' or named matplotlib colors) — overrides palette when given.
+            style (optional): Fine styling overrides: figure_width_inches, figure_height_inches, dpi, grid, despine, sequential_cmap (the continuous colormap), fit_color, edge_color.
         """
         arguments: dict[str, Any] = {"kind": kind}
         if endpoint is not None:
@@ -2373,6 +2376,12 @@ def register_tools(app: FastMCP) -> None:
             arguments["format"] = format
         if title is not None:
             arguments["title"] = title
+        if palette is not None:
+            arguments["palette"] = palette
+        if colors is not None:
+            arguments["colors"] = colors
+        if style is not None:
+            arguments["style"] = style
         return shaped_call("render_chart", _impl_render_chart, arguments)
 
     app.tool(render_chart)
