@@ -1560,3 +1560,44 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("calculate_clv", _impl_calculate_clv, arguments)
 
     app.tool(calculate_clv)
+
+    _impl_analyze_network = registry.lookup("analyze_network").func
+
+    def analyze_network(source_column: str, target_column: str, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, weight_column: str | None = None, directed: bool | None = None, include_centrality: bool | None = None) -> Any:
+        """
+        Analyze a network stored as a tabular edge list (addressed source with source_column/target_column, optional weight_column, directed on request): density, connectivity, components, degree summary, clustering, and top centrality nodes.
+
+        Input shape: TABULAR.
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            source_column: The edge-source node column.
+            target_column: The edge-target node column.
+            weight_column (optional): Optional edge-weight column.
+            directed (optional): Treat edges as directed (implementation default false).
+            include_centrality (optional): Compute centrality measures (implementation default true).
+        """
+        arguments: dict[str, Any] = {"source_column": source_column, "target_column": target_column}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if weight_column is not None:
+            arguments["weight_column"] = weight_column
+        if directed is not None:
+            arguments["directed"] = directed
+        if include_centrality is not None:
+            arguments["include_centrality"] = include_centrality
+        return shaped_call("analyze_network", _impl_analyze_network, arguments)
+
+    app.tool(analyze_network)

@@ -76,6 +76,7 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("bayesian_estimate", {"column": "probe"}),
     ("analyze_rfm", {"customer_column": "probe", "date_column": "probe", "value_column": "probe"}),
     ("calculate_clv", {"customer_column": "probe", "date_column": "probe", "value_column": "probe"}),
+    ("analyze_network", {"source_column": "probe", "target_column": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

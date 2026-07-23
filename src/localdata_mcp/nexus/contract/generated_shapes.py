@@ -354,4 +354,10 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='process',
     ),
+    "analyze_network": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.SCALAR,
+        streaming_capable=False,
+        domain='process',
+    ),
 }
