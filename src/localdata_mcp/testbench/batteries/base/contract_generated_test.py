@@ -90,6 +90,8 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("optimize_route", {"edges": ["probe"], "waypoints": ["probe"]}),
     ("analyze_accessibility", {"edges": ["probe"], "service_locations": ["probe"], "demand_locations": ["probe"]}),
     ("generate_service_isochrones", {"edges": ["probe"], "service_locations": ["probe"], "time_bands": ["probe"]}),
+    ("prepare_missing_values", {}),
+    ("convert_types", {"conversions": {}}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

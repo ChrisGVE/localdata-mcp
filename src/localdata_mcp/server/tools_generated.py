@@ -2096,3 +2096,73 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("generate_service_isochrones", _impl_generate_service_isochrones, arguments)
 
     app.tool(generate_service_isochrones)
+
+    _impl_prepare_missing_values = registry.lookup("prepare_missing_values").func
+
+    def prepare_missing_values(endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None, columns: list | None = None, missing_strategy: str | None = None, fill_value: str | None = None) -> Any:
+        """
+        Handle missing values on an addressed tabular source: missing_strategy drop (default — fabricates nothing), mean, median, mode, forward_fill, or constant (needs fill_value). Returns the cleaned relation; composes as a pipeline stage.
+
+        Input shape: TABULAR.
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            columns (optional): Columns to clean (default: every column).
+            missing_strategy (optional): drop (default), mean, median, mode, forward_fill, constant.
+            fill_value (optional): Fill value for missing_strategy='constant'.
+        """
+        arguments: dict[str, Any] = {}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        if columns is not None:
+            arguments["columns"] = columns
+        if missing_strategy is not None:
+            arguments["missing_strategy"] = missing_strategy
+        if fill_value is not None:
+            arguments["fill_value"] = fill_value
+        return shaped_call("prepare_missing_values", _impl_prepare_missing_values, arguments)
+
+    app.tool(prepare_missing_values)
+
+    _impl_convert_types = registry.lookup("convert_types").func
+
+    def convert_types(conversions: dict, endpoint: str | None = None, path: str | None = None, table: str | None = None, query: str | None = None) -> Any:
+        """
+        Coerce named columns of an addressed tabular source to a target type (numeric, integer, string, datetime, boolean) via the conversions map. Reports failed casts; composes as a pipeline stage.
+
+        Input shape: TABULAR.
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: process.
+
+        Args:
+            endpoint (optional): The operator-declared endpoint name (exactly one of endpoint/path).
+            path (optional): A local file inside allowed_paths (exactly one of endpoint/path).
+            table (optional): A table on the endpoint (exactly one of table/query for endpoint sources).
+            query (optional): One read-only SQL statement (endpoint sources and local database files).
+            conversions: Map of column name to target type.
+        """
+        arguments: dict[str, Any] = {"conversions": conversions}
+        if endpoint is not None:
+            arguments["endpoint"] = endpoint
+        if path is not None:
+            arguments["path"] = path
+        if table is not None:
+            arguments["table"] = table
+        if query is not None:
+            arguments["query"] = query
+        return shaped_call("convert_types", _impl_convert_types, arguments)
+
+    app.tool(convert_types)

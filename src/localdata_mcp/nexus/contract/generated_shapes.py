@@ -438,4 +438,16 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='process',
     ),
+    "prepare_missing_values": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='process',
+    ),
+    "convert_types": ShapeEntry(
+        input_shape=TypeShape.TABULAR,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='process',
+    ),
 }
