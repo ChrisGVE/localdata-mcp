@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from io import BytesIO
 
+import matplotlib
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_svg import FigureCanvasSVG
 from matplotlib.figure import Figure
@@ -54,7 +55,13 @@ def _export(figure: Figure, image_format: str) -> bytes:
     """The figure as bytes via the format's OO canvas (no pyplot)."""
     buffer = BytesIO()
     if image_format == "svg":
-        FigureCanvasSVG(figure).print_svg(buffer)
+        # svg.fonttype='none' keeps text as escaped <text> nodes (not
+        # glyph paths), so matplotlib's XML-escaping of titles/labels/
+        # data-derived values is FR-501's first defense layer and the
+        # text is structurally present. rc_context scopes the setting —
+        # no global pyplot state leaks (§6c). PNG is unaffected.
+        with matplotlib.rc_context({"svg.fonttype": "none"}):
+            FigureCanvasSVG(figure).print_svg(buffer)
     else:
         FigureCanvasAgg(figure).print_png(buffer)
     return buffer.getvalue()
