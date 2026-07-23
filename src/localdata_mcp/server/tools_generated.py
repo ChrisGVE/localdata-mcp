@@ -224,3 +224,41 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("write_query", _impl_write_query, {"endpoint": endpoint, "sql": sql})
 
     app.tool(write_query)
+
+    _impl_read_file = registry.lookup("read_file").func
+
+    def read_file(path: str, format: str) -> Any:
+        """
+        Read a local data file (14 core formats: CSV, TSV, JSON, YAML, TOML, INI, XML, Excel, ODS, Numbers, Parquet, Feather, Arrow, HDF5) inside the operator's allowed paths.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            path: The file path (must lie inside allowed_paths).
+            format: The format name, or "auto" to infer from the suffix.
+        """
+        return shaped_call("read_file", _impl_read_file, {"path": path, "format": format})
+
+    app.tool(read_file)
+
+    _impl_query_file = registry.lookup("query_file").func
+
+    def query_file(path: str, sql: str) -> Any:
+        """
+        Run a read-only SQL statement over a local SQLite or DuckDB file (ad-hoc, contained, read-only unless the operator grants otherwise; results are read whole under the memory budget).
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+        Domain: ingest.
+
+        Args:
+            path: The database file path (inside allowed_paths).
+            sql: One SQL statement.
+        """
+        return shaped_call("query_file", _impl_query_file, {"path": path, "sql": sql})
+
+    app.tool(query_file)

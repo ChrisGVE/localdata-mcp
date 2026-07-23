@@ -33,3 +33,24 @@ def unknown_endpoint_refusal(endpoint_name: str) -> GuardedExecutionError:
             retryable=False,
         )
     )
+
+
+def over_budget_refusal(detail: str) -> GuardedExecutionError:
+    """I-2's over-budget admission refusal: the suggestion names the
+    CALLER-side recovery (narrow the SQL) and states that the ceiling
+    is operator configuration — asserted on content by the NFR-202
+    matrix row."""
+    return GuardedExecutionError(
+        StructuredError(
+            error_type=ErrorType.RESOURCE_ERROR,
+            message=f"result refused by the memory-budget gate: {detail}",
+            suggestion=(
+                "Narrow the SQL predicate so the admitted result fits the "
+                "memory budget — add a WHERE clause or LIMIT, or aggregate "
+                "in SQL instead of retrieving raw rows. The memory ceiling "
+                "itself is operator configuration "
+                "(resources.memory_ceiling_bytes), not caller-adjustable."
+            ),
+            retryable=False,
+        )
+    )

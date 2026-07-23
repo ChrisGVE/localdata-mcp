@@ -7,3 +7,5 @@
 | `list_endpoints` | Enumerate every operator-declared endpoint (SQL, key-value, and graph/tree alike) with its backend kind, posture, and health. | NONE | TABULAR | no | — |
 | `query` | Run a read-only SQL statement against a declared endpoint and return the rows (guarded: allow-list validated, any posture). | NONE | TABULAR | no | `endpoint`, `sql` |
 | `write_query` | Run a mutating SQL statement (INSERT/UPDATE/DELETE or a write-side local-file construct) against a declared read-write endpoint (guarded: posture enforced, allow-list validated). | NONE | TABULAR | no | `endpoint`, `sql` |
+| `read_file` | Read a local data file (14 core formats: CSV, TSV, JSON, YAML, TOML, INI, XML, Excel, ODS, Numbers, Parquet, Feather, Arrow, HDF5) inside the operator's allowed paths. | NONE | TABULAR | no | `path`, `format` |
+| `query_file` | Run a read-only SQL statement over a local SQLite or DuckDB file (ad-hoc, contained, read-only unless the operator grants otherwise; results are read whole under the memory budget). | NONE | TABULAR | no | `path`, `sql` |

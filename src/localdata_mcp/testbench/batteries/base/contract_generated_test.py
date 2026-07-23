@@ -33,6 +33,8 @@ GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
     ("list_endpoints", {}),
     ("query", {"endpoint": "probe", "sql": "probe"}),
     ("write_query", {"endpoint": "probe", "sql": "probe"}),
+    ("read_file", {"path": "probe", "format": "probe"}),
+    ("query_file", {"path": "probe", "sql": "probe"}),
 )
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}

@@ -96,4 +96,16 @@ TOOL_SHAPES: Final[Mapping[str, ShapeEntry]] = {
         streaming_capable=False,
         domain='ingest',
     ),
+    "read_file": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='ingest',
+    ),
+    "query_file": ShapeEntry(
+        input_shape=TypeShape.NONE,
+        output_shape=TypeShape.TABULAR,
+        streaming_capable=False,
+        domain='ingest',
+    ),
 }

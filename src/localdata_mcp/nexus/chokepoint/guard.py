@@ -35,6 +35,7 @@ import pandas as pd
 from localdata_mcp.nexus.config.models import ConfigModel
 from localdata_mcp.nexus.error.model import StructuredError
 from localdata_mcp.nexus.error.wire import wrap
+from localdata_mcp.nexus.persistence.ephemeral import EphemeralEngineKind
 from localdata_mcp.nexus.persistence.manager import (
     PersistenceNexus,
     UnknownEndpointError,
@@ -52,9 +53,15 @@ from .sparql_validate import screen_read, screen_update
 from .sql_validate.cache import ValidationCache
 from .sql_validate.walker import SqlClassification
 
-# Re-exported at the seam: tool modules catch the NFR-114 name miss
-# through the guard, never by importing NX-5 (FR-802's import rule).
-__all__ = ["UnknownEndpointError"]
+# Re-exported at the seam: tool modules catch the NFR-114 name miss,
+# name the ephemeral engine kind, and catch the resource-admission
+# refusal through the guard — never by importing NX-5 or a chokepoint
+# internal (FR-802 / §6.2's import rule, enforced by the import gate).
+__all__ = [
+    "UnknownEndpointError",
+    "EphemeralEngineKind",
+    "ResourceRefusedError",
+]
 
 Language = Literal["sql", "sparql"]
 
@@ -220,6 +227,54 @@ class Chokepoint:
 
     def evict_idle_streams(self) -> tuple[str, ...]:
         return self._registry.evict_idle()
+
+    # -- the ephemeral local-file seam (I-2, NFR-114 i-b) -------------
+
+    def guarded_file_query(
+        self,
+        path: str | Path,
+        request: QueryRequest,
+        engine_kind: EphemeralEngineKind,
+    ) -> Result:
+        """Ad-hoc SQL over a local SQLite/DuckDB file: contained FIRST
+        (NFR-108 — an out-of-tree path never reaches NX-5), screened by
+        the same allow-list, and READ-ONLY by default — a mutation
+        needs an operator `ephemeral_write_paths` grant (§5's ephemeral
+        posture rule; NFR-114's local-file branch). The connection
+        never outlives this call (no NX-5 pool is pinned, so the row-24
+        stream cap does not apply — I-2)."""
+        real = self.contain_path(path, mode="read")
+        classification = self._cache.classify(request.text, engine_kind)
+        wants_write = (
+            classification.category in ("mutation", "local_file_write")
+            or classification.contains_mutation_nodes
+        )
+        connection_spec = self._persistence.open_ephemeral(str(real), engine_kind)
+        if wants_write and connection_spec.posture != "read_write":
+            raise GuardRefusedError(
+                f"mutation refused: ad-hoc file source {str(real)!r} is "
+                "read-only by default (NFR-114) — only an operator "
+                "security.ephemeral_write_paths grant makes it writable"
+            )
+        self._contain_all(classification, mode="write" if wants_write else "read")
+        with self._wired(f"file:{real}", engine_kind):
+            with connection_spec.open() as live:
+                if wants_write:
+                    affected = execute_mutation(live, request.text, request.parameters)
+                    return Result(
+                        columns=(),
+                        rows=(),
+                        category=classification.category,
+                        affected_rows=affected,
+                    )
+                columns, rows = fetch_bounded(
+                    live,
+                    request.text,
+                    request.parameters,
+                    self._bounds,
+                    self._config.query.default_chunk_size,
+                )
+        return Result(columns=columns, rows=rows, category=classification.category)
 
     # -- the endpoint-enumeration seam (I-1) --------------------------
 
