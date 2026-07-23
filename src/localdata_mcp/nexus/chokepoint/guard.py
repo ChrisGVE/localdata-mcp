@@ -65,6 +65,11 @@ __all__ = [
 
 Language = Literal["sql", "sparql"]
 
+# Endpoint kinds whose statements are SPARQL regardless of the caller's
+# language hint (E8.3): the language belongs to the DECLARED backend,
+# so an rdf endpoint's text always crosses the E6.2b screen.
+_SPARQL_BACKEND_KINDS = frozenset({"rdf"})
+
 
 @dataclass(frozen=True)
 class QueryRequest:
@@ -310,7 +315,7 @@ class Chokepoint:
         """Classify and refuse everything the read entrypoint may not
         carry; returns the category. Every extracted path literal is
         contained read-side (NFR-108)."""
-        if request.language == "sparql":
+        if request.language == "sparql" or backend_kind in _SPARQL_BACKEND_KINDS:
             screen_read(request.text)
             return "query"
         classification = self._cache.classify(request.text, backend_kind)
@@ -332,7 +337,7 @@ class Chokepoint:
     def _screen_write_side(self, request: QueryRequest, backend_kind: str) -> str:
         """The mutation entrypoint's screen: only the enumerated write
         categories pass, path literals contained write-side."""
-        if request.language == "sparql":
+        if request.language == "sparql" or backend_kind in _SPARQL_BACKEND_KINDS:
             screen_update(request.text)
             return "mutation"
         classification = self._cache.classify(request.text, backend_kind)

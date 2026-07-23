@@ -28,6 +28,16 @@ BACKEND_TO_SQLGLOT_DIALECT: Mapping[str, str] = {
     "oracle": "oracle",
 }
 
+# E8.3's store families validate as the engine they physically are:
+# a kv/tree/graph endpoint IS a SQLite file carrying the store schema
+# (nexus/persistence/store_schemas.py), so its statements walk the
+# sqlite policy — declared here as data, resolved by walker.py.
+STORE_BACKEND_ALIASES: Mapping[str, str] = {
+    "kv": "sqlite",
+    "tree": "sqlite",
+    "graph": "sqlite",
+}
+
 Direction = Literal["read", "write"]
 
 

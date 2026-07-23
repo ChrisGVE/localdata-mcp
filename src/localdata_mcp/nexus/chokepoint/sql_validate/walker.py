@@ -23,7 +23,12 @@ from typing import Literal, cast
 import sqlglot
 from sqlglot import expressions as exp
 
-from .policy import BACKEND_TO_SQLGLOT_DIALECT, POLICIES, DialectPolicy
+from .policy import (
+    BACKEND_TO_SQLGLOT_DIALECT,
+    POLICIES,
+    STORE_BACKEND_ALIASES,
+    DialectPolicy,
+)
 
 Category = Literal["query", "mutation", "local_file_read", "local_file_write"]
 
@@ -72,8 +77,9 @@ def classify(sql: str, backend_kind: str) -> SqlClassification:
 
 
 def _policy_for(backend_kind: str) -> DialectPolicy:
+    resolved = STORE_BACKEND_ALIASES.get(backend_kind, backend_kind)
     try:
-        return POLICIES[backend_kind]
+        return POLICIES[resolved]
     except KeyError:
         raise SqlRefusedError(
             f"no validation policy for backend {backend_kind!r} — refused"

@@ -44,6 +44,14 @@ _ALLOWED: dict[tuple[str, str], str] = {
         "nexus/chokepoint/expr_eval.py",
         "eval",
     ): "asteval Interpreter.eval — the closed numeric grammar FR-305 mandates",
+    (
+        "nexus/persistence/rdf.py",
+        "query",
+    ): (
+        "rdflib Graph.query — SPARQL over the endpoint's own store, "
+        "reached only through NX-6 after the E6.2b construct screen; "
+        "not pandas' expression evaluator"
+    ),
 }
 
 

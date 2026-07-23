@@ -36,9 +36,15 @@ from localdata_mcp.nexus.config.endpoints import (
     resolve_credential,
 )
 from localdata_mcp.nexus.persistence.limits import ResourceLimits
+from localdata_mcp.nexus.persistence.rdf import RdfHandle, rdf_format_of
+from localdata_mcp.nexus.persistence.store_schemas import ensure_store_schema
 
 # Backends SQLAlchemy pools with a QueuePool (networked servers).
 _NETWORKED_KINDS = frozenset({"postgresql", "mysql", "mssql", "oracle"})
+
+# The declared store families (E8.3): SQLite files carrying the
+# store_schemas.py table shapes, DSN-declared as `<kind>+sqlite://…`.
+_STORE_KINDS = frozenset({"kv", "tree", "graph"})
 
 
 class UnsupportedBackendError(ValueError):
@@ -127,6 +133,10 @@ def create_handle(
         )
     if kind == "sqlite":
         return _sqlite_handle(declaration.dsn, declaration.posture)
+    if kind in _STORE_KINDS:
+        return _store_handle(declaration.dsn, declaration.posture, kind)
+    if kind == "rdf":
+        return _rdf_handle(declaration.dsn, declaration.posture)
     if kind in _NETWORKED_KINDS:
         return _networked_handle(declaration, limits, environ)
     raise UnsupportedBackendError(
@@ -153,6 +163,42 @@ def _sqlite_handle(dsn: str, posture: Posture) -> SqlAlchemyHandle:
                 cursor.close()
 
     return SqlAlchemyHandle(engine=engine)
+
+
+def _store_handle(dsn: str, posture: Posture, store_kind: str) -> SqlAlchemyHandle:
+    """A kv/tree/graph store (E8.3): the SQLite engine behind the
+    family-prefixed DSN (`kv+sqlite:///f` → `sqlite:///f`), with
+    `PRAGMA foreign_keys = ON` on every connect (the tree schema's
+    property cascade relies on it — SQLite defaults it off) and the
+    store_schemas.py tables ensured at creation on read-write posture
+    (a read-only store expects a pre-seeded file, like every read-only
+    file engine)."""
+    sqlite_dsn = "sqlite://" + dsn.split("://", 1)[1]
+    handle = _sqlite_handle(sqlite_dsn, posture)
+
+    @event.listens_for(handle.engine, "connect")
+    def _apply_foreign_keys(dbapi_connection: Any, _record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys = ON")
+        finally:
+            cursor.close()
+
+    if posture == "read_write":
+        ensure_store_schema(handle.engine, store_kind)
+    return handle
+
+
+def _rdf_handle(dsn: str, posture: Posture) -> RdfHandle:
+    """An rdf store (E8.3): the rdflib graph behind `rdf+<format>://…`,
+    parsed from the declared file at creation; read-only posture makes
+    the handle itself refuse updates (defense in depth under NX-6)."""
+    sub_scheme = dsn.split("://", 1)[0].split("+", 1)[1]
+    return RdfHandle(
+        path=make_url("sqlite://" + dsn.split("://", 1)[1]).database or "",
+        format=rdf_format_of(sub_scheme),
+        read_only=posture == "read_only",
+    )
 
 
 def _networked_handle(
