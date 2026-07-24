@@ -4,7 +4,9 @@ Translation tests drive real exceptions through the kept feeder into
 the one wire taxonomy. The NFR-302 half is the always-on import check:
 an AST scan over the whole v3 tree asserting translate.py is the ONLY
 importer of the legacy error feeder — a second importer would be the
-second translation path NX-3 forbids.
+second translation path NX-3 forbids. The feeder module names and the
+one sanctioned importer are declared in gated_tree.py (NFR-402), shared
+with the import-graph reachability gate (test_nexus_import_graph.py).
 """
 
 from __future__ import annotations
@@ -14,15 +16,14 @@ from pathlib import Path
 
 from localdata_mcp.nexus.error.model import ErrorType
 from localdata_mcp.nexus.error.translate import _LEGACY_TO_WIRE, translate
-from localdata_mcp.nexus.gated_tree import SRC_ROOT, iter_v3_sources
-
-_LEGACY_FEEDER_MODULES = (
-    "localdata_mcp.error_classification",
-    "localdata_mcp.error_mappers",
-    "localdata_mcp.error_handler",
+from localdata_mcp.nexus.gated_tree import (
+    NX3_FEEDER_ENTRYPOINT,
+    NX3_FEEDER_MODULES,
+    SRC_ROOT,
+    iter_v3_sources,
 )
 
-_THE_ONE_IMPORTER = SRC_ROOT / "nexus/error/translate.py"
+_THE_ONE_IMPORTER = SRC_ROOT / NX3_FEEDER_ENTRYPOINT
 
 
 class TestTranslation:
@@ -61,15 +62,14 @@ class TestNfr302ImportCheck:
                     isinstance(node, ast.ImportFrom)
                     and node.module
                     and any(
-                        node.module.startswith(feeder)
-                        for feeder in _LEGACY_FEEDER_MODULES
+                        node.module.startswith(feeder) for feeder in NX3_FEEDER_MODULES
                     )
                 ):
                     offenders.append(f"{path}: from {node.module}")
                 if isinstance(node, ast.Import) and any(
                     alias.name.startswith(feeder)
                     for alias in node.names
-                    for feeder in _LEGACY_FEEDER_MODULES
+                    for feeder in NX3_FEEDER_MODULES
                 ):
                     offenders.append(f"{path}: import")
         assert offenders == [], offenders
