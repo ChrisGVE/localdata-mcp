@@ -348,11 +348,37 @@ def _capped_value(value: Any, cap: int) -> str:
     """One mapping value's rendered text, truncated so a single large
     embedded value (a clustering-label list, an LP assignment vector)
     cannot blow the inline budget (CR-001). The full value survives in
-    the envelope's `data` region."""
+    the envelope's `data` region.
+
+    A list/tuple is rendered element by element and stopped as soon as the
+    budget is reached, so a million-element vector never materializes its
+    full `str()` just to be sliced away (CR-033) — the transient render
+    stays bounded by `cap`, not by the value's size."""
+    if isinstance(value, (list, tuple)):
+        return _capped_sequence(value, cap)
     rendered = str(value)
     if len(rendered) > cap:
         return rendered[:cap] + f"… (value truncated — {len(rendered)} chars total)"
     return rendered
+
+
+def _capped_sequence(value: "list[Any] | tuple[Any, ...]", cap: int) -> str:
+    """Render `[a, b, …]` one element at a time, stopping once the budget
+    is reached — the full sequence is never stringified. The element
+    count comes from `len()` (O(1) for list/tuple), so the truncation note
+    is exact without materializing the tail."""
+    parts: list[str] = []
+    used = 1  # the opening "["
+    for item in value:
+        piece = repr(item)
+        if used + len(piece) + 2 > cap:  # + ", "
+            return (
+                "[" + ", ".join(parts) + f", …] ({len(value)} elements, "
+                "truncated to fit the inline budget)"
+            )
+        parts.append(piece)
+        used += len(piece) + 2
+    return "[" + ", ".join(parts) + "]"
 
 
 def _zero_statement(tool_name: str, what: str) -> str:
