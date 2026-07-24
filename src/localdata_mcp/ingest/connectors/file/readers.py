@@ -112,13 +112,20 @@ _LOGICAL_SIZE_FORMATS: frozenset[str] = frozenset(
     {"parquet", "feather", "arrow", "hdf5", "xlsx", "ods", "numbers"}
 )
 
-# Per-cell allowance for a variable-width (object/string) column: a Python
-# str carries ~49 bytes of object header on top of the 8-byte array
-# pointer, so a column of many short distinct strings materializes far
-# past its declared byte total. 60 bytes/cell bounds that (and hugely
-# over-estimates a dictionary-shared column, which is the fail-safe
-# direction).
-_OBJECT_CELL_BYTES = 60
+# Per-LEAF-element allowance when a reader materializes Python objects
+# (a pandas object column, a list/struct cell's children, an HDF5
+# `.tolist()` scalar). A Python str/int carries ~49 bytes of object header
+# on top of the 8-byte reference, so every leaf value — NOT every row —
+# must be charged: a `list<string>` cell holds K children, so a column of
+# R rows materializes R×K Python objects, not R (CR-037). 64 bytes/leaf
+# bounds that and hugely over-estimates a dictionary-shared column, which
+# is the fail-safe direction.
+_LEAF_ELEMENT_BYTES = 64
+
+# Per-ROW allowance for a nested (list/struct/map) column: each cell is a
+# small numpy object array / Python list wrapping its children (~96 bytes
+# of container overhead) — charged on top of the per-leaf cost above.
+_ROW_CONTAINER_BYTES = 96
 
 # Multiplier applied to every logical-size estimate to cover the pandas
 # frame bookkeeping the per-column arithmetic omits (the index, per-block
@@ -294,34 +301,38 @@ def _with_margin(raw: int) -> int:
     return int(raw * _MATERIALIZATION_MARGIN)
 
 
-def _arrow_cell_bytes(arrow_type: Any, rows: int) -> int:
-    """Materialized bytes for one arrow-typed column of `rows` rows: a
-    fixed-width numeric/temporal/bool column is `rows * itemsize`; a
-    variable-width (string/binary/nested) column materializes to a pandas
-    object array charged at `_OBJECT_CELL_BYTES` per cell (the declared
-    byte total is added by the caller for parquet)."""
+def _is_fixed_width(arrow_type: Any) -> bool:
+    """A numeric/temporal/bool arrow type — materialized numpy-backed in
+    pandas at an exact per-value itemsize (no Python-object graph)."""
+    import pyarrow as pa
+
+    return (
+        pa.types.is_boolean(arrow_type)
+        or pa.types.is_integer(arrow_type)
+        or pa.types.is_floating(arrow_type)
+        or pa.types.is_temporal(arrow_type)
+    )
+
+
+def _fixed_width_bytes(arrow_type: Any) -> int:
     import pyarrow as pa
 
     if pa.types.is_boolean(arrow_type):
-        return rows * 1
-    if (
-        pa.types.is_integer(arrow_type)
-        or pa.types.is_floating(arrow_type)
-        or pa.types.is_temporal(arrow_type)
-    ):
-        width = (
-            (arrow_type.bit_width // 8) if getattr(arrow_type, "bit_width", 0) else 8
-        )
-        return rows * width
-    return rows * _OBJECT_CELL_BYTES
+        return 1
+    return (arrow_type.bit_width // 8) if getattr(arrow_type, "bit_width", 0) else 8
 
 
 def _columnar_materialization(source: Path, format_name: str) -> int:
-    """parquet: rows x per-column width from the footer (+ declared
-    uncompressed bytes for variable-width columns), metadata-only.
-    feather/arrow (arrow IPC): schema width x row count, read through a
-    memory map so per-batch counting stays bounded (one batch at a time,
-    released between reads) rather than materializing the whole file."""
+    """The materialized-memory bound for a columnar file.
+
+    parquet: from the footer alone (no column data read). For each column
+    the KEY quantity is the leaf-value count `num_values` — for a nested
+    (list/struct) column it counts every child element, so it bounds the
+    per-element Python-object graph `pd.read_parquet` materializes; using
+    `num_rows` would miss a `list` cell's K-per-row blow-up (CR-037).
+    feather/arrow (arrow IPC): read batch by batch through a memory map so
+    the inspection stays bounded to one batch at a time; each array is
+    bounded recursively (nested children included)."""
     if format_name == "parquet":
         import pyarrow.parquet as pq
 
@@ -330,55 +341,105 @@ def _columnar_materialization(source: Path, format_name: str) -> int:
         schema = metadata.schema.to_arrow_schema()
         estimate = 0
         for index, field in enumerate(schema):
-            estimate += _arrow_cell_bytes(field.type, rows)
-            if _is_variable(field.type):
-                # Add the declared uncompressed character data on top of
-                # the per-cell object allowance already charged above.
-                estimate += sum(
-                    metadata.row_group(rg).column(index).total_uncompressed_size
-                    for rg in range(metadata.num_row_groups)
-                )
+            leaf_values = sum(
+                metadata.row_group(rg).column(index).num_values
+                for rg in range(metadata.num_row_groups)
+            )
+            char_bytes = sum(
+                metadata.row_group(rg).column(index).total_uncompressed_size
+                for rg in range(metadata.num_row_groups)
+            )
+            estimate += _parquet_column_bytes(field.type, rows, leaf_values, char_bytes)
         return _with_margin(estimate)
     import pyarrow as pa
     import pyarrow.ipc as ipc
 
+    estimate = 0
     with pa.memory_map(str(source), "r") as handle:
         reader = ipc.open_file(handle)
-        schema = reader.schema
-        rows = sum(
-            reader.get_batch(batch).num_rows
-            for batch in range(reader.num_record_batches)
-        )
-    return _with_margin(sum(_arrow_cell_bytes(field.type, rows) for field in schema))
+        for batch in range(reader.num_record_batches):
+            for column in reader.get_batch(batch).columns:
+                estimate += _arrow_array_bytes(column)
+    return _with_margin(estimate)
 
 
-def _is_variable(arrow_type: Any) -> bool:
+def _parquet_column_bytes(
+    arrow_type: Any, rows: int, leaf_values: int, char_bytes: int
+) -> int:
+    """Materialized bytes for one parquet column, from footer counts only.
+
+    - fixed-width scalar (numpy-backed pandas column): `rows × itemsize`.
+    - nested (list/struct/map): each of `rows` cells is a container
+      (`_ROW_CONTAINER_BYTES`) holding `leaf_values` Python objects in
+      total (`× _LEAF_ELEMENT_BYTES`), plus the raw child bytes.
+    - scalar string/binary (pandas object column): one Python object per
+      row plus the char data."""
     import pyarrow as pa
 
-    return not (
-        pa.types.is_boolean(arrow_type)
-        or pa.types.is_integer(arrow_type)
-        or pa.types.is_floating(arrow_type)
-        or pa.types.is_temporal(arrow_type)
-    )
+    if pa.types.is_nested(arrow_type):
+        return (
+            rows * _ROW_CONTAINER_BYTES + leaf_values * _LEAF_ELEMENT_BYTES + char_bytes
+        )
+    if _is_fixed_width(arrow_type):
+        return rows * _fixed_width_bytes(arrow_type)
+    return rows * _LEAF_ELEMENT_BYTES + char_bytes
+
+
+def _arrow_array_bytes(array: Any) -> int:
+    """Materialized bytes for one arrow array (feather/arrow), recursing
+    into nested children so a `list`/`struct` cell's per-element Python
+    objects are charged, not just its row count (CR-037). `flatten()` on a
+    memory-mapped batch stays bounded to the batch."""
+    import pyarrow as pa
+
+    arrow_type = array.type
+    rows = len(array)
+    if _is_fixed_width(arrow_type):
+        return rows * _fixed_width_bytes(arrow_type)
+    if pa.types.is_list(arrow_type) or pa.types.is_large_list(arrow_type):
+        return rows * _ROW_CONTAINER_BYTES + _arrow_array_bytes(array.flatten())
+    if pa.types.is_struct(arrow_type):
+        children = sum(
+            _arrow_array_bytes(array.field(i)) for i in range(arrow_type.num_fields)
+        )
+        return rows * _ROW_CONTAINER_BYTES + children
+    # scalar string/binary/other -> pandas object column: one Python
+    # object per row plus the array's own char/offset buffers.
+    return rows * _LEAF_ELEMENT_BYTES + array.nbytes
 
 
 def _hdf5_materialization(source: Path) -> int:
-    """Sum every dataset's `shape.prod x dtype.itemsize` (h5py metadata,
-    no data read) — an upper bound on what any single-key read
-    materializes."""
+    """The bound matches `_read_hdf5`'s two paths (h5py metadata only, no
+    dataset read):
+
+    - a SINGLE dataset becomes a NumPy-backed DataFrame; the h5py array
+      and the DataFrame's copy are both live during construction, so the
+      bound is `elements × itemsize × 2` (the double buffer).
+    - MULTIPLE datasets convert to Python lists (`.tolist()` for JSON), so
+      each is charged the per-object rate `elements × _LEAF_ELEMENT_BYTES`
+      (+ raw char bytes for variable/bytes/string dtypes) — a `.tolist()`
+      materializes one Python object per element (CR-038)."""
     import h5py
     import numpy as np
 
-    total = 0
+    shapes: list[tuple[int, int, str]] = []  # (elements, itemsize, dtype.kind)
 
     def visit(_name: str, item: Any) -> None:
-        nonlocal total
         if isinstance(item, h5py.Dataset):
-            total += int(np.prod(item.shape)) * item.dtype.itemsize
+            elements = int(np.prod(item.shape)) if item.shape else 1
+            shapes.append((elements, item.dtype.itemsize, item.dtype.kind))
 
     with h5py.File(source, "r") as handle:
         handle.visititems(visit)
+
+    if len(shapes) == 1:
+        elements, itemsize, _kind = shapes[0]
+        return _with_margin(elements * itemsize * 2)
+    total = 0
+    for elements, itemsize, kind in shapes:
+        total += elements * _LEAF_ELEMENT_BYTES
+        if kind in ("O", "S", "U"):  # object / bytes / unicode
+            total += elements * itemsize  # raw character data on top
     return _with_margin(total)
 
 
@@ -519,23 +580,29 @@ def _read_xml(path: Path) -> Mapping[str, Any]:
 
 def _read_hdf5(path: Path) -> Any:
     """h5py with the file-content-directed channel CLOSED: an external
-    link or virtual dataset anywhere refuses the whole file (I-2)."""
+    link or virtual dataset anywhere refuses the whole file (I-2).
+
+    A single dataset returns a DataFrame built from the NumPy array
+    directly — never `array.tolist()`, whose intermediate Python-object
+    list balloons to ~10x the buffer and defeats the `shape × itemsize`
+    admission estimate (CR-038). Only the multi-dataset document shape
+    converts to Python lists (its values must be JSON-serializable for the
+    envelope), and its estimate is charged at Python-object rates to
+    match."""
     import h5py
 
     with h5py.File(path, "r") as handle:
         _refuse_hdf5_indirection(handle, handle.name)
-        datasets: dict[str, Any] = {}
+        arrays: dict[str, Any] = {}
 
         def collect(name: str, item: Any) -> None:
             if isinstance(item, h5py.Dataset):
-                datasets[name] = item[()].tolist()
+                arrays[name] = item[()]  # NumPy — no per-element Python list
 
         handle.visititems(collect)
-    if len(datasets) == 1:
-        only = next(iter(datasets.values()))
-        frame = pd.DataFrame(only)
-        return frame
-    return datasets
+    if len(arrays) == 1:
+        return pd.DataFrame(next(iter(arrays.values())))
+    return {name: array.tolist() for name, array in arrays.items()}
 
 
 def _refuse_hdf5_indirection(group: Any, base: str) -> None:

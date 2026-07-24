@@ -466,6 +466,106 @@ class TestDecompressionBombRefusal:
         with pytest.raises(ResourceRefusedError):
             self._read_bomb(bomb, "feather")
 
+    def test_parquet_nested_list_bomb_refused_at_the_upfront_gate(
+        self, tmp_path: Path
+    ) -> None:
+        """CR-037: a `list<string>` column blows up per-ELEMENT, not
+        per-row — 150k rows × 800 children = 120M objects (~1 GB) from a
+        ~3 KB file. The estimate must count leaf values, not rows."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        bomb = tmp_path / "nested.parquet"
+        table = pa.table(
+            {
+                "c": pa.array(
+                    [["x"] * 800 for _ in range(150_000)], type=pa.list_(pa.string())
+                )
+            }
+        )
+        pq.write_table(table, str(bomb), compression="zstd")
+        assert os.path.getsize(bomb) < self._CEILING
+        with pytest.raises(ResourceRefusedError):
+            self._read_bomb(bomb, "parquet")
+
+    def test_feather_nested_list_bomb_refused_at_the_upfront_gate(
+        self, tmp_path: Path
+    ) -> None:
+        """CR-037: the arrow IPC path recurses into list children too."""
+        import pyarrow as pa
+        import pyarrow.feather as pf
+
+        bomb = tmp_path / "nested.feather"
+        pf.write_feather(
+            pa.table(
+                {
+                    "c": pa.array(
+                        [["y"] * 600 for _ in range(120_000)],
+                        type=pa.list_(pa.string()),
+                    )
+                }
+            ),
+            str(bomb),
+            compression="zstd",
+        )
+        with pytest.raises(ResourceRefusedError):
+            self._read_bomb(bomb, "feather")
+
+    def test_hdf5_bomb_refused_at_the_upfront_gate(self, tmp_path: Path) -> None:
+        """CR-038: a large HDF5 dataset (distinct values, so nothing is
+        interned away) is refused at a low ceiling before it materializes."""
+        import h5py
+
+        bomb = tmp_path / "bomb.h5"
+        with h5py.File(bomb, "w") as handle:
+            handle.create_dataset(
+                "c",
+                data=np.arange(5_000_000, dtype="float64"),
+                compression="gzip",
+            )
+        assert os.path.getsize(bomb) < self._CEILING
+        with pytest.raises(ResourceRefusedError):
+            self._read_bomb(bomb, "hdf5")
+
+    def test_hdf5_admitted_read_never_breaches_the_estimate(
+        self, tmp_path: Path
+    ) -> None:
+        """CR-038 anti-fail-open invariant: whatever the reader actually
+        materializes for an HDF5 file (single-dataset NumPy frame OR the
+        multi-dataset `.tolist()` document) must stay within the estimate
+        the gate admitted against — measured for both shapes with distinct
+        values (the case an attacker controls)."""
+        import tracemalloc
+
+        import h5py
+
+        from localdata_mcp.ingest.connectors.file import readers
+
+        def estimate(path: Path) -> int:
+            fd = readers._contained_open(path)
+            try:
+                return readers._upfront_estimate(fd, path, "hdf5")
+            finally:
+                os.close(fd)
+
+        def read_peak(path: Path) -> int:
+            tracemalloc.start()
+            readers.read_path(path, "hdf5", lambda _estimate: None)
+            _current, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            return peak
+
+        single = tmp_path / "single.h5"
+        with h5py.File(single, "w") as handle:
+            handle.create_dataset("c", data=np.arange(3_000_000, dtype="float64"))
+        assert estimate(single) >= read_peak(single)
+
+        multi = tmp_path / "multi.h5"
+        with h5py.File(multi, "w") as handle:
+            handle.create_dataset("a", data=np.arange(2_000_000, dtype="float64"))
+            handle.create_dataset("b", data=np.arange(2_000_000, dtype="float64"))
+        assert estimate(multi) >= read_peak(multi)
+
     def test_benign_columnar_file_passes_the_upfront_gate(self, tmp_path: Path) -> None:
         small = tmp_path / "small.parquet"
         _FRAME.to_parquet(small)

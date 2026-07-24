@@ -132,19 +132,14 @@ class _StreamingSurface(_GuardCore):
         )
 
     def admit_load(self, estimated_bytes: int) -> None:
-        """The upfront whole-load memory gate (§5), exposed on the guard
-        seam for the load-then-serve file readers (`read_file`): a
-        whole-dataset read is admitted only if its estimated full size
-        fits current headroom — the one point a decompression bomb can be
-        refused AHEAD of the materialization that would exhaust memory.
-        The reader owns the estimate (it knows the format); the guard
-        owns the verdict against the one live ceiling. Raises
-        `ResourceRefusedError` (re-exported through guard.py) on refusal.
-
-        NOTE (CR-005): this seam is the in-scope half of the fix — the
-        file readers in `ingest/connectors/file/` must cross it BEFORE
-        `read_path` materializes the frame; that call-site wiring is
-        tracked separately."""
+        """The upfront whole-load memory CHECK (§5): a whole-dataset read
+        fits current headroom, or `ResourceRefusedError` (re-exported
+        through guard.py). This is a pure check — it does NOT reserve the
+        estimate on the ledger, so a file-reader call path must use
+        `reserve_load`/`release_load` instead (CR-030): a bare `admit_load`
+        lets two concurrent loads each pass against a ledger blind to the
+        other. Kept as the headroom-check primitive the batteries assert
+        directly; production load paths cross `reserve_load`."""
         self._bounds.admit_load(estimated_bytes)
 
     def reserve_load(self, load_id: str, estimated_bytes: int) -> None:

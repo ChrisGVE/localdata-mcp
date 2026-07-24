@@ -64,7 +64,8 @@ class ValidationCache:
         """The cached classification, computing and storing on a miss.
 
         A cached refusal is re-raised — the verdict is deterministic per
-        (dialect, normalized text), so serving it from cache is correct.
+        (dialect, exact statement bytes), so serving it from cache is
+        correct.
         """
         key = _cache_key(sql, backend_kind)
         cached = self._get(key)
