@@ -11,27 +11,33 @@ so concurrent streams and analyses cannot individually pass while
 jointly exceeding the ceiling. Analytical admission is DYNAMIC (S8
 row 13): the row count is capped by `query.max_analysis_rows` AND the
 estimated working set (rows × per-row estimate) is checked against
-`ceiling − live residency`, the refusal naming current residency. The
-staging branch is WIRED, not removed: aggregate spill accounting
-against `resources.max_spill_bytes` (S8 row 5) and the
-`min_free_disk_bytes` floor (row 6) checked before any spill or export
-write. Every bound is read from NX-2 — no literal in this file may
-restate an S8 default (NFR-403). Neighbors: chunk_registry.py charges
-stream residency here; guard.py admits every analytical and load path
-through here and shapes refusals via NX-3.
+`ceiling − live residency`, the refusal naming current residency. There
+is NO disk-spill/staging branch here: v3 streaming bounds memory by
+look-ahead backpressure (chunk_registry.py pauses the pull at the K/B
+bound), not by spilling to disk, so no spill/staging WRITE path exists
+in the tree for a disk gate to sit in front of — the earlier
+`admit_spill`/`release_spill`/`live_spill` machinery (and its `_spill`
+ledger) was fully implemented but had zero production callers, so it was
+removed rather than left as a gate whose comment falsely claimed it was
+wired (CR-006/GP5). The `resources.max_spill_bytes` and
+`min_free_disk_bytes` NX-2 fields consequently have no consumer in v3;
+the only disk WRITE the tree performs is NX-8's `export_to_file`, which
+enforces its own containment and atomic-write and is out of NX-6's
+memory accounting. Every memory bound is read from NX-2 — no literal in
+this file may restate an S8 default (NFR-403). Neighbors:
+chunk_registry.py charges stream residency here; guard.py admits every
+analytical and load path through here and shapes refusals via NX-3.
 """
 
 from __future__ import annotations
 
 import functools
-import shutil
 import threading
-from pathlib import Path
 from typing import Any, Callable, Literal, TypeVar, cast
 
 from localdata_mcp.nexus.config.models import ConfigModel
 
-ResourceClass = Literal["memory", "disk", "internal"]
+ResourceClass = Literal["memory", "internal"]
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -72,14 +78,13 @@ class ResourceBounds:
     Registries (streams, in-flight analyses) charge their live resident
     bytes under a `registry_id`; every admission decision reads the sum
     — never a per-retrieval view — so the ceiling holds jointly (§5
-    bound 2). Thread-safe: one lock over both ledgers.
+    bound 2). Thread-safe: one lock over the residency ledger.
     """
 
     def __init__(self, config: ConfigModel) -> None:
         self._resources = config.resources
         self._query = config.query
         self._residency: dict[str, int] = {}
-        self._spill: dict[str, int] = {}
         self._lock = threading.Lock()
 
     # -- aggregate memory ledger (§5 bound 2) -------------------------
@@ -182,55 +187,3 @@ class ResourceBounds:
                 f"{residency}) — NFR-105",
                 resource_class="memory",
             )
-
-    # -- staging branch: disk bounds (S8 rows 5-6), wired -------------
-
-    @_fail_safe
-    def admit_spill(
-        self, registry_id: str, additional_bytes: int, staging_dir: Path
-    ) -> None:
-        """Admit `additional_bytes` of spill for `registry_id` into
-        `staging_dir`: aggregate spill stays under `max_spill_bytes`
-        (row 5) AND the write leaves at least `min_free_disk_bytes`
-        free (row 6). A failed free-space probe refuses (fail-safe)."""
-        if additional_bytes < 0:
-            raise ResourceRefusedError(
-                f"spill admission refused: negative size {additional_bytes} "
-                "— refused fail-safe (NFR-105)",
-                resource_class="internal",
-            )
-        max_spill = self._resources.max_spill_bytes
-        min_free = self._resources.min_free_disk_bytes
-        free_after = shutil.disk_usage(staging_dir).free - additional_bytes
-        if free_after < min_free:
-            raise ResourceRefusedError(
-                f"spill admission refused: writing {additional_bytes} bytes "
-                f"to {str(staging_dir)!r} would leave {free_after} bytes "
-                f"free, under the {min_free}-byte floor (S8 row 6, "
-                "NFR-203)",
-                resource_class="disk",
-            )
-        with self._lock:
-            aggregate = sum(self._spill.values()) + additional_bytes
-            if aggregate > max_spill:
-                raise ResourceRefusedError(
-                    f"spill admission refused: {additional_bytes} more bytes "
-                    f"would put aggregate spill at {aggregate} bytes, over "
-                    f"the {max_spill}-byte max_spill_bytes bound "
-                    "(S8 row 5, NFR-203)",
-                    resource_class="disk",
-                )
-            self._spill[registry_id] = (
-                self._spill.get(registry_id, 0) + additional_bytes
-            )
-
-    def release_spill(self, registry_id: str) -> None:
-        """Drop a registry's spill accounting (idempotent, like
-        `release` — teardown must never fail on bookkeeping)."""
-        with self._lock:
-            self._spill.pop(registry_id, None)
-
-    def live_spill(self) -> int:
-        """The sum of every registry's accounted spill bytes."""
-        with self._lock:
-            return sum(self._spill.values())

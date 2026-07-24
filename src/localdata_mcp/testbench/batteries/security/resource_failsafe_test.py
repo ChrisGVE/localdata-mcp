@@ -12,10 +12,10 @@ to make the checker's own internals bug out — so the battery reaches the
 one place the fault lives: the live resource-bounds owned by the booted
 chokepoint (obtained through the guard the seam yields, never imported —
 NFR-103's own internals-stay-internal rule holds for this module too).
-Into each admission method (memory charge, analytical admission, load
-admission, disk-spill admission) an internal fault is injected, and each is
-asserted to REFUSE with the `internal` resource class rather than return —
-and rather than leak the raw exception. A genuine over-budget refusal is
+Into each memory admission method (memory charge, analytical admission,
+load admission) an internal fault is injected, and each is asserted to
+REFUSE with the `internal` resource class rather than return — and rather
+than leak the raw exception. A genuine over-budget refusal is
 proven to pass through the guard unchanged (not re-wrapped), and an
 explicit-guard refusal stays intact, so the fail-safe wrapper never masks a
 real bound decision.
@@ -80,16 +80,6 @@ def test_admit_analysis_internal_fault_refuses(bounds) -> None:
 def test_admit_load_internal_fault_refuses(bounds) -> None:
     bounds._require_memory_headroom = _raise_bug
     error = _expect_refusal(lambda: bounds.admit_load(estimated_bytes=1))
-    assert error.resource_class == "internal"
-
-
-def test_admit_spill_internal_fault_refuses(
-    bounds, tmp_path: Path, monkeypatch
-) -> None:
-    # The free-space probe itself fails — the disk-bound branch's fail-safe.
-    module = sys.modules[type(bounds).__module__]
-    monkeypatch.setattr(module.shutil, "disk_usage", _raise_bug)
-    error = _expect_refusal(lambda: bounds.admit_spill("registry", 1, tmp_path))
     assert error.resource_class == "internal"
 
 

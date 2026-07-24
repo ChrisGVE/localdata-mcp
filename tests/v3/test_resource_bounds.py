@@ -3,15 +3,14 @@
 The exit-gate assertions for resource_bounds.py: the fail-open defect
 class is CLOSED (an internal error inside a check refuses, never
 passes), dynamic analytical admission checks live headroom — not the
-bare row cap — naming current residency in the refusal (S8 row 13),
+bare row cap — naming current residency in the refusal (S8 row 13), and
 the aggregate ledger holds the ceiling jointly across registries (§5
-bound 2), and the wired staging branch enforces both disk rows (S8
-rows 5-6) fail-safe.
+bound 2). The disk-spill/staging admission was removed (CR-006): v3
+streaming bounds memory by look-ahead backpressure, not by spilling to
+disk, so no spill write path existed for that gate to sit in front of.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -26,20 +25,13 @@ from localdata_mcp.nexus.config.models import (
 )
 
 # A deliberately tiny model: ceiling 1 MiB-ish so tests never allocate
-# meaningfully; values chosen to be provably non-S8 (none appears as a
-# ConfigModel default).
+# meaningfully; the value is provably non-S8 (not a ConfigModel default).
 _CEILING = 1_000_000
-_SPILL_MAX = 2_000_000
-_MIN_FREE = 500_000
 
 
 def small_config() -> ConfigModel:
     return ConfigModel(
-        resources=ResourcesConfig(
-            memory_ceiling_bytes=_CEILING,
-            max_spill_bytes=_SPILL_MAX,
-            min_free_disk_bytes=_MIN_FREE,
-        )
+        resources=ResourcesConfig(memory_ceiling_bytes=_CEILING),
     )
 
 
@@ -183,70 +175,3 @@ class TestFailOpenDefectClosed:
         )
         with pytest.raises(ResourceRefusedError):
             bounds.admit_load(estimated_bytes=1)
-
-
-class TestStagingBranchWired:
-    def test_spill_within_bounds_admits_and_accounts(
-        self, bounds: ResourceBounds, tmp_path: Path
-    ) -> None:
-        bounds.admit_spill("reg-1", 100_000, tmp_path)
-        bounds.admit_spill("reg-1", 100_000, tmp_path)
-        assert bounds.live_spill() == 200_000
-
-    def test_aggregate_spill_over_max_refused(
-        self, bounds: ResourceBounds, tmp_path: Path
-    ) -> None:
-        bounds.admit_spill("reg-1", 1_500_000, tmp_path)
-        with pytest.raises(ResourceRefusedError) as refusal:
-            bounds.admit_spill("reg-2", 600_000, tmp_path)
-        assert refusal.value.resource_class == "disk"
-        # The refused admission is not accounted.
-        assert bounds.live_spill() == 1_500_000
-
-    def test_free_disk_floor_refuses(
-        self,
-        bounds: ResourceBounds,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """S8 row 6: a write that would leave less than the floor free
-        is refused before the OS is starved."""
-        import shutil as _shutil
-
-        class Usage:
-            free = _MIN_FREE + 50_000
-
-        monkeypatch.setattr(_shutil, "disk_usage", lambda path: Usage())
-        with pytest.raises(ResourceRefusedError) as refusal:
-            bounds.admit_spill("reg-1", 100_000, tmp_path)
-        assert refusal.value.resource_class == "disk"
-
-    def test_failed_disk_probe_refuses_fail_safe(
-        self,
-        bounds: ResourceBounds,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import shutil as _shutil
-
-        def broken(path: object) -> object:
-            raise OSError("probe failed")
-
-        monkeypatch.setattr(_shutil, "disk_usage", broken)
-        with pytest.raises(ResourceRefusedError) as refusal:
-            bounds.admit_spill("reg-1", 1, tmp_path)
-        assert refusal.value.resource_class == "internal"
-
-    def test_negative_spill_refused(
-        self, bounds: ResourceBounds, tmp_path: Path
-    ) -> None:
-        with pytest.raises(ResourceRefusedError):
-            bounds.admit_spill("reg-1", -1, tmp_path)
-
-    def test_release_spill_is_idempotent(
-        self, bounds: ResourceBounds, tmp_path: Path
-    ) -> None:
-        bounds.admit_spill("reg-1", 100_000, tmp_path)
-        bounds.release_spill("reg-1")
-        bounds.release_spill("reg-1")
-        assert bounds.live_spill() == 0
