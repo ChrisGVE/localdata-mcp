@@ -26,6 +26,22 @@ class TestClassificationCaching:
         cache.classify("SELECT * FROM read_csv_auto('/b.csv')", "duckdb")
         assert len(cache) == 2
 
+    def test_whitespace_inside_a_literal_never_shares_an_entry(self) -> None:
+        """CR-011: two statements identical except for a whitespace run
+        INSIDE a quoted literal are distinct executed bytes — and, for a
+        path literal, distinct files — so the cached verdict must not be
+        reused across them (guard-reads-a-model, NFR-108)."""
+        cache = ValidationCache(max_entries=8)
+        cache.classify("SELECT * FROM read_csv_auto('/a b.csv')", "duckdb")
+        cache.classify("SELECT * FROM read_csv_auto('/a  b.csv')", "duckdb")
+        assert len(cache) == 2
+
+    def test_value_literal_interior_whitespace_is_preserved(self) -> None:
+        cache = ValidationCache(max_entries=8)
+        cache.classify("SELECT 'a b' FROM t", "sqlite")
+        cache.classify("SELECT 'a  b' FROM t", "sqlite")
+        assert len(cache) == 2
+
     def test_case_is_not_folded(self) -> None:
         # A quoted identifier's case is semantic — never normalized away.
         cache = ValidationCache(max_entries=8)

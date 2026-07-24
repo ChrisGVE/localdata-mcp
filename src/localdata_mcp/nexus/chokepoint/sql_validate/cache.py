@@ -7,9 +7,13 @@ which is exactly the case the cache serves. It is fail-closed by
 construction:
 
 - Normalization is strictly semantics- and literal-preserving —
-  whitespace runs collapsed and leading/trailing trimmed, NEVER literal
-  masking or fingerprinting — so two statements differing in a path or
-  value literal never share an entry.
+  whitespace runs are collapsed ONLY OUTSIDE quoted literals (SQL is
+  whitespace-insensitive there) and leading/trailing trimmed, NEVER
+  literal masking or fingerprinting. Whitespace INSIDE a quoted literal
+  is preserved byte-for-byte, so two statements differing only in a
+  literal's interior whitespace (`'a b'` vs `'a  b'`, distinct executed
+  bytes and distinct paths) never share an entry — the cached verdict
+  can never reason over a reconstruction of different executed text.
 - Only the classification is cached; posture and NFR-108 containment
   are evaluated per call by guard.py, OUTSIDE this cache, so a cached
   verdict never carries a containment decision and never goes stale
@@ -25,21 +29,66 @@ classification; guard.py owns one cache instance sized from NX-2.
 
 from __future__ import annotations
 
-import re
 import threading
 from collections import OrderedDict
 
 from .walker import SqlClassification, SqlRefusedError, classify
 
-_WHITESPACE = re.compile(r"\s+")
+
+def _collapse_outside_literals(sql: str) -> str:
+    """Collapse every whitespace run to one space, but ONLY outside
+    quoted literals — the interior of a `'…'`, `"…"`, or `` `…` `` span
+    is copied byte-for-byte.
+
+    The scanner errs toward staying INSIDE a literal (a doubled
+    delimiter is an escaped quote, a backslash escapes the next
+    character): mis-reading a literal as closed would re-open the exact
+    whitespace-collision hole this normalization exists to close, so the
+    only tolerated error is the safe one — preserving whitespace that
+    did not strictly need preserving (a cache miss, never a collision).
+    """
+    out: list[str] = []
+    i = 0
+    n = len(sql)
+    quote = ""
+    while i < n:
+        ch = sql[i]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:  # backslash escape (e.g. MySQL)
+                out.append(sql[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                if i + 1 < n and sql[i + 1] == quote:  # doubled = escaped quote
+                    out.append(sql[i + 1])
+                    i += 2
+                    continue
+                quote = ""  # the closing delimiter
+            i += 1
+            continue
+        if ch in "'\"`":
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch.isspace():
+            out.append(" ")
+            i += 1
+            while i < n and sql[i].isspace():
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out).strip()
 
 
 def _cache_key(sql: str, backend_kind: str) -> str:
     """Semantics- and literal-preserving normalization: collapse
-    whitespace only. Case is NOT folded — a quoted identifier's case is
-    semantic — and no literal is ever masked, so distinct literals
-    cannot collide (§7)."""
-    return f"{backend_kind}\x00{_WHITESPACE.sub(' ', sql).strip()}"
+    whitespace OUTSIDE quoted literals only. Case is NOT folded — a
+    quoted identifier's case is semantic — and no literal interior is
+    ever touched, so distinct executed bytes cannot collide (§7)."""
+    return f"{backend_kind}\x00{_collapse_outside_literals(sql)}"
 
 
 class ValidationCache:
