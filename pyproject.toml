@@ -155,6 +155,7 @@ markers = [
     "influxdb: tests requiring InfluxDB",
     "neo4j: tests requiring Neo4j",
     "couchdb: tests requiring CouchDB",
+    "nightly: exhaustive/stretch battery tiers run nightly, excluded per-PR (S7.4)",
 ]
 asyncio_mode = "strict"
 
