@@ -264,6 +264,12 @@ class TestWriteGuards:
 _FRAME = pd.DataFrame({"i": [1, 2, 3], "s": ["a", "b", "c"], "f": [1.5, 2.5, 3.5]})
 
 
+def _admit_all(estimated_bytes: int) -> None:
+    """A no-op memory-admission seam for the round-trip reloads: these
+    reload tiny exported fixtures and only assert fidelity, not the
+    CR-005 gate (which test_ingest_file covers)."""
+
+
 class TestRoundTrip:
     @pytest.mark.parametrize("fmt", ["parquet", "arrow"])
     def test_type_preserving_round_trip(self, bench: Path, fmt: str) -> None:
@@ -273,7 +279,7 @@ class TestRoundTrip:
             path=str(target),
             source=_FRAME.to_dict(orient="records"),
         )
-        reloaded = read_path(target, resolve_format(target, fmt))
+        reloaded = read_path(target, resolve_format(target, fmt), _admit_all)
         pd.testing.assert_frame_equal(reloaded, _FRAME)
 
     def test_csv_round_trip_values_documented_lossy(self, bench: Path) -> None:
@@ -285,7 +291,7 @@ class TestRoundTrip:
             path=str(target),
             source=_FRAME.to_dict(orient="records"),
         )
-        reloaded = read_path(target, resolve_format(target, "csv"))
+        reloaded = read_path(target, resolve_format(target, "csv"), _admit_all)
         assert reloaded.to_dict(orient="records") == _FRAME.to_dict(orient="records")
 
     def test_json_round_trip(self, bench: Path) -> None:
@@ -295,7 +301,7 @@ class TestRoundTrip:
             path=str(target),
             source=_FRAME.to_dict(orient="records"),
         )
-        reloaded = read_path(target, resolve_format(target, "json"))
+        reloaded = read_path(target, resolve_format(target, "json"), _admit_all)
         assert reloaded.to_dict(orient="records") == _FRAME.to_dict(orient="records")
 
 
