@@ -20,8 +20,9 @@ in the tree for a disk gate to sit in front of — the earlier
 ledger) was fully implemented but had zero production callers, so it was
 removed rather than left as a gate whose comment falsely claimed it was
 wired (CR-006/GP5). The `resources.max_spill_bytes` and
-`min_free_disk_bytes` NX-2 fields consequently have no consumer in v3;
-the only disk WRITE the tree performs is NX-8's `export_to_file`, which
+`min_free_disk_bytes` NX-2 fields were removed with it (they had no
+remaining consumer); the only disk WRITE the tree performs is NX-8's
+`export_to_file`, which
 enforces its own containment and atomic-write and is out of NX-6's
 memory accounting. Every memory bound is read from NX-2 — no literal in
 this file may restate an S8 default (NFR-403). Neighbors:
