@@ -30,7 +30,11 @@ _SAMPLES = 40  # tail-resolving draw count (non-config bench shape)
 def test_warm_list_tools_p99_under_the_row_28_floor() -> None:
     bound_ms = ConfigModel().testbench.discovery_p99_ms
     load_spec_modules()
-    registered = {spec.name for spec in default_registry()}
+    # The served surface is production-only: walking-skeleton probes are
+    # registered but marked `test_only` and kept off the served app
+    # (CR-012), so the floor is asserted against the production tool
+    # count — the real served surface — not the full registry.
+    production = {spec.name for spec in default_registry() if not spec.test_only}
 
     async def session() -> tuple[list[float], int]:
         async with Client(app) as client:
@@ -43,9 +47,7 @@ def test_warm_list_tools_p99_under_the_row_28_floor() -> None:
             return timings, len(served)
 
     timings, served_count = anyio.run(session)
-    # The full v3 tool count is on the path — the floor is asserted
-    # against the real surface, not a subset.
-    assert served_count >= len(registered)
+    assert served_count == len(production)
     ordered = sorted(timings)
     p99 = ordered[min(math.ceil(len(ordered) * 0.99) - 1, len(ordered) - 1)]
     assert p99 < bound_ms, (
