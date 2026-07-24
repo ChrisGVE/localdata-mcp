@@ -159,6 +159,14 @@ class TestGuardedQuery:
         with pytest.raises(UnknownEndpointError):
             guard.guarded_query("undeclared", QueryRequest(text="SELECT 1"))
 
+    def test_bounded_query_releases_residency_on_teardown(self, tmp_path: Path) -> None:
+        """CR-007: the working set charged for the query's lifetime is
+        released once the result is handed off — the ledger returns to
+        zero so a later query starts with full headroom."""
+        guard, _ = build_stack(tmp_path)
+        guard.guarded_query("rw", QueryRequest(text="SELECT * FROM t"))
+        assert guard._bounds.live_residency() == 0
+
 
 class TestGuardedMutation:
     def test_write_on_read_write_endpoint(self, tmp_path: Path) -> None:

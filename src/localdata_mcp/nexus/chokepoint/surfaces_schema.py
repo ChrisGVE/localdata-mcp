@@ -16,6 +16,7 @@ only. Chokepoint-internal by §6.2: composed into `Chokepoint`
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from . import introspection
@@ -91,19 +92,24 @@ class _SchemaSurface(_GuardCore):
         exist; store kinds refused as catalog reads."""
         record = self._persistence.record(endpoint_name)
         self._refuse_store_catalog(endpoint_name, record.backend_kind)
-        with self._wired(endpoint_name, record.backend_kind):
-            if table not in introspection.table_names(record):
-                return None
-            statement = introspection.quoted_select(record, table)
-            with self._persistence.connection(endpoint_name) as connection:
-                columns, rows = fetch_bounded(
-                    connection,
-                    statement,
-                    None,
-                    self._bounds,
-                    self._config.query.default_chunk_size,
-                )
-        return Result(columns=columns, rows=rows, category="query")
+        registry_id = f"analysis:table:{endpoint_name}:{uuid.uuid4().hex}"
+        try:
+            with self._wired(endpoint_name, record.backend_kind):
+                if table not in introspection.table_names(record):
+                    return None
+                statement = introspection.quoted_select(record, table)
+                with self._persistence.connection(endpoint_name) as connection:
+                    columns, rows = fetch_bounded(
+                        connection,
+                        statement,
+                        None,
+                        self._bounds,
+                        self._config.query.default_chunk_size,
+                        registry_id=registry_id,
+                    )
+            return Result(columns=columns, rows=rows, category="query")
+        finally:
+            self._bounds.release(registry_id)
 
     def _refuse_store_catalog(self, endpoint_name: str, backend_kind: str) -> None:
         if backend_kind in ("kv", "tree", "graph", "rdf"):

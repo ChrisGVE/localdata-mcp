@@ -10,13 +10,18 @@ exactly what FR-105 forbids a test to normalize.
 
 from __future__ import annotations
 
+import pytest
+
 from localdata_mcp.nexus.chokepoint.execution import (
     execute_mutation,
     fetch_bounded,
     iter_frames,
 )
-from localdata_mcp.nexus.chokepoint.resource_bounds import ResourceBounds
-from localdata_mcp.nexus.config.models import ConfigModel
+from localdata_mcp.nexus.chokepoint.resource_bounds import (
+    ResourceBounds,
+    ResourceRefusedError,
+)
+from localdata_mcp.nexus.config.models import ConfigModel, ResourcesConfig
 
 
 class NativeConnection:
@@ -53,6 +58,7 @@ def test_fetch_bounded_over_the_native_shape() -> None:
         {"p": 1},
         ResourceBounds(ConfigModel()),
         batch_size=2,
+        registry_id="q-1",
     )
     assert columns == ("id", "label")
     assert rows == ((1, "a"), (2, "b"), (3, "c"))
@@ -78,6 +84,56 @@ def test_iter_frames_over_the_native_shape() -> None:
 def test_native_parameters_pass_none_when_absent() -> None:
     connection = NativeConnection([])
     fetch_bounded(
-        connection, "SELECT 1", None, ResourceBounds(ConfigModel()), batch_size=2
+        connection,
+        "SELECT 1",
+        None,
+        ResourceBounds(ConfigModel()),
+        batch_size=2,
+        registry_id="q-2",
     )
     assert connection.seen_parameters is None
+
+
+def _bounds(ceiling: int) -> ResourceBounds:
+    return ResourceBounds(
+        ConfigModel(resources=ResourcesConfig(memory_ceiling_bytes=ceiling))
+    )
+
+
+def test_fetch_bounded_charges_and_holds_the_retained_working_set() -> None:
+    """CR-007: the retained analytical result is charged to the aggregate
+    residency ledger under its registry_id and HELD, so a concurrent
+    bounded query can see it. Before the fix nothing charged the ledger
+    for a completed bounded query, so live_residency stayed at zero."""
+    bounds = _bounds(1_000_000)
+    connection = NativeConnection([(i, "x" * 100) for i in range(40)])
+    fetch_bounded(
+        connection,
+        "SELECT * FROM t",
+        None,
+        bounds,
+        batch_size=100,
+        registry_id="analysis-A",
+    )
+    assert bounds.live_residency() > 0
+
+
+def test_concurrent_bounded_queries_jointly_refuse() -> None:
+    """CR-007: two concurrent bounded queries whose combined working set
+    exceeds the ceiling get a fail-safe refusal. Query A holds its
+    working set on the ledger (as guarded_query holds it across its
+    lifetime); query B's fetch then refuses rather than jointly blowing
+    the ceiling — the residency the headroom check reads now learns
+    about finished/in-flight bounded results."""
+    bounds = _bounds(1_000_000)
+    bounds.charge("analysis-A", 950_000)  # query A's held working set
+    connection = NativeConnection([(i, "x" * 3000) for i in range(60)])
+    with pytest.raises(ResourceRefusedError):
+        fetch_bounded(
+            connection,
+            "SELECT * FROM t",
+            None,
+            bounds,
+            batch_size=100,
+            registry_id="analysis-B",
+        )

@@ -16,6 +16,7 @@ Chokepoint-internal by §6.2: composed into `Chokepoint` (guard.py).
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 from localdata_mcp.nexus.persistence.ephemeral import EphemeralEngineKind
@@ -31,19 +32,28 @@ class _QueryMutationSurface(_GuardCore):
     # -- the two entrypoints (§6.2) -----------------------------------
 
     def guarded_query(self, endpoint_name: str, request: QueryRequest) -> Result:
-        """The read path — permitted on ANY posture (NFR-113)."""
+        """The read path — permitted on ANY posture (NFR-113).
+
+        The retained working set is charged to the residency ledger for
+        the query's lifetime and released on teardown (CR-007), so
+        concurrent bounded queries respect the ceiling jointly."""
         record = self._persistence.record(endpoint_name)
         category = self._screen_read_side(request, record.backend_kind)
-        with self._wired(endpoint_name, record.backend_kind):
-            with self._persistence.connection(endpoint_name) as connection:
-                columns, rows = fetch_bounded(
-                    connection,
-                    request.text,
-                    request.parameters,
-                    self._bounds,
-                    self._config.query.default_chunk_size,
-                )
-        return Result(columns=columns, rows=rows, category=category)
+        registry_id = f"analysis:{endpoint_name}:{uuid.uuid4().hex}"
+        try:
+            with self._wired(endpoint_name, record.backend_kind):
+                with self._persistence.connection(endpoint_name) as connection:
+                    columns, rows = fetch_bounded(
+                        connection,
+                        request.text,
+                        request.parameters,
+                        self._bounds,
+                        self._config.query.default_chunk_size,
+                        registry_id=registry_id,
+                    )
+            return Result(columns=columns, rows=rows, category=category)
+        finally:
+            self._bounds.release(registry_id)
 
     def guarded_mutation(self, endpoint_name: str, request: QueryRequest) -> Result:
         """The write path — `read_write` posture only (NFR-113), for
@@ -93,21 +103,28 @@ class _QueryMutationSurface(_GuardCore):
                 "security.ephemeral_write_paths grant makes it writable"
             )
         self._contain_all(classification, mode="write" if wants_write else "read")
-        with self._wired(f"file:{real}", engine_kind):
-            with connection_spec.open() as live:
-                if wants_write:
-                    affected = execute_mutation(live, request.text, request.parameters)
-                    return Result(
-                        columns=(),
-                        rows=(),
-                        category=classification.category,
-                        affected_rows=affected,
+        registry_id = f"analysis:file:{real}:{uuid.uuid4().hex}"
+        try:
+            with self._wired(f"file:{real}", engine_kind):
+                with connection_spec.open() as live:
+                    if wants_write:
+                        affected = execute_mutation(
+                            live, request.text, request.parameters
+                        )
+                        return Result(
+                            columns=(),
+                            rows=(),
+                            category=classification.category,
+                            affected_rows=affected,
+                        )
+                    columns, rows = fetch_bounded(
+                        live,
+                        request.text,
+                        request.parameters,
+                        self._bounds,
+                        self._config.query.default_chunk_size,
+                        registry_id=registry_id,
                     )
-                columns, rows = fetch_bounded(
-                    live,
-                    request.text,
-                    request.parameters,
-                    self._bounds,
-                    self._config.query.default_chunk_size,
-                )
-        return Result(columns=columns, rows=rows, category=classification.category)
+            return Result(columns=columns, rows=rows, category=classification.category)
+        finally:
+            self._bounds.release(registry_id)

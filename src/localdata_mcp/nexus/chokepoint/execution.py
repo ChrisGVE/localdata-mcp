@@ -10,7 +10,11 @@ tuples — the capability-narrow material guard.py freezes into a
 Retention is admission-gated: `fetch_bounded` measures the first batch,
 then re-admits through the E6.5 dynamic gate BEFORE retaining each
 further batch, so an over-cap or over-headroom result refuses mid-fetch
-instead of materializing (S8 row 13 applied on the wire).
+instead of materializing (S8 row 13 applied on the wire). It also
+CHARGES the retained working set to the aggregate residency ledger
+under a caller-owned `registry_id` (CR-007), so concurrent bounded
+queries are visible to each other's headroom check; the caller releases
+that id once the result is handed off.
 `iter_frames` is the streaming counterpart: the same fetch loop as a
 pull source of DataFrames for the E6.6 ChunkRegistry. Neighbors:
 guard.py is the only caller; resource_bounds.py rules on every
@@ -75,10 +79,24 @@ def fetch_bounded(
     parameters: Mapping[str, Any] | None,
     bounds: ResourceBounds,
     batch_size: int,
+    *,
+    registry_id: str,
 ) -> tuple[tuple[str, ...], tuple[tuple[Any, ...], ...]]:
     """Execute and fetch ALL rows — each batch admitted through the
     dynamic gate before it is retained, so the refusal (over the row
-    cap, or over live headroom) lands before the memory does."""
+    cap, or over live headroom) lands before the memory does.
+
+    The retained working set is CHARGED to the aggregate residency
+    ledger under `registry_id` as it accrues (CR-007), so a concurrent
+    bounded query's headroom check sees this query's memory and the two
+    cannot jointly exceed the ceiling. The caller owns the registry_id's
+    lifetime and MUST release it once the result is handed off (the
+    charge is left standing on return — this is not a self-contained
+    admission). To keep the query's own accumulating set from
+    double-counting against its own headroom check, its prior charge is
+    released immediately before each admission and re-established
+    immediately after (`charge` is the joint ceiling gate; the release
+    is idempotent on the first batch)."""
     cursor = _execute(connection, sql, parameters)
     columns = _columns_of(cursor)
     rows: list[tuple[Any, ...]] = []
@@ -89,7 +107,10 @@ def fetch_bounded(
             break
         if per_row is None:
             per_row = _per_row_bytes(batch)
-        bounds.admit_analysis(rows=len(rows) + len(batch), per_row_bytes=per_row)
+        total = len(rows) + len(batch)
+        bounds.release(registry_id)
+        bounds.admit_analysis(rows=total, per_row_bytes=per_row)
+        bounds.charge(registry_id, int(total * per_row))
         rows.extend(batch)
     return columns, tuple(rows)
 
