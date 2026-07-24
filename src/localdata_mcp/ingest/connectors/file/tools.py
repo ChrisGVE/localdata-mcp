@@ -7,16 +7,18 @@ touches the path, and dispatches to the hardened 14-format table
 through the guard's ephemeral seam — contained, allow-list screened,
 read-only by default (NFR-114 i-b), load-then-serve by declaration
 (the connection never outlives the call; the result is read whole
-under the admission gate). An over-budget result becomes the
-structured refusal whose suggestion names the SQL-narrowing recovery
-(refusals.py). Neighbors: readers.py owns format hardening;
-runtime.py supplies the guard.
+under the admission gate). An over-budget result becomes a structured
+refusal (refusals.py) whose suggestion is tool-appropriate: `read_file`
+names the file-side recovery (smaller/less-compressed file), `query_file`
+names the SQL-narrowing recovery. Neighbors: readers.py owns format
+hardening; runtime.py supplies the guard.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pandas as pd
 
@@ -28,7 +30,7 @@ from localdata_mcp.nexus.chokepoint.guard import (
 )
 from localdata_mcp.nexus.contract.spec import Param, TypeShape, tool_spec
 
-from ...refusals import over_budget_refusal
+from ...refusals import file_over_budget_refusal, over_budget_refusal
 from ...runtime import chokepoint
 from .readers import FileIngestError, read_path, resolve_format
 
@@ -65,25 +67,35 @@ _ENGINE_SUFFIXES: dict[str, EphemeralEngineKind] = {
     domain="ingest",
 )
 def read_file(path: str, format: str = "auto") -> Any:
-    real = chokepoint().contain_path(path, mode="read")
+    guard = chokepoint()
+    real = guard.contain_path(path, mode="read")
     format_name = resolve_format(real, format)
+    # CR-030: reserve the load's estimated footprint on the shared ledger
+    # for the DURATION of the read (not merely check it), so a concurrent
+    # whole-file read sees it and the two cannot jointly pass the ceiling.
+    # Released in the finally once the frame is admitted-and-served.
+    load_id = uuid4().hex
     try:
         # NFR-105/CR-005: the reader crosses the memory-admission gate
         # before it materializes the file — a decompression bomb inside
         # allowed_paths is refused fail-safe here, never OOM-ed.
-        loaded = read_path(real, format_name, chokepoint().admit_load)
-    except ResourceRefusedError as refusal:
-        raise over_budget_refusal(str(refusal)) from refusal
-    if isinstance(loaded, pd.DataFrame):
-        result = Result(
-            columns=tuple(str(column) for column in loaded.columns),
-            rows=tuple(tuple(row) for row in loaded.itertuples(index=False)),
-            category="local_file_read",
+        loaded = read_path(
+            real, format_name, lambda est: guard.reserve_load(load_id, est)
         )
-        # I-4: beyond the inline budget the guard registers the loaded
-        # frame as a load-then-serve stream (I-2's classification).
-        return chokepoint().serve_result(result, str(real))
-    return loaded
+        if isinstance(loaded, pd.DataFrame):
+            result = Result(
+                columns=tuple(str(column) for column in loaded.columns),
+                rows=tuple(tuple(row) for row in loaded.itertuples(index=False)),
+                category="local_file_read",
+            )
+            # I-4: beyond the inline budget the guard registers the loaded
+            # frame as a load-then-serve stream (I-2's classification).
+            return guard.serve_result(result, str(real))
+        return loaded
+    except ResourceRefusedError as refusal:
+        raise file_over_budget_refusal(str(refusal)) from refusal
+    finally:
+        guard.release_load(load_id)
 
 
 @tool_spec(

@@ -213,3 +213,27 @@ def over_budget_refusal(detail: str) -> GuardedExecutionError:
             retryable=False,
         )
     )
+
+
+def file_over_budget_refusal(detail: str) -> GuardedExecutionError:
+    """The over-budget refusal for a whole-file read (`read_file`,
+    `profile_data`): there is no SQL predicate to narrow, so the
+    suggestion names the file-appropriate recovery (CR-035 — the
+    Intention-Driven-Interface guidance must be actionable for the tool
+    the agent actually called)."""
+    return GuardedExecutionError(
+        StructuredError(
+            error_type=ErrorType.RESOURCE_ERROR,
+            message=f"result refused by the memory-budget gate: {detail}",
+            suggestion=(
+                "The file's estimated in-memory size exceeds the memory "
+                "budget. Supply a smaller or less-compressed file, select "
+                "fewer columns upstream, or split it; for a delimited file "
+                "(CSV/TSV) the reader streams, so a large row count is fine "
+                "but very wide rows are not. The memory ceiling itself is "
+                "operator configuration (resources.memory_ceiling_bytes), "
+                "not caller-adjustable."
+            ),
+            retryable=False,
+        )
+    )

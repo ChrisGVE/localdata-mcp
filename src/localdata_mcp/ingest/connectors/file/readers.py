@@ -23,10 +23,24 @@ readers, not around them:
 Containment (NFR-108) is the TOOL's step before any reader runs
 (tools.py crosses the guard's contain_path). The NFR-105 MEMORY gate is
 this module's step: `read_path` crosses the chokepoint's admission seam
-(`admit`, injected) BEFORE any whole-file materialization (CR-005) —
-CSV/TSV charge their growing residency chunk by chunk (a high-ratio file
-refused mid-read), the rest cross one upfront on-disk-size estimate — so
-a decompression bomb inside allowed_paths cannot OOM the server.
+(`admit`, injected) BEFORE any whole-file materialization (CR-005) so a
+decompression bomb inside allowed_paths cannot OOM the server. Three
+admission regimes, by how the format's materialized size can be bounded
+ahead of the read:
+
+- CSV/TSV charge their growing residency chunk by chunk (a high-ratio
+  file refused mid-read), behind a coarse `st_size` pre-gate that bounds
+  a wide/newline-free first chunk (CR-031).
+- Uncompressed whole-file formats (the text tree, legacy .xls) cross one
+  upfront `st_size * factor` estimate — sound because the bytes are
+  present on disk.
+- Compressed containers (parquet/feather/arrow/HDF5, zip-packed
+  xlsx/ods/numbers) cross an estimate read from the container's own
+  declared LOGICAL shape (rows x column width, dataset shapes, archive
+  uncompressed total), NEVER `st_size` — an on-disk-size estimate is
+  defeatable by a dictionary/RLE or deflate bomb and would fail open
+  (CR-029, `_logical_materialization`).
+
 Otherwise readers assume a contained real path and do no security beyond
 their own format's hardening. Neighbors: tools.py dispatches here; the
 inventory registry records each format's streaming classification (E8.4).
@@ -65,30 +79,62 @@ imports the chokepoint (the import-graph gate)."""
 # than after the whole file has materialized (CR-005).
 _READ_CHUNK_ROWS = 50_000
 
-# Upfront in-memory estimate for the formats that cannot stream: the only
-# pre-read signal is the on-disk size, so the estimate is
-# `st_size * factor`. Over-estimation is the fail-safe direction (it
-# refuses a borderline-huge legitimate file that should stream instead),
-# so each factor is a conservative upper bound on the format's
-# unpack-and-parse blow-up: zip-packed spreadsheets expand ~10-20x,
-# compressible columnar/binary ~5-12x, uncompressed columnar ~1x plus
-# framing overhead, and text parsed to a Python object graph runs several
-# times the source text.
+# Upfront in-memory estimate for the non-streaming formats. Two regimes,
+# split by whether the on-disk bytes bound the materialized size:
+#
+# - UNCOMPRESSED on disk (the text tree + legacy .xls, an OLE2/BIFF
+#   stream): the file's own bytes are present, so `st_size * factor` is a
+#   sound upper bound on the parsed object graph — text parsed to a Python
+#   object graph runs several times its source; .xls a small multiple.
+#   Over-estimation is the fail-safe direction.
+#
+# - COMPRESSED containers (columnar parquet/feather/arrow, HDF5, and the
+#   zip-packed spreadsheets xlsx/ods/numbers): on-disk size says NOTHING
+#   about materialized size — a dictionary/RLE or deflate bomb expands
+#   hundreds-to-thousands to one (a 92 KB dict/RLE parquet materializes
+#   160 MB), so `st_size * factor` is trivially defeatable and FAILS OPEN
+#   (CR-029). These are estimated from the container's own declared
+#   LOGICAL shape instead (rows x materialized column width, dataset
+#   shapes x itemsize, or the archive's declared-uncompressed total) —
+#   never st_size. See `_logical_materialization`.
 _EXPANSION_FACTOR: Mapping[str, int] = {
     "json": 10,
     "yaml": 10,
     "toml": 10,
     "ini": 10,
     "xml": 10,
-    "xlsx": 20,
     "xls": 20,
-    "ods": 20,
-    "numbers": 20,
-    "parquet": 12,
-    "hdf5": 12,
-    "feather": 4,
-    "arrow": 4,
 }
+
+# The compressed containers: each estimated from declared logical size,
+# never from st_size (CR-029). Dispatched in `_logical_materialization`.
+_LOGICAL_SIZE_FORMATS: frozenset[str] = frozenset(
+    {"parquet", "feather", "arrow", "hdf5", "xlsx", "ods", "numbers"}
+)
+
+# Per-cell allowance for a variable-width (object/string) column: a Python
+# str carries ~49 bytes of object header on top of the 8-byte array
+# pointer, so a column of many short distinct strings materializes far
+# past its declared byte total. 60 bytes/cell bounds that (and hugely
+# over-estimates a dictionary-shared column, which is the fail-safe
+# direction).
+_OBJECT_CELL_BYTES = 60
+
+# Multiplier applied to every logical-size estimate to cover the pandas
+# frame bookkeeping the per-column arithmetic omits (the index, per-block
+# overhead, object slack) — the raw column sum undershoots the measured
+# `memory_usage(deep=True)` by a small constant, so a 10% margin keeps the
+# estimate a true upper bound.
+_MATERIALIZATION_MARGIN = 1.1
+
+# Coarse upfront pre-gate for the streaming (CSV/TSV) path: the running
+# per-chunk charge fires only AFTER a chunk materializes, so a wide or
+# newline-free file whose whole content lands in the first chunk could
+# OOM before the first charge (CR-031). CSV/TSV are uncompressed, so
+# `st_size` is a floor on the file's own bytes; charging `st_size * 2`
+# before the read bounds that first-chunk materialization (the parsed
+# frame runs a small multiple of the delimited text).
+_STREAM_COARSE_FACTOR = 2
 
 # Formats whose reader library validates the PATH itself (by package name
 # or suffix) and so cannot consume a `/dev/fd/<fd>` proxy: they read the
@@ -158,8 +204,13 @@ def read_path(real: Path, format_name: str, admit: AdmitLoad) -> Any:
     fd = _contained_open(real)
     try:
         if format_name in _STREAMING_READERS:
+            # CR-031: bound a wide/newline-free first chunk BEFORE the
+            # running per-chunk charge (which only fires after a chunk
+            # materializes) can be reached — CSV/TSV are uncompressed so
+            # st_size is a sound floor.
+            admit(os.fstat(fd).st_size * _STREAM_COARSE_FACTOR)
             return _STREAMING_READERS[format_name](fd, admit)
-        admit(_upfront_estimate(os.fstat(fd).st_size, format_name))
+        admit(_upfront_estimate(fd, real, format_name))
         os.lseek(fd, 0, os.SEEK_SET)
         # Most readers consume the descriptor via /dev/fd; a format whose
         # library validates the path itself (numbers_parser checks the
@@ -209,10 +260,138 @@ def _supported_formats() -> set[str]:
     return set(_READERS) | set(_STREAMING_READERS)
 
 
-def _upfront_estimate(size_bytes: int, format_name: str) -> int:
-    """The pre-read in-memory estimate for a non-streaming format:
-    on-disk size times the format's conservative expansion factor."""
-    return size_bytes * _EXPANSION_FACTOR.get(format_name, 1)
+def _upfront_estimate(fd: int, real: Path, format_name: str) -> int:
+    """The pre-read materialized-memory estimate for a non-streaming
+    format. A compressed container is estimated from its own declared
+    LOGICAL shape (CR-029); an uncompressed format from `st_size` times
+    its conservative expansion factor."""
+    if format_name in _LOGICAL_SIZE_FORMATS:
+        # The metadata read goes through the SAME contained descriptor the
+        # reader will use (`/dev/fd/<fd>`), never a re-resolved path string
+        # — except the path-only formats, which read the O_NOFOLLOW-
+        # validated real path (CR-024).
+        source = real if format_name in _PATH_ONLY_FORMATS else Path(_fd_path(fd))
+        return _logical_materialization(source, format_name)
+    return os.fstat(fd).st_size * _EXPANSION_FACTOR.get(format_name, 1)
+
+
+def _logical_materialization(source: Path, format_name: str) -> int:
+    """Declared materialized size of a compressed container, read from
+    metadata WITHOUT materializing the data (CR-029). A metadata read that
+    cannot bound the file raises — GP3 fail-safe never falls back to the
+    defeatable `st_size` estimate."""
+    if format_name in {"parquet", "feather", "arrow"}:
+        return _columnar_materialization(source, format_name)
+    if format_name == "hdf5":
+        return _hdf5_materialization(source)
+    # zip-packed spreadsheets: xlsx / ods / numbers
+    return _zip_materialization(source)
+
+
+def _with_margin(raw: int) -> int:
+    """A logical column/dataset sum times the frame-overhead margin —
+    a true upper bound on the measured resident size."""
+    return int(raw * _MATERIALIZATION_MARGIN)
+
+
+def _arrow_cell_bytes(arrow_type: Any, rows: int) -> int:
+    """Materialized bytes for one arrow-typed column of `rows` rows: a
+    fixed-width numeric/temporal/bool column is `rows * itemsize`; a
+    variable-width (string/binary/nested) column materializes to a pandas
+    object array charged at `_OBJECT_CELL_BYTES` per cell (the declared
+    byte total is added by the caller for parquet)."""
+    import pyarrow as pa
+
+    if pa.types.is_boolean(arrow_type):
+        return rows * 1
+    if (
+        pa.types.is_integer(arrow_type)
+        or pa.types.is_floating(arrow_type)
+        or pa.types.is_temporal(arrow_type)
+    ):
+        width = (
+            (arrow_type.bit_width // 8) if getattr(arrow_type, "bit_width", 0) else 8
+        )
+        return rows * width
+    return rows * _OBJECT_CELL_BYTES
+
+
+def _columnar_materialization(source: Path, format_name: str) -> int:
+    """parquet: rows x per-column width from the footer (+ declared
+    uncompressed bytes for variable-width columns), metadata-only.
+    feather/arrow (arrow IPC): schema width x row count, read through a
+    memory map so per-batch counting stays bounded (one batch at a time,
+    released between reads) rather than materializing the whole file."""
+    if format_name == "parquet":
+        import pyarrow.parquet as pq
+
+        metadata = pq.ParquetFile(str(source)).metadata
+        rows = metadata.num_rows
+        schema = metadata.schema.to_arrow_schema()
+        estimate = 0
+        for index, field in enumerate(schema):
+            estimate += _arrow_cell_bytes(field.type, rows)
+            if _is_variable(field.type):
+                # Add the declared uncompressed character data on top of
+                # the per-cell object allowance already charged above.
+                estimate += sum(
+                    metadata.row_group(rg).column(index).total_uncompressed_size
+                    for rg in range(metadata.num_row_groups)
+                )
+        return _with_margin(estimate)
+    import pyarrow as pa
+    import pyarrow.ipc as ipc
+
+    with pa.memory_map(str(source), "r") as handle:
+        reader = ipc.open_file(handle)
+        schema = reader.schema
+        rows = sum(
+            reader.get_batch(batch).num_rows
+            for batch in range(reader.num_record_batches)
+        )
+    return _with_margin(sum(_arrow_cell_bytes(field.type, rows) for field in schema))
+
+
+def _is_variable(arrow_type: Any) -> bool:
+    import pyarrow as pa
+
+    return not (
+        pa.types.is_boolean(arrow_type)
+        or pa.types.is_integer(arrow_type)
+        or pa.types.is_floating(arrow_type)
+        or pa.types.is_temporal(arrow_type)
+    )
+
+
+def _hdf5_materialization(source: Path) -> int:
+    """Sum every dataset's `shape.prod x dtype.itemsize` (h5py metadata,
+    no data read) — an upper bound on what any single-key read
+    materializes."""
+    import h5py
+    import numpy as np
+
+    total = 0
+
+    def visit(_name: str, item: Any) -> None:
+        nonlocal total
+        if isinstance(item, h5py.Dataset):
+            total += int(np.prod(item.shape)) * item.dtype.itemsize
+
+    with h5py.File(source, "r") as handle:
+        handle.visititems(visit)
+    return _with_margin(total)
+
+
+def _zip_materialization(source: Path) -> int:
+    """Declared-uncompressed total of a zip-packed spreadsheet
+    (xlsx/ods/numbers): the sum of the archive's central-directory
+    uncompressed sizes. This is the decompressed archive (its XML/IWA
+    parts), a conservative upper bound on the materialized cell frame
+    (the markup is at least as large as the values it carries)."""
+    import zipfile
+
+    with zipfile.ZipFile(source) as archive:
+        return _with_margin(sum(entry.file_size for entry in archive.infolist()))
 
 
 # -- tabular readers --------------------------------------------------
@@ -244,6 +423,10 @@ def _stream_delimited(fd: int, admit: AdmitLoad, *, sep: str) -> pd.DataFrame:
             admit(resident)
             frames.append(chunk)
     if frames:
+        # CR-032: pd.concat allocates a new full-size frame while `frames`
+        # is still held — a transient ~2x the admitted resident — so the
+        # peak is admitted before it is reached.
+        admit(resident * 2)
         return pd.concat(frames, ignore_index=True)
     os.lseek(fd, 0, os.SEEK_SET)  # header-only file: re-read just the header
     return pd.read_csv(source, sep=sep, nrows=0)

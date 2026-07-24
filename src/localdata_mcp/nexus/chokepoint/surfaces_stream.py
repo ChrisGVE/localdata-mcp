@@ -147,6 +147,21 @@ class _StreamingSurface(_GuardCore):
         tracked separately."""
         self._bounds.admit_load(estimated_bytes)
 
+    def reserve_load(self, load_id: str, estimated_bytes: int) -> None:
+        """Reserve `estimated_bytes` on the shared residency ledger under
+        `load_id` for the DURATION of a whole-file load, so two concurrent
+        loads see each other's in-flight footprint and cannot jointly pass
+        the ceiling (CR-030 — the file-path twin of the bounded-analysis
+        charge). `charge` SETS residency and refuses an aggregate over the
+        ceiling, so this both admits AND reserves; the streaming reader's
+        growing per-chunk calls update the same id. The caller releases in
+        a `finally` (`release_load`)."""
+        self._bounds.charge(f"load:{load_id}", estimated_bytes)
+
+    def release_load(self, load_id: str) -> None:
+        """Drop a whole-file load's reservation (idempotent)."""
+        self._bounds.release(f"load:{load_id}")
+
     def serve_result(self, result: Result, source_name: str) -> "Result | StreamOpened":
         """I-2/I-4's cutover for load-then-serve sources (`read_file`,
         `query_file`): the ALREADY-ADMITTED result passes through

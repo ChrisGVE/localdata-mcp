@@ -17,11 +17,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterator
 
+import numpy as np
 import pandas as pd
 import pytest
 
 import localdata_mcp.ingest.runtime as runtime
-from localdata_mcp.ingest.connectors.file.readers import FileIngestError
+from localdata_mcp.ingest.connectors.file.readers import FileIngestError, read_path
 from localdata_mcp.ingest.connectors.file.tools import query_file, read_file
 from localdata_mcp.nexus.chokepoint.guard import (
     Chokepoint,
@@ -391,9 +392,7 @@ class TestAtomicContainOpenCr024:
         with pytest.raises(OSError):
             readers._contained_open(swapped)
 
-    def test_contained_open_returns_a_readable_descriptor(
-        self, tmp_path: Path
-    ) -> None:
+    def test_contained_open_returns_a_readable_descriptor(self, tmp_path: Path) -> None:
         from localdata_mcp.ingest.connectors.file import readers
 
         real = tmp_path / "d.csv"
@@ -403,3 +402,86 @@ class TestAtomicContainOpenCr024:
             assert os.read(fd, 5) == b"hello"
         finally:
             os.close(fd)
+
+
+class _RaiseWhenOver:
+    """A fake `admit` seam that refuses when the UPFRONT estimate exceeds a
+    ceiling. Driving `read_path` with it isolates the pre-read gate from
+    any downstream `serve_result` charge — the estimate is checked BEFORE
+    a byte is read, so a refusal here proves the bomb never materialized.
+    (Under an `st_size × factor` estimate the estimate stays tiny and this
+    never fires — which is exactly the regression these tests catch.)"""
+
+    def __init__(self, ceiling: int) -> None:
+        self.ceiling = ceiling
+        self.max_seen = 0
+
+    def __call__(self, estimated: int) -> None:
+        self.max_seen = max(self.max_seen, estimated)
+        if estimated > self.ceiling:
+            raise ResourceRefusedError(
+                f"estimate {estimated} over test ceiling {self.ceiling}",
+                resource_class="memory",
+            )
+
+
+class TestDecompressionBombRefusal:
+    """CR-029: a compressed container's estimate is read from its declared
+    LOGICAL shape, never `st_size` — so a dictionary/RLE or deflate bomb
+    (tiny on disk, huge materialized) is refused BEFORE it materializes,
+    where an `st_size × factor` estimate would pass and OOM. Each bomb is
+    well under the ceiling by on-disk size and well over it by materialized
+    size; the tests drive `read_path` directly so the refusal they assert
+    can only come from the upfront gate (they go RED if the estimate
+    reverts to `st_size`)."""
+
+    _CEILING = 20_000_000  # 20 MB — below every bomb's materialized size
+
+    def _read_bomb(self, path: Path, fmt: str) -> _RaiseWhenOver:
+        admit = _RaiseWhenOver(self._CEILING)
+        read_path(path, fmt, admit)
+        return admit
+
+    def test_parquet_bomb_refused_at_the_upfront_gate(self, tmp_path: Path) -> None:
+        bomb = tmp_path / "bomb.parquet"
+        # 5M identical int64 -> dict/RLE ~30 KB on disk, 40 MB materialized.
+        pd.DataFrame({"c": np.zeros(5_000_000, dtype="int64")}).to_parquet(
+            bomb, compression="zstd"
+        )
+        assert os.path.getsize(bomb) < self._CEILING  # would pass st_size×factor
+        with pytest.raises(ResourceRefusedError):
+            self._read_bomb(bomb, "parquet")
+
+    def test_feather_bomb_refused_at_the_upfront_gate(self, tmp_path: Path) -> None:
+        import pyarrow as pa
+        import pyarrow.feather as pf
+
+        bomb = tmp_path / "bomb.feather"
+        pf.write_feather(
+            pa.table({"c": np.zeros(5_000_000, dtype="int64")}),
+            str(bomb),
+            compression="zstd",
+        )
+        assert os.path.getsize(bomb) < self._CEILING
+        with pytest.raises(ResourceRefusedError):
+            self._read_bomb(bomb, "feather")
+
+    def test_benign_columnar_file_passes_the_upfront_gate(self, tmp_path: Path) -> None:
+        small = tmp_path / "small.parquet"
+        _FRAME.to_parquet(small)
+        admit = self._read_bomb(small, "parquet")  # does not raise
+        assert admit.max_seen < self._CEILING
+
+    def test_read_file_bomb_refusal_is_file_worded(self, tmp_path: Path) -> None:
+        """CR-035: end-to-end, `read_file`'s over-budget refusal names the
+        file-side recovery, never the SQL-narrowing one."""
+        install(tmp_path, ceiling=self._CEILING)
+        bomb = tmp_path / "bomb.parquet"
+        pd.DataFrame({"c": np.zeros(5_000_000, dtype="int64")}).to_parquet(
+            bomb, compression="zstd"
+        )
+        with pytest.raises(GuardedExecutionError) as caught:
+            read_file(str(bomb))
+        suggestion = caught.value.structured.suggestion.lower()
+        assert "less-compressed" in suggestion or "smaller" in suggestion
+        assert "sql" not in suggestion

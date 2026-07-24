@@ -22,6 +22,7 @@ import contextlib
 import contextvars
 from pathlib import Path
 from typing import Any, Iterator
+from uuid import uuid4
 
 import pandas as pd
 
@@ -34,9 +35,9 @@ from localdata_mcp.nexus.chokepoint.guard import (
 
 from ..ingest.connectors.file.readers import read_path, resolve_format
 from ..ingest.refusals import (
+    file_over_budget_refusal,
     invalid_source_refusal,
     missing_entity_refusal,
-    over_budget_refusal,
     unknown_endpoint_refusal,
 )
 from ..ingest.runtime import chokepoint
@@ -169,13 +170,23 @@ def _path_frame(
             f"only — {path!r} is a document/table format; supply the bare "
             "path."
         )
-    real = chokepoint().contain_path(path, mode="read")
+    guard = chokepoint()
+    real = guard.contain_path(path, mode="read")
+    # CR-030: reserve the load footprint on the shared ledger for the read
+    # duration (mirroring read_file), released in the finally.
+    load_id = uuid4().hex
     try:
         # NFR-105/CR-005: the profiling path materializes the file too —
         # it must cross the same memory-admission gate as read_file.
-        loaded = read_path(real, resolve_format(real, "auto"), chokepoint().admit_load)
+        loaded = read_path(
+            real,
+            resolve_format(real, "auto"),
+            lambda est: guard.reserve_load(load_id, est),
+        )
     except ResourceRefusedError as refusal:
-        raise over_budget_refusal(str(refusal)) from refusal
+        raise file_over_budget_refusal(str(refusal)) from refusal
+    finally:
+        guard.release_load(load_id)
     if isinstance(loaded, pd.DataFrame):
         return loaded, str(path)
     raise missing_entity_refusal(
