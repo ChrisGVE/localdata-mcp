@@ -19,6 +19,7 @@ from localdata_mcp.nexus.config.merge import merge_sources
 from localdata_mcp.nexus.config.provenance import Layer, LayerSource
 from localdata_mcp.nexus.persistence.ephemeral import (
     EphemeralFileConnection,
+    EphemeralOpenRefusedError,
     ephemeral_for,
     rw_granted,
 )
@@ -150,3 +151,33 @@ class TestGrantIsIntroductionGated:
         assert any(
             "ephemeral_write_paths" in str(refusal) for refusal in result.refusals
         )
+
+
+class TestAtomicContainOpenCr024:
+    """CR-024: the ephemeral open re-validates the canonical path with
+    O_NOFOLLOW, so a final component that is a symlink (standing in for a
+    post-containment swap) is refused before the engine opens it."""
+
+    def test_open_refuses_a_symlinked_canonical_path(self, tmp_path: Path) -> None:
+        real = tmp_path / "real.db"
+        seeded_sqlite(real)
+        link = tmp_path / "link.db"
+        link.symlink_to(real)
+        # Construct with the symlink AS the canonical path (ephemeral_for
+        # would resolve it away) — the O_NOFOLLOW guard refuses to follow.
+        ephemeral = EphemeralFileConnection(
+            canonical_path=link, engine_kind="sqlite", posture="read_only"
+        )
+        with pytest.raises(OSError):  # ELOOP or EphemeralOpenRefusedError
+            with ephemeral.open():
+                pass
+
+    def test_open_succeeds_on_a_real_regular_file(self, tmp_path: Path) -> None:
+        db = tmp_path / "data.db"
+        seeded_sqlite(db)
+        ephemeral = ephemeral_for(db, "sqlite", write_grants=())
+        with ephemeral.open() as connection:
+            assert connection.execute(text("SELECT x FROM t")).scalar() == 7
+
+    def test_refusal_class_is_a_permission_error(self) -> None:
+        assert issubclass(EphemeralOpenRefusedError, PermissionError)

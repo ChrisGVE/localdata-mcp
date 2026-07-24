@@ -12,6 +12,7 @@ suggestion-content assertion (NFR-202's load-then-serve cell).
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterator
@@ -369,3 +370,36 @@ class TestDecompressionGateCr005:
         # 60000 rows > the inline budget → served as a stream
         assert getattr(result, "stream_id", None)
         assert result.columns == ("a", "b")
+
+
+class TestAtomicContainOpenCr024:
+    """CR-024: read_path re-opens the contained path with O_NOFOLLOW and
+    reads through /dev/fd, so a symlink swapped into the final component
+    after NX-6 containment cannot redirect the read (TOCTOU closed)."""
+
+    def test_contained_open_refuses_a_symlinked_final_component(
+        self, tmp_path: Path
+    ) -> None:
+        from localdata_mcp.ingest.connectors.file import readers
+
+        real = tmp_path / "data.csv"
+        real.write_text("a\n1\n")
+        swapped = tmp_path / "swapped.csv"
+        swapped.symlink_to(real)
+        # Standing in for a post-containment swap: a symlinked final
+        # component is refused by O_NOFOLLOW, never followed.
+        with pytest.raises(OSError):
+            readers._contained_open(swapped)
+
+    def test_contained_open_returns_a_readable_descriptor(
+        self, tmp_path: Path
+    ) -> None:
+        from localdata_mcp.ingest.connectors.file import readers
+
+        real = tmp_path / "d.csv"
+        real.write_text("hello\n")
+        fd = readers._contained_open(real)
+        try:
+            assert os.read(fd, 5) == b"hello"
+        finally:
+            os.close(fd)

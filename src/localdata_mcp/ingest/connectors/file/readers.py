@@ -90,6 +90,11 @@ _EXPANSION_FACTOR: Mapping[str, int] = {
     "arrow": 4,
 }
 
+# Formats whose reader library validates the PATH itself (by package name
+# or suffix) and so cannot consume a `/dev/fd/<fd>` proxy: they read the
+# O_NOFOLLOW-validated real path (CR-024 residual documented in read_path).
+_PATH_ONLY_FORMATS = frozenset({"numbers"})
+
 
 # -- format table -----------------------------------------------------
 
@@ -133,19 +138,70 @@ def resolve_format(path: Path, declared: str) -> str:
     return suffix_format
 
 
-def read_path(path: Path, format_name: str, admit: AdmitLoad) -> Any:
-    """Dispatch to the one reader for `format_name`, crossing the
-    chokepoint's memory-admission seam BEFORE the file materializes
-    (CR-005/NFR-105, GP3 fail-safe): a streamable format (CSV/TSV) is
-    read chunk by chunk with its growing residency charged after each — a
-    high-ratio file is refused mid-read; every other format crosses one
-    upfront estimate keyed off the on-disk size. No reader materializes a
-    whole file without first passing this gate."""
-    streaming = _STREAMING_READERS.get(format_name)
-    if streaming is not None:
-        return streaming(path, admit)
-    admit(_upfront_estimate(path, format_name))
-    return _READERS[format_name](path)
+def read_path(real: Path, format_name: str, admit: AdmitLoad) -> Any:
+    """Dispatch to the one reader for `format_name` over an ATOMICALLY
+    contained descriptor (CR-024), crossing the chokepoint's
+    memory-admission seam BEFORE the file materializes (CR-005/NFR-105,
+    GP3 fail-safe).
+
+    The contained path is re-opened with O_NOFOLLOW and its descriptor
+    identity re-validated (`_contained_open`), then every reader consumes
+    the file through `/dev/fd/<fd>` — never by re-resolving the path
+    string — so a symlink swapped into the final component after
+    containment cannot redirect the read (the resolve-then-reopen TOCTOU
+    is closed). A streamable format (CSV/TSV) is read chunk by chunk with
+    its growing residency charged after each (a high-ratio file refused
+    mid-read); every other format crosses one upfront estimate keyed off
+    the descriptor's size. No reader materializes a whole file without
+    first passing the memory gate.
+    """
+    fd = _contained_open(real)
+    try:
+        if format_name in _STREAMING_READERS:
+            return _STREAMING_READERS[format_name](fd, admit)
+        admit(_upfront_estimate(os.fstat(fd).st_size, format_name))
+        os.lseek(fd, 0, os.SEEK_SET)
+        # Most readers consume the descriptor via /dev/fd; a format whose
+        # library validates the path itself (numbers_parser checks the
+        # `.numbers` package name) reads the O_NOFOLLOW-validated real
+        # path instead — the symlinked-final-component vector is already
+        # closed by _contained_open; the residual is the narrow reopen
+        # window, bounded in the single-user deployment.
+        source = real if format_name in _PATH_ONLY_FORMATS else Path(_fd_path(fd))
+        return _READERS[format_name](source)
+    finally:
+        os.close(fd)
+
+
+def _fd_path(fd: int) -> str:
+    """The `/dev/fd/<fd>` path that refers to THIS open descriptor, not
+    the original path string — the read cannot be redirected by a later
+    symlink swap (CR-024)."""
+    return f"/dev/fd/{fd}"
+
+
+def _contained_open(real: Path) -> int:
+    """Atomic contain-and-open (CR-024): re-open the already-contained
+    path with O_NOFOLLOW so a symlink swapped into the final component
+    after NX-6 resolved it cannot redirect the read, then confirm the
+    descriptor still names the same file (device+inode) containment
+    validated. Callers read through `/dev/fd/<fd>`, never by re-resolving
+    the path string. Residual (bounded in the single-user deployment): a
+    parent directory swapped in the microwindow between the identity stat
+    and the open."""
+    fd = os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        opened = os.fstat(fd)
+        current = os.stat(real)
+        if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+            raise FileIngestError(
+                "contain-and-open identity mismatch: the file changed "
+                "between containment and open (CR-024 TOCTOU) — refused"
+            )
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def _supported_formats() -> set[str]:
@@ -153,40 +209,44 @@ def _supported_formats() -> set[str]:
     return set(_READERS) | set(_STREAMING_READERS)
 
 
-def _upfront_estimate(path: Path, format_name: str) -> int:
+def _upfront_estimate(size_bytes: int, format_name: str) -> int:
     """The pre-read in-memory estimate for a non-streaming format:
     on-disk size times the format's conservative expansion factor."""
-    return os.stat(path).st_size * _EXPANSION_FACTOR.get(format_name, 1)
+    return size_bytes * _EXPANSION_FACTOR.get(format_name, 1)
 
 
 # -- tabular readers --------------------------------------------------
 
 
-def _read_csv_streaming(path: Path, admit: AdmitLoad) -> pd.DataFrame:
-    return _stream_delimited(path, admit, sep=",")
+def _read_csv_streaming(fd: int, admit: AdmitLoad) -> pd.DataFrame:
+    return _stream_delimited(fd, admit, sep=",")
 
 
-def _read_tsv_streaming(path: Path, admit: AdmitLoad) -> pd.DataFrame:
-    return _stream_delimited(path, admit, sep="\t")
+def _read_tsv_streaming(fd: int, admit: AdmitLoad) -> pd.DataFrame:
+    return _stream_delimited(fd, admit, sep="\t")
 
 
-def _stream_delimited(path: Path, admit: AdmitLoad, *, sep: str) -> pd.DataFrame:
-    """Running-charge chunked read (CR-005): pull the file in fixed-row
-    chunks and charge the growing resident size through the chokepoint
-    after each — the whole-file frame never materializes past the memory
-    ceiling, mirroring how bounded SQL fetch admits per batch. A ledger
-    refusal on any chunk propagates as the structured over-budget refusal
-    (tools.py) before the rest of the file is read."""
+def _stream_delimited(fd: int, admit: AdmitLoad, *, sep: str) -> pd.DataFrame:
+    """Running-charge chunked read (CR-005) over the contained descriptor
+    (CR-024): pull the file in fixed-row chunks through `/dev/fd/<fd>` and
+    charge the growing resident size through the chokepoint after each —
+    the whole-file frame never materializes past the memory ceiling,
+    mirroring how bounded SQL fetch admits per batch. A ledger refusal on
+    any chunk propagates as the structured over-budget refusal (tools.py)
+    before the rest of the file is read."""
+    source = _fd_path(fd)
     frames: list[pd.DataFrame] = []
     resident = 0
-    with pd.read_csv(path, sep=sep, chunksize=_READ_CHUNK_ROWS) as reader:
+    os.lseek(fd, 0, os.SEEK_SET)
+    with pd.read_csv(source, sep=sep, chunksize=_READ_CHUNK_ROWS) as reader:
         for chunk in reader:
             resident += int(chunk.memory_usage(deep=True).sum())
             admit(resident)
             frames.append(chunk)
-    if not frames:
-        return pd.read_csv(path, sep=sep, nrows=0)
-    return pd.concat(frames, ignore_index=True)
+    if frames:
+        return pd.concat(frames, ignore_index=True)
+    os.lseek(fd, 0, os.SEEK_SET)  # header-only file: re-read just the header
+    return pd.read_csv(source, sep=sep, nrows=0)
 
 
 def _read_xlsx(path: Path) -> pd.DataFrame:
@@ -387,7 +447,7 @@ def _element_to_mapping(element: Any) -> Any:
     return node
 
 
-_STREAMING_READERS: Mapping[str, Callable[[Path, AdmitLoad], Any]] = {
+_STREAMING_READERS: Mapping[str, Callable[[int, AdmitLoad], Any]] = {
     "csv": _read_csv_streaming,
     "tsv": _read_tsv_streaming,
 }
