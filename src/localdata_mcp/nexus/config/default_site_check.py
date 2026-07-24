@@ -12,6 +12,11 @@ Scan rules, mechanical by construction:
 - other ints >= 4 are common — flagged only in restatement-prone
   contexts (module/class-level constant assignments and function
   parameter defaults), where a "default" would be re-declared;
+- string defaults (palette names, hex colors, postures) are likewise
+  flagged only in restatement contexts: a scalar constant assignment or
+  a parameter default re-declares the value, while an enumeration of
+  valid values (a tuple/list member) or an inline call argument is
+  legitimate noise, not a second default site;
 - ints 0-3 are structurally unscannable (schema versions, indices) and
   exempt; their one-home discipline rests on review.
 """
@@ -56,18 +61,23 @@ def s8_default_values() -> dict[str, Any]:
     }
 
 
-def _split_by_distinctiveness() -> tuple[set[float], set[int]]:
-    """(distinctive, common-int) value sets per the module's scan rules."""
+def _split_by_distinctiveness() -> tuple[set[float], set[int], set[str]]:
+    """(distinctive, common-int, string) value sets per the scan rules."""
     distinctive: set[float] = set()
     common: set[int] = set()
+    strings: set[str] = set()
     for value in s8_default_values().values():
-        if isinstance(value, float) and value not in (0.0, 1.0):
+        if isinstance(value, bool):
+            continue  # booleans are unscannable (flags, not thresholds)
+        if isinstance(value, str):
+            strings.add(value)
+        elif isinstance(value, float) and value not in (0.0, 1.0):
             distinctive.add(value)
         elif isinstance(value, int) and value >= 2048:
             distinctive.add(value)
         elif isinstance(value, int) and value >= 4:
             common.add(value)
-    return distinctive, common
+    return distinctive, common, strings
 
 
 def check_one_default_site(root: Path | None = None) -> list[Violation]:
@@ -82,7 +92,7 @@ def check_one_default_site(root: Path | None = None) -> list[Violation]:
 
 def scan_source(text: str, filename: str) -> list[Violation]:
     """Scan one module's source text for restated S8 defaults."""
-    distinctive, common = _split_by_distinctiveness()
+    distinctive, common, strings = _split_by_distinctiveness()
     tree = ast.parse(text, filename=filename)
     violations = [
         Violation(filename, node.lineno, node.value, "literal")
@@ -95,9 +105,19 @@ def scan_source(text: str, filename: str) -> list[Violation]:
     violations.extend(
         Violation(filename, node.lineno, node.value, context)
         for node, context in _restatement_contexts(tree)
-        if not isinstance(node.value, bool) and node.value in common
+        if _is_restated_default(node.value, common, strings)
     )
     return sorted(violations, key=lambda v: v.lineno)
+
+
+def _is_restated_default(value: Any, common: set[int], strings: set[str]) -> bool:
+    """Whether a restatement-context constant re-declares a default: a
+    common int, or a string default (never a boolean)."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, str):
+        return value in strings
+    return value in common
 
 
 def _restatement_contexts(

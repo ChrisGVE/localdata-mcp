@@ -62,3 +62,26 @@ class TestScanner:
 
     def test_non_default_values_pass(self) -> None:
         assert scan_source("TIMEOUT = 42\nRATIO = 0.5\n", "fake.py") == []
+
+    def test_string_default_is_caught_in_a_module_constant(self) -> None:
+        # "colorblind" is visualize.default_palette's one home; restating
+        # it as a module constant is a second default site.
+        violations = scan_source('DEFAULT_PALETTE = "colorblind"\n', "fake.py")
+        assert [v.value for v in violations] == ["colorblind"]
+
+    def test_string_default_is_caught_in_a_parameter_default(self) -> None:
+        violations = scan_source(
+            'def render(palette="colorblind"):\n    return palette\n', "fake.py"
+        )
+        assert [v.value for v in violations] == ["colorblind"]
+
+    def test_string_default_in_a_collection_is_not_flagged(self) -> None:
+        # An enumeration of valid presets is not a restated scalar default;
+        # only a scalar constant/parameter default re-declares the value.
+        assert scan_source('PRESETS = ("deep", "colorblind")\n', "fake.py") == []
+
+    def test_string_default_inline_use_is_not_flagged(self) -> None:
+        assert scan_source('use("colorblind")\n', "fake.py") == []
+
+    def test_non_default_string_passes(self) -> None:
+        assert scan_source('LABEL = "hello"\n', "fake.py") == []
