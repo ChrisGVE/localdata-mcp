@@ -27,6 +27,7 @@ import pandas as pd
 
 from localdata_mcp.nexus.chokepoint.guard import (
     QueryRequest,
+    ResourceRefusedError,
     Result,
     UnknownEndpointError,
 )
@@ -35,6 +36,7 @@ from ..ingest.connectors.file.readers import read_path, resolve_format
 from ..ingest.refusals import (
     invalid_source_refusal,
     missing_entity_refusal,
+    over_budget_refusal,
     unknown_endpoint_refusal,
 )
 from ..ingest.runtime import chokepoint
@@ -168,7 +170,12 @@ def _path_frame(
             "path."
         )
     real = chokepoint().contain_path(path, mode="read")
-    loaded = read_path(real, resolve_format(real, "auto"))
+    try:
+        # NFR-105/CR-005: the profiling path materializes the file too —
+        # it must cross the same memory-admission gate as read_file.
+        loaded = read_path(real, resolve_format(real, "auto"), chokepoint().admit_load)
+    except ResourceRefusedError as refusal:
+        raise over_budget_refusal(str(refusal)) from refusal
     if isinstance(loaded, pd.DataFrame):
         return loaded, str(path)
     raise missing_entity_refusal(
