@@ -5,8 +5,11 @@ The capability probe and the coordinate-statistics tools' ToolSpecs
 `analyze_spatial_autocorrelation`, `find_spatial_hotspots`,
 `calculate_spatial_distances`. The geometry and network halves live
 in geo_tools.py (codesize split). Thin over spatial_stats.py with the
-X-2 addressing contract. Neighbors: spec_modules.py rosters both this
-module and geo_tools.py.
+X-2 addressing contract. The k-NN neighbour count and the significance
+level default to the operator-configured process values fetched through
+the guard's `process_defaults()` seam (the tool layer never reads NX-2,
+section 6.2). Neighbors: spec_modules.py rosters both this module and
+geo_tools.py.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from typing import Any
 
 from localdata_mcp.nexus.contract.spec import Param, TypeShape, tool_spec
 
+from localdata_mcp.ingest.runtime import chokepoint
 from ..support import addressed_frame, source_params
 from .capabilities import check_capabilities
 from .spatial_stats import (
@@ -57,7 +61,7 @@ def check_geospatial_capabilities() -> Any:
         Param(
             "k_neighbors",
             int,
-            "Neighbours per point (implementation default 8).",
+            "Neighbours per point (default: the configured process value).",
             required=False,
         ),
     ),
@@ -74,7 +78,13 @@ def analyze_spatial_autocorrelation(
     **knobs: Any,
 ) -> Any:
     frame, source = addressed_frame(endpoint, path, table, query)
-    result = spatial_autocorrelation(frame, value_column, **knobs)
+    defaults = chokepoint().process_defaults()
+    result = spatial_autocorrelation(
+        frame,
+        value_column,
+        default_k_neighbors=defaults.spatial_k_neighbors,
+        **knobs,
+    )
     result["source"] = source
     return result
 
@@ -94,7 +104,7 @@ def analyze_spatial_autocorrelation(
         Param(
             "significance_level",
             float,
-            "Two-sided significance (implementation default 0.05).",
+            "Two-sided significance (default: the configured process value).",
             required=False,
         ),
     ),
@@ -111,7 +121,14 @@ def find_spatial_hotspots(
     **knobs: Any,
 ) -> Any:
     frame, source = addressed_frame(endpoint, path, table, query)
-    result = spatial_hotspots(frame, value_column, **knobs)
+    defaults = chokepoint().process_defaults()
+    result = spatial_hotspots(
+        frame,
+        value_column,
+        default_significance=defaults.significance_level,
+        default_k_neighbors=defaults.spatial_k_neighbors,
+        **knobs,
+    )
     result["source"] = source
     return result
 

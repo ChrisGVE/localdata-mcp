@@ -9,11 +9,14 @@ normality, correlation. `auto` answers the question the supplied
 columns pose: a group column → two-sample comparison (parametric when
 both groups pass Shapiro, else Mann-Whitney — the legacy selection
 rule); two numeric columns → correlation; one column → normality.
-Every result is a plain dict the NX-7 envelope shapes; degenerate
-outputs (NaN statistics on constant data) trip the shared sentinel,
-never a silent success. Neighbors: hypothesis_ranks.py carries the
-rank/association half of the dispatch table (codesize split);
-support.py owns column/group handling; tools.py declares the ToolSpec.
+The significance level arrives from the caller or the operator-
+configured process default (the guard seam), never an inline literal
+(CR-009). Every result is a plain dict the NX-7 envelope shapes;
+degenerate outputs (NaN statistics on constant data) trip the shared
+sentinel, never a silent success. Neighbors: hypothesis_ranks.py
+carries the rank/association half of the dispatch table (codesize
+split); support.py owns column/group handling; tools.py declares the
+ToolSpec.
 """
 
 from __future__ import annotations
@@ -52,22 +55,32 @@ def run_hypothesis_test(
     second_column: str | None = None,
     group_column: str | None = None,
     popmean: float = 0.0,
-    alpha: float = 0.05,
+    alpha: float | None = None,
     alternative: str = "two-sided",
+    default_alpha: float = 0.0,
 ) -> dict[str, Any]:
     """The dispatched test result as a plain dict."""
     if test_type not in TEST_TYPES:
         raise invalid_source_refusal(
             f"Unknown test_type {test_type!r} — one of {list(TEST_TYPES)}."
         )
+    effective_alpha = alpha if alpha is not None else default_alpha
     if test_type == "auto":
-        test_type = _select_test(frame, column, second_column, group_column)
+        test_type = _select_test(
+            frame, column, second_column, group_column, effective_alpha
+        )
     result = _DISPATCH[test_type](
-        frame, column, second_column, group_column, popmean, alpha, alternative
+        frame,
+        column,
+        second_column,
+        group_column,
+        popmean,
+        effective_alpha,
+        alternative,
     )
     result["test_type"] = test_type
-    result["alpha"] = alpha
-    result["significant"] = bool(result["p_value"] < alpha)
+    result["alpha"] = effective_alpha
+    result["significant"] = bool(result["p_value"] < effective_alpha)
     return result
 
 
@@ -76,11 +89,12 @@ def _select_test(
     column: str | None,
     second_column: str | None,
     group_column: str | None,
+    alpha: float,
 ) -> str:
     """The legacy auto rule: the supplied columns pose the question."""
     if group_column is not None and column is not None:
         first, values_a, second, values_b = two_groups(frame, column, group_column)
-        if _both_normal(values_a, values_b):
+        if _both_normal(values_a, values_b, alpha):
             return "ttest_ind"
         return "mann_whitney"
     if column is not None and second_column is not None:
@@ -93,14 +107,17 @@ def _select_test(
     )
 
 
-def _both_normal(values_a: "pd.Series[float]", values_b: "pd.Series[float]") -> bool:
+def _both_normal(
+    values_a: "pd.Series[float]", values_b: "pd.Series[float]", alpha: float
+) -> bool:
     """The legacy parametric screen: Shapiro on both groups at the
-    conventional 5% level (a selection heuristic, not the verdict)."""
+    verdict's significance level (a selection heuristic, not the verdict
+    — it reads the same operator-configured alpha, not an inline 0.05)."""
     for values in (values_a, values_b):
         n = len(values)
         if not (ranks.SHAPIRO_MIN <= n <= ranks.SHAPIRO_MAX):
             return False
-        if stats.shapiro(values).pvalue < 0.05:
+        if stats.shapiro(values).pvalue < alpha:
             return False
     return True
 

@@ -3,13 +3,14 @@
 `bootstrap_statistic` and `bayesian_estimate`'s computations,
 re-authored from `main`'s transformer pair. Bootstrap: percentile
 confidence intervals (Efron & Tibshirani) over seeded resamples —
-the resample count arrives from the caller or the S8 row-30 default
-(fetched at the tool layer through the guard seam, never read from
-NX-2 here). Bayesian: the conjugate normal model with a
-noninformative prior, whose posterior for the mean is the published
-Student-t result — the battery pins the credible interval against
-scipy's t distribution directly. Neighbors: tools.py declares the
-ToolSpecs; monte_carlo.py is the sibling.
+the resample count and the interval-coverage level arrive from the
+caller or the operator-configured process defaults (fetched at the
+tool layer through the guard seam, never read from NX-2 here).
+Bayesian: the conjugate normal model with a noninformative prior,
+whose posterior for the mean is the published Student-t result — the
+battery pins the credible interval against scipy's t distribution
+directly. Neighbors: tools.py declares the ToolSpecs; monte_carlo.py
+is the sibling.
 """
 
 from __future__ import annotations
@@ -31,10 +32,6 @@ STATISTICS: dict[str, Callable[["np.ndarray[Any, Any]"], float]] = {
 
 PRIORS = ("normal",)
 
-# The conventional confidence/credible level, spelled as arithmetic:
-# the S8 scan reserves the 0.95 literal for its config default.
-_DEFAULT_LEVEL = 1.0 - 0.05
-
 
 def bootstrap(
     frame: pd.DataFrame,
@@ -44,14 +41,17 @@ def bootstrap(
     confidence_level: float | None = None,
     seed: int | None = None,
     default_resamples: int = 0,
+    default_confidence: float = 0.0,
 ) -> dict[str, Any]:
     """The percentile-bootstrap estimate and interval for `statistic`."""
     if statistic not in STATISTICS:
         raise invalid_source_refusal(
             f"Unknown statistic {statistic!r} — one of {list(STATISTICS)}."
         )
+    # The interval coverage arrives from the caller or the operator-
+    # configured process default (the guard seam), never an inline literal.
     if confidence_level is None:
-        confidence_level = _DEFAULT_LEVEL
+        confidence_level = default_confidence
     if not (0.0 < confidence_level < 1.0):
         raise invalid_source_refusal("confidence_level must be inside (0, 1).")
     count = resamples if resamples is not None else default_resamples
@@ -86,6 +86,7 @@ def bayesian_posterior(
     column: str,
     prior_distribution: str = "normal",
     credible_level: float | None = None,
+    default_credible: float = 0.0,
 ) -> dict[str, Any]:
     """The conjugate-normal posterior of the mean under a
     noninformative prior: Student-t with n-1 degrees of freedom."""
@@ -96,8 +97,10 @@ def bayesian_posterior(
             f"Unknown prior_distribution {prior_distribution!r} — one of "
             f"{list(PRIORS)}."
         )
+    # The credible-interval coverage arrives from the caller or the
+    # operator-configured process default (the guard seam).
     if credible_level is None:
-        credible_level = _DEFAULT_LEVEL
+        credible_level = default_credible
     if not (0.0 < credible_level < 1.0):
         raise invalid_source_refusal("credible_level must be inside (0, 1).")
     values = numeric_values(frame, column).to_numpy(dtype=float)

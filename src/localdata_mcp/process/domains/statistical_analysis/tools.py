@@ -5,9 +5,11 @@ The statistical family's four tools, carried by name from `main`
 `analyze_effect_sizes` (FR-310 closure), `analyze_ab_test`. Each is a
 thin declaration over its computation module: resolve the addressed
 frame (the X-2 exactly-one-source contract via support.py), run the
-computation, attach the source label. Caller-omittable knobs are
-`required=False` Params — the implementation default governs (one
-default site, NFR-403). input_shape=TABULAR: these consume a table
+computation, attach the source label. The significance level (alpha)
+defaults to the operator-configured process value fetched through the
+guard's `process_defaults()` seam at call time — the tool layer never
+reads NX-2 (section 6.2, NFR-403 one default site), and a caller-
+supplied alpha overrides. input_shape=TABULAR: these consume a table
 (chain-initial via their own addressing, or fed by an upstream E11
 stage); output SCALAR — a verdict dict, not a relation. Neighbors:
 hypothesis/anova/effects/ab_test.py compute; spec_modules.py rosters
@@ -20,6 +22,7 @@ from typing import Any
 
 from localdata_mcp.nexus.contract.spec import Param, TypeShape, tool_spec
 
+from localdata_mcp.ingest.runtime import chokepoint
 from ..support import addressed_frame, source_params
 from .ab_test import perform_ab_test
 from .anova import perform_anova
@@ -29,7 +32,7 @@ from .hypothesis import run_hypothesis_test
 _ALPHA = Param(
     "alpha",
     float,
-    "Significance level for the verdict (implementation default 0.05).",
+    "Significance level for the verdict (default: the configured process value).",
     required=False,
 )
 _ALTERNATIVE = Param(
@@ -92,7 +95,10 @@ def analyze_hypothesis_test(
     **knobs: Any,
 ) -> Any:
     frame, source = addressed_frame(endpoint, path, table, query)
-    result = run_hypothesis_test(frame, **knobs)
+    defaults = chokepoint().process_defaults()
+    result = run_hypothesis_test(
+        frame, default_alpha=defaults.significance_level, **knobs
+    )
     result["source"] = source
     return result
 
@@ -124,7 +130,14 @@ def analyze_anova(
     **knobs: Any,
 ) -> Any:
     frame, source = addressed_frame(endpoint, path, table, query)
-    result = perform_anova(frame, dependent_var, group_var, **knobs)
+    defaults = chokepoint().process_defaults()
+    result = perform_anova(
+        frame,
+        dependent_var,
+        group_var,
+        default_alpha=defaults.significance_level,
+        **knobs,
+    )
     result["source"] = source
     return result
 
@@ -194,6 +207,13 @@ def analyze_ab_test(
     **knobs: Any,
 ) -> Any:
     frame, source = addressed_frame(endpoint, path, table, query)
-    result = perform_ab_test(frame, metric_column, variant_column, **knobs)
+    defaults = chokepoint().process_defaults()
+    result = perform_ab_test(
+        frame,
+        metric_column,
+        variant_column,
+        default_alpha=defaults.significance_level,
+        **knobs,
+    )
     result["source"] = source
     return result

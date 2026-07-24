@@ -5,10 +5,12 @@ lived in the business-intelligence package; v3 homes it with the
 statistical family per PRD S3.3's family listing). Two variants,
 one metric: a binary metric (or test_type='proportion') runs the
 two-proportion z-test (statsmodels); a continuous one runs Welch's
-t-test, or Mann-Whitney on request. The result names the winner and
-the relative lift so the agent can read the verdict without a second
-computation. Neighbors: tools.py declares the ToolSpec; support.py
-owns the exactly-two-group split.
+t-test, or Mann-Whitney on request. The significance level arrives
+from the caller or the operator-configured process default (the guard
+seam), never an inline literal (CR-009). The result names the winner
+and the relative lift so the agent can read the verdict without a
+second computation. Neighbors: tools.py declares the ToolSpec;
+support.py owns the exactly-two-group split.
 """
 
 from __future__ import annotations
@@ -28,14 +30,16 @@ def perform_ab_test(
     metric_column: str,
     variant_column: str,
     test_type: str = "auto",
-    alpha: float = 0.05,
+    alpha: float | None = None,
     alternative: str = "two-sided",
+    default_alpha: float = 0.0,
 ) -> dict[str, Any]:
     """The A/B verdict between the exactly-two variants."""
     if test_type not in TEST_TYPES:
         raise invalid_source_refusal(
             f"Unknown test_type {test_type!r} — one of {list(TEST_TYPES)}."
         )
+    effective_alpha = alpha if alpha is not None else default_alpha
     first, values_a, second, values_b = two_groups(frame, metric_column, variant_column)
     if test_type == "auto":
         test_type = "proportion" if _binary(values_a, values_b) else "t_test"
@@ -50,13 +54,13 @@ def perform_ab_test(
         outcome = stats.mannwhitneyu(values_a, values_b, alternative=alternative)
         statistic, p_value = float(outcome.statistic), float(outcome.pvalue)
     mean_a, mean_b = float(values_a.mean()), float(values_b.mean())
-    significant = bool(p_value < alpha)
+    significant = bool(p_value < effective_alpha)
     winner = (first if mean_a > mean_b else second) if significant else None
     result: dict[str, Any] = {
         "test_type": test_type,
         "statistic": statistic,
         "p_value": p_value,
-        "alpha": alpha,
+        "alpha": effective_alpha,
         "significant": significant,
         "variants": {
             first: {"n": int(len(values_a)), "mean": mean_a},

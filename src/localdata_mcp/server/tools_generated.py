@@ -852,7 +852,7 @@ def register_tools(app: FastMCP) -> None:
             second_column (optional): Second column for paired/correlation/chi2 tests.
             group_column (optional): Column defining the two groups for two-sample tests.
             popmean (optional): Population mean for ttest_1samp (implementation default 0.0).
-            alpha (optional): Significance level for the verdict (implementation default 0.05).
+            alpha (optional): Significance level for the verdict (default: the configured process value).
             alternative (optional): Alternative hypothesis: two-sided (default), greater, or less.
         """
         arguments: dict[str, Any] = {}
@@ -900,7 +900,7 @@ def register_tools(app: FastMCP) -> None:
             query (optional): One read-only SQL statement (endpoint sources and local database files).
             dependent_var: The numeric outcome column.
             group_var: The column defining the groups.
-            alpha (optional): Significance level for the verdict (implementation default 0.05).
+            alpha (optional): Significance level for the verdict (default: the configured process value).
         """
         arguments: dict[str, Any] = {"dependent_var": dependent_var, "group_var": group_var}
         if endpoint is not None:
@@ -968,7 +968,7 @@ def register_tools(app: FastMCP) -> None:
             metric_column: The outcome metric column.
             variant_column: The column assigning the two variants.
             test_type (optional): auto (default), proportion, t_test, or mann_whitney.
-            alpha (optional): Significance level for the verdict (implementation default 0.05).
+            alpha (optional): Significance level for the verdict (default: the configured process value).
             alternative (optional): Alternative hypothesis: two-sided (default), greater, or less.
         """
         arguments: dict[str, Any] = {"metric_column": metric_column, "variant_column": variant_column}
@@ -1433,7 +1433,7 @@ def register_tools(app: FastMCP) -> None:
             column: The numeric column to bootstrap.
             statistic (optional): mean (default), median, std, or var.
             resamples (optional): Bootstrap resamples (default: the configured S8 row-30 count).
-            confidence_level (optional): Interval coverage (implementation default 0.95).
+            confidence_level (optional): Interval coverage (default: the configured process value).
             seed (optional): Random seed pinning every draw (default: fresh entropy).
         """
         arguments: dict[str, Any] = {"column": column}
@@ -1518,7 +1518,7 @@ def register_tools(app: FastMCP) -> None:
             query (optional): One read-only SQL statement (endpoint sources and local database files).
             column: The numeric column to estimate.
             prior_distribution (optional): Conjugate prior family (normal — the launch set).
-            credible_level (optional): Interval coverage (implementation default 0.95).
+            credible_level (optional): Interval coverage (default: the configured process value).
         """
         arguments: dict[str, Any] = {"column": column}
         if endpoint is not None:
@@ -1803,7 +1803,7 @@ def register_tools(app: FastMCP) -> None:
             value_column: The measured value column.
             x_column (optional): The x/longitude column (default 'x').
             y_column (optional): The y/latitude column (default 'y').
-            k_neighbors (optional): Neighbours per point (implementation default 8).
+            k_neighbors (optional): Neighbours per point (default: the configured process value).
         """
         arguments: dict[str, Any] = {"value_column": value_column}
         if endpoint is not None:
@@ -1843,7 +1843,7 @@ def register_tools(app: FastMCP) -> None:
             value_column: The measured value column.
             x_column (optional): The x/longitude column (default 'x').
             y_column (optional): The y/latitude column (default 'y').
-            significance_level (optional): Two-sided significance (implementation default 0.05).
+            significance_level (optional): Two-sided significance (default: the configured process value).
         """
         arguments: dict[str, Any] = {"value_column": value_column}
         if endpoint is not None:

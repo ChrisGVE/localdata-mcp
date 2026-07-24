@@ -4,8 +4,11 @@ The time-series family's two tools, carried by name from `main`
 (DR GP2): `analyze_time_series` (trend/stationarity/autocorrelation/
 seasonality) and `forecast_time_series` (arima, ets, plus the §6(f)
 harvested sarima and auto_arima). Thin over analysis.py /
-forecasting.py with the X-2 addressing contract. Neighbors:
-series.py preps; spec_modules.py rosters this module.
+forecasting.py with the X-2 addressing contract. The ADF stationarity
+verdict's significance level defaults to the operator-configured
+process value fetched through the guard's `process_defaults()` seam
+(the tool layer never reads NX-2, section 6.2). Neighbors: series.py
+preps; spec_modules.py rosters this module.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from typing import Any
 
 from localdata_mcp.nexus.contract.spec import Param, TypeShape, tool_spec
 
+from localdata_mcp.ingest.runtime import chokepoint
 from ..support import addressed_frame, source_params
 from .analysis import analyze_series
 from .forecasting import forecast_series
@@ -54,7 +58,14 @@ def analyze_time_series(
     **knobs: Any,
 ) -> Any:
     frame, source = addressed_frame(endpoint, path, table, query)
-    result = analyze_series(frame, date_column, value_column, **knobs)
+    defaults = chokepoint().process_defaults()
+    result = analyze_series(
+        frame,
+        date_column,
+        value_column,
+        default_significance=defaults.significance_level,
+        **knobs,
+    )
     result["source"] = source
     return result
 

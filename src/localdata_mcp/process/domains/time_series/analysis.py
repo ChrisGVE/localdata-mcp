@@ -6,8 +6,10 @@ trend (least-squares slope over the observation index), stationarity
 (augmented Dickey-Fuller), autocorrelation (ACF with the 1.96/√n
 significance band), and seasonality (decomposition strength when the
 calendar frequency implies a period and the data covers two of them).
-Neighbors: series.py preps the series; tools.py declares the
-ToolSpec; forecasting.py is the sibling.
+The ADF stationarity verdict reads the operator-configured significance
+level through the guard seam (CR-009), never an inline literal.
+Neighbors: series.py preps the series; tools.py declares the ToolSpec;
+forecasting.py is the sibling.
 """
 
 from __future__ import annotations
@@ -33,8 +35,13 @@ def analyze_series(
     date_column: str,
     value_column: str,
     frequency: str | None = None,
+    significance_level: float | None = None,
+    default_significance: float = 0.0,
 ) -> dict[str, Any]:
     """The four analysis blocks over the addressed series."""
+    effective_alpha = (
+        significance_level if significance_level is not None else default_significance
+    )
     series = time_indexed_values(frame, date_column, value_column)
     if frequency is not None:
         series = series.asfreq(frequency)
@@ -51,7 +58,7 @@ def analyze_series(
             "max": float(series.max()),
         },
         "trend": _trend_block(series),
-        "stationarity": _stationarity_block(series),
+        "stationarity": _stationarity_block(series, effective_alpha),
         "autocorrelation": _autocorrelation_block(series),
         "seasonality": _seasonality_block(series),
     }
@@ -71,7 +78,7 @@ def _trend_block(series: "pd.Series[float]") -> dict[str, Any]:
     }
 
 
-def _stationarity_block(series: "pd.Series[float]") -> dict[str, Any]:
+def _stationarity_block(series: "pd.Series[float]", alpha: float) -> dict[str, Any]:
     from statsmodels.tsa.stattools import adfuller
 
     statistic, p_value, _lags, _nobs, _critical, _icbest = adfuller(
@@ -81,7 +88,7 @@ def _stationarity_block(series: "pd.Series[float]") -> dict[str, Any]:
         "test": "adf",
         "statistic": float(statistic),
         "p_value": float(p_value),
-        "is_stationary": bool(p_value < 0.05),
+        "is_stationary": bool(p_value < alpha),
     }
 
 

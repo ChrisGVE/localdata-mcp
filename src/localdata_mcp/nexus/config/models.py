@@ -145,6 +145,32 @@ class ProcessConfig:
     # Standard ill-conditioning heuristic (Golub & Van Loan): 1e10 leaves
     # ~6 trustworthy digits in double precision.
     sentinel_max_condition_number: float = cfg_field(1e10, doc="S8 row 32")
+    # The conventional significance level alpha for hypothesis-test
+    # verdicts — the one home the statistical, A/B, ANOVA, spatial-hotspot,
+    # and time-series-stationarity verdicts all read through the
+    # process_defaults() seam (CR-009: was a frozen inline literal at four
+    # sites; caller-overridable per call). unscanned: 0.05 is a pervasive
+    # magic literal (contamination fractions, retry backoffs, test
+    # thresholds) the AST gate cannot tell apart from alpha, so this knob's
+    # one-home discipline rests on review + the seam, not the scanner.
+    significance_level: float = cfg_field(
+        0.05,
+        doc="significance level alpha (statistical verdicts)",
+        unscanned=True,
+    )
+    # The conventional interval-coverage level for percentile bootstrap
+    # CIs and Bayesian credible intervals — read through the seam by the
+    # sampling family (CR-008: was arithmetic-obfuscated inline).
+    confidence_level: float = cfg_field(
+        0.95, doc="interval coverage (bootstrap CI / credible interval)"
+    )
+    # Neighbours per point for the k-NN spatial-weights kernel that
+    # Moran's I and Getis-Ord Gi* share (Anselin's common default) — an
+    # operator knob read through the seam (CR-008: was arithmetic-
+    # obfuscated inline to evade the S8 scan).
+    spatial_k_neighbors: int = cfg_field(
+        8, doc="k-NN neighbours (spatial weights kernel)"
+    )
 
 
 @dataclass(frozen=True)

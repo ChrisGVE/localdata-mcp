@@ -31,6 +31,7 @@ def simulate(
     bounds: list[float] | None = None,
     seed: int | None = None,
     default_iterations: int = 0,
+    default_significance: float = 0.0,
 ) -> dict[str, Any]:
     """The seeded simulation verdict for the addressed column."""
     if simulation_type not in SIMULATION_TYPES:
@@ -44,7 +45,7 @@ def simulate(
     values = numeric_values(frame, column).to_numpy(dtype=float)
     rng = np.random.default_rng(seed)
     if simulation_type == "uncertainty":
-        return _uncertainty(values, count, rng, column)
+        return _uncertainty(values, count, rng, column, default_significance)
     return _integration(values, count, bounds, rng, column)
 
 
@@ -53,8 +54,13 @@ def _uncertainty(
     count: int,
     rng: np.random.Generator,
     column: str,
+    alpha: float,
 ) -> dict[str, Any]:
-    """The resampled sampling distribution of the mean."""
+    """The resampled sampling distribution of the mean, summarized by
+    its central (1 - 2*alpha) interval and median — the reported band's
+    tails are the operator-configured significance level (the p05/p95
+    labels hold at the default alpha=0.05), read through the guard seam
+    rather than an inline percentile literal."""
     draws = np.array(
         [
             float(np.mean(values[rng.integers(0, len(values), size=len(values))]))
@@ -69,11 +75,9 @@ def _uncertainty(
         "mean_estimate": float(np.mean(draws)),
         "standard_error": float(np.std(draws, ddof=1)),
         "distribution": {
-            # p95 spelled as arithmetic: the S8 scan reserves the
-            # 0.95 literal for its config default.
-            "p05": float(np.quantile(draws, 0.05)),
+            "p05": float(np.quantile(draws, alpha)),
             "p50": float(np.quantile(draws, 0.50)),
-            "p95": float(np.quantile(draws, 1.0 - 0.05)),
+            "p95": float(np.quantile(draws, 1.0 - alpha)),
         },
     }
 

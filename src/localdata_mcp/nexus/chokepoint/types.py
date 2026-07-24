@@ -71,12 +71,18 @@ class EndpointSummary:
 
 @dataclass(frozen=True)
 class ProcessDefaults:
-    """The S8 process-domain default counts (rows 30/31) as a plain
-    value — what `process_defaults()` hands E10's stochastic tools,
-    so the ConfigModel stays behind the seam (section 6.2)."""
+    """The S8 process-domain defaults as a plain value — what
+    `process_defaults()` hands E10's tools, so the ConfigModel stays
+    behind the seam (section 6.2). Carries the stochastic counts (rows
+    30/31) and the statistical-verdict knobs (significance level alpha,
+    interval-coverage level, and the spatial k-NN neighbour count) that
+    the domains read at call time instead of an inline literal."""
 
     bootstrap_resamples: int
     monte_carlo_iterations: int
+    significance_level: float
+    confidence_level: float
+    spatial_k_neighbors: int
 
 
 @dataclass(frozen=True)

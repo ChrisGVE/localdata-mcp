@@ -6,9 +6,11 @@ permutation-free analytic z-score), `find_spatial_hotspots`
 (Getis-Ord Gi* per point, hot/cold at the significance level), and
 `calculate_spatial_distances` (a summarized distance-matrix report,
 bounded to keep the n² matrix legible). All three read the addressed
-coordinates through weights.py's shared k-NN neighbourhood.
-Neighbors: weights.py builds the kernel; tools.py declares the
-ToolSpecs.
+coordinates through weights.py's shared k-NN neighbourhood; the
+neighbour count and the significance level arrive from the caller or
+the operator-configured process defaults (the guard seam, CR-008/
+CR-009), never an inline literal. Neighbors: weights.py builds the
+kernel; tools.py declares the ToolSpecs.
 """
 
 from __future__ import annotations
@@ -34,12 +36,10 @@ def spatial_autocorrelation(
     x_column: str = "x",
     y_column: str = "y",
     k_neighbors: int | None = None,
+    default_k_neighbors: int = 0,
 ) -> dict[str, Any]:
     """Global Moran's I of `value_column` over the k-NN neighbourhood."""
-    if k_neighbors is None:
-        # Anselin's common default; inlined because the S8 scan reserves
-        # constant/parameter-default literals for config-backed values.
-        k_neighbors = 4 + 4
+    k = k_neighbors if k_neighbors is not None else default_k_neighbors
     points = coordinates(frame, x_column, y_column)
     values = numeric_values(frame, value_column).to_numpy(dtype=float)
     if len(values) != len(points):
@@ -47,7 +47,7 @@ def spatial_autocorrelation(
             "Value and coordinate columns disagree after dropping missing "
             "rows — clean the source so every row has x, y, and a value."
         )
-    weights = knn_weights(points, k_neighbors)
+    weights = knn_weights(points, k)
     moran, z_score = _morans_i(values, weights)
     return {
         "method": "morans_i",
@@ -56,7 +56,7 @@ def spatial_autocorrelation(
         "z_score": z_score,
         "p_value": float(2.0 * (1.0 - stats.norm.cdf(abs(z_score)))),
         "n_points": int(len(values)),
-        "k_neighbors": k_neighbors,
+        "k_neighbors": k,
         "interpretation": _autocorr_reading(moran, z_score),
     }
 
@@ -64,6 +64,15 @@ def spatial_autocorrelation(
 def _morans_i(
     values: "np.ndarray[Any, Any]", weights: "np.ndarray[Any, Any]"
 ) -> tuple[float, float]:
+    """Global Moran's I and its analytic z-score.
+
+    Reference: Moran (1950), "Notes on continuous stochastic phenomena",
+    Biometrika 37; the analytic normal approximation of I's variance
+    under the randomization assumption follows Cliff & Ord (1981),
+    "Spatial Processes: Models and Applications", and Anselin (1995),
+    "Local Indicators of Spatial Association — LISA", Geographical
+    Analysis 27(2):93-115.
+    """
     n = len(values)
     deviations = values - values.mean()
     denominator = float((deviations**2).sum())
@@ -93,21 +102,26 @@ def spatial_hotspots(
     value_column: str,
     x_column: str = "x",
     y_column: str = "y",
-    significance_level: float = 0.05,
+    significance_level: float | None = None,
+    default_significance: float = 0.0,
+    default_k_neighbors: int = 0,
 ) -> dict[str, Any]:
     """Getis-Ord Gi* hot/cold spots per point."""
+    alpha = (
+        significance_level if significance_level is not None else default_significance
+    )
     points = coordinates(frame, x_column, y_column)
     values = numeric_values(frame, value_column).to_numpy(dtype=float)
-    weights = knn_weights(points, min(8, len(points) - 1))
+    weights = knn_weights(points, min(default_k_neighbors, len(points) - 1))
     z_scores = _getis_ord(values, weights)
-    cut = float(stats.norm.ppf(1.0 - significance_level / 2.0))
+    cut = float(stats.norm.ppf(1.0 - alpha / 2.0))
     hot = [int(i) for i in np.nonzero(z_scores > cut)[0]]
     cold = [int(i) for i in np.nonzero(z_scores < -cut)[0]]
     return {
         "method": "getis_ord_gi_star",
         "value_column": value_column,
         "n_points": int(len(values)),
-        "significance_level": significance_level,
+        "significance_level": alpha,
         "n_hotspots": len(hot),
         "n_coldspots": len(cold),
         "hotspot_indices": hot,
@@ -119,6 +133,15 @@ def spatial_hotspots(
 def _getis_ord(
     values: "np.ndarray[Any, Any]", weights: "np.ndarray[Any, Any]"
 ) -> "np.ndarray[Any, Any]":
+    """Getis-Ord Gi* local hot/cold statistic (z-scored) per point.
+
+    Reference: Getis & Ord (1992), "The analysis of spatial association
+    by use of distance statistics", Geographical Analysis 24(3):189-206,
+    and Ord & Getis (1995), "Local spatial autocorrelation statistics:
+    distributional issues and an application", Geographical Analysis
+    27(4):286-306 — the Gi* form includes the focal point in the local
+    sum, standardized against the global mean and variance below.
+    """
     n = len(values)
     mean = values.mean()
     std = values.std(ddof=0)

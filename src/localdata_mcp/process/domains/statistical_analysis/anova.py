@@ -4,9 +4,11 @@
 the effect size (eta squared from the sums of squares) and a Tukey
 HSD post-hoc pass (statsmodels) when the omnibus test is significant
 — `main`'s `ANOVAAnalysisTransformer` algorithm without the
-transformer scaffolding. The per-group summary lands under the
-`groups` key deliberately: an empty group is the sentinel's class-3
-degenerate-shape signal (E7.2), so a hollow grouping becomes a
+transformer scaffolding. The significance level arrives from the
+caller or the operator-configured process default (the guard seam),
+never an inline literal (CR-009). The per-group summary lands under
+the `groups` key deliberately: an empty group is the sentinel's
+class-3 degenerate-shape signal (E7.2), so a hollow grouping becomes a
 structured error, never a silent success. Neighbors: tools.py
 declares the ToolSpec; hypothesis.py covers the two-group case.
 """
@@ -25,10 +27,12 @@ def perform_anova(
     frame: pd.DataFrame,
     dependent_var: str,
     group_var: str,
-    alpha: float = 0.05,
+    alpha: float | None = None,
+    default_alpha: float = 0.0,
 ) -> dict[str, Any]:
     """One-way ANOVA across every group of `group_var`."""
     require_columns(frame, dependent_var, group_var)
+    effective_alpha = alpha if alpha is not None else default_alpha
     labels = sorted(frame[group_var].dropna().unique().tolist(), key=str)
     if len(labels) < 2:
         raise invalid_source_refusal(
@@ -40,12 +44,12 @@ def perform_anova(
         for label in labels
     }
     outcome = stats.f_oneway(*samples.values())
-    significant = bool(outcome.pvalue < alpha)
+    significant = bool(outcome.pvalue < effective_alpha)
     result: dict[str, Any] = {
         "anova_type": "one_way",
         "f_statistic": float(outcome.statistic),
         "p_value": float(outcome.pvalue),
-        "alpha": alpha,
+        "alpha": effective_alpha,
         "significant": significant,
         "eta_squared": _eta_squared(samples),
         "groups": {

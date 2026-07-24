@@ -2,10 +2,11 @@
 
 The sampling family's four tools, carried by name from `main`
 (DR GP2): `generate_sample`, `bootstrap_statistic`,
-`monte_carlo_simulate`, `bayesian_estimate`. The stochastic counts
-default to the S8 rows 30/31 values fetched through the guard's
+`monte_carlo_simulate`, `bayesian_estimate`. The stochastic counts and
+the interval-coverage/significance levels default to the operator-
+configured process values fetched through the guard's
 `process_defaults()` seam at call time — the tool layer never reads
-NX-2 (section 6.2), and a caller-supplied count overrides. Every
+NX-2 (section 6.2), and a caller-supplied value overrides. Every
 stochastic tool carries `seed` (S3.3). Neighbors:
 sampling/estimation/monte_carlo.py compute; spec_modules.py rosters
 this module.
@@ -102,7 +103,7 @@ def generate_sample(
         Param(
             "confidence_level",
             float,
-            "Interval coverage (implementation default 0.95).",
+            "Interval coverage (default: the configured process value).",
             required=False,
         ),
         _SEED,
@@ -122,7 +123,11 @@ def bootstrap_statistic(
     frame, source = addressed_frame(endpoint, path, table, query)
     defaults = chokepoint().process_defaults()
     result = bootstrap(
-        frame, column, default_resamples=defaults.bootstrap_resamples, **knobs
+        frame,
+        column,
+        default_resamples=defaults.bootstrap_resamples,
+        default_confidence=defaults.confidence_level,
+        **knobs,
     )
     result["source"] = source
     return result
@@ -178,6 +183,7 @@ def monte_carlo_simulate(
         frame,
         column,
         default_iterations=defaults.monte_carlo_iterations,
+        default_significance=defaults.significance_level,
         **knobs,
     )
     result["source"] = source
@@ -203,7 +209,7 @@ def monte_carlo_simulate(
         Param(
             "credible_level",
             float,
-            "Interval coverage (implementation default 0.95).",
+            "Interval coverage (default: the configured process value).",
             required=False,
         ),
     ),
@@ -220,6 +226,9 @@ def bayesian_estimate(
     **knobs: Any,
 ) -> Any:
     frame, source = addressed_frame(endpoint, path, table, query)
-    result = bayesian_posterior(frame, column, **knobs)
+    defaults = chokepoint().process_defaults()
+    result = bayesian_posterior(
+        frame, column, default_credible=defaults.confidence_level, **knobs
+    )
     result["source"] = source
     return result

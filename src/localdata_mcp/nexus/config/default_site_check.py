@@ -18,7 +18,11 @@ Scan rules, mechanical by construction:
   valid values (a tuple/list member) or an inline call argument is
   legitimate noise, not a second default site;
 - ints 0-3 are structurally unscannable (schema versions, indices) and
-  exempt; their one-home discipline rests on review.
+  exempt; their one-home discipline rests on review;
+- a field flagged `unscanned` in its metadata is exempt entirely: a
+  pervasive magic literal (e.g. 0.05) the AST cannot tell apart from
+  unrelated uses of the same value, so its one-home discipline likewise
+  rests on review + the config seam, not this gate.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from ..gated_tree import iter_v3_sources
+from .fields import META_UNSCANNED
 from .models import ConfigModel, iter_config_fields
 
 # The one legitimate home of the defaults (plus its testbench section).
@@ -61,12 +66,23 @@ def s8_default_values() -> dict[str, Any]:
     }
 
 
+def _scannable_values() -> list[Any]:
+    """The S8 default values the gate scans — every field except those
+    flagged `unscanned` (a pervasive magic literal that rests on review)."""
+    model = ConfigModel()
+    return [
+        getattr(getattr(model, section), fld.name)
+        for section, fld in iter_config_fields()
+        if not fld.metadata.get(META_UNSCANNED)
+    ]
+
+
 def _split_by_distinctiveness() -> tuple[set[float], set[int], set[str]]:
     """(distinctive, common-int, string) value sets per the scan rules."""
     distinctive: set[float] = set()
     common: set[int] = set()
     strings: set[str] = set()
-    for value in s8_default_values().values():
+    for value in _scannable_values():
         if isinstance(value, bool):
             continue  # booleans are unscannable (flags, not thresholds)
         if isinstance(value, str):

@@ -39,13 +39,19 @@ class _ConfigSeams(_GuardCore):
         return expr_eval.evaluate_numeric_expression(expression, columns)
 
     def process_defaults(self) -> "ProcessDefaults":
-        """The S8 process-domain defaults (rows 30/31) as a plain
-        value — the seam E10's stochastic tools read their
-        operator-tunable counts through (tool packages never read
-        NX-2 directly, section 6.2)."""
+        """The S8 process-domain defaults as a plain value — the seam
+        E10's tools read their operator-tunable counts and statistical-
+        verdict knobs through (tool packages never read NX-2 directly,
+        section 6.2). Carries the stochastic counts (rows 30/31), the
+        significance level alpha, the interval-coverage level, and the
+        spatial k-NN neighbour count."""
+        process = self._config.process
         return ProcessDefaults(
-            bootstrap_resamples=self._config.process.bootstrap_default_resamples,
-            monte_carlo_iterations=self._config.process.monte_carlo_default_iterations,
+            bootstrap_resamples=process.bootstrap_default_resamples,
+            monte_carlo_iterations=process.monte_carlo_default_iterations,
+            significance_level=process.significance_level,
+            confidence_level=process.confidence_level,
+            spatial_k_neighbors=process.spatial_k_neighbors,
         )
 
     def visualize_defaults(self) -> "VisualizeDefaults":

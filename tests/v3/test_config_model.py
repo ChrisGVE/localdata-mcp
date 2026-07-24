@@ -58,6 +58,12 @@ EXPECTED_DEFAULTS = {
     "process.bootstrap_default_resamples": 1000,
     "process.monte_carlo_default_iterations": 10000,
     "process.sentinel_max_condition_number": 1e10,
+    # process — statistical-verdict knobs (one home for alpha, interval
+    # coverage, and the spatial k-NN neighbour count; consumed through the
+    # process_defaults() seam, CR-008/CR-009)
+    "process.significance_level": 0.05,
+    "process.confidence_level": 0.95,
+    "process.spatial_k_neighbors": 8,
     # visualize — chart styling defaults (FR-503 styling layer, E12.6)
     "visualize.default_palette": "colorblind",
     "visualize.default_sequential_cmap": "viridis",
