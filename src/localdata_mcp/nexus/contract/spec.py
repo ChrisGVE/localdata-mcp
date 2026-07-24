@@ -61,7 +61,16 @@ class Param:
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """The single authoritative declaration of one tool's contract."""
+    """The single authoritative declaration of one tool's contract.
+
+    `test_only=True` marks a spec that stays OFF the served product
+    surface: the generated wrapper routes it into
+    `register_skeleton_tools` (never `register_tools`, which mcp_app.py
+    is the sole caller of), and the L3 contract stub exercises it on a
+    battery-local FastMCP app. It remains a fully registered spec — its
+    type-shape registry entry and docs row are still generated — so GP5
+    keeps proving it at the seam without polluting the live MCP surface
+    (the walking-skeleton probes, CR-012)."""
 
     name: str
     summary: str
@@ -70,6 +79,7 @@ class ToolSpec:
     output_shape: TypeShape
     streaming_capable: bool = False
     domain: str | None = None
+    test_only: bool = False
     func: Callable[..., Any] = field(default=lambda: None, compare=False)
 
     def __post_init__(self) -> None:
@@ -97,6 +107,7 @@ def tool_spec(
     output_shape: TypeShape,
     streaming_capable: bool = False,
     domain: str | None = None,
+    test_only: bool = False,
     registry: Any = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Declare a tool: build its ToolSpec, register it, tag the function.
@@ -116,6 +127,7 @@ def tool_spec(
             output_shape=output_shape,
             streaming_capable=streaming_capable,
             domain=domain,
+            test_only=test_only,
             func=func,
         )
         target = registry
