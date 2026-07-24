@@ -99,3 +99,29 @@ jobs:
         run: >
           uv run --no-project --with cvss python
           scripts/check_audit_severity.py --report audit.json --threshold 7.0
+
+  nightly-db-extras:
+    # NFR-504: the extras engines (MSSQL via pymssql, Oracle via the free
+    # gvenzl/oracle-free image + oracledb thin mode) have no battery row of
+    # their own — v3 denies their injection vectors statically — so their
+    # connector is fixture-tested here instead: bring the containers up, then
+    # load-and-verify the probe fixture round-trips through each. Compose owns
+    # bring-up (the script drives it); the whole job is non-gating nightly.
+    name: MSSQL + Oracle extras fixture-test (NFR-504)
+    runs-on: ubuntu-latest
+    env:
+      LOCALDATA_TEST_MSSQL_DSN: mssql+pymssql://sa:TestPass123!@localhost:11433/master
+      LOCALDATA_TEST_ORACLE_DSN: oracle+oracledb://testuser:testpass@localhost:11521/?service_name=FREEPDB1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync environment with the mssql + enterprise extras
+        run: uv sync --frozen --extra dev --extra mssql --extra enterprise
+      - name: Bring up the extras database fixtures
+        run: uv run python scripts/build_db_fixtures.py --up --tier extras
+      - name: Load + verify the extras fixture probes
+        # --load waits for readiness first; oracle-free needs ~2 min to open.
+        run: uv run python scripts/build_db_fixtures.py --load --tier extras --timeout 300
+      - name: Tear down the extras fixtures
+        if: always()
+        run: uv run python scripts/build_db_fixtures.py --down
