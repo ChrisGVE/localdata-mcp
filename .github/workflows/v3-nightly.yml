@@ -1,0 +1,96 @@
+# v3 nightly — the exhaustive/stretch tiers the per-PR budget holds back
+# (S7.4). Budget: 4 h. Everything here is exhaustive within its scope —
+# this is a scheduling split, never sampling (the stretch battery is the
+# one sanctioned sampling point, §6(k), and is non-gating).
+#
+# Tiers, per S7.4:
+#   - pipeline lengths 3-4 exhaustive + the stretch probe (nightly marker)
+#   - full perf/memory battery incl. leak loops and cold-start
+#   - longitudinal results-store comparison (NFR-508), report-only
+#   - the weekly pip-audit schedule rides the nightly (dependency drift)
+name: v3 nightly
+
+on:
+  schedule:
+    # 04:17 UTC daily — off the hour to avoid the scheduler stampede.
+    - cron: "17 4 * * *"
+  workflow_dispatch: {}
+
+env:
+  UV_PYTHON: "3.12"
+
+jobs:
+  nightly-pipeline:
+    name: pipeline lengths 3-4 + stretch (exhaustive/nightly)
+    runs-on: ubuntu-latest
+    env:
+      LOCALDATA_RESULTS_STORE_DIR: ${{ github.workspace }}/results-workers
+      LOCALDATA_RESULTS_RUN_ID: nightly-${{ github.run_id }}
+      LOCALDATA_DATASET_HASH: unpinned
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync environment
+        run: uv sync --frozen --extra dev
+      - name: Run the nightly pipeline tiers
+        # -m nightly selects the derived-valid lengths-3-4 executor and
+        # the non-gating stretch probe; both persist per-worker results.
+        run: >
+          uv run pytest
+          src/localdata_mcp/testbench/batteries/pipeline/
+          -m nightly -v
+      - name: Restore the durable canonical results store
+        uses: actions/cache@v4
+        with:
+          path: results-canonical.db
+          key: results-store-${{ github.run_id }}
+          restore-keys: |
+            results-store-
+      - name: Merge the nightly results into the canonical store
+        run: >
+          uv run python scripts/merge_battery_results.py
+          --canonical results-canonical.db
+          "${{ github.workspace }}/results-workers/*.db"
+      - name: Longitudinal comparison of the last two pipeline runs
+        # Report-only (no --fail-on-regression): the nightly surfaces
+        # drift in the results store, it does not gate on it (NFR-508).
+        run: >
+          uv run python scripts/compare_battery_runs.py
+          --store results-canonical.db --battery pipeline
+      - name: Upload the canonical results store
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-results-${{ github.run_id }}
+          path: results-canonical.db
+          if-no-files-found: warn
+
+  nightly-perf-memory:
+    name: full perf/memory battery + cold start
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync environment
+        run: uv sync --frozen --extra dev
+      - name: Run the full perf/memory battery (leak loops included)
+        run: >
+          uv run pytest src/localdata_mcp/testbench/batteries/perf_memory/ -v
+      - name: Cold-start measurement against the row-17 bound
+        run: uv run python scripts/cold_start_smoke.py --bound 5.0
+
+  nightly-pip-audit:
+    name: weekly dependency CVE audit (rides the nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Export the locked dependency closure
+        run: uv export --frozen --all-extras --no-emit-project -o requirements-audit.txt
+      - name: Audit the locked closure
+        run: >
+          uvx pip-audit -r requirements-audit.txt --no-deps -f json -o audit.json
+          || echo "pip-audit reported findings; threshold gate decides"
+      - name: Apply the CVSS threshold gate
+        run: >
+          uv run --no-project --with cvss python
+          scripts/check_audit_severity.py --report audit.json --threshold 7.0
