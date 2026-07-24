@@ -190,7 +190,7 @@ adding SQL over files — is the larger, two-truth change.
 
 **GP9 — Resource bounds are measured, never predicted.** Every memory, disk, and context bound in
 this architecture is decided from **an observation taken after the bytes exist** — the SQLite
-workspace's own `page_count × page_size`, a batch's `memory_usage(deep=True)`, the measured free
+workspace's own `(page_count − freelist_count) × page_size`, a batch's `memory_usage(deep=True)`, the measured free
 bytes on the spill volume, the actual rendered length of a response — never from metadata about
 data not yet materialized. **Upfront metadata estimation as an admission gate is retired**, not
 re-tuned: it is unsound in principle (`code_review.md` Round-5 structural diagnosis) because a
@@ -233,10 +233,40 @@ design measures the one quantity it *can* measure (the rendered character count 
 §5.9) and converts with `response.chars_per_token`, a **declared, conservative, NX-2-visible
 assumption at a boundary the process cannot see across** — which is exactly why it is a config field
 rather than a constant, so it is arguable instead of hidden.
-*And the one genuine exception the audit found is removed rather than scoped around:* the
-retrieval-side aggregate accounting used to extrapolate a chunk's residency per-row from one
-measured chunk — a prediction of Q from R by any reading. It is deleted; every buffered chunk is now
-measured exactly, on the same terms as every load batch (§5.9).
+*(iii) The claim is made over an enumerated set of sites, not over a universal quantifier.* GP9's
+universal form has now failed an audit **twice** — round 1 found one contradiction, and round 2 found
+that the one deleted in response was one of three — and both times the answer was to remove an
+instance and call the remainder an exception. It is not answered that way a third time. **GP9's claim is
+that every site in the list below decides its bound from an observation of the quantity it bounds**,
+and the list is what an auditor checks — a sentence cannot be true of a document and false of the
+tree without one of these rows being wrong.
+
+| site | quantity bounded | decided from | status |
+|---|---|---|---|
+| load-batch charge (§5.4) | one batch's resident bytes | `memory_usage(deep=True)` on that batch | holds |
+| workspace residency (§5.4) | the staged database's bytes | `(page_count − freelist_count) × page_size` on that database | holds |
+| spill free-disk floor (§5.5) | free bytes on the spill volume | `statvfs` on that volume | holds |
+| aggregate spill cap (§5.5) | bytes under `spill_dir` | `stat` of the files there | holds |
+| inline/stream cutover (§5.9) | the rendered response's size | the real render's own length | holds |
+| buffered-chunk charge (§5.9) | one chunk's resident bytes | `memory_usage(deep=True)` on that chunk | **fixed round 2** — was per-row extrapolation from chunk 1 |
+| **bounded-fetch retention charge** (§5.9, `execution.py:100-115`) | a bounded read's retained rows | **was** `total_rows × first-batch per-row bytes`; **now** the running sum of each batch's own measurement | **fixed this round** |
+| **analytical admission** (§5.9, `resource_bounds.py:137-161`) | the analytical working set | **was** `rows × per_row_bytes`; **now** the measured retained bytes, with the row cap kept as a row bound | **fixed this round** |
+| **upfront whole-load admission** (`resource_bounds.py:163-175`) | a file's materialized bytes | file metadata, before the bytes exist | **deleted** — §7's deletion row, and it is the retired abstraction itself |
+| `workspace.whole_parse_max_file_bytes` (§4c) | *file* bytes | `stat` on that file | holds, by clause (i) — it bounds what it measures, and §4c/§7/§10 all say it is not a memory bound |
+| `response.inline_max_tokens` (§5.9) | the caller's token count | a measured character count × a declared divisor | **declared conversion**, by clause (ii) — the quantity is outside this process |
+
+The last two rows are the two boundaries clauses (i) and (ii) draw; every other row is Q-from-Q or is
+deleted. Three rows were live contradictions when this round opened — all three in the tree, on the
+flagship read path, and none mapped by the previous revision of this document. They are named here
+rather than in a footnote because that is the difference between a scoped principle and an unstated
+exception. **Test that keeps the table honest:** the enumeration is asserted mechanically, in the
+shape §6.2's import-graph gate already uses — a test walks `nexus/**` for every call site that
+charges or admits against the residency ledger and asserts the set equals an explicit expected list
+held in the test file. Adding a bound then requires editing that list, which is a visible, reviewable
+act; today a new predicted-quantity gate can appear with nothing turning red, which is exactly how
+these three survived two rounds of hand-sweeping. The table above is the human-readable rendering of
+that list, and keeping the two in step is the same one-declaration discipline §7.2 applies to the
+connector inventory.
 *Upward check:* direct instantiation of PROJECT-FP #4 (proven, not assumed) and of the global
 "Leverage Existing & Evidence" first principle; refines GP3's fail-safe clause by fixing *what*
 the gate may read. It supersedes no locked decision — NFR-105 mandates a fail-safe memory bound and
@@ -410,15 +440,16 @@ same DSN/credential stripping before it reaches a tool result.
 Two flows, one story: how a file **becomes a table** (the load, measured and spillable), and how a
 result **leaves the process** (the serve, under the `ChunkRegistry`'s bounds). The 2026-07-24
 re-alignment changes what the per-format matrix classifies. It no longer sorts formats into
-*genuinely-streaming* versus *load-then-serve at the serving edge*; **serving is always SQL
-streaming out of an engine**, so the matrix now classifies each format by **how it reaches a
+*genuinely-streaming* versus *load-then-serve at the serving edge*; **serving a *staged table* is
+always SQL streaming out of an engine** — regime 3 and `query_file` keep their own buffered serving
+path (§5.9) — so the matrix now classifies each format by **how it reaches a
 table** — the only axis on which formats still genuinely differ:
 
 | Regime | Formats | How it loads | What is bounded, and how |
 |---|---|---|---|
-| **1 — batched into a table** | CSV, TSV, Excel `.xlsx` (openpyxl `read_only` + `iter_rows`), Parquet (`ParquetFile.iter_batches`), Feather / Arrow (`RecordBatchReader`), HDF5 (dataset row-slicing) | the connector yields bounded batches; NX-6 charges and measures each one and directs NX-5 to append it | **measured, per batch.** Peak in-process residency is one batch, measured with `memory_usage(deep=True)` before the write; workspace residency is measured with `page_count × page_size` after it. A high-expansion file is refused (or spilled) at the first over-budget batch, never after the whole file materializes. |
+| **1 — batched into a table** | CSV, TSV, Excel `.xlsx` (openpyxl `read_only` + `iter_rows`), Parquet (`ParquetFile.iter_batches`), Feather / Arrow (`RecordBatchReader`), HDF5 (dataset row-slicing) | the connector yields bounded batches; NX-6 charges and measures each one and directs NX-5 to append it | **measured, per batch.** Peak in-process residency is one batch, measured with `memory_usage(deep=True)` before the write; workspace residency is measured with `(page_count − freelist_count) × page_size` after it (§5.4). A high-expansion file is refused (or spilled) at the first over-budget batch, never after the whole file materializes. |
 | **2 — whole-parse into a table** | ODS (`odfpy`), Numbers (`numbers-parser`), legacy `.xls`, JSON in record shape | the library's parse is atomic — it returns the whole object graph or nothing; the loader treats the parse result as a single batch | **declared, not claimed sound.** A coarse `workspace.whole_parse_max_file_bytes` pre-gate refuses very large inputs, and the parsed batch is measured before it is written. The pre-gate is a **file-size limit, not a memory guarantee** — that is stated in the tool's own generated docs, and it is why regime 2 is a named residual in §10 rather than a solved case. |
-| **3 — not a table** | YAML, TOML, INI, XML, JSON in document shape | never enters the workspace; `read_file` returns the nested-mapping shape as today | bounded as today by the whole-parse pre-gate; these shapes have no SQL meaning, so Level 0 declines them rather than inventing a table for them. |
+| **3 — not a table** | YAML, TOML, INI, XML, JSON in document shape | never enters the workspace; `read_file` returns the nested-mapping shape as today | bounded by the **measured charge at prime** on the buffered serving path (§5.9) — `workspace.whole_parse_max_file_bytes` is a `load_file` pre-gate and does not apply here, since a regime-3 shape never reaches `load_file`; these shapes have no SQL meaning, so Level 0 declines them rather than inventing a table for them. |
 
 The regime is **declared per format in NX-1's inventory registry** (`nexus/contract/inventory.py`,
 §7.2) — one declaration, consumed by the loader's dispatch, by the generated per-format docs, and
@@ -468,8 +499,8 @@ sequenceDiagram
                 NX6-->>LLM: structured NX-3 refusal, requires_refinement,<br/>naming the budget and the recovery
             end
         end
-        NX6->>WS: append(table, rows, affinities) — batch 1 declares affinities;<br/>a later batch's conflicting storage class is RECORDED as mixed,<br/>never widened (§5.4); executemany over a LAZY row iterator<br/>through the value binder (§5.4 — refuses what has no storage<br/>class), then COMMIT (rollback + re-raise if it fails), so no<br/>transaction stays open (§5.5 step 0, §7)
-        WS-->>NX6: residency = page_count × page_size (measured)
+        NX6->>WS: append(table, rows, affinities) — batch 1 declares affinities;<br/>affinities are never widened (§5.4);<br/>mixedness is decided at end of load from the storage-class<br/>profile, not from any batch's dtype; executemany over a LAZY row iterator<br/>through the value binder (§5.4 — refuses what has no storage<br/>class), then COMMIT (rollback + re-raise if it fails), so no<br/>transaction stays open (§5.5 step 0, §7)
+        WS-->>NX6: residency = (page_count - freelist_count) x page_size (measured)
         NX6->>Batch: send() the next batch's row budget<br/>(shrink when the batch landed over load_batch_target_bytes)
         opt residency exceeds workspace.memory_budget_bytes
             NX6->>NX6: spill gate — measured free bytes vs min_free_disk_bytes,<br/>live (lock-held) spill total in the SHARED spill_dir vs<br/>max_spill_bytes, contain_path(target, roots=[spill_dir],<br/>mode="write") — ONE owner (§5.5)
@@ -478,7 +509,10 @@ sequenceDiagram
         end
         NX6->>Led: recharge the workspace's current residency
     end
-    NX6-->>LLM: load report {table, rows, columns, declared affinities,<br/>mixed columns + their typeof histograms,<br/>storage: memory or spilled}
+    NX6->>WS: storage_class_profile(table) — ONE pass, every column<br/>(the sixth NX-5 operation; NX-6 may not run a SELECT itself)
+    WS-->>NX6: per-column {integer, real, text, blob, null} counts
+    NX6->>NX6: derive the mixed set (null is not a conflict);<br/>apply workspace.dtype_conflict — signal or abort (§5.4)
+    NX6-->>LLM: load report {table, rows, columns, declared affinities,<br/>per-column storage-class profiles + the mixed set,<br/>storage: memory or spilled}
 ```
 
 Once the table exists, the caller reads it with `query(endpoint="workspace", sql=...)` — the same
@@ -673,14 +707,31 @@ wall-clock owner as any declared endpoint.
 
 **Definition, stated once and used verbatim everywhere below.** The **residency ledger** is the
 single process-wide record of how many bytes this process is currently holding resident on behalf of
-callers, and the gate that refuses a new charge that would take the total over NFR-105's memory
-ceiling. It has one implementation — the kept `MemoryBudget` machinery in
+callers, and the gate that refuses a new charge that would take the total over
+**`resources.memory_ceiling_bytes`** — the existing, LOCKED NX-2 field the ledger already reads
+(`nexus/config/models.py:51`, `cfg_field(4 * GIB, doc="S8 row 1 (LOCKED)")`, consumed at
+`resource_bounds.py`'s `_require_memory_headroom`). NFR-105 is the requirement; this is the knob, and
+the previous revision named only the requirement, which left every "the ledger refuses" sentence
+pointing at a number the document never gave. It has one implementation — the kept `MemoryBudget`
+machinery in
 `nexus/chokepoint/resource_bounds.py` (fail-open defect fixed per NFR-105/203) — reached through one
 charge/release pair, `reserve_load`/`release_load` (`surfaces_stream.py:145-158`), and one keyed
-entry per live consumer: `load:<id>` for a Level-0 staging load, `composition:<pipeline_id>` for a
+entry per live consumer, in **four** families:
+`load:<id>` for a Level-0 staging load — **charged by NX-6's staging loop after each batch
+measurement via `reserve_load(load_id, measured_bytes)` and released by the same loop's `finally`
+via `release_load(load_id)`, on the success branch and on the compensating-drop abort branch alike**
+(named because the previous revision kept the pair while naming a caller for neither half, and a
+release with no named caller is how a ledger entry outlives the data it accounts for) —
+`composition:<pipeline_id>` for a
 running pipeline's inter-stage data (`charge_composition`, `surfaces_config.py:73`), one per live
-`ChunkRegistry`. **The keys differ; the ledger does not.** Its total is what every "the ledger
-refuses" sentence in this document refers to.
+`ChunkRegistry`, and — the highest-frequency family, missing from the previous enumeration —
+`analysis:*` for every bounded read, in three shapes that differ only in what identifies the source:
+`analysis:<endpoint>:<uuid>` (`surfaces_query.py:42`), `analysis:file:<path>:<uuid>` for an
+ephemeral file query (`:106`), and `analysis:table:<endpoint>:<uuid>` for a schema read
+(`surfaces_schema.py:95`). **The keys differ; the ledger does not.** Its total is what every "the
+ledger refuses" sentence in this document refers to. An enumeration that misses the busiest consumer
+answers the question it was written to answer only half-way, which is why the family is listed with
+its three sites rather than with a summary.
 
 The name is not invented here — it is the tree's own (`surfaces_stream.py:147`, *"reserve … on the
 shared residency ledger"*). What this revision fixes is that the document had grown five aliases for
@@ -699,16 +750,37 @@ Two distinctions the name has to carry, because both were being blurred:
 - **The residency ledger is not the retired admission gate.** The deleted `admit_load` estimator
   family predicted a *file's* cost before reading it; the ledger records bytes that already exist.
   §7's deletion row is explicit that what survives is the ledger, not the estimate.
+- **A released charge is not a returned page, and the ledger does not claim otherwise.** The ledger
+  tracks bytes *attributed* to a consumer, and releasing an entry means this process no longer holds
+  that data on the caller's behalf — it does **not** mean the allocator or the OS took the memory
+  back. Measured for this revision on a 400k-row `:memory:` workspace: after a `DROP TABLE` the page
+  measure falls to 0.00 MB under both candidate measures, while `ru_maxrss` moves by +0.17 MB, i.e.
+  not at all (it is a high-water mark and cannot fall). The same holds after a spill releases the
+  `:memory:` charge. This is a **declared fail-open direction**, not a hidden one: after an abort or
+  a spill the ledger reads lower than the process's actual arena, and the next admission is decided
+  against the ledger. It is declared here because a reader who assumes otherwise will size
+  `workspace.memory_budget_bytes` against RSS and be wrong, and because it is the fact that settles
+  §5.4's `auto_vacuum` choice — neither candidate returns memory, so neither can be preferred for
+  doing so.
 
 ### 5.4 The session workspace database (Level 0's staging target)
 
 > **Ownership, stated once and binding on every mention below (GP1).** **NX-5 owns the workspace
 > database and every operation on it**; **NX-6 owns every decision about when those operations
-> run.** NX-5's surface is five operations, reachable by NX-6 and by nothing else: `ensure()`,
-> `append(table, rows, affinities)`, `residency_bytes()`, `spill(target_path)`, `drop(table)`.
+> run.** NX-5's surface is **six** operations reachable by NX-6: `ensure()`,
+> `append(table, rows, affinities)`, `residency_bytes()`, `storage_class_profile(table)`,
+> `spill(target_path)`, `drop(table)`.
 > NX-6 does the charging, the residency comparison, the free-disk floor and aggregate-spill-cap
 > gate, the `contain_path` check on the spill target, and the abort decision — then calls one of
-> those five. **NX-6 never touches the workspace backend directly** (which is why §3's component
+> those six. **Two further operations exist and are reachable only at process boundaries, by
+> `server/mcp_app.py` and by nothing else** — `reap_orphans()` at boot (§5.6) and `dispose()` at
+> shutdown and on idle eviction (§5.7). They are named here because an earlier revision stated the
+> surface as "five operations, reachable by NX-6 and by nothing else" while the same document used
+> both of these with a non-NX-6 caller, and a rule stated as an exhaustive enumeration that its own
+> document contradicts is unciteable. Their containment posture is stated where they are specified
+> rather than left implicit: the reaper's deletions are confined to `spill_dir` by the same resolved
+> disjointness rule NX-6's gate applies (§5.5 step 2, §5.6), which is the check NX-6 would otherwise
+> have performed. **NX-6 never touches the workspace backend directly** (which is why §3's component
 > diagram routes Level-0 staging through NX-5 like every other backend touch, and why the earlier
 > "the record is NX-5's, the staging is NX-6's" split — which left the spill disk gate with two
 > owners, §8 giving it to NX-6 and §5's config table to `WorkspaceStore.spill()` — is superseded
@@ -834,7 +906,7 @@ The record's fields, and the rules that make each of them mean something:
   are load-bearing and neither is a default:
 
   - **Every** checkout takes the lock — an ordinary read through `guarded_query` exactly as much as
-    one of NX-5's five operations. It is the *read* that breaks all three cases, so a lock only the
+    one of NX-5's six operations. It is the *read* that breaks all three cases, so a lock only the
     writers take would close nothing.
   - `RLock`, not `Lock`, because NX-5's operations compose (`spill()` reads `residency_bytes()`
     before it migrates) and a plain `Lock` would deadlock the writer against itself. `RLock` relaxes
@@ -888,37 +960,58 @@ The record's fields, and the rules that make each of them mean something:
   defense-in-depth shape §7 uses for the SQL deny-set — but the *guarantee* is the engine's, and the
   serialization under it is now a mechanism rather than a claim.
 - **`storage`** is `memory | spilled`, and **`spill_path`** is set only in the second state.
-- **`residency_bytes`** is the **measured** figure `page_count × page_size`, read from the live
+- **`residency_bytes`** is the **measured** figure `(page_count − freelist_count) × page_size`, read
+  from the live
   database after every batch write. This is the observation GP9 is built on: it is SQLite's own
   count of pages it has actually allocated, so it is blind to nothing — a BLOB column, a nested
   list flattened into text, a pathologically wide row all land as real pages. It replaces the
   entire upfront-estimator surface (`ingest/connectors/file/readers.py`'s
   `_EXPANSION_FACTOR` / `_logical_materialization` / `_arrow_array_bytes` / `_hdf5_materialization`
   machinery), which §7 deletes rather than extends.
-  **The measure needs one pragma to be honest, and this design sets it: `PRAGMA
-  auto_vacuum=FULL`, at `ensure()`, before the first table exists.** Without it the figure
+  **The freelist subtraction is what makes the figure honest, and it is the measure precisely
+  because it does not depend on a pragma being set.** A bare `page_count × page_size`
   **ratchets**: `page_count` does not shrink when a table is dropped, so the design's *own* abort
   path inflates it permanently — measured directly for this revision, 1058 pages before a
   `DROP TABLE` and 1058 after, with `freelist_count` = 1057 of them free
-  (`tmp/arch-workspace/supervisor-verification.md`). N refused loads would leave the workspace
+  (`tmp/arch-workspace/supervisor-verification.md`), and re-measured at 400k rows: 21.02 MB before a
+  `DROP` and 21.02 MB after, with 5130 pages free. N refused loads would leave the workspace
   measuring at its high-water mark while holding no rows, so the next perfectly legitimate load
   spills — or, with `spill_dir` unset, refuses — for no reason at all. That is not a tuning nit:
   the ratchet is triggered by the design's own named failure path, so the first adversarial test
-  of the abort path hits it. With `auto_vacuum=FULL` the same sequence reclaimed 1059 of 1060
-  pages. **The rejected alternative is `(page_count − freelist_count) × page_size`**, which is
-  equally accurate as *accounting* and was the audit's other suggestion — rejected because it
-  makes the ledger honest while the process still holds the pages: the budget would read low while
-  RSS stayed high, which inverts what the budget exists to protect. `auto_vacuum=FULL` returns the
-  memory instead of merely describing it correctly. Its cost is stated rather than glossed: FULL
-  relocates pages at every commit that frees pages, and on the load path nothing frees pages, so
+  of the abort path hits it. Subtracting the freelist reads **0.00 MB** after that drop, which is
+  the truth about what the database holds.
+  **`PRAGMA auto_vacuum=FULL` is still set at `ensure()`, before the first table exists — but for a
+  different reason than the previous revision gave, and that reason was wrong.** It said `FULL` was
+  preferred because it "returns the memory rather than merely accounting for it correctly". **That
+  claim is not true and it is retired here in place, so the change is auditable.** Measured on this
+  machine, 400k rows, one clean process per setting: after the `DROP`, the freelist-subtracted
+  measure reads 0.00 MB under *both* settings, and `ru_maxrss` moves by +0.17 MB (`NONE`) and
+  +0.18 MB (`FULL`) — i.e. neither returns anything, because `ru_maxrss` is a high-water mark and
+  cannot fall. Worse for the old argument: reloading the same 400k rows after the drop cost **+0.50
+  MB** of RSS under `NONE` (the freed pages are reused in place) against **+1.98 MB** under `FULL`.
+  On the `:memory:` path the two settings are equivalent as accounting and `FULL` is marginally
+  worse as allocation. **The true reason to keep `FULL` is the spilled path**, where the resource is
+  a *file* under a *budget* and pages genuinely do not get reused by an in-process allocator: after
+  a compensating drop on a spilled workspace, `FULL` compacts the file while the default leaves it
+  at its high-water size, consuming the `max_spill_bytes` directory budget (§5.5) for rows that no
+  longer exist. That is a real, un-refuted benefit on the axis that has a real scarcity, and it is
+  what the choice now rests on. Its cost is unchanged and still small: FULL relocates pages at every
+  commit that frees pages, and on the load path nothing frees pages, so
   the cost lands only on `DROP TABLE` — the abort path, where a little work is exactly the right
-  trade. **Caller:** `WorkspaceStore.ensure()`, before any DDL. **Test that fails if the caller
-  disappears:** load a file, force the compensating drop, and assert `residency_bytes` returns to
-  its pre-load baseline — asserted on **both** storage states, `:memory:` and spilled, so that
-  whether `VACUUM INTO` carries the source's `auto_vacuum` setting to the target is proven by the
-  suite rather than assumed from the documentation.
-- **`tables`** maps table name → declared column affinities, the set of columns recorded as *mixed*
-  with their `typeof` histograms (the record `describe_table` renders, §5.4), row count, and the
+  trade. **Caller:** `WorkspaceStore.ensure()`, before any DDL. **Tests, one per claim, because the
+  previous single test passed under both options and would have caught none of this:** (a) the
+  measure — load a file, force the compensating drop, assert `residency_bytes` returns to its
+  pre-load baseline, on **both** storage states, which also proves `VACUUM INTO` carries the
+  source's `auto_vacuum` setting to the target rather than assuming it from the documentation; and
+  (b) the pragma — on a **spilled** workspace, assert the spill file's on-disk size after a
+  compensating drop is close to its pre-load size, which is red without `FULL` and is the only leg
+  that can be. Neither test asserts that memory was returned to the OS, because §5.3 records that
+  neither option does.
+- **`tables`** maps table name → each column's **declared affinity** and its **storage-class
+  profile** — the end-of-load per-class counts from `storage_class_profile()` (this subsection),
+  which is simultaneously the record `describe_table` renders, the derivation of the *mixed* set,
+  and the input the cross-table key check reads without re-scanning anything — plus row count, and
+  the
   **source provenance** recorded at load time (canonical path, mtime, size). That last field closes a gap
   the harvest found MISSING in *both* trees: `main` wrote `_check_file_modified` and never called
   it (`database_manager.py:3688`, zero callers; `source_file_mtime` never assigned), and v3 will
@@ -937,8 +1030,8 @@ stem (plus the sanitized sheet name for a multi-sheet workbook), sanitized by th
 sanitizer (`main`'s `file_processor/engine.py:148-171` — the harvest's verdict is KEEP, *the caller
 misuses it*), and **resolved exactly once per (file, sheet) before the batch loop begins**. That
 one sentence fixes a latent `main` defect the harvest found and no test caught: `main` re-sanitized
-per chunk against an accumulating `used_names` set (`engine.py:88-96`), so any sheet larger than
-one chunk fragmented across `Sales`, `Sales_1`, `Sales_2`… (its multi-sheet tests used 3- and
+per batch against an accumulating `used_names` set (`engine.py:88-96`), so any sheet larger than
+one batch fragmented across `Sales`, `Sales_1`, `Sales_2`… (its multi-sheet tests used 3- and
 10-row sheets). A caller-supplied `table=` overrides the derivation; a collision with an existing
 workspace table is refused with a suggestion naming `table=` and `replace=True`, never silently
 overwritten.
@@ -976,16 +1069,79 @@ triggered *by* a type conflict during a load, not at leisure.
 So the decision, in three parts:
 
 1. **Keep the declared affinity.** Affinities are declared from the first batch and never altered.
-   Values retain their natural per-value storage class, which means `typeof(col)` remains an **exact
-   per-value discriminator** — the one thing a caller can act on, and the one thing a rebuild would
-   erase.
-2. **Detect the conflict and signal it as a first-class part of the load result.** When a later
-   batch's dtype for a column does not match the declared affinity, the column is recorded as
-   **mixed** in `LoadReport`, carrying its per-storage-class histogram from
-   `SELECT typeof(col), count(*) … GROUP BY 1` — cheap, exact, **measured rather than predicted**
-   (GP9), and taken from the table that now exists rather than guessed from the frames that built
-   it. The same record is exposed through `describe_table`, so a caller arriving later — a different
-   turn, a different tool — sees it without having held the load report.
+   Values retain their natural per-value storage class, which is what makes `typeof(col)` usable as
+   a per-value discriminator at all — and it is the one thing a rebuild would erase. **What
+   `typeof()` can and cannot discriminate is stated precisely below**, because the previous revision
+   stated it universally and the universal claim is false in three separate ways.
+2. **Derive mixedness from the table, at end of load, for every column — never from the frames'
+   dtypes.** The previous revision keyed detection on a **cross-batch dtype change** (*"when a later
+   batch's dtype for a column does not match the declared affinity"*), and that observable is the
+   wrong one in both directions, executed:
+   - **Blind to the modal case.** A file smaller than `workspace.load_batch_rows` is **one batch**,
+     so no cross-batch conflict can occur at all. A single-batch column `1,2,3,abc,5` collapses to
+     one `str` dtype, stores as `text 5`, answers `avg` = 2.2 against a truth of 2.75 over the
+     numerics — and nothing is flagged on any surface. Most spreadsheets and CSVs a single operator
+     loads are one batch, so the detector was blind to the common case and awake only for the rare
+     one. A second blind case needs no size argument: two `object` batches carrying different
+     Python types inside are a dtype *match*, so nothing is flagged while the stored column is
+     genuinely mixed.
+   - **Noisy on clean columns.** One empty field at a batch boundary flips `int64` → `float64`, a
+     dtype conflict against a declared `INTEGER` affinity — so a column whose stored classes are
+     `integer 5 / null 1` and whose `avg` is exactly correct gets reported *mixed*. A caller taught
+     that "mixed" appears on clean numeric columns learns to ignore the flag, which is the one thing
+     a signal-not-refuse design cannot afford.
+
+   Under GP9's own form this is the principle applied to the schema layer: pandas dtype is R, stored
+   storage class is Q, and the trigger predicted Q from R while the histogram it triggered measured
+   Q. So the trigger is **deleted** and the measurement is taken unconditionally: at end of load,
+   **one pass over the staged table counts the storage classes of every column**, and *that* count
+   decides which columns are mixed. Complete by construction, no false positives, no false
+   negatives, and nothing on the write hot path inspecting values (which is also what stops an
+   implementer from breaking §7's non-materialization invariant to get a signal).
+
+   **The form is one statement, and the complete detector measures cheaper than the incomplete one
+   did.** `count(*) FILTER (WHERE typeof(<col>) = '<class>')` over the five storage classes for
+   every column, in a single scan, rather than one `SELECT typeof(c), count(*) … GROUP BY 1` per
+   flagged column. Measured on this machine, a 200,000-row × 40-column `:memory:` table (three runs,
+   best of three, the same table for both forms):
+
+   | form | clean data | with 4 mixed columns |
+   |---|---|---|
+   | per-column `GROUP BY`, the previous specification | 7.61 s | 7.46 s |
+   | **one-pass `count(*) FILTER`, this specification** | **4.04 s** | **3.77 s** |
+
+   for a load that itself took 3.42 s in the same run — so the profile costs on the order of the
+   load, not a rounding error, and calling it "cheap" (as the previous revision did) was wrong by
+   two orders of magnitude against the two-pragma residency read it sits beside. The honest
+   statement is that it is **one scan of the table just written, roughly the cost of writing it**,
+   and it scales in rows × columns: ~0.5 µs per row per column, so a single column at 1M rows is
+   ~550 ms as a `GROUP BY` and the one-pass form amortizes that across all columns at once. The
+   statement's result-column count is 5 per column, so it is **chunked into column groups sized from
+   the engine's own reported `SQLITE_LIMIT_COLUMN`** (2000 here, read from the connection rather
+   than written as a literal) — without which a table wider than 400 columns cannot be profiled at
+   all.
+
+   **No opt-out knob, and that is a decision rather than an omission.** Every other numeric in this
+   revision is an NX-2 field, and an unbounded cost with no knob is normally the same defect class
+   as a module literal. It is refused here because the profile is no longer an optional embellishment
+   on a load report: it is the *detector* (this rule), and it is the input to the cross-table key
+   check below. A field whose off-position silently disables two correctness signals is a footgun,
+   and the design's own ruling on this exact question is that **silence is the defect**. What is
+   configurable is the *response* to a conflict, which is `workspace.dtype_conflict`, below. The
+   measured alternative is recorded in §10 as a tuning path rather than adopted: a first pass of
+   `min(typeof(c)), max(typeof(c)), count(c)` per column identifies the non-uniform columns in 2
+   aggregates instead of 5 and needs the per-class `GROUP BY` only for those — measured 3.08 s on
+   clean data, i.e. inside the noise of the chosen form on this machine, and cheaper only when few
+   columns are mixed.
+
+   **A binder-side counter was considered and is rejected on GP9, not on cost.** The value binder
+   specified below visits every value on the way to the cursor, so it could accumulate the profile for free with no
+   scan at all. It is refused because SQLite applies **column affinity after binding**: a text `'1'`
+   bound into an `INTEGER`-affinity column is *stored* as an integer (verified — a column declared
+   `INTEGER` and fed `'1','01','007','7.0','10','abc'` stores `integer 5 / text 1`). A binder-side
+   count would therefore report what was sent, not what is stored, which is a prediction of Q from R
+   — the exact form GP9 forbids, arrived at from the cheap direction. The scan is the price of the
+   principle, and stating that is better than paying it silently.
 3. **Signal rather than refuse, and make strictness the knob.** Refusing an entire load because one
    column of forty is mixed fails the flagship path — making files queryable — for a condition the
    caller can work around the moment it is told: `WHERE typeof(col)='integer'`, or an explicit
@@ -993,20 +1149,94 @@ So the decision, in three parts:
    so the LLM adjusts and refines the pipeline iteratively"*, and that is what a signal does and a
    refusal does not. **Silence is the defect here; refusal is the over-correction.** So
    `workspace.dtype_conflict` is an NX-2 field defaulting to **signal-and-continue**, with
-   **refuse-on-conflict** available for a caller that wants the load to fail loudly.
+   **refuse-on-conflict** available for a caller that wants the load to fail loudly. **`null` is not
+   a conflict:** mixedness is judged over the non-null storage classes, so `integer 199,997 / null 3`
+   is a clean column with missing values and is not reported mixed, while the null count is still
+   carried in the profile because a caller wants it. That one rule is what kills the false-positive
+   direction; without it the new observable reproduces the old detector's noise in a new form.
 
-**Caller:** NX-5's `append()` detects the mismatch as it binds the batch (it is the only code that
-sees both the declared affinity and the incoming dtype) and reports it upward; NX-6's staging loop
-records it in `LoadReport`, runs the `typeof` histogram once at end of load, and consults
-`workspace.dtype_conflict` on whether to continue or abort through the ordinary compensating-drop
-path (§5.5). **Test that fails if either caller disappears:** load a two-batch fixture whose column
-is integer in batch 1 and text in batch 2, then assert three things — the load succeeds under the
-default; `LoadReport` marks the column mixed and carries the histogram `integer N / text M`;
-`describe_table` reports the same. A fourth assertion pins the behaviour that made the old answer
-wrong: `avg(col)` over that table is asserted to be the coerced value, *not* the numeric mean, so the
-test documents the hazard the signal exists to announce and turns red if someone "fixes" it by
-rebuilding the column. A fifth runs the same fixture under `refuse-on-conflict` and asserts the
-table is absent afterwards.
+**What `typeof()` actually discriminates, stated precisely because the previous revision's universal
+claim is false in three separate ways.** It reports the **stored** storage class of each value, and that is not the same question as
+"what did the file contain":
+
+- It **does** distinguish values that arrived as different storage classes and stayed that way —
+  `integer 5 / text 2` for five numbers followed by two words. This is the discriminator the T5
+  ruling turns on and it is real.
+- It **does not** recover a value that column affinity converted on the way in. Numeric-looking text
+  bound into an `INTEGER`-affinity column is stored as an integer and reports `integer`, so the
+  profile describes the classes queries will actually see — which is the operative truth for a
+  caller writing `WHERE typeof(col)='integer'` — and *not* the classes the source file held.
+- It **did not** discriminate at all for extension-dtype columns until this round: `Int64` and
+  `boolean` bound as raw BLOBs, and BLOB outranks affinity, so the column stayed blob-typed and
+  `avg` returned 0.0 against a truth of 2.0 (the silent-BLOB table below). **The value binder below
+  closes exactly that hole** — every value now crosses a converter that maps it to a real SQLite storage
+  class or refuses it — so from this revision forward `typeof()` is exact *over what the binder
+  admits*, which is the scope of the claim. It was never exact before the binder existed, and the
+  previous revision asserted it anyway.
+
+**Cross-table key mismatch: the profile answers a hazard the per-column apparatus structurally
+cannot see.** Everything above is per column within one load. The flagship capability — joining two
+files in one database — has a **pairwise** hazard instead, and it is worse than the mixed-column
+case because it produces *more rows* rather than a wrong aggregate, so it does not even look
+anomalous. Executed for this revision, `a` holding integer keys `1, 7, 10` and `b` holding the same
+identifiers as text `'1','01','007','7.0','10','abc'` (zero-padded ids from a CSV parsed as string):
+
+| `a`'s affinity | `b`'s affinity | rows the JOIN returns |
+|---|---|---|
+| `INTEGER` | `TEXT` | **5** |
+| `TEXT` | `INTEGER` | **5** |
+| `INTEGER` | `INTEGER` | **5** |
+| `TEXT` | `TEXT` | **2** |
+
+Neither column is mixed, so nothing above reports anything. The mechanism is SQLite's comparison
+rule: when either side has numeric affinity the text operand is converted, so `'1'` and `'01'` both
+match integer 1 and the fact row fans out; with both sides textual the comparison is by string and
+the same query answers 2. **The row count is decided by a pair of affinities that two independent
+loads chose independently, and no surface reports either.** The same disagreement changes `DISTINCT`
+(measured: 3 groups over a `TEXT` column against 1 over an `INTEGER` one, same four values) and
+`ORDER BY` (`[2, 9, 10]` against `['10','2','9']`).
+
+**The design signals it, and the mechanism is already paid for.** The per-column storage-class
+profile that rule 2 computes is recorded as load metadata in the `tables` map (below), so comparing
+two join keys needs **no new scan and no new pass over any data** — it is a lookup of two records
+this process already holds. NX-6 extracts the equi-join column pairs from the AST it **already
+parses for every statement** (NFR-104's validator, `sql_validate/walker.py`); verified against the
+pinned `sqlglot` 30.13.0 that the extraction covers explicit `ON a.k = b.k`, comma-joins with the
+predicate in `WHERE`, `USING (k)`, and multi-join statements, resolving aliases to table names. When
+both keys resolve to workspace tables whose recorded profiles have **no storage class in common**,
+the result carries a `key_class_mismatch` note naming both tables, both columns, and both profiles.
+It is a **note, not a refusal**, for the same reason and by the same ruling as the mixed-column
+signal: the caller's recourse is an explicit `CAST` on one side, and refusing a legitimate join
+because two CSVs disagree about a key's type fails the flagship path for a condition the caller can
+fix once told.
+
+**Its limits are stated, because the profile answers one of the two questions.** It detects that two
+join keys **disagree about their storage class** — the `INTEGER`/`TEXT` and `TEXT`/`INTEGER` rows
+above. It does **not** detect the `INTEGER`/`INTEGER` row, where both profiles agree and the fan-out
+comes from distinct source strings that are numerically equal (`'1'` and `'01'`) — that is a
+property of the *data*, not of the types, and no type-level check can see it. The honest consequence
+is carried in §10 as a named residual rather than implied away here. **Caller:** NX-6, in the same
+validation pass that already classifies the statement — so the check disappears if and only if the
+validator does. **Test that fails if the caller disappears:** load the two fixtures above, JOIN
+them, assert the note names both tables with their profiles and that the result still returns its 5
+rows (signal, not refusal); a second leg loads two files whose keys share a storage class and
+asserts **no** note, so the check cannot be satisfied by always warning.
+
+**Caller for the profile:** NX-6's staging loop, once at end of load, through **NX-5's
+`storage_class_profile(table)`** — the sixth workspace operation, added because the previous
+revision told NX-6 to run a `SELECT` itself while the ownership rule three paragraphs above forbids
+NX-6 touching the workspace backend at all. NX-6 records the result in `LoadReport`, derives the
+mixed set from it, and consults `workspace.dtype_conflict` on whether to continue or abort through
+the ordinary compensating-drop path (§5.5). The same record is exposed through `describe_table`, so
+a caller arriving in a later turn sees it without having held the load report. **Test that fails if
+either caller disappears:** load a **single-batch** fixture whose column is `1,2,3,abc,5` — the case
+the previous detector could not see — and assert four things: the load succeeds under the default;
+`LoadReport` marks the column mixed and carries the profile; `describe_table` reports the same; and
+`avg(col)` is asserted to be the coerced value, *not* the numeric mean, so the test documents the
+hazard the signal exists to announce and turns red if someone "fixes" it by rebuilding the column. A
+fifth leg loads a clean integer column with one empty field and asserts it is **not** reported mixed
+(the null rule, red under the old dtype trigger). A sixth runs the mixed fixture under
+`refuse-on-conflict` and asserts the table is absent afterwards.
 
 **Binding the frame to the cursor: the value binder, and what it refuses.** §7's write primitive
 feeds `executemany` a lazy row iterator, which is what makes the write's memory transient flat — but
@@ -1031,7 +1261,7 @@ cells, and all four `pd.NA`-bearing nullables. The silent set is the dangerous o
 
 **A declared `INTEGER` affinity does not rescue a BLOB** — BLOB outranks affinity, so the column stays
 blob-typed and `avg` returns **0.0 against a truth of 2.0** with `count` = 3, on a *clean
-single-dtype column with no mixed data anywhere*. That is the wrong-answer class the whole of §5.4
+single-dtype column with no mixed data anywhere*. That is the wrong-answer class this whole subsection
 exists to prevent, reached silently, and it defeats T5's mechanism *before* the mixed-column question
 is even asked: `typeof(col)` is not an exact per-value discriminator for any extension-dtype column
 until this layer exists. The third BLOB row is worse than the first two because a parquet list column
@@ -1072,14 +1302,14 @@ That is still a generator: nothing is materialized, and §7's invariant 1 holds 
 **`Decimal` is the one entry that trades something, so it is argued rather than tabled.** SQLite has
 no decimal type and three placements are available: `real` (arithmetic works, ~15–16 significant
 digits retained), `text` (exact, but every aggregate over the column silently coerces to 0 — the
-precise hazard §5.4's mixed-column ruling exists to announce), and refusal (a parquet `decimal128`
+precise hazard the mixed-column ruling above exists to announce), and refusal (a parquet `decimal128`
 column is ordinary financial data; refusing it fails the flagship path for a supported format).
 `real` is chosen because the design's governing property is that **a value which reaches SQL either
 answers arithmetic correctly or does not arrive**, and `text` breaks that on a clean column. The
 residual — a `decimal128` beyond float64's significand loses low-order digits — is real, so the
 column is recorded as converted in `LoadReport` and rendered by `describe_table`, **through the same
 per-column channel that carries the mixed-column record** rather than a second one. It is
-individually reversible: flipping to `text` is one table row plus the aggregate warning §5.4 already
+individually reversible: flipping to `text` is one table row plus the aggregate warning this subsection already
 documents.
 
 **The refusal is by absence from the table, not by an enumerated denylist — and that is what makes it
@@ -1133,17 +1363,55 @@ measured `residency_bytes` against `workspace.memory_budget_bytes`; crossing it 
 the **residency ledger** (§5.3), which is the same pressure arriving from a different direction —
 triggers migration.
 
+**Two thresholds govern the same physical resource, and their relation is stated and validated
+rather than left for a reader to guess.** `resources.memory_ceiling_bytes` (§5.3, existing and
+LOCKED) is the **process-wide** ceiling every consumer charges against; `workspace.memory_budget_bytes`
+is **one consumer's** threshold, the point at which the staged database migrates to disk. The
+required relation is therefore **`workspace.memory_budget_bytes < resources.memory_ceiling_bytes`**,
+validated at config load with the same typed `ConfigurationError` and for the same reason as §5.8's
+connection arithmetic: config load is the only point at which both numbers are visible. At or above
+the ceiling the workspace threshold can never fire first — the ledger always refuses first — so the
+design's *normal* spill path becomes unreachable and every spill arrives through the refusal branch.
+That is dead config in the CR-006 sense, and it is refused rather than shipped. **Test:** a config
+with the workspace budget at or above the process ceiling fails startup naming both fields.
+
+**The asymmetry with §5.8 is real and it has an answer**, because "one axis is proved at config time
+and its sibling is not" is exactly the question this design owes: **connections are reserved,
+memory is charged.** A connection permit is taken at registration and held whether or not a
+connection exists, so a configuration can be *statically* over-subscribed and only config-time
+arithmetic can catch it. Memory is charged when the bytes exist and released when they go, so the
+ledger refuses at the moment of truth with the real number in hand, and a config-time sum over
+worst-case consumers (`4N` chunk registries at `query.chunk_buffer_max_bytes` each, plus the
+workspace budget, plus every in-flight analysis) would refuse configurations that never come close
+to the ceiling in practice. So the memory axis gets the one config-time check that is genuinely
+static — the relation above — and the ledger enforces the rest. What the design does **not** claim
+is that the sum of every consumer's threshold fits under the ceiling; it claims the ledger stops
+them jointly, which is §5.9's bound (2).
+
 **What a ledger refusal does, stated once because the document previously gave two incompatible
 answers** (it said a refusal triggers a spill in one paragraph and aborted the load in another, and
 those cannot both be true of the single most consequential branch in the design):
 
-> **A residency-ledger refusal asks for a spill. It is never itself the abort.** The abort is what
-> happens when the spill answer is *no*.
+> **A residency-ledger refusal *on the Level-0 load path* asks for a spill. There it is never itself
+> the abort; the abort is what happens when the spill answer is *no*. On the two paths where there
+> is no workspace to spill, a refusal has its own defined consequence: it pauses a `ChunkRegistry`'s
+> buffer top-up (§5.9), and it fails a composition drain with a structured refusal (§6.3).**
+
+The scope clause is not decoration. The rule was previously stated with none, so a reader who
+internalised "a refusal is never the abort" met §6.3 — where a refusal mid-drain *is* the stage
+failure — and had to conclude either that the document contradicts itself or that the sentence
+carried a scope it never wrote. That is the same failure GP9's scope clause exists to prevent, in
+the same document, and it is fixed the same way.
 
 Concretely, and in this order: on a refusal NX-6 evaluates the spill gate. If the workspace is still
 in `:memory:`, `workspace.spill_dir` is set, and the free-disk floor and aggregate spill cap both
-pass, the workspace **spills** — which releases its ledger charge (step 5) and lets the load
-continue, because the pressure the refusal reported is exactly the pressure the migration relieves.
+pass, the workspace **spills** — which releases its `:memory:` ledger charge (step 5) and lets the
+load continue. **What the spill relieves is stated conditionally, because step 5 replaces the
+released charge rather than zeroing it:** the migration relieves the reported pressure whenever the
+workspace's current residency exceeds the on-disk page-cache bound that replaces it (step 5). Where
+it does not — a refusal can arrive from process-wide pressure while the workspace itself sits below
+`workspace.memory_budget_bytes` — the spill is not the relief, and the design says so rather than
+promising a relief its own step 5 denies.
 The load **aborts**, through the compensating drop of step 7, in the three cases where spilling
 cannot relieve it: the workspace is **already spilled** (spill is one-way, so there is no second
 migration to make), `spill_dir` is **unset** (the fail-closed default: no spill was ever authorized),
@@ -1557,13 +1825,17 @@ from **`resources.max_concurrent_connections`** (default ~10, per the genesis cl
 `EngineHandle` construction acquires **as many permits as that engine's pool can ever hold
 physically**, not one permit per engine:
 
-- a **declared endpoint** reserves its `resources.max_connections_per_endpoint` pool ceiling, and
-  its engine is built `pool_size=<that ceiling>, max_overflow=0` — so the reservation is not an
-  estimate of what the pool might use, it is a structural cap the pool cannot exceed;
+- a **declared endpoint** reserves **what its handle can physically hold**, which is a property of
+  the backend and not one global number (the previous revision used the global number, and that is
+  the defect this bullet fixes — see below);
 - an **ephemeral file open** reserves 1, for the duration of its call (it is exactly one
   connection, never pooled — §5's ephemeral rule);
 - the **workspace** reserves 1 (it is exactly one `StaticPool` connection — the posture bullet
-  above), and a spill swap replaces the registration rather than adding one.
+  above), and a spill swap replaces the registration rather than adding one. That swap is the
+  **one declared exception** to "every construction acquires permits": it takes zero, deliberately,
+  because taking a permit under memory pressure could fail at exactly the moment it must not, and
+  for the duration of the swap two physical connections exist against one permit. Stated as an
+  exception rather than left to contradict the rule three paragraphs above it.
 
 **An earlier draft of this paragraph counted engines, and that was an 8× hole.** With a ceiling of
 ~10 *engines* and `max_connections_per_endpoint` = 8, the design admitted up to 80 physical
@@ -1572,19 +1844,62 @@ all that it was emergent, at least counted the right thing. Counting connections
 number mean what the genesis says it means, and `max_connections_per_endpoint` becomes what it
 already reads as: a per-endpoint share of one global budget.
 
-**The budget is proved to fit at config time, not discovered exhausted at run time.** Warm-up
-reserves every declared endpoint's pool ceiling, so a configuration declaring enough endpoints to
-consume the whole budget would leave `load_file` refusing forever with nothing in the error to
-explain why. NX-2 therefore validates the arithmetic when it validates the config: **Σ (each
-declared endpoint's `max_connections_per_endpoint`) + 1 for the workspace + 1 for an ephemeral open
-must be ≤ `max_concurrent_connections`**, refused otherwise with a typed `ConfigurationError`
-showing the sum and the shortfall. The two 1s are not tuning numbers — they are the structural
-facts stated above (a workspace is one connection; an ephemeral open is one connection), which is
-why they are arithmetic here rather than a third config field. **Caller:** NX-2's config
-validation, at load, beside the reserved-name rule. **Tests that fail if either caller
-disappears:** an over-subscribed config fails startup with the typed error naming the arithmetic;
-and with the budget saturated at run time, `load_file` refuses immediately with the ceiling-shaped
-NX-3 refusal (below) rather than blocking.
+**But the correction over-shot, and as it stood a two-endpoint configuration could not boot.**
+`resources.max_connections_per_endpoint` is **one global field, LOCKED at 8**
+(`nexus/config/models.py:53`, applied per endpoint at `nexus/persistence/limits.py:40` — both read
+directly), so "Σ each endpoint's pool ceiling + 1 + 1 ≤ `max_concurrent_connections` ≈ 10" evaluates
+to `8N + 2 ≤ 10`, i.e. **N ≤ 1**. A configuration declaring two databases — the ordinary case for a
+tool whose flagship feature is cross-source analysis — failed startup, and the operator's only
+remedy was to lower a field this design does not own. Two facts fix it, and both were verified in
+the tree rather than assumed:
+
+- **Eight is not what most endpoints hold.** `pool_size=max_connections_per_endpoint` is set in
+  exactly one place — `_networked_handle` (`nexus/persistence/engines.py:251-282`, `QueuePool`,
+  `max_overflow=0`), i.e. for server backends. Every **SQLite** endpoint and every kv/tree/graph
+  store is built `StaticPool` (`:194-212`, `:215-236`) and holds **one** connection. **DuckDB**
+  (`DuckDbHandle`, `:128-155`) retains nothing between calls — each `connect()` opens and closes
+  one. **RDF** (`RdfHandle`, `nexus/persistence/rdf.py:139-165`) parses an in-process graph and
+  holds **zero** backend connections. So a reservation of 8 for a SQLite endpoint was not a
+  conservative bound, it was a wrong one, and the common local configuration was refused for
+  connections that could never exist.
+- **A ceiling is a ceiling, not a quota.** `max_connections_per_endpoint` bounds a pool from above;
+  nothing requires an endpoint to be *given* its ceiling. So the pooled endpoints **share the
+  budget** instead of each claiming it, which is what §5.8's own sentence ("a per-endpoint share of
+  one global budget") already promised and the arithmetic contradicted.
+
+**The reservation, restated:** each endpoint reserves `min(its handle's physical ceiling, its share
+of the budget)`, where the physical ceiling is 1 for `StaticPool`, DuckDB and ephemeral opens, 0 for
+RDF, and `max_connections_per_endpoint` for a networked pool; and the share is
+`floor((max_concurrent_connections − 1 workspace − 1 ephemeral − Σ the fixed 0/1 reservations) / P)`
+over the `P` pooled endpoints, floored at 1. A networked endpoint's engine is then built
+`pool_size=<its reservation>, max_overflow=0`, so the reservation remains a **structural cap the
+pool cannot exceed** rather than an estimate. This is an NX-2 **derived** field by the mechanism the
+config model already uses for `query.max_analysis_rows` (`cfg_field(DERIVED, derive=…)`,
+`nexus/config/models.py:78-80`) — one formula, one home, no new literal.
+
+**What that makes bootable, at the locked defaults** (`max_concurrent_connections` ≈ 10,
+`max_connections_per_endpoint` = 8): two SQLite endpoints → `1+1+1+1 = 4`. One networked endpoint →
+`min(8, 8) + 2 = 10`. Two networked → `min(8, 4) × 2 + 2 = 10`, four connections each. Eight
+networked → 1 each. Nine → the floor of 1 cannot be met and the configuration is refused, which is
+the only case where refusal is the truth.
+
+**The budget is still proved to fit at config time, and the proof now proves something.** NX-2
+validates when it validates the config: **Σ (each endpoint's reservation) + 1 for the workspace + 1
+for an ephemeral open must be ≤ `max_concurrent_connections`**, refused otherwise with a typed
+`ConfigurationError` showing the sum, the per-endpoint reservations it derived, and the shortfall —
+naming the reservations matters, because "your two endpoints got four connections each" is the
+information an operator needs and a bare sum is not. The workspace `1` is a structural fact (one
+`StaticPool` connection). **The ephemeral `1` is a guaranteed minimum, not an assumption that only
+one is ever in flight** — the previous revision presented it as the latter, and concurrent tool
+dispatch in this server is real (§5.4's posture bullet). It reserves enough that *at least one*
+ephemeral open always fits; a second concurrent `query_file` competes for whatever permits are free
+and, at the ceiling, gets the immediate non-blocking refusal below. That is a true statement about
+what the arithmetic buys, where "at most one ephemeral open exists" was not. **Caller:** NX-2's
+config validation, at load, beside the reserved-name rule. **Tests that fail if either caller
+disappears:** a two-SQLite-endpoint config **boots** (red under the previous arithmetic, which is
+the regression this leg exists to pin); a nine-networked-endpoint config fails startup with the
+typed error naming the derived reservations; and with the budget saturated at run time, `load_file`
+refuses immediately with the ceiling-shaped NX-3 refusal (below) rather than blocking.
 
 `BoundedSemaphore`, not `Semaphore`, so the over-release bug the harvest found on `main`
 (`:2675-2715` releasing a permit for a still-registered connection, silently inflating the ceiling
@@ -1662,9 +1977,21 @@ what removes it: the registry's dominant occupant used to be whole files read in
 those are now workspace tables served by SQL. What is left in a registry is bounded **by the
 registry's own K/B rule**, so the deep traversal runs over a frame whose size the same knob already
 caps — the identical argument §7 makes for measuring every load batch, now available on this path
-too. So each chunk is measured as it enters the buffer, and NFR-204's chokepoint-overhead assertion
-— already extended to cover the load path's per-batch measurement — covers this cost as well, so it
-is **measured rather than assumed tolerable**. **Caller:** the buffer top-up in NX-6's
+too. So each chunk is measured as it enters the buffer, and the cost of measuring is itself measured
+rather than assumed tolerable — **but not by the assertion the previous revision named**. NFR-204's
+chokepoint-overhead assertion is defined in §7 as a **p99 SQL-validation latency** bound, and a
+`sqlglot` parse-latency bound is satisfied identically whether `memory_usage(deep=True)` costs 1 µs
+or 1 s: the two are measured at different call sites on different inputs. Citing it here was a test
+named so loosely it could not fail for this reason, which is the defect class this document exists to
+remove. **NFR-204's assertion is therefore split in two**: one leg keeps the validation-latency
+bound, and a second leg asserts a **per-chunk and per-batch measurement-overhead ceiling** on the
+only fixture shape that can make it red — an `object` column holding containers. The cost is bounded
+and known: on pandas 3 the deep traversal is free for strings and numerics (1.0–1.2× the shallow
+read, ~0.5 ns/cell) because the native `str` dtype removes the per-element `sys.getsizeof` loop, and
+it is 195 ns/cell and 10× the shallow read only for `object` columns of containers — ~113 ms for one
+chunk at `query.chunk_buffer_max_bytes`. That is affordable and it is the same nested-object class §7
+already carries as a residual; what was not affordable was claiming coverage from an assertion that
+measures something else. **Caller:** the buffer top-up in NX-6's
 `ChunkRegistry`, before the chunk becomes servable. **Test that fails if the extrapolation returns:**
 a two-chunk fixture whose second chunk is deliberately an order of magnitude heavier per row than
 the first (short strings then long ones) asserts the ledger's charge after chunk 2 matches chunk 2's
@@ -1687,7 +2014,14 @@ file is now a workspace table, and a query against it streams like any other SQL
 cursor: a `read_file` document shape (regime 3), a `query_file` result over an ad-hoc
 SQLite/DuckDB file whose connection cannot outlive the call by design (§5.2's ephemeral rule), and
 — by the declared exception above — a `query(endpoint="workspace")` result, whose cursor is closed
-before the call returns. What
+before the call returns. **The registry's *mechanism* for assigning that kind changes with it**, and
+§7.2's edit 2 is where: `StreamingClass` is derived today from `Kind` alone
+(`inventory.py:80-108`), which makes CSV, Parquet, Feather, Arrow, HDF5 and both Excel formats come
+out `LOAD_THEN_SERVE` — exactly the set this paragraph says the class no longer covers. Narrowing
+the class in prose while leaving the derivation producing the old values would be one concept with
+two live classifications, so the derivation moves to §4c's **load regime** and the two agree by
+construction. **NFR-202's honest matrix asserts the regime**; the streaming class is the serving
+consequence of it, and §4c says the same in the same words. What
 *is* deleted is the sentence that governed it — quoting the superseded text verbatim so the change
 is auditable: "governed instead by its upfront admission
 decision, the memory-budget gate refusing the load if the *estimated* full size exceeds budget".
@@ -1695,9 +2029,51 @@ decision, the memory-budget gate refusing the load if the *estimated* full size 
 ledger of §5.3** — the two shared a name in the old text, which is exactly why §5.3 now fixes one.
 Those registries are governed by the same measured charge as every other: their frames are measured
 and charged as they prime, a residency-ledger refusal stops the priming, and bounds (2) and (3)
-apply unchanged. **No estimate of memory residency is left in the path** — that is the claim GP9
-carries and it is now literally true, the last exception (per-row chunk extrapolation) having been
-deleted above. The one quantity still converted rather than measured is the caller's **token**
+apply unchanged.
+
+**The bounded-read path had two more predictions, and the previous revision of this section said
+there were none.** The sentence that stood here — *"no estimate of memory residency is left in the
+path"* — was false when it was written, and it is quoted rather than silently replaced because the
+claim's failure is the reason GP9 now carries an enumerated table (§2) instead of a universal
+quantifier. Two live sites, both on the flagship read path, both verified by opening the files:
+
+- **`fetch_bounded` extrapolates from the first batch.** `nexus/chokepoint/execution.py:100-115`
+  measures per-row bytes **once** (`if per_row is None: per_row = _per_row_bytes(batch)`) and then
+  charges `int(total * per_row)` and admits `rows=total, per_row_bytes=per_row` for every batch
+  after it — the identical shape as the chunk-registry extrapolation deleted above, on a busier
+  path. **The fix is the same fix:** each batch is measured as it is fetched and the charge is the
+  **running sum of those measurements**, which is O(n) in total work (each batch measured once,
+  never re-measured) and exact by construction rather than by luck. The bytes already exist when the
+  charge is taken — `fetchmany` has returned — so this is Q-from-Q with nothing to estimate.
+- **`admit_analysis` gates on a product of two numbers.** `nexus/chokepoint/resource_bounds.py:137-161`
+  computes `estimated = int(rows * per_row_bytes)` and checks it against headroom. It takes the
+  **measured retained bytes** instead. Its *other* branch — the `query.max_analysis_rows` cap — is
+  kept unchanged and is **inside** GP9 by scope clause (i): it bounds rows from a count of rows.
+  The signature therefore becomes `admit_analysis(rows, resident_bytes)`, and the fail-safe refusal
+  on a non-positive figure (which exists precisely because a zero per-row estimate would admit
+  anything) is kept, now reading a measurement rather than a factor.
+
+**Caller for both:** NX-6's `guarded_query`, `guarded_file_query` and `read_table` — the three sites
+that already charge the ledger around a bounded fetch (`surfaces_query.py:42`, `:106`,
+`surfaces_schema.py:95`, all read). **Test that fails if the extrapolation returns:** a two-batch bounded read
+whose second batch is an order of magnitude heavier per row than the first asserts the ledger's
+charge equals the sum of the two batches' own measurements — red under any first-batch
+extrapolation, and red under the product form, since both compute the first batch's cost twice.
+
+**The upfront whole-load gate is the third, and it is deleted rather than fixed** (§7's deletion
+row): `ResourceBounds.admit_load(estimated_bytes)` (`resource_bounds.py:163-175`) admits a
+whole-dataset read from a prediction made *before the bytes exist*, which is the retired abstraction
+itself and not a variant of it. Deleting it is a four-site change, and the sites are named so the
+change-set is complete rather than approximate: the method; NX-6's re-export seam
+(`surfaces_stream.py:134-143`, whose own docstring already records that no production path may use
+it); the `AdmitLoad` callable type and its injection point in the file readers
+(`ingest/connectors/file/readers.py:70-74`); and the two batteries that assert the seam
+(`tests/v3/test_guard.py:299-311`, `tests/v3/test_resource_bounds.py:134`), which are **frozen
+tests** — their removal is a contract change under the test-governance rule, recorded here so it is
+a decision rather than a deletion someone discovers in a diff. What survives is
+`reserve_load`/`release_load`, the charge/release pair, fed a measured batch size.
+
+The one quantity still converted rather than measured is the caller's **token**
 count, which belongs to a tokenizer in another process; GP9's scope clause (§2) states that boundary
 explicitly rather than letting a universal quantifier paper over it.
 
@@ -1859,14 +2235,16 @@ and its pin-eligibility.
 
 | Field | Section, classification | Consumer | Why it is config and not code |
 |---|---|---|---|
-| `workspace.memory_budget_bytes` | `workspace.*`, security-classed (a resource ceiling → pin-eligible) | NX-6's staging loop: the measured-residency spill trigger | The memory a machine can spare for a staged dataset varies per deployment; this is the knob that decides `:memory:` vs. disk. |
+| `workspace.memory_budget_bytes` | `workspace.*`, security-classed (a resource ceiling → pin-eligible) | NX-6's staging loop: the measured-residency spill trigger; NX-2's validation, which refuses a value ≥ `resources.memory_ceiling_bytes` (§5.5) | The memory a machine can spare for a staged dataset varies per deployment; this is the knob that decides `:memory:` vs. disk. **It is one consumer's threshold, not the process ceiling** — that is `resources.memory_ceiling_bytes`, the row below — and the required relation between them is validated at config load rather than left for a reader to infer from two similar names. |
 | `workspace.spill_dir` | `workspace.*`, security-classed, **introduction-gated**, **disjointness-validated**, **mode-validated** | NX-2's validation (introduction gate; disjointness from `allowed_paths` and `security.ephemeral_write_paths` on **resolved** paths; not group/other-writable), NX-6's `contain_path(target, roots=[spill_dir], mode="write")`, NX-5's `spill()` and the startup reaper | It is a filesystem write root, so it carries `allowed_paths`' rules exactly: operator-trust introduction only, empty default = fail-closed = no spill. Disjointness is validated here rather than checked at run time because config load is the only point where all the roots are visible at once (§5's spill step 2). It is also the **shared** root §5.5 step 1 budgets with `max_spill_bytes` and §5.6 reaps under `flock` — one directory, three consumers, one declaration. |
 | `workspace.load_batch_rows` | `workspace.*` | `load_file`, which reads it through NX-2 and passes it to the batch generator as its initial row budget (§6.2) | The granularity of the step between two measurements (GP9) — the one lever trading load throughput against overshoot. |
 | `workspace.load_batch_target_bytes` | `workspace.*`, **derived** from `workspace.memory_budget_bytes` | NX-6's staging loop, which compares each measured batch against it and `send()`s the shrunk row budget back into the generator (§6.2) | Derived, not independently defaulted, by the same `cfg_field(DERIVED, derive=…)` mechanism `query.max_analysis_rows` already uses (`nexus/config/models.py:78-80`) — one formula, one home. |
 | `workspace.whole_parse_max_file_bytes` | `workspace.*`, security-classed | **`load_file`, before it constructs the regime-2 whole-parse adapter** — i.e. before the library's atomic parse begins, since afterwards there is nothing left to refuse (§4c). One `stat` on the already-contained path. | The declared size limit for formats with no incremental reader. Honest naming: it bounds *file size*, not memory — and per GP9's scope clause (§2) that is why it is inside GP9 rather than an exception to it: it bounds the quantity it measures. **Test that fails if the caller disappears:** an ODS fixture over the configured limit is refused by `load_file` with the size-shaped NX-3 refusal **and** the test asserts the parse library was never entered (the refusal arrives without the parse's wall-clock cost) — red if the gate is moved after the parse, which is the failure mode that would leave it looking present and doing nothing. |
-| `workspace.dtype_conflict` | `workspace.*` (`signal` \| `refuse`) | NX-6's staging loop, on a batch whose dtype conflicts with the column's declared affinity (§5.4) | Whether a mixed column is a fact to report or a reason to fail is a caller-policy question, not an architectural one: an exploratory LLM session wants the load to succeed with the `typeof` histogram in hand, a scripted ETL caller wants it to fail loudly. Default `signal`, per the genesis's "minimal support + graceful error management". |
+| `workspace.dtype_conflict` | `workspace.*` (`signal` \| `refuse`) | NX-6's staging loop, on the **end-of-load storage-class profile** — not on a batch dtype, which was the wrong observable (§5.4) | Whether a mixed column is a fact to report or a reason to fail is a caller-policy question, not an architectural one: an exploratory LLM session wants the load to succeed with the profile in hand, a scripted ETL caller wants it to fail loudly. Default `signal`, per the genesis's "minimal support + graceful error management". **There is deliberately no knob that turns the profile itself off** — it is the detector and the input to the cross-table key check, so an off-position would silently disable two correctness signals; the argued rejection is in §5.4 rather than left as a gap. |
 | `workspace.idle_ttl_seconds` | `workspace.*` | the idle sweep at every NX-6 admission point | Mirrors `query.stream_idle_ttl_seconds`; the two are separately tunable because a workspace is expensive to rebuild and a stream is not. |
-| `resources.max_concurrent_connections` | `resources.*`, security-classed | `EngineRegistry`'s `BoundedSemaphore` (permits = physical connections), plus NX-2's startup arithmetic check against the declared endpoints (§5) | The genesis's "~10 concurrent connections, **configurable**, including in-memory DBs" is a configurability requirement in its own words — and it says *connections*, which is why this field is not `max_registered_engines`. |
+| `resources.max_concurrent_connections` | `resources.*`, security-classed | `EngineRegistry`'s `BoundedSemaphore` (permits = physical connections), plus NX-2's startup arithmetic check against the declared endpoints (§5.8) | The genesis's "~10 concurrent connections, **configurable**, including in-memory DBs" is a configurability requirement in its own words — and it says *connections*, which is why this field is not `max_registered_engines`. |
+| `resources.per_endpoint_reservation` | `resources.*`, **derived** — no default of its own | `EngineRegistry` at registration (the permits taken) and, for a networked endpoint, its engine's `pool_size` (§5.8) | **Derived, not declared**, by the `cfg_field(DERIVED, derive=…)` mechanism already used for `query.max_analysis_rows`: `min(the handle's physical ceiling, the endpoint's share of the budget)`. It exists as a named field so the derivation has one home and the startup error can *print* what each endpoint got, which is the information an operator needs; a flat `max_connections_per_endpoint` per endpoint is what made a two-endpoint configuration unbootable at the locked defaults. |
+| `resources.memory_ceiling_bytes` — **existing and LOCKED, mapped here because the previous revision named it zero times** | `resources.*`, security-classed | the residency ledger's every admission (`resource_bounds.py`'s `_require_memory_headroom`), i.e. every "the ledger refuses" sentence in this document (§5.3) | Not added by this revision: `nexus/config/models.py:51`, `cfg_field(4 * GIB, doc="S8 row 1 (LOCKED)")`, live today. It is mapped because §5.3 defined the ledger against "NFR-105's memory ceiling" — the requirement, never the knob — while naming a *different*, similarly-spelled budget three lines away. A locked in-tree field the whole load model is bounded by is exactly the brownfield miss (Coding FP5) this document has caught twice before. Its **value** is not this revision's to move; its **name and relation** are. |
 | `resources.min_free_disk_bytes`, `resources.max_spill_bytes` | `resources.*`, security-classed | **NX-6's spill gate** — the one owner of the spill disk budget (§5); `WorkspaceStore.spill()` performs the migration and gates nothing | **Restored.** Removed at CR-006 as dead config when the gate they fed had no caller; they now have one, so **two** module comments — not one — must be corrected in the same change-set rather than left contradicting the code. Both citations are verified for this revision: (1) `nexus/config/models.py:54-60`, the removal comment itself, which states that "neither an aggregate spill cap nor a free-disk floor has any consumer left to feed"; and (2) `nexus/chokepoint/resource_bounds.py:15-23`, whose module docstring goes further and asserts that **no spill/staging write path exists in the tree at all** — a sentence that becomes actively false the moment Level 0 lands, and the more dangerous of the two because a reader would take it as a statement about the architecture rather than about a config field. An earlier draft of this row cited `resource_bounds.py:54-60` for the removal comment; those lines are the `_fail_safe` decorator, and the citation is corrected here. |
 | `response.inline_max_tokens`, `response.chars_per_token` | `response.*` | the measured cutover in `surfaces_stream.py` | The context budget belongs to the *caller's model*, which the operator knows and the server cannot; and the chars-per-token assumption must be visible to be arguable. |
 
@@ -1999,17 +2377,38 @@ it may point: `ingest` imports `nexus`, never the reverse. Concretely,
 `batches: Generator[pd.DataFrame, int | None, None]` — a plain generator that yields a batch and
 accepts the **next** batch's row budget back via `send()`, which is how NX-6's measured shrink
 feedback (`workspace.load_batch_target_bytes`) reaches the reader without NX-6 knowing anything
-about formats. A reader that cannot honour a smaller budget — regime 2's whole-parse adapter has
-exactly one batch — simply ignores the sent value, which is declared rather than special-cased.
+about formats. **Honouring the sent budget is contractual for regime 1 and only regime 1**, and the
+distinction has to be drawn that way round: an earlier revision said any reader "simply ignores the
+sent value, which is declared rather than special-cased", but a reader that ignores it is
+observationally identical to a loop that stopped sending, which is a named budget with no way to
+tell whether it is wired — this document's own dominant defect class. So: **a regime-1 batched
+reader MUST honour a smaller budget on its next batch**; **regime 2's whole-parse adapter is the
+declared exception**, because it has exactly one batch and there is no next one to shrink. **Test
+that fails if the loop stops sending or the reader stops honouring:** a regime-1 fixture whose first
+batch lands over `workspace.load_batch_target_bytes` asserts the second batch's row count is
+strictly smaller — red if `send()` is removed, red if the reader discards it — with a paired
+regime-2 leg asserting the single-batch adapter is *not* required to shrink, so the exception is a
+tested property of one regime rather than a licence for all of them. Until that test exists the
+shrink feedback is a budget nobody enforces, and §7's "the worst overshoot is one measured batch"
+is bounded in **rows** and in nothing else.
 `source` is the provenance record §5's `stale_source` note needs (canonical path, mtime, size):
 **data, not a reader**, so it carries no import. `LoadReport` is capability-narrow like every other
-NX-6 return (GP3's corollary): table name, row count, the declared column affinities, **any column
-recorded as *mixed* together with its `typeof` histogram** (§5.4 — the signal that replaces the
-withdrawn declare-then-widen answer), and `storage: memory | spilled` — no engine, no connection, no
+NX-6 return (GP3's corollary): table name, row count, the declared column affinities, **every column's
+storage-class profile and the mixed set derived from it** (§5.4 — the signal that replaces the
+withdrawn declare-then-widen answer, and the record the cross-table key check reads), and `storage: memory | spilled` — no engine, no connection, no
 cursor.
-**Test that fails if this regresses:** the import-graph test (below) carries an explicit assertion
-that no module under `nexus/**` imports anything under `ingest/**` — which is the assertion that
-turns red the moment someone "simplifies" the signature back to a path and a format name.
+**Test that fails if this regresses — stated as an addition, because the assertion does not exist
+yet and the previous revision said it did.** The live gate `tests/v3/test_nexus_import_graph.py` is
+entirely **one-directional**: it constrains what tool packages may import *from* `nexus/**`, what
+outsiders may reach of NX-6's and NX-3's internals, and that every nexus package is classified.
+Nothing in it — nor in `test_persistence_import_graph.py` or `test_layout.py` — asserts the reverse
+direction. The *factual* half of the claim does hold and is kept separate from the gate that will
+keep it holding: **no `nexus/**` module imports any tool package today** (verified whole-tree). What
+this revision adds to that file is the reverse-direction assertion — no module under `nexus/**`
+imports anything under `ingest/**`, `explore/**`, `process/**`, `output/**` — which is the assertion
+that turns red the moment someone "simplifies" the signature back to a path and a format name.
+Stating an existing test as carrying an assertion it does not carry is how a *test* ends up with no
+teeth, which is the same failure as a guard with no caller.
 `NX5.get_connection` is deliberately **not** in this set: NX-5 is reachable by NX-6 exclusively
 (§8 NX-5), so no tool module can obtain a live connection by importing a permitted nexus — the
 import-graph test and the reachability model agree. Tool modules pass the operator-declared
@@ -2180,10 +2579,10 @@ audit found it holding the round's only BLOCKER.
 | **Visualization engine (§6c)** | `matplotlib` (`Agg` headless backend), object-oriented `Figure` + `FigureCanvasAgg` API only, one `Figure` → SVG + PNG, explicit disposal; declarative chart-spec layer above it; **allow-list** SVG sanitizer owned by NX-8. Detail below. | See "Visualization engine — detail." | REQUIREMENTS §6(c); no visualization dependency exists on `main` today (T13 pattern would recur if undecided). | Low for the renderer (isolated to `visualize/render/`); the chart-spec layer is the reversal boundary a renderer swap must not discard. |
 | **Composition surface exposure shape (§6i)** | **Primary: one DAG-spec tool, `compose_pipeline`** (§6.3) on the harvested `PipelineComposer` topo-sort; **secondary: curated zero-logic convenience wrappers** over the same engine. Detail below. | See "Composition surface — detail." | Harvested `pipeline/core/composer.py` (read in full); FR-601/602/604; REQUIREMENTS §6(i). | Medium — the DAG-spec schema is the harder-to-reverse part (§10 risk 1); wrappers are trivially reversible. |
 | **sklearn's place in composition** (revised 2026-07-24, GP10) | **Orchestration is the tool-DAG; sklearn is the step contract.** `compose_pipeline` schedules registered tools (`process/composition/dag_spec.py` + `scheduler.py` + `stage_runner/`); the analytical steps inside stages are sklearn-compatible estimators, carried chunk-wise by `SklearnStreamingAdapter` (`streaming_exec/sklearn_adapter.py:22-31`) where they declare `partial_fit`, and materialized at the declared boundary where they do not (§6.3). | (a) A literal `sklearn.pipeline.Pipeline` backbone, as the genesis names — **rejected**: `fit`/`transform` are whole-dataset by contract, so it cannot satisfy the genesis's own Level-1 streaming requirement, and it gives up pre-execution whole-chain validation. (b) Reviving `main`'s `DataSciencePipeline` (`pipeline/core/pipeline_class.py`) — **rejected**: it *claimed* the sklearn contract while `AnalysisPipelineBase.transform()` returned a `PipelineResult` rather than array-like, it declared four extra abstract methods constituting a parallel bespoke step protocol that was the real execution path, and nothing in 30k LOC ever composed a multi-step `Pipeline` (a tree-wide grep for `Pipeline([...])` returns **only docstrings**). | `tmp/harvest-review-main.md` §D4 (read in full): `main`'s streaming was `DataFrameStreamingSource` over an already-materialized frame; its chunked fit gave chunk 1 a full `super().fit()` and later chunks `partial_fit`, so a `StandardScaler` was fitted on chunk 1 alone (`pipeline/core/streaming.py:651-678`); `_transform_chunk` swallowed failures into an empty frame and reported success with rows missing (`:724-727`). v3's replacements are 99 + 75 lines and honest. | **Low, and deliberately isolated** — the reversal is GP10's own note: the DAG is consumed only behind `compose_pipeline`'s contract and the estimators only behind the step contract, so flipping the backbone touches neither the tool surface nor any other nexus. |
-| **Level-0 staging engine** | **SQLite**, one session workspace database (§5), reached through the same NX-5 `EngineHandle` protocol as every other engine — the workspace's implementation of that protocol is §5.4's `WorkspaceHandle`, which adds the serializing lock and the `query_only` write window behind the unchanged two-member surface — `StaticPool` + `check_same_thread=False` for the `:memory:` case, the harvested pattern already carried at `nexus/persistence/engines.py:194-212`. Batches land in a table whose column affinities the loader declares up front (§5); the write primitive itself is the next row's decision, not this one's. | (a) **DuckDB** — genuinely attractive for analytical scans and it is already a core dependency; rejected for *this* role because the property the design turns on is a cheap, exact, engine-reported residency figure that also survives migration to disk, and SQLite gives it in one pragma pair (`page_count × page_size`) with `VACUUM INTO` as a one-statement, all-or-nothing migration. DuckDB's own spill-to-disk is internal and opaque to our ledger, which is precisely the visibility GP9 exists to have. (b) **Keep everything in a pandas frame and bound it by estimate** — rejected: that is the retired abstraction (CR-039..044). | `tmp/harvest-review-main.md` §D1: `main` shipped flat-file-into-SQLite-table staging (`file_processor/engine.py:82-104`), so the *channel* is a restoration of something that demonstrably worked, not an invention — the *primitive* it used (chunked `to_sql`) is the one part not restored, for the reason the next row measures. SQLite is already a core dependency and already the results-store engine (§5), so the manifest does not change. | **Medium.** The staging *target* is behind `stage_batches` and the reserved `workspace` endpoint name, so a swap to DuckDB changes no tool contract; what it would change is the residency measurement (§5) and the migration mechanism (the row below the write primitive). |
-| **Level-0 batch write primitive** (added 2026-07-24, round 2 — the round's BLOCKER; the **binder** added round 3, which is where the round-2 fix was itself defective) | **`cursor.executemany(INSERT …, rows)` fed a LAZY row iterator (`df.itertuples(index=False, name=None)`) through a per-value binder, on the DBAPI connection borrowed from the workspace's own handle, followed by an explicit `commit()` (and a `rollback()` if the `executemany` raises, §5.5 step 7).** Two named invariants, not coding preferences: the sequence handed to `executemany` is **never materialized** (§5.5's flat-peak test), and **every value crosses §5.4's binder**, whose per-dtype mapping and fail-closed refusal are what make the primitive able to bind what §7.2's readers actually produce. The seam is stated rather than assumed: `EngineHandle` (`nexus/persistence/engines.py:102-112`) is `connect()` + `dispose()` and does **not** expose `raw_connection()` — `SqlAlchemyHandle` does not forward it and `DuckDbHandle` (`:129-153`) could not answer it — so the DBAPI connection is reached through §5.4's **`WorkspaceHandle`**, the workspace-only `EngineHandle` implementation that also owns the serializing lock and the `query_only` write window. The workspace therefore stays one engine over `StaticPool`, `PRAGMA page_count × page_size` still reads on that same engine afterwards, NX-5 keeps its single owner, and the protocol gains no member for a capability only one endpoint has. | (a) **pandas `to_sql`** — what this document specified until round 2; **rejected**, and this is the decision the BLOCKER forced. (b) **`to_sql(chunksize=K)`, i.e. sub-batching the write** — the audit's first suggested direction; **rejected on measurement**: the peak scales with *total rows*, not with `K`, because pandas materializes the whole frame into insert-ready sequences *once, before* it chunks — so chunking bounds the statement size and not the allocation. (c) **Measuring the process across the write** (`tracemalloc` around the write path) — the audit's third direction; **rejected**: it costs 5.71× wall-clock, and with (b) above there is no transient left to measure. (d) **A multiplier constant** ("charge 35× the measured batch") — **rejected on principle**: an estimate wearing a measurement's clothes, exactly GP9's prohibition, and data-dependent besides (35.6× vs 19.4× at identical row counts). (e) **`exec_driver_sql(sql, list(itertuples))`** — the same primitive with the sequence materialized; **rejected on measurement**, 6.6× — which is precisely why the non-materialization invariant is stated as an invariant. | Supervisor measurement, `tmp/arch-workspace/supervisor-verification.md` (python 3.12.9, sqlite 3.47.1, numpy 2.4.4, pandas 3.0.2, SQLAlchemy 2.0.49; `tracemalloc` peak with the frame allocated before tracing starts, every case asserting the rows actually landed). `to_sql` peaked at **113.75 MB against a 3.20 MB charge — 35.6×** on ordinary numeric data at 200k rows (19.4× with text). `to_sql(chunksize=5000)` asymptotes at ~5× and scales with total rows (100k→5.8×, 800k→5.1×). `executemany` over the lazy iterator held its peak at **0.008 MB across 100k → 1.6M rows — a 16× growth in rows moving the peak not at all** — correct on numeric, mixed (int/float/str/bool) and NULL-bearing frames (NaN/`None` → `NULL`, `np.True_` → `1`), and **~4–5× faster** than `to_sql` (0.92 s vs 4.57 s at 200k). Through the pooled DBAPI connection the peak was 0.020 MB and the residency pragma still read correctly on the same engine. **Round 3, the binder:** enumerated over 30 dtype cases from the §7.2 readers, the bare primitive **raises on 14 and stores 3 silently as BLOBs** — including a `read_parquet` `list<…>` column, which yields `ndarray` cells nobody had enumerated; with the binder, 27 bind correctly and 3 (`complex`, `list`, `dict`) are refused as legitimately unstageable. The flat-peak invariant **survives adaptation, measured not assumed**: 2.57 MB at 400k rows and 2.71 MB at 1.6M — flat across a 4× row increase, a constant rather than a per-row accumulation — for ~2.8× wall clock, on a controlled four-columns-either-way comparison (§5.4). | **Low.** Two method bodies — NX-5's `WorkspaceStore.append()` and the binder table beside it. Reverting to `to_sql` is a body change with the same signature, and it re-opens the BLOCKER, which is why §5's non-materialization test exists to make the reversal loud rather than silent. **Higher than the round-2 cell said for the DuckDB swap**, and the correction belongs here: a swap would break three things, not two — the residency measurement, the migration mechanism, **and the write primitive**, since DuckDB's Python API offers no equivalent lazy-`executemany` binding path. |
-| **In-memory → disk migration mechanism** | SQLite **`VACUUM INTO '<target>'`**, taken when *measured* residency crosses `workspace.memory_budget_bytes` (§5). Guarded by a measured free-disk floor and an aggregate spill cap before it runs — NX-6's gate, one owner (§5); performed by NX-5 onto a path pre-created `O_EXCL 0600` and identity-re-checked per CR-024; on failure the source database is untouched. Requires **neither an open transaction nor a statement in progress on the connection** — two preconditions, both measured, and the second is why §5.4 forbids the workspace holding a cursor across tool calls (§5.5 step 0). | (a) A **decision taken once, up front, from file size** — `main`'s `use_temp_file = file_size_mb > 100` (`file_processor/engine.py:44-48`), a literal with no config key, computed from `os.path.getsize()` on *compressed* bytes, unchangeable after chunk 0. Rejected on all three axes; it is the direct ancestor of the estimator class being retired. (b) **Row-by-row copy into a fresh on-disk DB** — more code, no transactional guarantee, and slower than the engine's own compacting copy. (c) **`sqlite3.Connection.backup()`** — viable and close in behaviour, but it copies page-for-page including free pages, where `VACUUM INTO` compacts; the compaction matters because the spilled file is exactly the thing the disk cap is protecting. | `VACUUM INTO` semantics, **verified by execution for this revision** rather than read from the documentation (`tmp/arch-workspace/supervisor-verification.md`, sqlite 3.47.1): it works from a `:memory:` source (311,296 bytes written, all rows present); it **fails inside an open transaction** (`cannot VACUUM from within a transaction`); it **fails with any statement in progress on the connection** (`cannot VACUUM - SQL statements in progress`, added round 3 — a partially-fetched cursor is enough, and closing it makes the identical spill succeed); it refuses an existing **non-empty** target but **accepts an existing empty one** — which is what makes the `O_EXCL 0600` pre-create work; it leaves the source unmodified on failure; and the file it creates unaided is `0o644`, world-readable. The trigger's soundness rests on §5's measured `page_count × page_size`, not on the mechanism. | **Low** — one method on `WorkspaceStore` (`nexus/persistence/workspace.py`); swapping to `backup()` is a body change with the same pre-checks and the same failure contract. |
-| **Upfront file-size estimation (`admit_load` and its estimator family)** | **Deleted**, not re-tuned: `_EXPANSION_FACTOR`, `_logical_materialization`, `_arrow_array_bytes`, `_hdf5_materialization`, `_zip_materialization` and `ResourceBounds.admit_load` go, together with the docstrings that describe them as the bomb gate. Their job passes to §4c's measured-batch model and §5's measured workspace residency. **What survives is the residency ledger (§5.3), not the estimate:** `reserve_load`/`release_load` (`surfaces_stream.py:145-158`) stay as the charge/release pair, now fed a *measured* batch size instead of a predicted file size — so an implementer reading this row deletes the estimator and rewires the reservation, never the reservation itself. | Keeping them as a *belt-and-braces* second layer — rejected, and this is the one alternative worth arguing against explicitly: a gate that is unsound in principle does not become sound by sitting behind a sound one; it contributes false confidence, it is the thing four audit rounds kept re-tuning, and CR-035 showed it also mis-shapes the caller-facing refusal. GP1 (one owner per concern) forbids a second admission truth for the same bytes. | `code_review.md` Rounds 3–5: CR-029 → CR-037/038 → CR-039..044, each round closing the modelled cases and the next finding an unmodelled type, engine, or axis, ending in the explicit structural diagnosis that upfront metadata estimation cannot bound post-materialization memory. Six format families, five engines, three rounds — the evidence for deletion is the audit trail itself. | **Low mechanically** (delete the module and its callers), **high in review value** — this is the change the whole re-alignment exists to make, so §10 flags it for the highest scrutiny. |
+| **Level-0 staging engine** | **SQLite**, one session workspace database (§5), reached through the same NX-5 `EngineHandle` protocol as every other engine — the workspace's implementation of that protocol is §5.4's `WorkspaceHandle`, which adds the serializing lock and the `query_only` write window behind the unchanged two-member surface — `StaticPool` + `check_same_thread=False` for the `:memory:` case, the harvested pattern already carried at `nexus/persistence/engines.py:194-212`. Batches land in a table whose column affinities the loader declares up front (§5); the write primitive itself is the next row's decision, not this one's. | (a) **DuckDB** — genuinely attractive for analytical scans and it is already a core dependency; rejected for *this* role because the property the design turns on is a cheap, exact, engine-reported residency figure that also survives migration to disk, and SQLite gives it in one pragma read (`(page_count − freelist_count) × page_size`) with `VACUUM INTO` as a one-statement, all-or-nothing migration. DuckDB's own spill-to-disk is internal and opaque to our ledger, which is precisely the visibility GP9 exists to have. (b) **Keep everything in a pandas frame and bound it by estimate** — rejected: that is the retired abstraction (CR-039..044). | `tmp/harvest-review-main.md` §D1: `main` shipped flat-file-into-SQLite-table staging (`file_processor/engine.py:82-104`), so the *channel* is a restoration of something that demonstrably worked, not an invention — the *primitive* it used (chunked `to_sql`) is the one part not restored, for the reason the next row measures. SQLite is already a core dependency and already the results-store engine (§5), so the manifest does not change. | **Medium.** The staging *target* is behind `stage_batches` and the reserved `workspace` endpoint name, so a swap to DuckDB changes no tool contract; what it would change is the residency measurement (§5) and the migration mechanism (the row below the write primitive). |
+| **Level-0 batch write primitive** (added 2026-07-24, round 2 — the round's BLOCKER; the **binder** added round 3, which is where the round-2 fix was itself defective) | **`cursor.executemany(INSERT …, rows)` fed a LAZY row iterator (`df.itertuples(index=False, name=None)`) through a per-value binder, on the DBAPI connection borrowed from the workspace's own handle, followed by an explicit `commit()` (and a `rollback()` if the `executemany` raises, §5.5 step 7).** Two named invariants, not coding preferences: the sequence handed to `executemany` is **never materialized** (§5.5's flat-peak test), and **every value crosses §5.4's binder**, whose per-dtype mapping and fail-closed refusal are what make the primitive able to bind what §7.2's readers actually produce. The seam is stated rather than assumed: `EngineHandle` (`nexus/persistence/engines.py:102-112`) is `connect()` + `dispose()` and does **not** expose `raw_connection()` — `SqlAlchemyHandle` does not forward it and `DuckDbHandle` (`:129-153`) could not answer it — so the DBAPI connection is reached through §5.4's **`WorkspaceHandle`**, the workspace-only `EngineHandle` implementation that also owns the serializing lock and the `query_only` write window. The workspace therefore stays one engine over `StaticPool`, the residency pragmas still read on that same engine afterwards, NX-5 keeps its single owner, and the protocol gains no member for a capability only one endpoint has. | (a) **pandas `to_sql`** — what this document specified until round 2; **rejected**, and this is the decision the BLOCKER forced. (b) **`to_sql(chunksize=K)`, i.e. sub-batching the write** — the audit's first suggested direction; **rejected on measurement**: the peak scales with *total rows*, not with `K`, because pandas materializes the whole frame into insert-ready sequences *once, before* it chunks — so chunking bounds the statement size and not the allocation. (c) **Measuring the process across the write** (`tracemalloc` around the write path) — the audit's third direction; **rejected**: it costs 5.71× wall-clock, and with (b) above there is no transient left to measure. (d) **A multiplier constant** ("charge 35× the measured batch") — **rejected on principle**: an estimate wearing a measurement's clothes, exactly GP9's prohibition, and data-dependent besides (35.6× vs 19.4× at identical row counts). (e) **`exec_driver_sql(sql, list(itertuples))`** — the same primitive with the sequence materialized; **rejected on measurement**, 6.6× — which is precisely why the non-materialization invariant is stated as an invariant. | Supervisor measurement, `tmp/arch-workspace/supervisor-verification.md` (python 3.12.9, sqlite 3.47.1, numpy 2.4.4, pandas 3.0.2, SQLAlchemy 2.0.49; `tracemalloc` peak with the frame allocated before tracing starts, every case asserting the rows actually landed). `to_sql` peaked at **113.75 MB against a 3.20 MB charge — 35.6×** on ordinary numeric data at 200k rows (19.4× with text). `to_sql(chunksize=5000)` asymptotes at ~5× and scales with total rows (100k→5.8×, 800k→5.1×). `executemany` over the lazy iterator held its peak at **0.008 MB across 100k → 1.6M rows — a 16× growth in rows moving the peak not at all** — correct on numeric, mixed (int/float/str/bool) and NULL-bearing frames (NaN/`None` → `NULL`, `np.True_` → `1`), and **~4–5× faster** than `to_sql` (0.92 s vs 4.57 s at 200k). Through the pooled DBAPI connection the peak was 0.020 MB and the residency pragma still read correctly on the same engine. **Round 3, the binder:** enumerated over 30 dtype cases from the §7.2 readers, the bare primitive **raises on 14 and stores 3 silently as BLOBs** — including a `read_parquet` `list<…>` column, which yields `ndarray` cells nobody had enumerated; with the binder, 27 bind correctly and 3 (`complex`, `list`, `dict`) are refused as legitimately unstageable. The flat-peak invariant **survives adaptation, measured not assumed**: 2.57 MB at 400k rows and 2.71 MB at 1.6M — flat across a 4× row increase, a constant rather than a per-row accumulation — for ~2.8× wall clock, on a controlled four-columns-either-way comparison (§5.4). | **Low.** Two method bodies — NX-5's `WorkspaceStore.append()` and the binder table beside it. Reverting to `to_sql` is a body change with the same signature, and it re-opens the BLOCKER, which is why §5's non-materialization test exists to make the reversal loud rather than silent. **Higher than the round-2 cell said for the DuckDB swap**, and the correction belongs here: a swap would break three things, not two — the residency measurement, the migration mechanism, **and the write primitive**, since DuckDB's Python API offers no equivalent lazy-`executemany` binding path. |
+| **In-memory → disk migration mechanism** | SQLite **`VACUUM INTO '<target>'`**, taken when *measured* residency crosses `workspace.memory_budget_bytes` (§5). Guarded by a measured free-disk floor and an aggregate spill cap before it runs — NX-6's gate, one owner (§5); performed by NX-5 onto a path pre-created `O_EXCL 0600` and identity-re-checked per CR-024; on failure the source database is untouched. Requires **neither an open transaction nor a statement in progress on the connection** — two preconditions, both measured, and the second is why §5.4 forbids the workspace holding a cursor across tool calls (§5.5 step 0). | (a) A **decision taken once, up front, from file size** — `main`'s `use_temp_file = file_size_mb > 100` (`file_processor/engine.py:44-48`), a literal with no config key, computed from `os.path.getsize()` on *compressed* bytes, unchangeable after chunk 0. Rejected on all three axes; it is the direct ancestor of the estimator class being retired. (b) **Row-by-row copy into a fresh on-disk DB** — more code, no transactional guarantee, and slower than the engine's own compacting copy. (c) **`sqlite3.Connection.backup()`** — viable and close in behaviour, but it copies page-for-page including free pages, where `VACUUM INTO` compacts; the compaction matters because the spilled file is exactly the thing the disk cap is protecting. | `VACUUM INTO` semantics, **verified by execution for this revision** rather than read from the documentation (`tmp/arch-workspace/supervisor-verification.md`, sqlite 3.47.1): it works from a `:memory:` source (311,296 bytes written, all rows present); it **fails inside an open transaction** (`cannot VACUUM from within a transaction`); it **fails with any statement in progress on the connection** (`cannot VACUUM - SQL statements in progress`, added round 3 — a partially-fetched cursor is enough, and closing it makes the identical spill succeed); it refuses an existing **non-empty** target but **accepts an existing empty one** — which is what makes the `O_EXCL 0600` pre-create work; it leaves the source unmodified on failure; and the file it creates unaided is `0o644`, world-readable. The trigger's soundness rests on §5.4's measured `(page_count − freelist_count) × page_size`, not on the mechanism. | **Low** — one method on `WorkspaceStore` (`nexus/persistence/workspace.py`); swapping to `backup()` is a body change with the same pre-checks and the same failure contract. |
+| **Upfront file-size estimation (`admit_load` and its estimator family)** | **Deleted**, not re-tuned: `_EXPANSION_FACTOR`, `_logical_materialization`, `_arrow_array_bytes`, `_hdf5_materialization`, `_zip_materialization` and `ResourceBounds.admit_load` go, together with the docstrings that describe them as the bomb gate. **The seam is four sites, named so the change-set is complete rather than approximate:** the method (`nexus/chokepoint/resource_bounds.py:163-175`); NX-6's re-export (`surfaces_stream.py:134-143`); the `AdmitLoad` callable type and its injection into the readers (`ingest/connectors/file/readers.py:70-74`); and the two batteries asserting the seam (`tests/v3/test_guard.py:299-311`, `tests/v3/test_resource_bounds.py:134`) — **committed tests, so retiring them is a `contract-change` under the test-governance rule, not a deletion** (§10). Their job passes to §4c's measured-batch model and §5's measured workspace residency. **What survives is the residency ledger (§5.3), not the estimate:** `reserve_load`/`release_load` (`surfaces_stream.py:145-158`) stay as the charge/release pair, now fed a *measured* batch size instead of a predicted file size — so an implementer reading this row deletes the estimator and rewires the reservation, never the reservation itself. | Keeping them as a *belt-and-braces* second layer — rejected, and this is the one alternative worth arguing against explicitly: a gate that is unsound in principle does not become sound by sitting behind a sound one; it contributes false confidence, it is the thing four audit rounds kept re-tuning, and CR-035 showed it also mis-shapes the caller-facing refusal. GP1 (one owner per concern) forbids a second admission truth for the same bytes. | `code_review.md` Rounds 3–5: CR-029 → CR-037/038 → CR-039..044, each round closing the modelled cases and the next finding an unmodelled type, engine, or axis, ending in the explicit structural diagnosis that upfront metadata estimation cannot bound post-materialization memory. Six format families, five engines, three rounds — the evidence for deletion is the audit trail itself. | **Low mechanically** (delete the module and its callers), **high in review value** — this is the change the whole re-alignment exists to make, so §10 flags it for the highest scrutiny. |
 | **Config nexus foundation** | Consolidate **all eight T7 config surfaces** into NX-2's one dataclass-per-truth model (§5). The dataclass-with-`__post_init__`-validation *pattern* is kept (it appears in both `config_manager/models.py` and `config_schemas.py`), but the anchor for the runtime truths is **`config_schemas.py`** — the home of chunk-size, buffer-timeout, memory-budget, concurrency, and `allowed_paths` (§5's verified field list) — with `models.py`'s non-overlapping truths folded in and its `PerformanceConfig` duplicates retired. Layer semantics: two-tier merge per §5 (pin-eligible security fields first-wins, all else last-wins cumulative), env-derivation from fields, one path list. | A from-scratch Pydantic-only config system — rejected: the tree already mixes Pydantic and dataclasses (two schema systems per T7); the fix standardizes on dataclasses-with-validation for the truth model, keeping Pydantic only at the I/O-deserialization boundary. | `config_manager/models.py`, `config_manager/types.py`, `config_schemas.py` (all read for this document — the §5 field/line citations are verified against `main`); AS-IS T7 (eight config surfaces, two schema systems); SSOT-02/SSOT-10/SSOT-11. | Low — config nexus is import-isolated by construction (NX-2). |
 | **Logging foundation** | Extend `logging_manager/` (already `structlog`-based, already has a `context.py`/`manager.py` separation) — fix is exactly the two lines T2 identifies (`logging_manager/config.py:65` `StreamHandler(sys.stdout)` → `sys.stderr`; `config_manager/models.py:62-64` `OutputDestination.STDOUT` default → `STDERR`), plus the NFR-303 defensive fd-1 guard at process startup and the whole-battery OS-level stdout-purity assertion. | Replace `structlog` — rejected: it is a mature, already-adopted structured-logging library; the defect is a wiring choice (which stream), not a library choice. | `logging_manager/config.py` (read in full, confirms the exact defect); `config_manager/models.py` (confirms the `[OutputDestination.STDOUT]` default). | Trivial — this is a 2-line fix plus a startup guard; the risk is regression, which NFR-303's whole-battery assertion structurally prevents from shipping silently again. |
 | **Persistence nexus foundation** | Revive `connection_manager/` (`EnhancedConnectionManager`, mixin composition: `EngineFactoryMixin`, `HealthMonitorMixin`, `QueryTrackingMixin`, `ResourceManagerMixin`) as NX-5's implementation, replacing the bare `self.connections: Dict[str, Any]` dict in `server/database_manager.py:117`. | Rebuild from scratch — rejected: the mixin-per-concern pattern already read (`connection_manager/manager.py`, in full) is exactly GP7's "decompose by concern" done correctly; it is dead only because nothing wires it, not because its design is wrong (PLAN per-pair disposition: "revive"). | `connection_manager/manager.py` (read in full — pooling, health, metrics, resource limits, thread-safe). | Medium — the revived module becomes the single owner of all connection state; any future change touches every caller through its accessor interface, which is the intended cost of a nexus. |
@@ -2354,7 +2753,7 @@ the full cross product of format × reader library × dtype, and every unmodelle
 The alternative — a type-blind worst case — refuses ordinary numeric files.
 
 So the design changes what is observed. **After a batch has been read, its residency is a fact**:
-`memory_usage(deep=True)` on the frame, `page_count × page_size` on the database. Neither can be
+`memory_usage(deep=True)` on the frame, `(page_count − freelist_count) × page_size` on the database. Neither can be
 fooled by a dtype nobody enumerated, because neither asks what the data *is* — they ask how much
 space it *took*. The remaining question is what happens between two facts, and the answer is the
 whole design: **bound the step.** A batch is `workspace.load_batch_rows` rows; its own residency is
@@ -2473,7 +2872,7 @@ comfortable one:
    such rows arrive together, and NFR-202's anti-fail-open assertion (§10 — the admitted charge
    must be ≥ the measured read peak) is what keeps the gap **visible per regime** instead of
    silent, since an object-dtype fixture is precisely the case it is there to catch.
-4. **Measurement costs something.** `page_count × page_size` is two pragmas per batch, not per row,
+4. **Measurement costs something.** the residency read is three pragmas per batch, not per row,
    and `memory_usage(deep=True)` is a deep traversal. The load path runs it per *batch* deliberately:
    a load is not the hot path a retrieval is, and this is the measurement the whole safety argument
    rests on. **Round 2 extended the same reasoning to the retrieval path and deleted its per-row
@@ -2542,15 +2941,26 @@ this document owes: not a new registry, but **three edits to an existing one**.
    alongside `StreamingClass` and in the same declared-once style — one declaration consumed by the
    loader's dispatch, by the generated per-format documentation, and by NFR-202's honest-matrix
    battery, so the matrix cannot drift from the dispatch that implements it.
-2. **Correct `StreamingClass`'s docstring, which asserts a mechanism this revision deletes.** It
-   currently reads that `LOAD_THEN_SERVE` sources "are read whole under the memory-admission gate and
-   sliced from that admitted buffer" (`inventory.py:43-52`). After Level 0 that is false twice over:
-   there is no memory-admission gate (it is the retired estimator, §7), and tabular file formats are
-   no longer read whole at all (they become workspace tables). This is the **third** in-tree comment
-   this revision must correct, beside the two CR-006 sites named in §5.11 — and it is the one an
-   auditor is least likely to find, because a docstring on an enum reads as description rather than
-   as a claim about the architecture. GP5's rule applies to prose as much as to code: a docstring
-   asserting a gate that no longer exists is the same defect as a gate with no caller.
+2. **Re-derive `StreamingClass` from the load regime, and correct its docstring.** Two problems, one
+   root. *The docstring* reads that `LOAD_THEN_SERVE` sources "are read whole under the
+   memory-admission gate and sliced from that admitted buffer" (`inventory.py:43-52`, the sentence
+   at `:48`). After Level 0 that is false twice over: there is no memory-admission gate (it is the
+   retired estimator, §7), and tabular file formats are no longer read whole at all. *The
+   derivation* is the deeper half: `_core()`/`_extra()` set `GENUINELY_STREAMING` **iff
+   `kind is Kind.SQL_ENGINE`** (`inventory.py:80-108`), so CSV, Parquet, Feather, Arrow, HDF5 and the
+   Excel pair all come out `LOAD_THEN_SERVE` — while §5.9 narrows that class in prose to "the
+   residual set that genuinely has no cursor", a set which excludes every one of them, because after
+   Level 0 they are workspace tables served by a cursor. Correcting only the docstring would leave
+   the mechanism producing the values the prose calls wrong, which is one concept with two live
+   classifications — the same defect T10 was, transposed from the ledger to the capability matrix.
+   **So the class is derived from the regime field of edit 1**: `batched` and `whole_parse` →
+   `GENUINELY_STREAMING` (the table's own engine cursor serves them), `not_a_table` →
+   `LOAD_THEN_SERVE`, `shape_dependent` → resolved with the regime, once per load. One declaration
+   decides both, so they cannot disagree. NFR-202's honest matrix asserts **the regime**; the
+   streaming class is the serving consequence of it, and §4c and §5.9 both say so in those words.
+   GP5's rule applies to prose as much as to code: a docstring asserting a gate that no longer exists
+   is the same defect as a gate with no caller — which is why the next edit stops counting these and
+   states a rule instead.
 3. **Resolve JSON, whose regime is data-dependent and therefore cannot be a single constant.** JSON
    is one inventory entry (`_core("json", Kind.FILE_FORMAT)`) but two regimes: a record-shaped
    document (an array of flat objects) belongs in regime 2 and becomes a table, while any other
@@ -2567,7 +2977,47 @@ this document owes: not a new registry, but **three edits to an existing one**.
    battery loads a record-shaped JSON fixture and asserts a queryable workspace table, then loads a
    nested-object fixture and asserts the document shape and no table — and the matrix generator
    renders both cells from the `shape_dependent` declaration, so a format declaring one regime while
-   dispatching two fails the drift check. The collect-and-build fixture script
+   dispatching two fails the drift check.
+4. **Correct every in-tree assertion of the deleted upfront memory-admission gate — a rule, not a
+   count.** The previous revision said the `StreamingClass` docstring was *"the **third** in-tree
+   comment this revision must correct"*. That was a counted, checkable claim and it was wrong: a
+   sweep of `src/` for prose asserting the retired gate, restricted to modules this revision
+   **keeps**, returns **eleven** sites, each opened and read for this revision. §8 NX-6's generic
+   clause ("their docstrings go with them") covers none of them, because "their" is possessive on
+   the *deleted* functions and every site below lives in a surviving module.
+
+   | # | site | the sentence that becomes false |
+   |---|---|---|
+   | 1 | `nexus/config/models.py:54-60` | the CR-006 removal comment — restored to true by §5.5's `max_spill_bytes`, and false in the *other* direction now |
+   | 2 | `nexus/chokepoint/resource_bounds.py:15-23` | "no spill/staging WRITE path exists in the tree" — false once §5.5 specifies one |
+   | 3 | `nexus/contract/inventory.py:48` | `LOAD_THEN_SERVE` sources "are read whole under the memory-admission gate" |
+   | 4 | `nexus/chokepoint/chunk_registry.py:18-24` | "the UPFRONT whole-file admission … is the reader's own gate, the `Chokepoint.admit_load` seam" |
+   | 5 | `nexus/chokepoint/chunk_registry.py:152-158` | the same claim, restated on `open_stream`'s docstring |
+   | 6 | `ingest/connectors/file/tools.py:9-10` | module docstring: "the result is read whole under the admission gate" |
+   | 7 | `ingest/connectors/file/tools.py:73-76` | "reserve the load's **estimated** footprint on the shared ledger" — the estimate is exactly what §7 deletes |
+   | 8 | `ingest/connectors/file/tools.py:79-81` | "the reader crosses the memory-admission gate before it materializes the file" |
+   | 9 | `explore/addressing.py:179-180` | "the profiling path materializes the file too — it must cross the same memory-admission gate as `read_file`" |
+   | **10** | `ingest/connectors/file/tools.py:106` — the `@tool_spec` **`summary`** for `query_file` | "results are read whole under the memory budget" |
+   | **11** | `ingest/endpoints.py:29` — `list_endpoints`' **`summary`** | "Enumerate every **operator-declared** endpoint" |
+
+   **Sites 10 and 11 are worse than comments and belong to §6.1, not here**, because `ToolSpec` is
+   the tool-contract SSOT and these strings are what the *model* reads. Site 10 is additionally a
+   **pre-existing defect this revision inherits rather than creates**: `guarded_file_query`
+   (`nexus/chokepoint/surfaces_query.py:79-109`, read in full) crosses no memory gate at all today —
+   it contains the path, classifies the SQL, opens the ephemeral connection and charges
+   `analysis:file:…` around the fetch, and never calls `admit_load` or `reserve_load` — so the
+   summary is false in the current tree, not merely after this revision. Site 11 becomes false the
+   moment §5.4's decision renders the workspace row: the workspace is explicitly **not**
+   operator-declared, so `list_endpoints` must say "every endpoint" and describe the workspace's
+   provenance in the row rather than in a clause that excludes it.
+
+   **And the rule, so the next deletion does not need a hand-maintained list:** *no module may
+   assert a mechanism it does not itself call, and the change-set that deletes a mechanism owns the
+   sweep for prose that describes it.* A count is a work list an implementer will read as complete;
+   a rule is what stays true when the eleventh site turns out to be a twelfth. The count was wrong
+   twice — three, then nine, then eleven — which is the argument for stating a rule and stopping.
+
+The collect-and-build fixture script
 (NFR-503/504) consumes **the registry**; this §7.2 table, the §7.1 manifest rows, and the
 `pyproject.toml` extras groups are CI-asserted consistent with it by a drift check mirroring
 `nexus/contract/check_drift.py` — the same one-declaration discipline NX-1 applies to the tool
@@ -2681,9 +3131,15 @@ re-implementation this document rejects.
   `stat` beside the disjointness check, because the spill's residual symlink-substitution window
   needs write access to that directory and nothing else in the design constrains it; and the
   **connection-budget
-  arithmetic** — Σ declared endpoints' `max_connections_per_endpoint` + 1 (workspace) + 1
-  (ephemeral) ≤ `max_concurrent_connections`, so an over-subscribed configuration fails at startup
-  instead of leaving `load_file` refusing forever with nothing to explain it.
+  arithmetic** — Σ each endpoint's **derived reservation** (its handle's physical ceiling capped by
+  its share of the budget, §5.8) + 1 (workspace) + 1 (ephemeral) ≤ `max_concurrent_connections`, so
+  an over-subscribed configuration fails at startup instead of leaving `load_file` refusing forever
+  with nothing to explain it — the reservation being *derived* rather than a flat
+  `max_connections_per_endpoint` per endpoint is what stops the two-endpoint configuration from
+  being unbootable at the locked defaults; and the **memory-threshold relation** —
+  `workspace.memory_budget_bytes < resources.memory_ceiling_bytes`, refused with the same typed
+  error, because at or above the process ceiling the workspace's own spill trigger can never fire
+  first and becomes dead config (§5.5).
 - **Lives at:** `nexus/config/` (`models.py` extending the kept `config_manager/models.py` shape,
   `loaders.py`, `env_derive.py`, `provenance.py`).
 - **Reached by:** NX-5 (endpoint declarations, credentials refs), NX-6 (resource bounds,
@@ -2748,10 +3204,17 @@ re-implementation this document rejects.
   one each — so declared endpoints, ephemeral opens and the workspace all pass through the same
   `BoundedSemaphore` (§5).
   **Owns the workspace *operations*, not the decisions that call them** (§5.4's ownership rule): the
-  five NX-6-only entrypoints `ensure` / `append` / `residency_bytes` / `spill(target)` / `drop`.
-  `append()` additionally **detects** a batch dtype that conflicts with the column's declared
-  affinity — it is the only code that sees both — and reports it upward; it does not decide what to
-  do about it, and it never widens or rebuilds the column (§5.4).
+  **six** NX-6-only entrypoints `ensure` / `append` / `residency_bytes` /
+  `storage_class_profile(table)` / `spill(target)` / `drop`, plus the **two boot/teardown-only**
+  operations `reap_orphans()` and `dispose()`, reachable by `server/mcp_app.py` and by nothing else
+  (§5.4's enumeration, which previously said five and used seven).
+  `storage_class_profile()` is the sixth because the end-of-load storage-class count is a `SELECT`,
+  and NX-6 may not run one against the workspace — it is the operation that gives §5.4's detector,
+  `describe_table`'s record and the cross-table key check a **legal** owner instead of an
+  ownership-rule violation. `append()` **never** inspects values to classify them: the storage class
+  is what SQLite stored after affinity, not what the binder sent, so classifying at bind time would
+  predict Q from R (§5.4, GP9) — and keeping value inspection off the write path is also what
+  protects §7's non-materialization invariant.
   The spill free-disk floor and aggregate spill cap are **NX-6's gate, not NX-5's** — `spill()`
   migrates and gates nothing.
   **Called by:** NX-6 for every issue and every staging operation; `server/mcp_app.py`'s §4e boot
@@ -2779,13 +3242,20 @@ re-implementation this document rejects.
   per-batch measured charge, the `send()`-based batch-shrink feedback, the measured-residency
   **spill decision** and, as its **sole owner**, the spill's free-disk floor, aggregate spill cap
   and `contain_path(mode="write")` on the target, plus the compensating-drop abort — each of which
-  it executes by calling one of NX-5's five workspace operations, never by touching the workspace
-  backend itself (§5.4's ownership rule); the **mixed-column record** (NX-5 detects the conflict,
-  NX-6 records it in `LoadReport`, runs the end-of-load `typeof` histogram, and applies
-  `workspace.dtype_conflict` — §5.4); the **measured inline/stream cutover** including the token bound (§5.9); the
+  it executes by calling one of NX-5's six workspace operations, never by touching the workspace
+  backend itself (§5.4's ownership rule); the **storage-class record** — NX-6 calls NX-5's
+  `storage_class_profile(table)` once at end of load, records the per-column profile in
+  `LoadReport`, **derives the mixed set from it** (there is no dtype-based trigger any more, §5.4),
+  applies `workspace.dtype_conflict`, and reads the same recorded profiles to attach the
+  **`key_class_mismatch`** note when a statement joins two workspace tables whose key columns share
+  no storage class (§5.4 — the extraction rides the AST NX-6 already parses, so it costs no new
+  scan); the **measured inline/stream cutover** including the token bound (§5.9); the
   **`ChunkRegistry`** streaming-buffer state — one owner, §5.9's resident bound/backpressure/TTL
   rules, **including the exact per-chunk residency measurement that replaces the deleted per-row
-  extrapolation** (§5.9, GP9's last exception closed); the **idle sweep** that reclaims expired streams and workspaces, invoked synchronously at
+  extrapolation** (§5.9); the **exact, running-sum charge on the bounded-read path**, which replaces
+  `fetch_bounded`'s first-batch per-row extrapolation and `admit_analysis`'s `rows × per_row_bytes`
+  product (§5.9 — the last two live GP9 contradictions, and §2's table is the enumeration that
+  keeps them closed); the **idle sweep** that reclaims expired streams and workspaces, invoked synchronously at
   every admission point (`open_stream`, `serve_result`, `stage_batches`, workspace `ensure()`) —
   there is no background thread and no timer (§5); per-endpoint posture enforcement (NFR-113);
   the `asteval`-based numeric expression evaluator (§7) — where `optimize_constrained`'s
@@ -2923,9 +3393,11 @@ src/localdata_mcp/
                                #         WorkspaceHandle (:memory: engine + the RLock EVERY
                                #         checkout takes + the query_only write window with a
                                #         finally restore), auto_vacuum=FULL at ensure() BEFORE
-                               #         query_only, the five NX-6-only operations,
-                               #         dtype-conflict DETECTION at append (never a widen,
-                               #         never a rebuild), O_EXCL 0600 pre-create + CR-024
+                               #         query_only, the six NX-6-only operations
+                               #         (incl. storage_class_profile) + the two
+                               #         boot/teardown-only ones (reap_orphans, dispose),
+                               #         affinities declared once and never widened or
+                               #         rebuilt, O_EXCL 0600 pre-create + CR-024
                                #         identity re-check + VACUUM INTO spill, the flock held
                                #         for the workspace's life, the ONE spill-file name
                                #         pattern shared by the writer and the reaper, startup
@@ -2941,7 +3413,7 @@ src/localdata_mcp/
                                  #       workspace_stage.py (Level-0 staging DECISIONS: the
                                  #         batch loop over the caller-supplied generator, the
                                  #         per-batch measured charge, the shrink feedback, the
-                                 #         spill gate and the abort — calling NX-5's five
+                                 #         spill gate and the abort — calling NX-5's six
                                  #         workspace operations, importing nothing from
                                  #         ingest/** (§6.2); a fifth surface mixin composed into
                                  #         Chokepoint alongside the four existing ones), and
@@ -3018,7 +3490,8 @@ bounded batches, and how) in `ingest/connectors/file/batches.py`; **the guarded 
 (charge, measure, shrink, decide spill, abort — every decision, no backend touch) in
 `nexus/chokepoint/workspace_stage.py`; **the database's own lifecycle and every operation on it**
 (the `WorkspaceHandle` with its lock and write window, the `executemany` append,
-`query_only`/`auto_vacuum` pragmas, `VACUUM INTO`, spill-file naming and locking, orphan reaping) in
+`storage_class_profile`'s one-pass count, `query_only`/`auto_vacuum` pragmas, `VACUUM INTO`,
+spill-file naming and locking, orphan reaping) in
 `nexus/persistence/workspace.py`, with **the dtype→storage-class mapping** split out beside it in
 `workspace_bind.py` because it is a pure lookup table with no lifecycle and reads as one story on
 its own; and **the connection ceiling** in `nexus/persistence/engine_registry.py`.
@@ -3043,7 +3516,7 @@ NFR-404's per-class bound exactly as the four existing mixins keep it there.
 | FR-8xx Persistence | `nexus/persistence/**` |
 | FR-9xx Export/Output | `nexus/export/**` |
 | NFR-1xx Security | `nexus/chokepoint/**`, `nexus/config/**` (credential home), `nexus/observability/**` (redaction) |
-| NFR-2xx Performance | `testbench/batteries/perf_memory/`, `ingest/connectors/**` (streaming semantics), memory-budget machinery (kept, wired into `nexus/chokepoint/resource_bounds.py`) |
+| NFR-2xx Performance | `testbench/batteries/perf_memory/`, `ingest/connectors/**` (streaming semantics), the **residency ledger** (§5.3, wired into `nexus/chokepoint/resource_bounds.py`) |
 | NFR-3xx Reliability | `nexus/error/**`, `nexus/observability/**` |
 | NFR-4xx Maintainability | `nexus/**` generally (NFR-401/402); `server/mcp_app.py` (NFR-404, god-class dissolution) |
 | NFR-5xx Testability | `testbench/**` |
@@ -3125,8 +3598,10 @@ evidence; this closed the round's only BLOCKER and is what makes GP9 hold by con
 consequence that the compensating `DROP TABLE` is the *only* undo, now stated plainly instead of
 implied); **spill-file confidentiality** (§5 spill step 4 — `O_EXCL 0600` pre-create, which works
 because `VACUUM INTO` accepts an *empty* existing target, and `spill_dir` disjointness validated at
-NX-2); the **freelist ratchet** (§5 — `PRAGMA auto_vacuum=FULL` at `ensure()`, chosen over
-`(page_count − freelist_count)` because it returns the memory rather than only accounting for it);
+NX-2); the **freelist ratchet** (§5 — the measure is `(page_count − freelist_count) × page_size`,
+and `PRAGMA auto_vacuum=FULL` at `ensure()` is kept for the **spilled file's on-disk compactness**;
+the round-2 tie-breaker — that `FULL` "returns the memory" — was **re-measured in round 3 and
+retired**: neither option returns anything to the process, and `ru_maxrss` cannot show that it did);
 **workspace ownership** (§5 — NX-5 owns the operations, NX-6 owns the decisions, one owner for the
 spill disk gate); the **`stage_batches` signature** (§6.2 — an iterator, to keep the tool→nexus
 import direction the import-graph test already enforces); the **workspace's resolution path** (§5 —
@@ -3136,17 +3611,53 @@ posture and a defined `list_endpoints` appearance); and the **unit the connectio
 
 **Also decided in round 2, second pass** (the findings the first pass deferred rather than closed):
 **cross-batch dtype conflict** (§5.4 — keep the declared affinity, detect the conflict, record the
-column as *mixed* with its `typeof` histogram in `LoadReport` and `describe_table`, and signal rather
+column as *mixed* in `LoadReport` and `describe_table`, and signal rather
 than refuse by default under the `workspace.dtype_conflict` knob; declare-then-widen withdrawn as
 unimplementable, and rebuild-to-`TEXT` rejected by measurement because it does not fix the aggregate,
-destroys the per-value discriminator, and costs a 2.20× residency transient); **GP9's scope**
+destroys the per-value discriminator, and costs a 2.20× residency transient — **the *observable* was
+re-decided in round 3**: the mixed set is derived from an end-of-load storage-class profile of every
+column, never from a batch dtype); **GP9's scope**
 (§2 — bound-on-Q-from-observation-of-Q, restricted to quantities this process can observe, which
-puts `whole_parse_max_file_bytes` and `chars_per_token` inside the principle honestly and deletes the
-one genuine exception, the retrieval path's per-row chunk extrapolation, §5.9); **what a residency-
+puts `whole_parse_max_file_bytes` and `chars_per_token` inside the principle honestly — **restated in
+round 3 as an enumerated table with a mechanical check**, after the universal form failed a second
+audit and three live contradictions were found in the tree, §5.9); **what a residency-
 ledger refusal does** (§5.5 — it asks for a spill; the abort is what happens when the spill answer is
 no, resolving the document's own contradiction); and the **naming of the residency ledger** (§5.3 —
 one object, one name, taken from the tree's own vocabulary, replacing five aliases one of which named
 the deleted estimator as well).
+
+**Named residuals from round 3, pass B** — each is a limitation the design accepts with its
+consequence stated, not a gap left for an auditor to find:
+
+- **A cross-table JOIN can still multiply rows when both keys agree about their type.** §5.4's
+  `key_class_mismatch` note detects that two join keys hold *different* storage classes, which is the
+  case two independently-loaded files most often produce. It cannot detect the case where both
+  columns are integer-classed and the fan-out comes from distinct source strings that are
+  numerically equal — measured: `'1'` and `'01'` in an `INTEGER`-affinity column both store as
+  integer 1, and a 3-row table joined to that column returns 5 rows with both profiles agreeing.
+  That is a property of the **data**, not of the types, and no type-level check can see it. The
+  consequence, stated plainly: **the flagship cross-file JOIN can silently return more rows than the
+  left-hand table has, with no signal, when the key's source representation is not
+  round-trip-unique.** Closing it needs a distinctness check on the joined keys — a scan, and one
+  the design does not currently pay for — so it is recorded here rather than half-designed.
+- **The end-of-load storage-class profile costs roughly one write of the table.** Measured 3.8–4.0 s
+  against a 3.4 s load on 200,000 rows × 40 columns (§5.4), scaling in rows × columns. It has no
+  opt-out by decision, because it is the detector. The measured tuning path, should the cost bite:
+  a first pass of `min(typeof(c)), max(typeof(c)), count(c)` per column identifies the non-uniform
+  columns in 2 aggregates instead of 5 and needs the per-class count only for those — 3.08 s on the
+  same fixture, i.e. inside this machine's noise, and materially cheaper only when the table is wide
+  and few columns are mixed. Recorded as a measured alternative rather than adopted, because two
+  numbers inside each other's noise do not justify a second code path.
+- **Deleting `admit_load` retires two committed tests, which is a contract change.**
+  `tests/v3/test_guard.py:299-311` and `tests/v3/test_resource_bounds.py:134` assert the upfront
+  seam directly. Under the test-governance rule a committed test is frozen, so their removal needs
+  the recorded reason (`contract-change`) and two-party sign-off; it is named here so it is a
+  decision taken in this document rather than a deletion discovered in a diff.
+- **The ledger reads lower than the process arena after an abort or a spill** (§5.3). Declared
+  fail-open direction, measured, and unfixable at this layer: `ru_maxrss` is a high-water mark and
+  the allocator does not return pages on either `auto_vacuum` setting. It matters most for whoever
+  picks `workspace.memory_budget_bytes` in the PRD, which is why it is stated where the number is
+  chosen rather than only where it is measured.
 
 **Scaling cliffs:**
 
