@@ -14,10 +14,11 @@ fixture script's DSN environment variables are present and SKIP with
 a named reason otherwise (the dockerized halves assemble in E14.2 —
 FR-102's dockerized acceptance lands there). The format table covers
 the 14 core formats through writable fixtures; legacy `.xls` shares
-the Excel family and needs an authored binary fixture (no maintained
-writer exists) — it lands with E14.1's collect-and-build script.
-E14.3 adds the `--randomize --seed 42` full-assertion mode; this
-module IS the deterministic half it re-runs.
+the Excel family but has no maintained writer, so it reads the
+authored binary committed by E14.1's collect-and-build script
+(scripts/build_oracle_datasets.py). E14.3 adds the `--randomize
+--seed 42` full-assertion mode; this module IS the deterministic
+half it re-runs.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -260,6 +262,21 @@ def _write_xlsx(path: Path) -> Path:
     return target
 
 
+def _committed_xls(path: Path) -> Path:
+    """The authored legacy `.xls` binary (E14.1) — no maintained writer
+    exists, so unlike the other formats it is not regenerated per-run but
+    copied from the committed fixture into the path-contained `tmp_path`
+    (every other format writes there too, so the read stays inside
+    allowed_paths). Its content mirrors `_FRAME`; the collect-and-build
+    script (scripts/build_oracle_datasets.py) authors it with xlwt."""
+    source = files("localdata_mcp.testbench.fixtures").joinpath(
+        "datasets/base_excel.xls"
+    )
+    target = path / "d.xls"
+    target.write_bytes(source.read_bytes())
+    return target
+
+
 def _write_ods(path: Path) -> Path:
     target = path / "d.ods"
     with pd.ExcelWriter(target, engine="odf") as writer:
@@ -332,9 +349,10 @@ def _expect_hdf5_matrix(data: Any) -> None:
     assert data["rows"][0] == [1, 2]
 
 
-# The 14 core formats in the section 7.2 declaration order (Excel's
-# xlsx variant carries the family here; the authored .xls binary
-# fixture lands with E14.1 — stated in the module docstring).
+# The 14 core formats in the section 7.2 declaration order, plus the
+# legacy `.xls` — it shares the Excel family but has no maintained writer,
+# so it rides in as the committed authored binary (E14.1) rather than a
+# per-run fixture.
 _FORMAT_ROWS: tuple[tuple[str, Callable[[Path], Path], Callable[[Any], None]], ...] = (
     ("csv", _write_csv, _expect_tabular_rows),
     ("tsv", _write_tsv, _expect_tabular_rows),
@@ -344,6 +362,7 @@ _FORMAT_ROWS: tuple[tuple[str, Callable[[Path], Path], Callable[[Any], None]], .
     ("ini", _write_ini, _expect_document),
     ("xml", _write_xml, _expect_xml_tree),
     ("excel_xlsx", _write_xlsx, _expect_tabular_rows),
+    ("excel_xls", _committed_xls, _expect_tabular_rows),
     ("ods", _write_ods, _expect_tabular_rows),
     ("numbers", _write_numbers, _expect_tabular_rows),
     ("parquet", _write_parquet, _expect_tabular_rows),

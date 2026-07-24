@@ -26,12 +26,17 @@ jobs:
     env:
       LOCALDATA_RESULTS_STORE_DIR: ${{ github.workspace }}/results-workers
       LOCALDATA_RESULTS_RUN_ID: nightly-${{ github.run_id }}
-      LOCALDATA_DATASET_HASH: unpinned
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: Sync environment
         run: uv sync --frozen --extra dev
+      - name: Pin the oracle-dataset provenance hash
+        # E14.1: same committed-manifest hash the per-PR suite pins, so
+        # nightly and per-PR outcomes share one dataset-provenance value.
+        run: |
+          HASH=$(uv run python scripts/build_oracle_datasets.py --print-hash)
+          echo "LOCALDATA_DATASET_HASH=$HASH" >> "$GITHUB_ENV"
       - name: Run the nightly pipeline tiers
         # -m nightly selects the derived-valid lengths-3-4 executor and
         # the non-gating stretch probe; both persist per-worker results.

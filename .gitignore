@@ -149,6 +149,10 @@ validate_test_fixes.py
 # Downloaded test datasets
 tests/datasets/
 
+# Oracle datasets provisioned by scripts/build_oracle_datasets.py --out
+# (the committed manifest + .xls fixture are tracked; the CSVs are not).
+oracle-datasets/
+
 # Generated test fixtures
 tests/fixtures/
 

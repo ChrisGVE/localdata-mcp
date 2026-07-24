@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "combined_sha256": "9b765a9ff33c9fdf05910f3304ff988742850638104a52c4321e8ad379b78260",
+  "entries": [
+    {
+      "name": "air_passengers",
+      "domain": "time_series",
+      "source": "network",
+      "retrieval": "statsmodels get_rdataset('AirPassengers', 'datasets')",
+      "license": "Public-domain series; Rdatasets packaging GPL-3 (data cached, packaging not redistributed)",
+      "sha256": "83e2023c9c16694da8ce858e4d4f189c283574dfe4daa64cc793b2ae54616519"
+    },
+    {
+      "name": "california_housing",
+      "domain": "regression",
+      "source": "network",
+      "retrieval": "sklearn.datasets.fetch_california_housing(as_frame=True)",
+      "license": "Public domain (StatLib census-derived)",
+      "sha256": "94ef369b909f5c725340b512b7c9a05c1550a554b6592d29303990e3ba521a1f"
+    },
+    {
+      "name": "diabetes",
+      "domain": "regression",
+      "source": "bundled",
+      "retrieval": "sklearn.datasets.load_diabetes(as_frame=True)",
+      "license": "BSD-3-Clause (scikit-learn bundle)",
+      "sha256": "f16718c1e6602b419193b9a023dbe278ae7f85ff343158813d7040a9f7512dec"
+    },
+    {
+      "name": "excel_xls_fixture",
+      "domain": "base_ingest",
+      "source": "authored",
+      "retrieval": "authored by scripts/build_oracle_datasets.py (xlwt)",
+      "license": "MIT (repo)",
+      "sha256": "e8b7cad345833f42b953e165021127de799c2b006ba2aced0346f931b0dea0d7"
+    },
+    {
+      "name": "finite_population",
+      "domain": "sampling",
+      "source": "authored",
+      "retrieval": "in-repo literal (sampling_battery_test.py)",
+      "license": "MIT (repo)",
+      "sha256": null
+    },
+    {
+      "name": "geospatial",
+      "domain": "geospatial",
+      "source": "authored",
+      "retrieval": "in-repo literal (geospatial_battery_test.py)",
+      "license": "MIT (repo)",
+      "sha256": null
+    },
+    {
+      "name": "iris",
+      "domain": "pattern_recognition",
+      "source": "bundled",
+      "retrieval": "sklearn.datasets.load_iris(as_frame=True)",
+      "license": "CC BY 4.0 (UCI) via scikit-learn bundle",
+      "sha256": "0ba79ae755c686ee02dfe1d2943772a46ded2433c4fde6dd7ad3b01c41ff5d3d"
+    },
+    {
+      "name": "macrodata",
+      "domain": "time_series",
+      "source": "bundled",
+      "retrieval": "statsmodels.datasets.macrodata.load_pandas()",
+      "license": "US public domain (statsmodels bundle)",
+      "sha256": "242dee4a4188894324cf152b49e31e1687e359cfdbc2ea5a2f8a69a9d0e1a849"
+    },
+    {
+      "name": "mtcars",
+      "domain": "regression",
+      "source": "network",
+      "retrieval": "statsmodels get_rdataset('mtcars', 'datasets')",
+      "license": "Public-domain data; Rdatasets packaging GPL-3 (data cached, packaging not redistributed)",
+      "sha256": "a4054c94d605b782d4ae01c377f050475ad5bfbf8391337076e60dac7777a309"
+    },
+    {
+      "name": "network_graph",
+      "domain": "network_graph",
+      "source": "authored",
+      "retrieval": "in-repo literal (network_battery_test.py)",
+      "license": "MIT (repo)",
+      "sha256": null
+    },
+    {
+      "name": "optimization_lp_assignment",
+      "domain": "optimization",
+      "source": "authored",
+      "retrieval": "in-repo literal (optimization_battery_test.py)",
+      "license": "MIT (repo)",
+      "sha256": null
+    },
+    {
+      "name": "plant_growth",
+      "domain": "statistical",
+      "source": "network",
+      "retrieval": "statsmodels get_rdataset('PlantGrowth', 'datasets')",
+      "license": "Public domain",
+      "sha256": "152cdae1d16a99bb4c12a251d89be3eecd9856a27c857c1fa51848f15064e1ac"
+    },
+    {
+      "name": "rfm_clv",
+      "domain": "business_intelligence",
+      "source": "authored",
+      "retrieval": "in-repo literal (bi_battery_test.py)",
+      "license": "MIT (repo)",
+      "sha256": null
+    },
+    {
+      "name": "sleep",
+      "domain": "statistical",
+      "source": "network",
+      "retrieval": "statsmodels get_rdataset('sleep', 'datasets')",
+      "license": "Public domain (Student 1908 / Cushny & Peebles)",
+      "sha256": "ce4284663e0dd651af11f84b235024d07bac257707062c74b744935b27028445"
+    }
+  ]
+}
