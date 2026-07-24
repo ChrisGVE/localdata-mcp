@@ -32,12 +32,14 @@ def _network(
 ) -> "nx.Graph[Any]":
     require_columns(frame, node_id_column, x_column, y_column)
     graph: "nx.Graph[Any]" = nx.Graph()
-    for _index, row in frame.iterrows():
-        graph.add_node(
-            str(row[node_id_column]),
-            x=float(row[x_column]),
-            y=float(row[y_column]),
+    # Vectorized node construction (never a per-row iterrows): each node
+    # carries its x/y coordinates as attributes.
+    graph.add_nodes_from(
+        (str(node_id), {"x": float(x), "y": float(y)})
+        for node_id, x, y in zip(
+            frame[node_id_column], frame[x_column], frame[y_column]
         )
+    )
     for edge in edges:
         if len(edge) < 2:
             raise invalid_source_refusal(

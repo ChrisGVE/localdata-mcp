@@ -73,17 +73,36 @@ def _build_graph(
     weight_column: str | None,
     directed: bool,
 ) -> "nx.Graph[Any]":
+    """Build the graph from the edge-list frame with the vectorized
+    `nx.from_pandas_edgelist` constructor (never a per-row iterrows).
+    Rows missing an endpoint are dropped; endpoints are stringified; a
+    weight column is carried under the `weight` edge attribute, and a row
+    whose weight is missing stays a plain (unweighted) edge — parity with
+    the original row-wise builder."""
     require_columns(frame, source_column, target_column, weight_column)
-    graph: "nx.Graph[Any]" = nx.DiGraph() if directed else nx.Graph()
-    for _index, row in frame.iterrows():
-        source = row[source_column]
-        target = row[target_column]
-        if pd.isna(source) or pd.isna(target):
-            continue
-        if weight_column is not None and not pd.isna(row[weight_column]):
-            graph.add_edge(str(source), str(target), weight=float(row[weight_column]))
-        else:
-            graph.add_edge(str(source), str(target))
+    create_using = nx.DiGraph if directed else nx.Graph
+    columns = [source_column, target_column]
+    if weight_column is not None:
+        columns.append(weight_column)
+    edges = frame[columns].dropna(subset=[source_column, target_column]).copy()
+    edges[source_column] = edges[source_column].astype(str)
+    edges[target_column] = edges[target_column].astype(str)
+    if weight_column is None:
+        return nx.from_pandas_edgelist(
+            edges, source_column, target_column, create_using=create_using()
+        )
+    edges = edges.rename(columns={weight_column: "weight"})
+    weighted = edges[edges["weight"].notna()].copy()
+    weighted["weight"] = weighted["weight"].astype(float)
+    graph = nx.from_pandas_edgelist(
+        weighted,
+        source_column,
+        target_column,
+        edge_attr="weight",
+        create_using=create_using(),
+    )
+    plain = edges[edges["weight"].isna()]
+    graph.add_edges_from(zip(plain[source_column], plain[target_column]))
     return graph
 
 
