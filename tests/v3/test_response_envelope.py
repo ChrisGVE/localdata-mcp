@@ -195,6 +195,60 @@ class TestEmptyResultSemantics:
         assert "mean: 1.5" in mapping.inline
 
 
+class TestMappingInlineBudget:
+    """CR-001: a mapping carrying a large embedded list (clustering
+    labels, CLV/RFM customer lists, LP assignments) must not render its
+    whole payload into an unbounded inline string. The inline region is
+    admission-subject like tabular results; the full typed mapping stays
+    in `data` for composition (GP4)."""
+
+    def _shaper(self, registry: ToolRegistry) -> ResponseShaper:
+        config = ConfigModel(
+            response=ResponseConfig(inline_max_rows=5, inline_max_bytes=256)
+        )
+        return ResponseShaper(config, registry)
+
+    def test_large_embedded_list_value_is_bounded_inline(
+        self, registry: ToolRegistry
+    ) -> None:
+        shaper = self._shaper(registry)
+        result = {"labels": list(range(10_000)), "n_clusters": 3}
+        envelope = shaper.shape_envelope(result, spec("source_tool", TypeShape.SCALAR))
+        assert envelope.inline is not None
+        # The inline region is bounded (well under the ~50 KB the raw
+        # list would render to), and the full mapping survives in data.
+        assert len(envelope.inline.encode("utf-8")) <= 2 * 256 + 512
+        assert envelope.data == result
+        assert "truncat" in envelope.inline.lower()
+
+    def test_many_entry_mapping_truncates_with_a_note(
+        self, registry: ToolRegistry
+    ) -> None:
+        shaper = self._shaper(registry)
+        result = {f"k{i}": i for i in range(50)}
+        envelope = shaper.shape_envelope(result, spec("source_tool", TypeShape.SCALAR))
+        assert envelope.inline is not None
+        assert "omitted" in envelope.inline
+        assert envelope.data == result
+
+    def test_small_mapping_renders_in_full_without_a_note(
+        self, registry: ToolRegistry
+    ) -> None:
+        shaper = self._shaper(registry)
+        result = {"mean": 1.5, "n": 3}
+        envelope = shaper.shape_envelope(result, spec("source_tool", TypeShape.SCALAR))
+        assert envelope.inline is not None
+        assert "mean: 1.5" in envelope.inline
+        assert "n: 3" in envelope.inline
+        assert "omitted" not in envelope.inline
+        assert "truncat" not in envelope.inline.lower()
+
+    def test_true_scalar_still_renders_directly(self, registry: ToolRegistry) -> None:
+        shaper = self._shaper(registry)
+        envelope = shaper.shape_envelope(42, spec("source_tool", TypeShape.SCALAR))
+        assert envelope.inline == "42"
+
+
 class TestCompositionMetadataDerivation:
     def test_next_steps_derive_from_the_registry_adjacency(
         self, registry: ToolRegistry

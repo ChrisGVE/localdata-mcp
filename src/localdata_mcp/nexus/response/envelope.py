@@ -101,9 +101,13 @@ class ResponseShaper:
 
         Tabular results (a guard `Result`, or any (columns, rows)
         carrier) render an inline markdown table within the budget and
-        cut over to a stream reference beyond it; scalars and mappings
-        render inline directly; empty results state their emptiness
-        explicitly.
+        cut over to a stream reference beyond it; a mapping is
+        admission-subject too — it renders `key: value` lines within the
+        budget and, over it, a bounded summary with an explicit
+        truncation note while the full typed mapping stays in `data` for
+        composition (CR-001; a mapping has no row-stream shape to cut
+        over to); true scalars render inline directly; empty results
+        state their emptiness explicitly.
         """
         metadata = self._metadata_for(tool_spec)
         if hasattr(result, "chunk_id"):
@@ -119,10 +123,59 @@ class ResponseShaper:
                 data=[],
                 composition_metadata=metadata,
             )
+        if isinstance(result, Mapping):
+            return self._shape_mapping(result, metadata)
         return ResponseEnvelope(
             inline=_inline_scalar(result),
             data=result,
             composition_metadata=metadata,
+        )
+
+    def _shape_mapping(
+        self, result: Mapping[Any, Any], metadata: CompositionMetadata
+    ) -> ResponseEnvelope:
+        """A mapping under the S8 23a/23b inline budget (CR-001).
+
+        Entries render as `- key: value` lines until either the row
+        bound (`inline_max_rows` entries) or the byte bound
+        (`inline_max_bytes`) trips, and any single value's rendered text
+        is itself capped so one large embedded list cannot blow the
+        inline region. Over budget, an explicit note states what was
+        omitted; `data` always carries the FULL typed mapping so
+        composition stays arithmetically correct (GP4).
+        """
+        entries = list(result.items())
+        if not entries:
+            return ResponseEnvelope(
+                inline=_inline_scalar(result),
+                data=result,
+                composition_metadata=metadata,
+            )
+        lines: list[str] = []
+        used = 0
+        shown = 0
+        for key, value in entries:
+            if shown >= self._max_rows:
+                break
+            line = f"- {key}: {_capped_value(value, self._max_bytes)}"
+            weight = len(line.encode("utf-8")) + 1  # + the joining newline
+            if shown > 0 and used + weight > self._max_bytes:
+                break
+            lines.append(line)
+            used += weight
+            shown += 1
+        inline = "\n".join(lines)
+        if shown < len(entries):
+            omitted = len(entries) - shown
+            inline += (
+                f"\n… {omitted} more "
+                f"{'entry' if omitted == 1 else 'entries'} omitted — the mapping "
+                f"exceeds the inline budget (inline_max_rows={self._max_rows}, "
+                f"inline_max_bytes={self._max_bytes}); the full typed mapping is "
+                "carried in `data` for composition."
+            )
+        return ResponseEnvelope(
+            inline=inline, data=result, composition_metadata=metadata
         )
 
     def _shape_tabular(
@@ -281,13 +334,25 @@ def _markdown_table(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> st
 
 
 def _inline_scalar(result: Any) -> str:
-    """The inline region for non-tabular payloads: a readable one-liner
-    (mappings render as `key: value` lines)."""
+    """The inline region for a true scalar payload, and the explicit
+    empty-mapping statement. Non-empty mappings are budget-shaped by
+    `_shape_mapping` (CR-001), never rendered here unbounded."""
     if isinstance(result, Mapping):
         if not result:
             return "The result is an empty mapping — no entries (not a failure)."
         return "\n".join(f"- {key}: {value}" for key, value in result.items())
     return str(result)
+
+
+def _capped_value(value: Any, cap: int) -> str:
+    """One mapping value's rendered text, truncated so a single large
+    embedded value (a clustering-label list, an LP assignment vector)
+    cannot blow the inline budget (CR-001). The full value survives in
+    the envelope's `data` region."""
+    rendered = str(value)
+    if len(rendered) > cap:
+        return rendered[:cap] + f"… (value truncated — {len(rendered)} chars total)"
+    return rendered
 
 
 def _zero_statement(tool_name: str, what: str) -> str:
