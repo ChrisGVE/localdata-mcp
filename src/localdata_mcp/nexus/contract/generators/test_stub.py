@@ -2,13 +2,16 @@
 
 Renders testbench/batteries/base/contract_generated_test.py: one
 parametrized L3 contract stub per registered tool through the
-fastmcp.Client in-memory seam (FR-702/NFR-501), plus the coverage
-check that FAILS when a registered ToolSpec lacks its generated entry
-— the always-on L3-presence gate. Sample argument literals derive
-from each Param's annotation; an annotation outside the supported set
-fails GENERATION (honest refusal, never a silently skipped tool).
-Neighbors: generate.py writes the output; purity_runner.py is the
-sibling OS-level seam the batteries wrap.
+fastmcp.Client in-memory seam (FR-702/NFR-501). Served (production)
+tools are exercised on the app mcp_app.py serves; test_only walking-
+skeleton probes are exercised on a battery-local app so GP5's L3 seam
+still covers them without polluting the served MCP surface (CR-012).
+The coverage check FAILS when a registered ToolSpec lacks its generated
+entry in either list — the always-on L3-presence gate. Sample argument
+literals derive from each Param's annotation; an annotation outside the
+supported set fails GENERATION (honest refusal, never a silently
+skipped tool). Neighbors: generate.py writes the output; purity_runner.py
+is the sibling OS-level seam the batteries wrap.
 """
 
 from __future__ import annotations
@@ -32,11 +35,13 @@ _SAMPLE_LITERALS: dict[type, str] = {
 
 _HEADER = f'''"""MACHINE-WRITTEN by {GENERATOR_NAME} — DO NOT EDIT.
 
-Parametrized L3 contract stubs (ARCHITECTURE.md 6.1 artifact 4):
-every registered tool answers a well-formed fastmcp.Client call, and
-the coverage check fails if any registered ToolSpec lacks an entry
-here. Regenerate via `python -m localdata_mcp.nexus.contract.generate`;
-hand edits fail CI through nexus/contract/check_drift.py.
+Parametrized L3 contract stubs (ARCHITECTURE.md 6.1 artifact 4): every
+served tool answers a well-formed fastmcp.Client call on the served
+app, every test_only walking-skeleton probe answers on a battery-local
+app kept OFF the served surface (CR-012), and the coverage check fails
+if any registered ToolSpec lacks an entry in either list. Regenerate
+via `python -m localdata_mcp.nexus.contract.generate`; hand edits fail
+CI through nexus/contract/check_drift.py.
 """
 
 from __future__ import annotations
@@ -46,16 +51,29 @@ from typing import Any
 
 import anyio
 import pytest
-from fastmcp import Client
+from fastmcp import Client, FastMCP
 
 from localdata_mcp.nexus.contract.registry import default_registry
 from localdata_mcp.nexus.contract.spec_modules import load_spec_modules
 from localdata_mcp.server.mcp_app import app
+from localdata_mcp.server.tools_generated import register_skeleton_tools
 
-GENERATED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
+# The served product surface: exercised against the app mcp_app.py boots.
+SERVED_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
 '''
 
+_MIDDLE = """)
+
+# The test_only walking-skeleton probes: exercised against a battery-
+# local app built here, so they never reach the served surface (CR-012)
+# yet stay L3-proven at the seam (GP5).
+SKELETON_TOOL_CALLS: "tuple[tuple[str, dict[str, Any]], ...]" = (
+"""
+
 _FOOTER = """)
+
+_skeleton_app = FastMCP("localdata-skeleton-probes")
+register_skeleton_tools(_skeleton_app)
 
 _ENVELOPE_REGIONS = {"inline", "data", "composition_metadata", "error"}
 
@@ -72,19 +90,15 @@ def _envelope_of(result: Any) -> "dict[str, Any]":
     return payload
 
 
-@pytest.mark.parametrize(
-    ("name", "arguments"),
-    GENERATED_TOOL_CALLS,
-    ids=[name for name, _ in GENERATED_TOOL_CALLS],
-)
-def test_tool_answers_well_formed(name: str, arguments: "dict[str, Any]") -> None:
+def _assert_well_formed(target: Any, name: str, arguments: "dict[str, Any]") -> None:
+    \"\"\"Call `name` on `target` and assert the FR-403 four-region
+    envelope, with error exclusive of the other regions.\"\"\"
+
     async def session() -> None:
-        async with Client(app) as client:
+        async with Client(target) as client:
             result = await client.call_tool(name, arguments)
             assert not result.is_error
             envelope = _envelope_of(result)
-            # FR-403: the four-region schema on every tool, and error
-            # exclusive with the other regions.
             assert set(envelope) >= _ENVELOPE_REGIONS
             if envelope["error"] is None:
                 assert envelope["inline"] is not None
@@ -96,10 +110,34 @@ def test_tool_answers_well_formed(name: str, arguments: "dict[str, Any]") -> Non
     anyio.run(session)
 
 
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    SERVED_TOOL_CALLS,
+    ids=[name for name, _ in SERVED_TOOL_CALLS],
+)
+def test_served_tool_answers_well_formed(
+    name: str, arguments: "dict[str, Any]"
+) -> None:
+    _assert_well_formed(app, name, arguments)
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    SKELETON_TOOL_CALLS,
+    ids=[name for name, _ in SKELETON_TOOL_CALLS],
+)
+def test_skeleton_probe_answers_well_formed(
+    name: str, arguments: "dict[str, Any]"
+) -> None:
+    _assert_well_formed(_skeleton_app, name, arguments)
+
+
 def test_every_registered_spec_has_a_generated_entry() -> None:
     load_spec_modules()
     registered = {spec.name for spec in default_registry()}
-    generated = {name for name, _ in GENERATED_TOOL_CALLS}
+    generated = {name for name, _ in SERVED_TOOL_CALLS} | {
+        name for name, _ in SKELETON_TOOL_CALLS
+    }
     missing = registered - generated
     assert not missing, (
         f"registered ToolSpecs lacking generated L3 entries: {sorted(missing)}"
@@ -124,9 +162,14 @@ def _sample_arguments(spec: ToolSpec) -> str:
     return "{" + ", ".join(pairs) + "}"
 
 
+def _entries(specs: list[ToolSpec]) -> str:
+    return "".join(
+        f'    ("{spec.name}", {_sample_arguments(spec)}),\n' for spec in specs
+    )
+
+
 def render_test_module(registry: ToolRegistry) -> str:
     """The complete contract_generated_test.py text for `registry`."""
-    entries = "".join(
-        f'    ("{spec.name}", {_sample_arguments(spec)}),\n' for spec in registry
-    )
-    return _HEADER + entries + _FOOTER
+    served = [spec for spec in registry if not spec.test_only]
+    skeleton = [spec for spec in registry if spec.test_only]
+    return _HEADER + _entries(served) + _MIDDLE + _entries(skeleton) + _FOOTER

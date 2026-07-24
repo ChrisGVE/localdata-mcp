@@ -18,168 +18,9 @@ from localdata_mcp.nexus.response.shaping import shaped_call
 
 
 def register_tools(app: FastMCP) -> None:
-    """Register every generated tool wrapper on `app`."""
+    """Register every served (production) tool wrapper on `app`."""
     load_spec_modules()
     registry = default_registry()
-
-    _impl_ping = registry.lookup("ping").func
-
-    def ping() -> Any:
-        """
-        Report server liveness with a constant probe response.
-
-        Input shape: NONE (chain endpoint — composes with nothing).
-        Output shape: SCALAR.
-        Streaming-capable: no.
-        """
-        arguments: dict[str, Any] = {}
-        return shaped_call("ping", _impl_ping, arguments)
-
-    app.tool(ping)
-
-    _impl_probe_table = registry.lookup("probe_table").func
-
-    def probe_table(rows: int) -> Any:
-        """
-        Produce a small numbered table of squares for pipeline probing.
-
-        Input shape: NONE (chain endpoint — composes with nothing).
-        Output shape: TABULAR.
-        Streaming-capable: no.
-
-        Args:
-            rows: How many rows the probe table carries.
-        """
-        arguments: dict[str, Any] = {"rows": rows}
-        return shaped_call("probe_table", _impl_probe_table, arguments)
-
-    app.tool(probe_table)
-
-    _impl_probe_vector = registry.lookup("probe_vector").func
-
-    def probe_vector(length: int) -> Any:
-        """
-        Produce an ordered series of triangular numbers for probing.
-
-        Input shape: NONE (chain endpoint — composes with nothing).
-        Output shape: VECTOR.
-        Streaming-capable: no.
-
-        Args:
-            length: How many entries the series carries.
-        """
-        arguments: dict[str, Any] = {"length": length}
-        return shaped_call("probe_vector", _impl_probe_vector, arguments)
-
-    app.tool(probe_vector)
-
-    _impl_probe_matrix = registry.lookup("probe_matrix").func
-
-    def probe_matrix(size: int) -> Any:
-        """
-        Produce an identity matrix of the requested size for probing.
-
-        Input shape: NONE (chain endpoint — composes with nothing).
-        Output shape: MATRIX.
-        Streaming-capable: no.
-
-        Args:
-            size: Row and column count of the matrix.
-        """
-        arguments: dict[str, Any] = {"size": size}
-        return shaped_call("probe_matrix", _impl_probe_matrix, arguments)
-
-    app.tool(probe_matrix)
-
-    _impl_probe_model = registry.lookup("probe_model").func
-
-    def probe_model(points: int) -> Any:
-        """
-        Fit a line to a tiny generated sample and report coefficients.
-
-        Input shape: NONE (chain endpoint — composes with nothing).
-        Output shape: FITTED_MODEL.
-        Streaming-capable: no.
-
-        Args:
-            points: Sample size drawn from y = 2n + 1.
-        """
-        arguments: dict[str, Any] = {"points": points}
-        return shaped_call("probe_model", _impl_probe_model, arguments)
-
-    app.tool(probe_model)
-
-    _impl_probe_graph = registry.lookup("probe_graph").func
-
-    def probe_graph(nodes: int) -> Any:
-        """
-        Produce a path graph with the requested node count for probing.
-
-        Input shape: NONE (chain endpoint — composes with nothing).
-        Output shape: GRAPH.
-        Streaming-capable: no.
-
-        Args:
-            nodes: How many nodes the path graph carries.
-        """
-        arguments: dict[str, Any] = {"nodes": nodes}
-        return shaped_call("probe_graph", _impl_probe_graph, arguments)
-
-    app.tool(probe_graph)
-
-    _impl_probe_geo = registry.lookup("probe_geo").func
-
-    def probe_geo(points: int) -> Any:
-        """
-        Produce evenly spaced points along the equator for probing.
-
-        Input shape: NONE (chain endpoint — composes with nothing).
-        Output shape: GEO.
-        Streaming-capable: no.
-
-        Args:
-            points: How many geometry-bearing rows to emit.
-        """
-        arguments: dict[str, Any] = {"points": points}
-        return shaped_call("probe_geo", _impl_probe_geo, arguments)
-
-    app.tool(probe_geo)
-
-    _impl_probe_chart = registry.lookup("probe_chart").func
-
-    def probe_chart(points: int) -> Any:
-        """
-        Build a line-chart specification over computed square values.
-
-        Input shape: NONE (chain endpoint — composes with nothing).
-        Output shape: CHART_SPEC.
-        Streaming-capable: no.
-
-        Args:
-            points: How many x/y pairs the chart spec plots.
-        """
-        arguments: dict[str, Any] = {"points": points}
-        return shaped_call("probe_chart", _impl_probe_chart, arguments)
-
-    app.tool(probe_chart)
-
-    _impl_probe_sink = registry.lookup("probe_sink").func
-
-    def probe_sink(text: str) -> Any:
-        """
-        Measure a text payload and report its size as a terminal result.
-
-        Input shape: TABULAR.
-        Output shape: NONE (chain endpoint — composes with nothing).
-        Streaming-capable: no.
-
-        Args:
-            text: Payload whose size the sink reports.
-        """
-        arguments: dict[str, Any] = {"text": text}
-        return shaped_call("probe_sink", _impl_probe_sink, arguments)
-
-    app.tool(probe_sink)
 
     _impl_list_endpoints = registry.lookup("list_endpoints").func
 
@@ -2414,3 +2255,168 @@ def register_tools(app: FastMCP) -> None:
         return shaped_call("export_result", _impl_export_result, arguments)
 
     app.tool(export_result)
+
+
+def register_skeleton_tools(app: FastMCP) -> None:
+    """Register the test_only walking-skeleton probe wrappers on `app` — a battery-local app only, never the served surface (CR-012)."""
+    load_spec_modules()
+    registry = default_registry()
+
+    _impl_ping = registry.lookup("ping").func
+
+    def ping() -> Any:
+        """
+        Report server liveness with a constant probe response.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: SCALAR.
+        Streaming-capable: no.
+        """
+        arguments: dict[str, Any] = {}
+        return shaped_call("ping", _impl_ping, arguments)
+
+    app.tool(ping)
+
+    _impl_probe_table = registry.lookup("probe_table").func
+
+    def probe_table(rows: int) -> Any:
+        """
+        Produce a small numbered table of squares for pipeline probing.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: TABULAR.
+        Streaming-capable: no.
+
+        Args:
+            rows: How many rows the probe table carries.
+        """
+        arguments: dict[str, Any] = {"rows": rows}
+        return shaped_call("probe_table", _impl_probe_table, arguments)
+
+    app.tool(probe_table)
+
+    _impl_probe_vector = registry.lookup("probe_vector").func
+
+    def probe_vector(length: int) -> Any:
+        """
+        Produce an ordered series of triangular numbers for probing.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: VECTOR.
+        Streaming-capable: no.
+
+        Args:
+            length: How many entries the series carries.
+        """
+        arguments: dict[str, Any] = {"length": length}
+        return shaped_call("probe_vector", _impl_probe_vector, arguments)
+
+    app.tool(probe_vector)
+
+    _impl_probe_matrix = registry.lookup("probe_matrix").func
+
+    def probe_matrix(size: int) -> Any:
+        """
+        Produce an identity matrix of the requested size for probing.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: MATRIX.
+        Streaming-capable: no.
+
+        Args:
+            size: Row and column count of the matrix.
+        """
+        arguments: dict[str, Any] = {"size": size}
+        return shaped_call("probe_matrix", _impl_probe_matrix, arguments)
+
+    app.tool(probe_matrix)
+
+    _impl_probe_model = registry.lookup("probe_model").func
+
+    def probe_model(points: int) -> Any:
+        """
+        Fit a line to a tiny generated sample and report coefficients.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: FITTED_MODEL.
+        Streaming-capable: no.
+
+        Args:
+            points: Sample size drawn from y = 2n + 1.
+        """
+        arguments: dict[str, Any] = {"points": points}
+        return shaped_call("probe_model", _impl_probe_model, arguments)
+
+    app.tool(probe_model)
+
+    _impl_probe_graph = registry.lookup("probe_graph").func
+
+    def probe_graph(nodes: int) -> Any:
+        """
+        Produce a path graph with the requested node count for probing.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: GRAPH.
+        Streaming-capable: no.
+
+        Args:
+            nodes: How many nodes the path graph carries.
+        """
+        arguments: dict[str, Any] = {"nodes": nodes}
+        return shaped_call("probe_graph", _impl_probe_graph, arguments)
+
+    app.tool(probe_graph)
+
+    _impl_probe_geo = registry.lookup("probe_geo").func
+
+    def probe_geo(points: int) -> Any:
+        """
+        Produce evenly spaced points along the equator for probing.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: GEO.
+        Streaming-capable: no.
+
+        Args:
+            points: How many geometry-bearing rows to emit.
+        """
+        arguments: dict[str, Any] = {"points": points}
+        return shaped_call("probe_geo", _impl_probe_geo, arguments)
+
+    app.tool(probe_geo)
+
+    _impl_probe_chart = registry.lookup("probe_chart").func
+
+    def probe_chart(points: int) -> Any:
+        """
+        Build a line-chart specification over computed square values.
+
+        Input shape: NONE (chain endpoint — composes with nothing).
+        Output shape: CHART_SPEC.
+        Streaming-capable: no.
+
+        Args:
+            points: How many x/y pairs the chart spec plots.
+        """
+        arguments: dict[str, Any] = {"points": points}
+        return shaped_call("probe_chart", _impl_probe_chart, arguments)
+
+    app.tool(probe_chart)
+
+    _impl_probe_sink = registry.lookup("probe_sink").func
+
+    def probe_sink(text: str) -> Any:
+        """
+        Measure a text payload and report its size as a terminal result.
+
+        Input shape: TABULAR.
+        Output shape: NONE (chain endpoint — composes with nothing).
+        Streaming-capable: no.
+
+        Args:
+            text: Payload whose size the sink reports.
+        """
+        arguments: dict[str, Any] = {"text": text}
+        return shaped_call("probe_sink", _impl_probe_sink, arguments)
+
+    app.tool(probe_sink)

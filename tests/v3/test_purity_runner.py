@@ -34,9 +34,13 @@ from localdata_mcp.testbench.purity_runner import (
 @pytest.fixture(scope="module")
 def l3_session(tmp_path_factory: pytest.TempPathFactory) -> SessionResult:
     """One real child-process session shared by the round-trip
-    assertions below: initialize, initialized, call the skeleton ping
-    tool, close stdin. Hermetic: HOME points into a temp dir and no
-    LOCALDATA_* env override leaks in, so only model defaults apply."""
+    assertions below: initialize, initialized, call the served
+    list_endpoints tool, close stdin. The walking-skeleton ping is OFF
+    the served surface now (CR-012), so this drives a production tool
+    that needs no configured backend — with zero endpoints declared it
+    returns the explicit first-contact message. Hermetic: HOME points
+    into a temp dir and no LOCALDATA_* env override leaks in, so only
+    model defaults apply."""
     home = tmp_path_factory.mktemp("child-home")
     env = {
         key: value
@@ -48,7 +52,7 @@ def l3_session(tmp_path_factory: pytest.TempPathFactory) -> SessionResult:
         [
             initialize_request(request_id=1),
             initialized_notification(),
-            tool_call_request(request_id=2, name="ping"),
+            tool_call_request(request_id=2, name="list_endpoints"),
         ],
         cwd=home,
         env=env,
@@ -77,9 +81,11 @@ class TestL3RoundTrip:
         response = l3_session.responses_by_id()[2]
         content = response["result"]["content"]
         # E7.2: the wrapper ships the FR-403 envelope; `inline` carries
-        # the scalar the tool produced.
+        # the tool's payload — here list_endpoints' zero-endpoints
+        # first-contact message (no backend configured in the hermetic
+        # child), not an error.
         envelope = json.loads(content[0]["text"])
-        assert envelope["inline"] == "pong"
+        assert "Zero endpoints declared" in envelope["inline"]
         assert envelope["error"] is None
 
     def test_logs_went_to_stderr_not_stdout(self, l3_session: SessionResult) -> None:

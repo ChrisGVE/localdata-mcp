@@ -81,15 +81,42 @@ def _render_one(spec: ToolSpec) -> str:
     )
 
 
-def render_wrapper_module(registry: ToolRegistry) -> str:
-    """The complete tools_generated.py text for `registry`."""
-    blocks = "\n".join(_render_one(spec) for spec in registry)
+def _render_register_function(name: str, docstring: str, specs: list[ToolSpec]) -> str:
+    """One `def {name}(app)` that registers every spec in `specs`."""
+    blocks = "\n".join(_render_one(spec) for spec in specs)
     return (
-        _HEADER
-        + "\ndef register_tools(app: FastMCP) -> None:\n"
-        + '    """Register every generated tool wrapper on `app`."""\n'
+        f"\ndef {name}(app: FastMCP) -> None:\n"
+        + f'    """{docstring}"""\n'
         + "    load_spec_modules()\n"
         + "    registry = default_registry()\n"
         + "\n"
         + blocks
+    )
+
+
+def render_wrapper_module(registry: ToolRegistry) -> str:
+    """The complete tools_generated.py text for `registry`.
+
+    Two registration functions partition the registry by test_only:
+    register_tools carries the served product surface (mcp_app.py's sole
+    caller), register_skeleton_tools carries the test_only walking-
+    skeleton probes so they stay OFF the live MCP surface (CR-012) while
+    the generated L3 stub still exercises them on a battery-local app."""
+    production = [spec for spec in registry if not spec.test_only]
+    skeleton = [spec for spec in registry if spec.test_only]
+    return (
+        _HEADER
+        + _render_register_function(
+            "register_tools",
+            "Register every served (production) tool wrapper on `app`.",
+            production,
+        )
+        + "\n"
+        + _render_register_function(
+            "register_skeleton_tools",
+            "Register the test_only walking-skeleton probe wrappers on "
+            "`app` — a battery-local app only, never the served surface "
+            "(CR-012).",
+            skeleton,
+        )
     )

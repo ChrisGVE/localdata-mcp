@@ -3,11 +3,15 @@
 Trivial but REAL pure tools (each computes its declared output shape,
 no stubs) proving the NX-1 one-declaration pipeline end to end: spec
 here -> generated wrapper/docs/test-stub/shape-registry artifacts ->
-FastMCP registration in mcp_app.py. E3.6 keeps one tool per
-non-DYNAMIC TypeShape so FR-701/704 acceptance runs against a
-populated registry; later epics land the real tool surface. Registered
-via nexus/contract/spec_modules.py's roster — never imported directly
-by the server.
+FastMCP registration. Every spec here is `test_only=True`: the
+generated wrapper routes it into register_skeleton_tools, NOT the
+register_tools mcp_app.py serves, so these probes never reach a live
+MCP client (CR-012). The generated L3 stub still exercises each one on
+a battery-local app, keeping GP5's seam proof. E3.6 keeps one tool per
+non-DYNAMIC TypeShape so FR-701/704 acceptance runs against a populated
+registry; later epics land the real tool surface. Registered via
+nexus/contract/spec_modules.py's roster — never imported directly by
+the server.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from localdata_mcp.nexus.contract.spec import Param, TypeShape, tool_spec
     params=[],
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.SCALAR,
+    test_only=True,
 )
 def ping() -> str:
     return "pong"
@@ -34,6 +39,7 @@ def ping() -> str:
     params=[Param("rows", int, "How many rows the probe table carries.")],
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.TABULAR,
+    test_only=True,
 )
 def probe_table(rows: int) -> dict[str, Any]:
     return {
@@ -48,6 +54,7 @@ def probe_table(rows: int) -> dict[str, Any]:
     params=[Param("length", int, "How many entries the series carries.")],
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.VECTOR,
+    test_only=True,
 )
 def probe_vector(length: int) -> list[int]:
     return [n * (n + 1) // 2 for n in range(length)]
@@ -59,6 +66,7 @@ def probe_vector(length: int) -> list[int]:
     params=[Param("size", int, "Row and column count of the matrix.")],
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.MATRIX,
+    test_only=True,
 )
 def probe_matrix(size: int) -> list[list[int]]:
     return [[1 if row == col else 0 for col in range(size)] for row in range(size)]
@@ -70,6 +78,7 @@ def probe_matrix(size: int) -> list[list[int]]:
     params=[Param("points", int, "Sample size drawn from y = 2n + 1.")],
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.FITTED_MODEL,
+    test_only=True,
 )
 def probe_model(points: int) -> dict[str, float]:
     xs = list(range(points))
@@ -91,6 +100,7 @@ def probe_model(points: int) -> dict[str, float]:
     params=[Param("nodes", int, "How many nodes the path graph carries.")],
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.GRAPH,
+    test_only=True,
 )
 def probe_graph(nodes: int) -> dict[str, Any]:
     return {
@@ -105,6 +115,7 @@ def probe_graph(nodes: int) -> dict[str, Any]:
     params=[Param("points", int, "How many geometry-bearing rows to emit.")],
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.GEO,
+    test_only=True,
 )
 def probe_geo(points: int) -> dict[str, Any]:
     return {
@@ -122,6 +133,7 @@ def probe_geo(points: int) -> dict[str, Any]:
     params=[Param("points", int, "How many x/y pairs the chart spec plots.")],
     input_shape=TypeShape.NONE,
     output_shape=TypeShape.CHART_SPEC,
+    test_only=True,
 )
 def probe_chart(points: int) -> dict[str, Any]:
     xs = list(range(points))
@@ -134,6 +146,7 @@ def probe_chart(points: int) -> dict[str, Any]:
     params=[Param("text", str, "Payload whose size the sink reports.")],
     input_shape=TypeShape.TABULAR,
     output_shape=TypeShape.NONE,
+    test_only=True,
 )
 def probe_sink(text: str) -> dict[str, int]:
     return {"characters": len(text), "words": len(text.split())}
