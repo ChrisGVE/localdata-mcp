@@ -67,7 +67,13 @@ _ENGINE_SUFFIXES: dict[str, EphemeralEngineKind] = {
 def read_file(path: str, format: str = "auto") -> Any:
     real = chokepoint().contain_path(path, mode="read")
     format_name = resolve_format(real, format)
-    loaded = read_path(real, format_name)
+    try:
+        # NFR-105/CR-005: the reader crosses the memory-admission gate
+        # before it materializes the file — a decompression bomb inside
+        # allowed_paths is refused fail-safe here, never OOM-ed.
+        loaded = read_path(real, format_name, chokepoint().admit_load)
+    except ResourceRefusedError as refusal:
+        raise over_budget_refusal(str(refusal)) from refusal
     if isinstance(loaded, pd.DataFrame):
         result = Result(
             columns=tuple(str(column) for column in loaded.columns),

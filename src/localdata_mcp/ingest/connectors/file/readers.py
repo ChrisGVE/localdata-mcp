@@ -21,10 +21,15 @@ readers, not around them:
   closure; refusal is the observable the battery asserts).
 
 Containment (NFR-108) is the TOOL's step before any reader runs
-(tools.py crosses the guard's contain_path) — readers assume a
-contained real path and do no security beyond their own format's
-hardening. Neighbors: tools.py dispatches here; the inventory registry
-records each format's streaming classification (E8.4).
+(tools.py crosses the guard's contain_path). The NFR-105 MEMORY gate is
+this module's step: `read_path` crosses the chokepoint's admission seam
+(`admit`, injected) BEFORE any whole-file materialization (CR-005) —
+CSV/TSV charge their growing residency chunk by chunk (a high-ratio file
+refused mid-read), the rest cross one upfront on-disk-size estimate — so
+a decompression bomb inside allowed_paths cannot OOM the server.
+Otherwise readers assume a contained real path and do no security beyond
+their own format's hardening. Neighbors: tools.py dispatches here; the
+inventory registry records each format's streaming classification (E8.4).
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ import configparser
 import datetime
 import io
 import json
+import os
 import tomllib
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -45,6 +51,44 @@ from defusedxml import ElementTree as DefusedElementTree
 class FileIngestError(ValueError):
     """A reader refused its file — unknown format, malformed content,
     or a hardening violation; shaped through NX-3 by the wrapper."""
+
+
+AdmitLoad = Callable[[int], None]
+"""The chokepoint's upfront memory-admission seam (Chokepoint.admit_load):
+given an estimated resident-byte count it returns on headroom and raises
+ResourceRefusedError otherwise. Injected by tools.py — readers.py never
+imports the chokepoint (the import-graph gate)."""
+
+# Rows per chunk on the running-charge streaming path: small enough that
+# one chunk's residency is a fraction of any realistic ceiling, so a
+# high-ratio file is refused after the first over-headroom chunk rather
+# than after the whole file has materialized (CR-005).
+_READ_CHUNK_ROWS = 50_000
+
+# Upfront in-memory estimate for the formats that cannot stream: the only
+# pre-read signal is the on-disk size, so the estimate is
+# `st_size * factor`. Over-estimation is the fail-safe direction (it
+# refuses a borderline-huge legitimate file that should stream instead),
+# so each factor is a conservative upper bound on the format's
+# unpack-and-parse blow-up: zip-packed spreadsheets expand ~10-20x,
+# compressible columnar/binary ~5-12x, uncompressed columnar ~1x plus
+# framing overhead, and text parsed to a Python object graph runs several
+# times the source text.
+_EXPANSION_FACTOR: Mapping[str, int] = {
+    "json": 10,
+    "yaml": 10,
+    "toml": 10,
+    "ini": 10,
+    "xml": 10,
+    "xlsx": 20,
+    "xls": 20,
+    "ods": 20,
+    "numbers": 20,
+    "parquet": 12,
+    "hdf5": 12,
+    "feather": 4,
+    "arrow": 4,
+}
 
 
 # -- format table -----------------------------------------------------
@@ -73,35 +117,76 @@ _SUFFIX_TO_FORMAT: Mapping[str, str] = {
 def resolve_format(path: Path, declared: str) -> str:
     """The effective format: the declared name, or the suffix when
     `auto` — an unknown answer is a refusal, never a guess."""
+    supported = _supported_formats()
     if declared != "auto":
-        if declared not in _READERS:
+        if declared not in supported:
             raise FileIngestError(
-                f"unknown format {declared!r} — supported: {sorted(_READERS)}"
+                f"unknown format {declared!r} — supported: {sorted(supported)}"
             )
         return declared
     suffix_format = _SUFFIX_TO_FORMAT.get(path.suffix.lower())
     if suffix_format is None:
         raise FileIngestError(
             f"cannot infer a format from suffix {path.suffix!r} — pass "
-            f"format explicitly (supported: {sorted(_READERS)})"
+            f"format explicitly (supported: {sorted(supported)})"
         )
     return suffix_format
 
 
-def read_path(path: Path, format_name: str) -> Any:
-    """Dispatch to the one reader for `format_name` (already resolved)."""
+def read_path(path: Path, format_name: str, admit: AdmitLoad) -> Any:
+    """Dispatch to the one reader for `format_name`, crossing the
+    chokepoint's memory-admission seam BEFORE the file materializes
+    (CR-005/NFR-105, GP3 fail-safe): a streamable format (CSV/TSV) is
+    read chunk by chunk with its growing residency charged after each — a
+    high-ratio file is refused mid-read; every other format crosses one
+    upfront estimate keyed off the on-disk size. No reader materializes a
+    whole file without first passing this gate."""
+    streaming = _STREAMING_READERS.get(format_name)
+    if streaming is not None:
+        return streaming(path, admit)
+    admit(_upfront_estimate(path, format_name))
     return _READERS[format_name](path)
+
+
+def _supported_formats() -> set[str]:
+    """Every format read_file accepts — streaming and whole-file alike."""
+    return set(_READERS) | set(_STREAMING_READERS)
+
+
+def _upfront_estimate(path: Path, format_name: str) -> int:
+    """The pre-read in-memory estimate for a non-streaming format:
+    on-disk size times the format's conservative expansion factor."""
+    return os.stat(path).st_size * _EXPANSION_FACTOR.get(format_name, 1)
 
 
 # -- tabular readers --------------------------------------------------
 
 
-def _read_csv(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path)
+def _read_csv_streaming(path: Path, admit: AdmitLoad) -> pd.DataFrame:
+    return _stream_delimited(path, admit, sep=",")
 
 
-def _read_tsv(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path, sep="\t")
+def _read_tsv_streaming(path: Path, admit: AdmitLoad) -> pd.DataFrame:
+    return _stream_delimited(path, admit, sep="\t")
+
+
+def _stream_delimited(path: Path, admit: AdmitLoad, *, sep: str) -> pd.DataFrame:
+    """Running-charge chunked read (CR-005): pull the file in fixed-row
+    chunks and charge the growing resident size through the chokepoint
+    after each — the whole-file frame never materializes past the memory
+    ceiling, mirroring how bounded SQL fetch admits per batch. A ledger
+    refusal on any chunk propagates as the structured over-budget refusal
+    (tools.py) before the rest of the file is read."""
+    frames: list[pd.DataFrame] = []
+    resident = 0
+    with pd.read_csv(path, sep=sep, chunksize=_READ_CHUNK_ROWS) as reader:
+        for chunk in reader:
+            resident += int(chunk.memory_usage(deep=True).sum())
+            admit(resident)
+            frames.append(chunk)
+    if not frames:
+        return pd.read_csv(path, sep=sep, nrows=0)
+    return pd.concat(frames, ignore_index=True)
 
 
 def _read_xlsx(path: Path) -> pd.DataFrame:
@@ -302,9 +387,12 @@ def _element_to_mapping(element: Any) -> Any:
     return node
 
 
+_STREAMING_READERS: Mapping[str, Callable[[Path, AdmitLoad], Any]] = {
+    "csv": _read_csv_streaming,
+    "tsv": _read_tsv_streaming,
+}
+
 _READERS: Mapping[str, Callable[[Path], Any]] = {
-    "csv": _read_csv,
-    "tsv": _read_tsv,
     "json": _read_json,
     "yaml": _read_yaml,
     "toml": _read_toml,

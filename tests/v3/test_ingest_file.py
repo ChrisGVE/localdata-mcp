@@ -26,6 +26,7 @@ from localdata_mcp.nexus.chokepoint.guard import (
     Chokepoint,
     GuardedExecutionError,
     GuardRefusedError,
+    ResourceRefusedError,
 )
 from localdata_mcp.nexus.chokepoint.path_contain import PathRefusedError
 from localdata_mcp.nexus.config.models import (
@@ -302,3 +303,69 @@ class TestOverBudgetRefusal:
         assert "WHERE" in suggestion and "LIMIT" in suggestion
         assert "operator configuration" in suggestion
         assert refusal.value.structured.error_type.value == "resource_error"
+
+
+class TestDecompressionGateCr005:
+    """NFR-105/GP3 fail-safe on the file read path: a high-ratio file
+    inside allowed_paths is refused through the memory-admission gate
+    BEFORE it materializes — never an OOM (CR-005 wired admit_load)."""
+
+    def test_running_charge_stops_before_reading_the_whole_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The streaming path charges residency per chunk and refuses
+        mid-read: with the chunk size shrunk to 100 rows and a fake gate
+        that refuses on the 3rd charge, only the first 3 of 10 chunks are
+        read — the remaining ~700 rows are never materialized."""
+        from localdata_mcp.ingest.connectors.file import readers
+
+        monkeypatch.setattr(readers, "_READ_CHUNK_ROWS", 100)
+        csv = tmp_path / "d.csv"
+        pd.DataFrame({"a": range(1000)}).to_csv(csv, index=False)
+        calls = {"n": 0}
+
+        def admit(estimated: int) -> None:
+            calls["n"] += 1
+            if calls["n"] >= 3:
+                raise ResourceRefusedError("over ceiling", resource_class="memory")
+
+        with pytest.raises(ResourceRefusedError):
+            readers.read_path(csv, "csv", admit)
+        assert calls["n"] == 3  # refused on chunk 3 of 10, rest unread
+
+    def test_streaming_csv_over_ceiling_is_refused_fail_safe(
+        self, tmp_path: Path
+    ) -> None:
+        install(tmp_path, ceiling=2048)
+        bomb = tmp_path / "bomb.csv"
+        pd.DataFrame({"a": range(60000), "b": range(60000)}).to_csv(bomb, index=False)
+        with pytest.raises(GuardedExecutionError) as refusal:
+            read_file(str(bomb))
+        assert refusal.value.structured.error_type.value == "resource_error"
+
+    def test_upfront_estimate_refuses_a_non_streaming_format(
+        self, tmp_path: Path
+    ) -> None:
+        """A whole-file format (parquet) is refused by the upfront
+        st_size*factor estimate before pandas ever opens it."""
+        install(tmp_path, ceiling=1024)
+        target = tmp_path / "big.parquet"
+        pd.DataFrame({"a": range(5000), "b": range(5000)}).to_parquet(
+            target, index=False
+        )
+        with pytest.raises(GuardedExecutionError) as refusal:
+            read_file(str(target))
+        assert refusal.value.structured.error_type.value == "resource_error"
+
+    def test_legitimate_large_file_reads_under_a_generous_ceiling(
+        self, tmp_path: Path
+    ) -> None:
+        """Positive control: the same shape reads fine under the default
+        ceiling — the gate refuses bombs, not legitimate data."""
+        install(tmp_path)
+        target = tmp_path / "ok.csv"
+        pd.DataFrame({"a": range(60000), "b": range(60000)}).to_csv(target, index=False)
+        result = read_file(str(target))
+        # 60000 rows > the inline budget → served as a stream
+        assert getattr(result, "stream_id", None)
+        assert result.columns == ("a", "b")
