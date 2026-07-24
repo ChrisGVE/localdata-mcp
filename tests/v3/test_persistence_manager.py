@@ -90,6 +90,29 @@ class TestConnectionSeam:
             with nexus.connection("alpha"):
                 pass
 
+    def test_issuable_and_pool_are_read_under_the_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CR-016: the issuability gate and the pool capture must run
+        inside the record-collection lock so a concurrent fault walk
+        cannot dispose-and-reissue the pool between the check and the
+        connect. We prove it by observing that the nexus RLock is owned
+        by this thread at the instant `issuable` is read — under the
+        pre-fix code (read outside the lock) it is not."""
+        nexus = warmed(tmp_path, "alpha")
+        record = nexus.record("alpha")
+        observed: dict[str, bool] = {}
+
+        class LockObservingIssuable:
+            def __get__(self, obj: object, objtype: object = None) -> bool:
+                observed["locked"] = nexus._lock._is_owned()  # type: ignore[attr-defined]
+                return record.state is LifecycleState.HEALTHY
+
+        monkeypatch.setattr(type(record), "issuable", LockObservingIssuable())
+        with nexus.connection("alpha") as connection:
+            assert connection.execute(text("SELECT 1")).scalar() == 1
+        assert observed["locked"] is True
+
 
 class TestFaultSignalRealImplementation:
     """The E4.0 contract against the REAL NX-5 (E6's gate, prepared)."""

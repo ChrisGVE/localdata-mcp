@@ -107,13 +107,27 @@ class PersistenceNexus:
     @contextmanager
     def connection(self, name: str) -> Iterator[Any]:
         """A live connection from the named record's pool — NX-6's seam
-        (§6.2), never importable by tool modules (FR-105/802)."""
-        record = self.record(name)
-        if not record.issuable:
-            raise EndpointUnavailableError(
-                f"endpoint {name!r} is {record.state.value}, not issuable"
-            )
-        with record.pool.connect() as live:
+        (§6.2), never importable by tool modules (FR-105/802).
+
+        Resolution, the issuability gate, and the pool capture happen as
+        ONE critical section (CR-016): a concurrent `mark_faulted` walk
+        can dispose-and-reissue `record.pool` between the issuable check
+        and the connect, so reading `issuable` and pinning the pool
+        reference OUTSIDE the lock is a TOCTOU. The captured handle is
+        the one that was issuable at check time; the connect itself runs
+        outside the lock so a blocking checkout never serializes every
+        endpoint behind the record collection's lock.
+        """
+        with self._lock:
+            record = self._records.get(name)
+            if record is None:
+                raise UnknownEndpointError(f"no declared endpoint named {name!r}")
+            if not record.issuable:
+                raise EndpointUnavailableError(
+                    f"endpoint {name!r} is {record.state.value}, not issuable"
+                )
+            pool = record.pool
+        with pool.connect() as live:
             yield live
 
     def check_health(self, name: str) -> HealthCheckResult:
