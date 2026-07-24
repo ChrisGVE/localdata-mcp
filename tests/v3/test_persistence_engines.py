@@ -18,10 +18,12 @@ from sqlalchemy import text
 from localdata_mcp.nexus.config.endpoints import EndpointDeclaration
 from localdata_mcp.nexus.config.models import ConfigModel
 from localdata_mcp.nexus.persistence.engines import (
+    _POOL_CHECKOUT_WAIT_SECONDS,
     DuckDbHandle,
     EngineHandle,
     SqlAlchemyHandle,
     UnsupportedBackendError,
+    apply_statement_timeout,
     backend_kind_of,
     create_handle,
 )
@@ -153,6 +155,72 @@ class TestNetworkedEngines:
         pool = handle.engine.pool
         assert pool.size() == LIMITS.max_connections
         assert pool._max_overflow == 0  # type: ignore[attr-defined]
+
+
+class TestStatementTimeoutPerDialect:
+    """CR-015: a REAL per-statement timeout, built per dialect. These
+    assert the timeout mechanism directly (no live server needed) — the
+    session SET for pg/mysql, the connection attribute for mssql/oracle."""
+
+    class _FakeCursor:
+        def __init__(self, log: list[str]) -> None:
+            self._log = log
+
+        def execute(self, statement: str) -> None:
+            self._log.append(statement)
+
+        def close(self) -> None:
+            pass
+
+    class _SessionConn:
+        def __init__(self) -> None:
+            self.executed: list[str] = []
+
+        def cursor(self) -> "TestStatementTimeoutPerDialect._FakeCursor":
+            return TestStatementTimeoutPerDialect._FakeCursor(self.executed)
+
+    class _AttrConn:
+        pass
+
+    def test_postgresql_sets_statement_timeout_in_ms(self) -> None:
+        conn = self._SessionConn()
+        apply_statement_timeout(conn, "postgresql", 30)
+        assert conn.executed == ["SET statement_timeout = 30000"]
+
+    def test_mysql_sets_max_execution_time_in_ms(self) -> None:
+        conn = self._SessionConn()
+        apply_statement_timeout(conn, "mysql", 30)
+        assert conn.executed == ["SET SESSION max_execution_time = 30000"]
+
+    def test_mssql_sets_the_pyodbc_query_timeout_in_seconds(self) -> None:
+        conn = self._AttrConn()
+        apply_statement_timeout(conn, "mssql", 30)
+        assert conn.timeout == 30  # type: ignore[attr-defined]
+
+    def test_oracle_sets_the_call_timeout_in_ms(self) -> None:
+        conn = self._AttrConn()
+        apply_statement_timeout(conn, "oracle", 30)
+        assert conn.call_timeout == 30000  # type: ignore[attr-defined]
+
+    def test_non_positive_timeout_is_a_no_op(self) -> None:
+        conn = self._SessionConn()
+        apply_statement_timeout(conn, "postgresql", 0)
+        assert conn.executed == []
+
+    def test_networked_pool_timeout_is_the_checkout_wait_not_the_statement_value(
+        self,
+    ) -> None:
+        """The two are decoupled (CR-015): a distinct statement timeout of
+        7s must NOT become the pool checkout wait."""
+        limits = ResourceLimits(
+            max_connections=3, statement_timeout_seconds=7, max_concurrent_streams=2
+        )
+        handle = create_handle(
+            TestNetworkedEngines.DECLARATION, limits, {"EP_PG_SECRET": "s3cret"}
+        )
+        assert isinstance(handle, SqlAlchemyHandle)
+        assert handle.engine.pool._timeout == _POOL_CHECKOUT_WAIT_SECONDS  # type: ignore[attr-defined]
+        assert _POOL_CHECKOUT_WAIT_SECONDS != 7
 
 
 class TestLimitsFromConfig:

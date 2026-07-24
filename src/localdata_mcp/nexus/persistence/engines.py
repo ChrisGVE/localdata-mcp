@@ -8,7 +8,10 @@ opens `read_only=True` — so a read-only file engine cannot write even
 if a later layer misbehaves. Networked backends (PostgreSQL/MySQL/
 MSSQL/Oracle) have no equivalent creation-time switch; their posture is
 enforced at the NX-6 chokepoint (NFR-113), which refuses mutation
-constructs before they reach the engine. Credentials are injected at
+constructs before they reach the engine, and their per-STATEMENT
+timeout is applied at each connect through the dialect's own mechanism
+(`apply_statement_timeout`, CR-015) — distinct from the pool checkout
+wait, which the two must never be conflated into. Credentials are injected at
 connection-issue time from the declaration's `credentials_ref`
 environment variable (NFR-110) — never present in any config file.
 
@@ -45,6 +48,50 @@ _NETWORKED_KINDS = frozenset({"postgresql", "mysql", "mssql", "oracle"})
 # The declared store families (E8.3): SQLite files carrying the
 # store_schemas.py table shapes, DSN-declared as `<kind>+sqlite://…`.
 _STORE_KINDS = frozenset({"kv", "tree", "graph"})
+
+# The pool CHECKOUT wait (seconds a caller blocks for a free pooled
+# connection) — SQLAlchemy's own default, kept DISTINCT from the
+# per-statement timeout the two were previously conflated into (CR-015):
+# a checkout wait is not a statement cap, so reusing the statement value
+# here left networked backends with no real per-statement timeout at all.
+_POOL_CHECKOUT_WAIT_SECONDS = 30
+
+
+def apply_statement_timeout(dbapi_connection: Any, kind: str, seconds: int) -> None:
+    """Enforce a per-STATEMENT timeout on a freshly pooled networked
+    connection through each dialect's own mechanism (CR-015) — the real
+    cap the previous `pool_timeout=<statement value>` never applied
+    (`pool_timeout` is only the checkout wait). PostgreSQL and MySQL take
+    a session SET the server enforces; MSSQL (pyodbc) and Oracle
+    (python-oracledb) take a per-connection attribute. MySQL's
+    `max_execution_time` bounds read-only SELECTs — the dominant traffic
+    on a read-only networked endpoint, whose writes the chokepoint
+    already refuses (NFR-113). A non-positive timeout means 'no cap' and
+    is left to the driver default."""
+    if seconds <= 0:
+        return
+    milliseconds = seconds * 1000
+    if kind == "postgresql":
+        _execute_session_statement(
+            dbapi_connection, f"SET statement_timeout = {milliseconds}"
+        )
+    elif kind == "mysql":
+        _execute_session_statement(
+            dbapi_connection, f"SET SESSION max_execution_time = {milliseconds}"
+        )
+    elif kind == "mssql":
+        dbapi_connection.timeout = seconds  # pyodbc per-query timeout (seconds)
+    elif kind == "oracle":
+        dbapi_connection.call_timeout = milliseconds  # oracledb call timeout (ms)
+
+
+def _execute_session_statement(dbapi_connection: Any, statement: str) -> None:
+    """Run one session-level SET on a raw DBAPI connection at connect."""
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute(statement)
+    finally:
+        cursor.close()
 
 
 class UnsupportedBackendError(ValueError):
@@ -208,18 +255,28 @@ def _networked_handle(
 ) -> SqlAlchemyHandle:
     """A networked server engine: hard-capped QueuePool from the NX-2
     limits (max_overflow=0 — the S8 row-3 ceiling is a ceiling, GP3),
-    pre-ping validation instead of any time-based recycle literal, and
-    the credential injected into the URL from the environment."""
+    pre-ping validation instead of any time-based recycle literal, the
+    credential injected into the URL from the environment, and a real
+    per-statement timeout applied at every connect via the dialect's own
+    mechanism (CR-015). `pool_timeout` carries the checkout wait only —
+    the statement cap is `apply_statement_timeout`, never `pool_timeout`."""
     url = make_url(declaration.dsn)
     secret = resolve_credential(declaration, environ)
     if secret is not None:
         url = url.set(password=secret)
+    kind = backend_kind_of(declaration.dsn)
     engine = create_engine(
         url,
         poolclass=QueuePool,
         pool_size=limits.max_connections,
         max_overflow=0,
-        pool_timeout=limits.statement_timeout_seconds,
+        pool_timeout=_POOL_CHECKOUT_WAIT_SECONDS,
         pool_pre_ping=True,
     )
+    timeout_seconds = limits.statement_timeout_seconds
+
+    @event.listens_for(engine, "connect")
+    def _apply_statement_timeout(dbapi_connection: Any, _record: Any) -> None:
+        apply_statement_timeout(dbapi_connection, kind, timeout_seconds)
+
     return SqlAlchemyHandle(engine=engine)
