@@ -13,6 +13,18 @@ symlink prefix), so a to-be-created file cannot escape through a
 linked directory. Neighbors: guard.py applies this to every extracted
 SQL path literal and to NX-8's writes; ephemeral opens cross it before
 nexus/persistence ever sees the path.
+
+RESIDUAL TOCTOU (CR-024): this seam returns a resolved path STRING, and
+its callers re-open by that string later (the file readers'
+`pd.read_*`, nexus/persistence's ephemeral open). Between this
+resolution and that open a path component can be swapped for a symlink
+pointing out of the tree — the classic time-of-check/time-of-use
+window. Closing it needs an ATOMIC contain-and-open at the open site
+(open the final component `O_NOFOLLOW`, then re-validate the opened
+descriptor's real path, or pass an fd through instead of a string);
+that lives in the reader/persistence call sites (outside NX-6), so this
+containment service cannot close it alone. Bounded in the single-user
+deployment, but not eliminated.
 """
 
 from __future__ import annotations
