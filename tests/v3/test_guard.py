@@ -143,10 +143,13 @@ class TestGuardedQuery:
         assert "guarded_mutation" in str(refusal.value)
 
     def test_screen_refusals_precede_any_execution(self, tmp_path: Path) -> None:
+        """CR-023: an allow-list refusal surfaces as the guard's one
+        public refusal type (GuardRefusedError), not the walker-internal
+        SqlRefusedError leaking past the seam."""
         guard, _ = build_stack(tmp_path)
-        with pytest.raises(SqlRefusedError):
+        with pytest.raises(GuardRefusedError):
             guard.guarded_query("rw", QueryRequest(text="SELECT 1; SELECT 2"))
-        with pytest.raises(SqlRefusedError):
+        with pytest.raises(GuardRefusedError):
             guard.guarded_query("rw", QueryRequest(text="not sql at all ("))
 
     def test_unknown_endpoint_propagates_nfr114(self, tmp_path: Path) -> None:
@@ -190,7 +193,7 @@ class TestGuardedMutation:
 
     def test_ddl_is_outside_every_guarded_category(self, tmp_path: Path) -> None:
         guard, _ = build_stack(tmp_path)
-        with pytest.raises(SqlRefusedError):
+        with pytest.raises(GuardRefusedError):
             guard.guarded_mutation("rw", QueryRequest(text="DROP TABLE t"))
 
 
@@ -299,9 +302,14 @@ class TestWirePath:
     def test_screen_refusals_are_not_wrapped_as_execution_errors(
         self, tmp_path: Path
     ) -> None:
+        """A screen refusal is a structured guard refusal, never a
+        backend GuardedExecutionError — and it is the guard's public
+        GuardRefusedError, never the walker-internal SqlRefusedError
+        (CR-023)."""
         guard, _ = build_stack(tmp_path)
-        with pytest.raises(SqlRefusedError):
+        with pytest.raises(GuardRefusedError):
             guard.guarded_query("rw", QueryRequest(text="SELECT 1; SELECT 2"))
+        assert not issubclass(SqlRefusedError, GuardRefusedError)
 
 
 class TestStreamingHandoff:
@@ -354,18 +362,14 @@ class TestEndpointSummaryAccessor:
         assert summary.backend_kind == "sqlite"
         assert summary.posture == "read_write"
 
-    def test_unknown_name_raises_the_one_resolution_error(
-        self, tmp_path: Path
-    ) -> None:
+    def test_unknown_name_raises_the_one_resolution_error(self, tmp_path: Path) -> None:
         from localdata_mcp.nexus.chokepoint.guard import UnknownEndpointError
 
         guard, _ = build_stack(tmp_path)
         with pytest.raises(UnknownEndpointError):
             guard.endpoint_summary("never-declared")
 
-    def test_summaries_are_the_per_name_view_aggregated(
-        self, tmp_path: Path
-    ) -> None:
+    def test_summaries_are_the_per_name_view_aggregated(self, tmp_path: Path) -> None:
         guard, _ = build_stack(tmp_path)
         assert guard.endpoint_summaries() == tuple(
             guard.endpoint_summary(name) for name in ("rw", "ro")

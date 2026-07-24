@@ -29,7 +29,7 @@ from .path_contain import AccessMode, contain
 from .resource_bounds import ResourceBounds, ResourceRefusedError
 from .sparql_validate import screen_read, screen_update
 from .sql_validate.cache import ValidationCache
-from .sql_validate.walker import SqlClassification
+from .sql_validate.walker import SqlClassification, SqlRefusedError
 from .types import (
     _SPARQL_BACKEND_KINDS,
     GuardRefusedError,
@@ -59,6 +59,21 @@ class _GuardCore:
 
     # -- screening ----------------------------------------------------
 
+    def _classify(self, request: QueryRequest, backend_kind: str) -> SqlClassification:
+        """Classify through the E6.3 cache, presenting a walker
+        allow-list refusal as the guard's ONE public refusal type
+        (CR-023). `SqlRefusedError` is a chokepoint internal — leaking it
+        past the seam means a tool catching the guard taxonomy
+        (`GuardRefusedError`, re-exported by guard.py) misses screening
+        refusals, and NX-7 shapes the bare `ValueError` as a generic
+        query-execution error rather than the security refusal it is. The
+        seam raises only `GuardRefusedError`, uniform with every other
+        entrypoint refusal."""
+        try:
+            return self._cache.classify(request.text, backend_kind)
+        except SqlRefusedError as refusal:
+            raise GuardRefusedError(str(refusal)) from refusal
+
     def _screen_read_side(self, request: QueryRequest, backend_kind: str) -> str:
         """Classify and refuse everything the read entrypoint may not
         carry; returns the category. Every extracted path literal is
@@ -66,7 +81,7 @@ class _GuardCore:
         if request.language == "sparql" or backend_kind in _SPARQL_BACKEND_KINDS:
             screen_read(request.text)
             return "query"
-        classification = self._cache.classify(request.text, backend_kind)
+        classification = self._classify(request, backend_kind)
         if classification.category in ("mutation", "local_file_write"):
             raise GuardRefusedError(
                 f"query refused: the statement classifies as "
@@ -88,7 +103,7 @@ class _GuardCore:
         if request.language == "sparql" or backend_kind in _SPARQL_BACKEND_KINDS:
             screen_update(request.text)
             return "mutation"
-        classification = self._cache.classify(request.text, backend_kind)
+        classification = self._classify(request, backend_kind)
         if classification.category in ("query", "local_file_read"):
             raise GuardRefusedError(
                 f"mutation refused: the statement classifies as "

@@ -80,7 +80,7 @@ class _QueryMutationSurface(_GuardCore):
         never outlives this call (no NX-5 pool is pinned, so the row-24
         stream cap does not apply — I-2)."""
         real = self.contain_path(path, mode="read")
-        classification = self._cache.classify(request.text, engine_kind)
+        classification = self._classify(request, engine_kind)
         wants_write = (
             classification.category in ("mutation", "local_file_write")
             or classification.contains_mutation_nodes
