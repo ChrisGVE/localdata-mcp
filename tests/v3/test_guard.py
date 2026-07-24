@@ -296,6 +296,20 @@ class TestDynamicAdmissionOnTheWire:
         result = guard.guarded_query("rw", QueryRequest(text="SELECT * FROM t LIMIT 2"))
         assert result.row_count == 2
 
+    def test_admit_load_seam_is_reachable_and_gates_upfront(
+        self, tmp_path: Path
+    ) -> None:
+        """CR-005: the whole-load memory gate (the one point a
+        decompression bomb can be refused before it materializes) is
+        exposed on the guard's public surface so the load-then-serve file
+        readers can cross it — a huge estimate is refused, a small one
+        admitted."""
+        config = build_config(tmp_path, ceiling=_SMALL_CEILING)
+        guard, _ = build_stack(tmp_path, config)
+        guard.admit_load(1)  # within headroom — no refusal
+        with pytest.raises(ResourceRefusedError):
+            guard.admit_load(config.resources.memory_ceiling_bytes + 1)
+
 
 class TestWirePath:
     def test_backend_failure_becomes_the_structured_shape(self, tmp_path: Path) -> None:

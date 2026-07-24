@@ -131,6 +131,22 @@ class _StreamingSurface(_GuardCore):
             advertised_chunks=self._registry.advertised_count(stream_id),
         )
 
+    def admit_load(self, estimated_bytes: int) -> None:
+        """The upfront whole-load memory gate (§5), exposed on the guard
+        seam for the load-then-serve file readers (`read_file`): a
+        whole-dataset read is admitted only if its estimated full size
+        fits current headroom — the one point a decompression bomb can be
+        refused AHEAD of the materialization that would exhaust memory.
+        The reader owns the estimate (it knows the format); the guard
+        owns the verdict against the one live ceiling. Raises
+        `ResourceRefusedError` (re-exported through guard.py) on refusal.
+
+        NOTE (CR-005): this seam is the in-scope half of the fix — the
+        file readers in `ingest/connectors/file/` must cross it BEFORE
+        `read_path` materializes the frame; that call-site wiring is
+        tracked separately."""
+        self._bounds.admit_load(estimated_bytes)
+
     def serve_result(self, result: Result, source_name: str) -> "Result | StreamOpened":
         """I-2/I-4's cutover for load-then-serve sources (`read_file`,
         `query_file`): the ALREADY-ADMITTED result passes through

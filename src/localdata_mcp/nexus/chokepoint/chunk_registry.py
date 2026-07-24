@@ -15,9 +15,13 @@ rules, mechanically:
   (S8 rows 8-9, genuinely-streaming registries only), so "the reader
   pauses at the bound and resumes on retrieval" is structural — an
   un-pulled source cannot occupy memory. A load-then-serve source is
-  buffered whole at open (its bound is the upfront `admit_load` gate,
-  §5); requesting past the look-ahead without retrieving buffered
-  chunks first is refused, keeping the bound a true cap.
+  buffered whole at open, its residency charged chunk by chunk to the
+  aggregate ledger as it primes (a ledger refusal stops the priming);
+  the UPFRONT whole-file admission — the one point a decompression bomb
+  is refused before it materializes — is the reader's own gate, the
+  `Chokepoint.admit_load` seam, not this registry (CR-005). Requesting
+  past the look-ahead without retrieving buffered chunks first is
+  refused, keeping the bound a true cap.
 - **T10 closure** — the advertised count is computed lazily from the
   buffer's live contents at request time (`advertised_count`), never
   cached or pre-declared; once exhausted the final total is reported
@@ -147,8 +151,11 @@ class ChunkRegistry:
     ) -> None:
         """Admit and register a stream (row 24), then prime its buffer:
         a streaming source fills to the look-ahead bound, a
-        load-then-serve source is read whole (its admission was the
-        upfront `admit_load` gate — FR-404's documented behavior)."""
+        load-then-serve source is read whole, its residency charged per
+        chunk to the aggregate ledger during priming (§5). The upfront
+        whole-load admission that refuses a decompression bomb before it
+        materializes is the caller's `Chokepoint.admit_load` gate, not
+        this method (CR-005)."""
         with self._lock:
             live = sum(
                 1
