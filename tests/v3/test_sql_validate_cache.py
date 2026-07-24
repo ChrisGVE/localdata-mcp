@@ -14,11 +14,22 @@ from localdata_mcp.nexus.chokepoint.sql_validate.walker import SqlRefusedError
 
 
 class TestClassificationCaching:
-    def test_whitespace_only_difference_hits_the_same_entry(self) -> None:
+    def test_byte_identical_statements_share_one_entry(self) -> None:
+        cache = ValidationCache(max_entries=8)
+        cache.classify("SELECT a FROM t", "sqlite")
+        cache.classify("SELECT a FROM t", "sqlite")
+        assert len(cache) == 1
+
+    def test_exact_bytes_key_any_whitespace_difference_is_distinct(self) -> None:
+        """CR-034: the key is the exact executed bytes — no normalization
+        — so even an insignificant whitespace difference OUTSIDE a literal
+        is a distinct entry (a miss, never a collision). This trades a few
+        cache hits for removing the second lexer that reconstructed the
+        statement."""
         cache = ValidationCache(max_entries=8)
         cache.classify("SELECT   a FROM t", "sqlite")
         cache.classify("SELECT a FROM t", "sqlite")
-        assert len(cache) == 1
+        assert len(cache) == 2
 
     def test_literal_difference_never_shares_an_entry(self) -> None:
         cache = ValidationCache(max_entries=8)

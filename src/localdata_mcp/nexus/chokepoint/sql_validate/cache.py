@@ -1,19 +1,23 @@
 """localdata_mcp/nexus/chokepoint/sql_validate/cache.py — the bounded LRU (E6.3).
 
-A bounded LRU keyed on `(dialect, normalized statement text)` storing
+A bounded LRU keyed on `(dialect, EXACT statement bytes)` storing
 ONLY the parse/walk classification (§7): the composition engine and the
 batteries drive many textually-identical statements through the gate,
 which is exactly the case the cache serves. It is fail-closed by
 construction:
 
-- Normalization is strictly semantics- and literal-preserving —
-  whitespace runs are collapsed ONLY OUTSIDE quoted literals (SQL is
-  whitespace-insensitive there) and leading/trailing trimmed, NEVER
-  literal masking or fingerprinting. Whitespace INSIDE a quoted literal
-  is preserved byte-for-byte, so two statements differing only in a
-  literal's interior whitespace (`'a b'` vs `'a  b'`, distinct executed
-  bytes and distinct paths) never share an entry — the cached verdict
-  can never reason over a reconstruction of different executed text.
+- The key is the exact executed text, byte-for-byte, never a normalized
+  or fingerprinted form (CR-034). An earlier version collapsed
+  whitespace outside quoted literals via a hand-rolled scanner, but that
+  made the cache reason over a RECONSTRUCTION of the statement and made
+  its no-collision guarantee depend on that scanner modelling every
+  dialect's literal boundaries exactly as the walker's lexer does (it did
+  not model Postgres/DuckDB dollar-quoting). Keying on the raw bytes
+  removes the second lexer entirely: two statements collide in the cache
+  only when they ARE the same bytes, so a cached verdict can never be
+  reused across different executed text. The only cost is a few missed
+  hits on statements that differ merely in insignificant whitespace — a
+  miss, never a collision.
 - Only the classification is cached; posture and NFR-108 containment
   are evaluated per call by guard.py, OUTSIDE this cache, so a cached
   verdict never carries a containment decision and never goes stale
@@ -35,60 +39,13 @@ from collections import OrderedDict
 from .walker import SqlClassification, SqlRefusedError, classify
 
 
-def _collapse_outside_literals(sql: str) -> str:
-    """Collapse every whitespace run to one space, but ONLY outside
-    quoted literals — the interior of a `'…'`, `"…"`, or `` `…` `` span
-    is copied byte-for-byte.
-
-    The scanner errs toward staying INSIDE a literal (a doubled
-    delimiter is an escaped quote, a backslash escapes the next
-    character): mis-reading a literal as closed would re-open the exact
-    whitespace-collision hole this normalization exists to close, so the
-    only tolerated error is the safe one — preserving whitespace that
-    did not strictly need preserving (a cache miss, never a collision).
-    """
-    out: list[str] = []
-    i = 0
-    n = len(sql)
-    quote = ""
-    while i < n:
-        ch = sql[i]
-        if quote:
-            out.append(ch)
-            if ch == "\\" and i + 1 < n:  # backslash escape (e.g. MySQL)
-                out.append(sql[i + 1])
-                i += 2
-                continue
-            if ch == quote:
-                if i + 1 < n and sql[i + 1] == quote:  # doubled = escaped quote
-                    out.append(sql[i + 1])
-                    i += 2
-                    continue
-                quote = ""  # the closing delimiter
-            i += 1
-            continue
-        if ch in "'\"`":
-            quote = ch
-            out.append(ch)
-            i += 1
-            continue
-        if ch.isspace():
-            out.append(" ")
-            i += 1
-            while i < n and sql[i].isspace():
-                i += 1
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out).strip()
-
-
 def _cache_key(sql: str, backend_kind: str) -> str:
-    """Semantics- and literal-preserving normalization: collapse
-    whitespace OUTSIDE quoted literals only. Case is NOT folded — a
-    quoted identifier's case is semantic — and no literal interior is
-    ever touched, so distinct executed bytes cannot collide (§7)."""
-    return f"{backend_kind}\x00{_collapse_outside_literals(sql)}"
+    """The key is `(dialect, exact statement bytes)` (CR-034): the raw
+    text, never normalized or case-folded. Distinct executed bytes cannot
+    collide because the key IS the bytes — no second lexer reconstructs
+    the statement (§7). The `\\x00` separator cannot occur in a dialect
+    name, so the two fields are unambiguous."""
+    return f"{backend_kind}\x00{sql}"
 
 
 class ValidationCache:
