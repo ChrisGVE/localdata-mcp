@@ -1,20 +1,15 @@
-"""Advanced Error Handling System for LocalData MCP v1.3.1.
+"""NX-3 error-taxonomy feeder remnant (post-E15).
 
-This package provides comprehensive error handling with custom exception hierarchy,
-retry mechanisms with exponential backoff, circuit breaker pattern for database
-connections, and integration with existing security, timeout, and connection systems.
-
-Key Features:
-- Custom exception hierarchy for different error types
-- Retry policies with exponential backoff and jitter
-- Circuit breaker pattern for database connection failures
-- Error recovery strategies and graceful degradation
-- Comprehensive error logging and metadata preservation
-- Integration with SecurityManager, ConnectionManager, and TimeoutManager
+The only surviving members of the former v2 error-handling package are the
+declared *mapping knowledge* the v3 error nexus keeps unchanged (PRD S4.3,
+NFR-302): ``ErrorCategory`` and its sibling enums/exception classes in
+``exceptions``, consumed by ``error_mappers.py`` / ``error_classification.py``
+and translated onto the closed wire taxonomy in ``nexus/error/translate.py``
+(the tree's ONE importer of this feeder). E15 deleted the legacy machinery
+(circuit breaker, retry, recovery, handler, error logging); ``exceptions`` is
+pure stdlib and imports unconditionally.
 """
 
-# The exceptions module is pure stdlib and is what v3's kept feeder
-# (error_mappers.py -> ErrorCategory) needs; it imports unconditionally.
 from .exceptions import (
     CircuitState,
     ConfigurationError,
@@ -29,77 +24,16 @@ from .exceptions import (
     SecurityViolationError,
 )
 
-# The remaining legacy machinery depends on packages the v3 manifest no
-# longer declares (e.g. prometheus_client). Guarded like the package
-# root and server/__init__ (E0/E2 precedent): the legacy path degrades,
-# the kept feeder chain stays importable until E15 deletes the rest.
-try:
-    from .circuit_breaker import (
-        CircuitBreaker,
-        CircuitBreakerConfig,
-        CircuitBreakerRegistry,
-        CircuitBreakerStats,
-        circuit_breaker_protection,
-    )
-    from .error_logging import (
-        ErrorLogger,
-        ErrorMetrics,
-    )
-    from .handler import (
-        ErrorHandler,
-        get_circuit_breaker,
-        get_error_handler,
-        handle_error,
-        initialize_error_handler,
-    )
-    from .recovery import (
-        ErrorRecoveryManager,
-        RecoveryAction,
-        RecoveryStrategy,
-    )
-    from .retry import (
-        RetryableOperation,
-        RetryPolicy,
-        retry_on_failure,
-    )
-except ImportError:  # pragma: no cover - legacy-only dependency gap
-    pass
-
 __all__ = [
-    # Enums
+    "CircuitState",
+    "ConfigurationError",
+    "DatabaseConnectionError",
     "ErrorCategory",
     "ErrorSeverity",
-    "RetryStrategy",
-    "CircuitState",
-    # Exception hierarchy
     "LocalDataError",
-    "DatabaseConnectionError",
     "QueryExecutionError",
-    "SecurityViolationError",
     "QueryTimeoutError",
     "ResourceExhaustionError",
-    "ConfigurationError",
-    # Retry mechanism
-    "RetryPolicy",
-    "RetryableOperation",
-    "retry_on_failure",
-    # Circuit breaker
-    "CircuitBreakerConfig",
-    "CircuitBreakerStats",
-    "CircuitBreaker",
-    "CircuitBreakerRegistry",
-    "circuit_breaker_protection",
-    # Recovery
-    "RecoveryStrategy",
-    "RecoveryAction",
-    "ErrorRecoveryManager",
-    # Logging
-    "ErrorMetrics",
-    "ErrorLogger",
-    # Main handler
-    "ErrorHandler",
-    "get_error_handler",
-    "initialize_error_handler",
-    "handle_error",
-    "get_circuit_breaker",
+    "RetryStrategy",
+    "SecurityViolationError",
 ]

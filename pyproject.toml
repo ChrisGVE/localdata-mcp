@@ -125,7 +125,7 @@ Documentation = "https://localdata-mcp.readthedocs.io"
 "Bug Tracker" = "https://github.com/chrisgve/localdata-mcp/issues"
 
 [project.scripts]
-localdata-mcp = "localdata_mcp.localdata_mcp:main"
+localdata-mcp = "localdata_mcp.server.mcp_app:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
