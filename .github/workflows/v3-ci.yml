@@ -46,6 +46,15 @@ jobs:
   tests:
     name: pytest + coverage floor (new paths)
     runs-on: ubuntu-latest
+    env:
+      # NFR-508 per-PR results-store integration: the emit plugin
+      # (batteries/conftest.py) writes one per-worker file here during
+      # the run, and the merge step below folds it into the canonical
+      # store. GITHUB_SHA is set by Actions; the dataset hash is
+      # unpinned until E14.1 wires the committed manifest.
+      LOCALDATA_RESULTS_STORE_DIR: ${{ github.workspace }}/results-workers
+      LOCALDATA_RESULTS_RUN_ID: pr-${{ github.run_id }}
+      LOCALDATA_DATASET_HASH: unpinned
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -55,15 +64,18 @@ jobs:
         # The base battery's accreted slices (E8.5, incl. the generated
         # contract stubs), the domain battery's E10 slices, the security
         # battery (NFR-502b — all NFR-1xx rows; the pg/mysql rows skip
-        # gracefully when the E14.2 fixture DSNs are absent), and the perf
-        # smoke tier (E9.5's discovery floor) run per-PR alongside the
-        # unit suite — S7.4's cadence; E14.3 adds the randomized mode
-        # and the full nightly tier.
+        # gracefully when the E14.2 fixture DSNs are absent), the pipeline
+        # length-2 exhaustive tier, and the perf smoke tier (E9.5's
+        # discovery floor) run per-PR alongside the unit suite — S7.4's
+        # cadence. `-m "not nightly"` holds the exhaustive lengths-3-4 and
+        # stretch tiers back to v3-nightly.yml.
         run: >
           uv run pytest tests/v3/ src/localdata_mcp/testbench/batteries/base/
           src/localdata_mcp/testbench/batteries/domain/
           src/localdata_mcp/testbench/batteries/security/
+          src/localdata_mcp/testbench/batteries/pipeline/
           src/localdata_mcp/testbench/batteries/perf_memory/
+          -m "not nightly"
           --cov=src/localdata_mcp/nexus
           --cov=src/localdata_mcp/ingest
           --cov=src/localdata_mcp/explore
@@ -72,6 +84,20 @@ jobs:
           --cov=src/localdata_mcp/testbench
           --cov-report=term-missing
           --cov-fail-under=85
+      - name: Merge per-worker results into the canonical store
+        # Exercises the E14.4 post-job merge (NFR-508); the canonical
+        # store is uploaded so the batch-then-diagnose gate and the
+        # nightly longitudinal comparison can read this run's outcomes.
+        run: >
+          uv run python scripts/merge_battery_results.py
+          --canonical results-canonical.db
+          "${{ github.workspace }}/results-workers/*.db"
+      - name: Upload the canonical results store
+        uses: actions/upload-artifact@v4
+        with:
+          name: battery-results-${{ github.run_id }}
+          path: results-canonical.db
+          if-no-files-found: warn
 
   pip-audit:
     name: dependency CVE gate
@@ -111,11 +137,49 @@ jobs:
       - name: Regenerate and compare the committed NX-1 artifacts
         run: uv run python -m localdata_mcp.nexus.contract.check_drift
 
-  batteries:
-    name: battery bench (placeholder)
+  battery-run-trailer:
+    # NFR-506 batch-then-diagnose merge gate. For each fix commit in the
+    # PR that touches bench-covered code, the checker requires a valid
+    # Battery-Run: trailer and verifies the two conditions against the
+    # canonical results store. The store is made durable across runs via
+    # actions/cache: the prior canonical store is restored, this PR's
+    # fresh run (the tests job's artifact — a run started AFTER the
+    # commits) is merged in, and the cache is re-saved. On a cold cache
+    # an antecedent run may be absent; the checker reports that as a
+    # violation on a genuine fix, and a green baseline warms the cache.
+    name: batch-then-diagnose gate (NFR-506)
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: [tests]
     steps:
-      - run: echo "placeholder until E3/E14 - the assembled battery bench lands in E14"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync environment
+        run: uv sync --frozen --extra dev
+      - name: Restore the durable canonical results store
+        uses: actions/cache@v4
+        with:
+          path: results-canonical.db
+          key: results-store-${{ github.run_id }}
+          restore-keys: |
+            results-store-
+      - name: Fetch this run's fresh battery results
+        uses: actions/download-artifact@v4
+        with:
+          name: battery-results-${{ github.run_id }}
+          path: fresh
+      - name: Fold this run into the canonical store
+        run: >
+          uv run python scripts/merge_battery_results.py
+          --canonical results-canonical.db "fresh/results-canonical.db"
+      - name: Check every fix commit's Battery-Run trailer
+        run: >
+          uv run python scripts/check_battery_run_trailer.py
+          --store results-canonical.db
+          --base ${{ github.event.pull_request.base.sha }}
+          --head ${{ github.event.pull_request.head.sha }}
 
   cold-start-smoke:
     # E8.6: process-launch -> serve-ready against the E8 import graph,
