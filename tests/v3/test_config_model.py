@@ -31,12 +31,11 @@ KIB = 2**10
 # Restating the defaults HERE is the frozen test expectation guarding the
 # one default site — the NFR-403 check scans src/, never tests.
 EXPECTED_DEFAULTS = {
-    # resources — S8 rows 1, 2, 3, 5, 6
+    # resources — S8 rows 1, 2, 3 (rows 5-6 spill/free-disk fields removed
+    # with the dead disk-spill gate, CR-006)
     "resources.memory_ceiling_bytes": 4 * GIB,
     "resources.query_timeout_seconds": 300,
     "resources.max_connections_per_endpoint": 8,
-    "resources.max_spill_bytes": 8 * GIB,
-    "resources.min_free_disk_bytes": 2 * GIB,
     # query — S8 rows 8, 9, 10, 12, 13 (derived), 24
     "query.chunk_buffer_max_chunks": 4,
     "query.chunk_buffer_max_bytes": 256 * MIB,

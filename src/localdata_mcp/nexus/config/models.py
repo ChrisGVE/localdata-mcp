@@ -51,11 +51,13 @@ class ResourcesConfig:
     memory_ceiling_bytes: int = cfg_field(4 * GIB, doc="S8 row 1 (LOCKED)")
     query_timeout_seconds: int = cfg_field(300, doc="S8 row 2 (LOCKED)")
     max_connections_per_endpoint: int = cfg_field(8, doc="S8 row 3 (LOCKED)")
-    # 2x the memory ceiling: one full over-ceiling working set plus
-    # overhead fits; larger invites unbounded-disk regressions (NFR-203).
-    max_spill_bytes: int = cfg_field(8 * GIB, doc="S8 row 5")
-    # Absolute free-disk floor under any spill/export write (fail-safe).
-    min_free_disk_bytes: int = cfg_field(2 * GIB, doc="S8 row 6")
+    # S8 rows 5-6 (max_spill_bytes / min_free_disk_bytes) are intentionally
+    # ABSENT: the disk-spill gate they fed was dead code and was deleted
+    # (CR-006), and v3's only disk WRITE — NX-8's export_to_file — is
+    # already atomic (temp-file + os.replace) and cleans up on ENOSPC, so
+    # neither an aggregate spill cap nor a free-disk floor has any consumer
+    # left to feed. A config field with no consumer is dead config (GP5),
+    # so both were removed rather than kept with an invented consumer.
 
 
 @dataclass(frozen=True)
