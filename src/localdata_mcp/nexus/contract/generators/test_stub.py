@@ -142,6 +142,26 @@ def test_every_registered_spec_has_a_generated_entry() -> None:
     assert not missing, (
         f"registered ToolSpecs lacking generated L3 entries: {sorted(missing)}"
     )
+
+
+def test_skeleton_probes_are_absent_from_the_served_app() -> None:
+    \"\"\"CR-036: a direct negative assertion that the served app exposes
+    NONE of the walking-skeleton probe names. CR-012's OFF-the-surface
+    guarantee is otherwise carried only by the generator partition
+    (not spec.test_only) plus the drift gate; this proves it at the live
+    fastmcp.Client wire, so a regression that wrongly registered a probe
+    into production fails here, not only on regeneration.\"\"\"
+    skeleton_names = {name for name, _ in SKELETON_TOOL_CALLS}
+
+    async def session() -> None:
+        async with Client(app) as client:
+            served = {tool.name for tool in await client.list_tools()}
+        leaked = skeleton_names & served
+        assert not leaked, (
+            f"walking-skeleton probes leaked onto the served surface: {sorted(leaked)}"
+        )
+
+    anyio.run(session)
 """
 
 
