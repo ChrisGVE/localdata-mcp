@@ -9,31 +9,29 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/ChrisGVE/localdata-mcp/ci.yml?branch=main&label=CI)](https://github.com/ChrisGVE/localdata-mcp/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/localdata-mcp.svg)](https://pypi.org/project/localdata-mcp/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Documentation](https://img.shields.io/badge/docs-readthedocs-blue.svg)](https://localdata-mcp.readthedocs.io)
 [![FastMCP](https://img.shields.io/badge/FastMCP-Compatible-green.svg)](https://github.com/jlowin/fastmcp)
-[![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/cd737717-02f3-4388-bab7-5ec7cbe40713)
-![PyPI downloads](https://img.shields.io/pypi/dm/localdata-mcp)
-![GitHub stars](https://img.shields.io/github/stars/ChrisGVE/localdata-mcp?style=social)
 
 <!-- mcp-name: io.github.chrisgve/localdata-mcp -->
 
-LocalData MCP gives LLM agents access to local and remote data — databases, files, graphs, and structured documents — along with a full data science toolkit for analysis and modeling. It exposes 71 MCP tools across 13 database types and 20+ file formats, with memory-bounded streaming so agents can work safely on large datasets without exceeding available RAM.
+SQL over your local data files, for LLM agents.
 
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chrisgve-localdata-mcp-badge.png)](https://mseep.ai/app/chrisgve-localdata-mcp)
+**Every datasource becomes a database.** A CSV, a TSV, a SQLite file — each is
+attached under a nickname and addressed as `nickname.table`. That one idea is why
+a spreadsheet and a database join in a single ordinary statement, and why there
+are seven tools here rather than seventy.
 
-## Quick Start
+> **Rebuild in progress.** This branch is a ground-up rewrite. It currently
+> supports flat files (`.csv`, `.tsv`, `.txt`) and SQLite, done properly — see
+> [Where this is going](#where-this-is-going). Earlier releases claimed far more
+> surface than they held; this one claims what it has.
+
+## Quick start
 
 ```bash
-# Install permanently
-uv tool install localdata-mcp
-
-# Or run directly without installing
-uvx localdata-mcp
+uv tool install localdata-mcp     # or: uvx localdata-mcp
 ```
 
-> **First-run note:** Data science dependencies (scipy, scikit-learn, statsmodels, geopandas) total around 200 MB and are downloaded on first use. Subsequent starts reuse the cache. If your MCP client times out on the first launch, reconnect — the next start will be immediate.
-
-Add to your MCP client configuration:
+Add it to your MCP client configuration:
 
 ```json
 {
@@ -45,307 +43,150 @@ Add to your MCP client configuration:
 }
 ```
 
-For `uvx` (no permanent install):
+Then point it at a file and ask:
+
+```python
+attach("./sales.csv")                     # → {"nickname": "sales", "tables": ["sales.sales"], ...}
+query("sales", "SELECT sku, sum(qty) FROM sales.sales GROUP BY sku")
+```
+
+`attach` derives the nickname from the filename and **returns the one it
+actually used** — if that name was taken, you get `sales_2` and are told what it
+collided with. Always read it back rather than assuming.
+
+## The seven verbs
+
+| Verb | What it does |
+| --- | --- |
+| `attach(database, nickname?, writable?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. |
+| `detach(nickname)` | Close it and free the slot. |
+| `query(nickname, sql, limit?, path?)` | Run SQL. With `path`, the whole result is written to CSV instead of returned. |
+| `info(nickname?, table?)` | Three altitudes: the whole session, one datasource, or one table's columns and row count. |
+| `add_table(nickname, source\|columns, join_on?)` | Land another table *inside* an open database. With `join_on`, reports which keys have no match. |
+| `drop_table(nickname, table)` | Remove a table. |
+| `save(nickname, path)` | Write the database out to a file you keep. |
+
+### Looking one file up against another
+
+The common request — *"can you cross-reference this with that other file?"* —
+uses `add_table`, not a second `attach`:
+
+```python
+attach("./sales.csv")                                              # → "sales"
+add_table("sales", source="./prices.csv", join_on="sku")
+query("sales", "SELECT s.sku, s.qty * p.price AS total "
+               "FROM sales.sales s JOIN sales.prices p ON s.sku = p.sku")
+```
+
+Landing the second file inside the first database is not just tidier. **Only
+tables in the same database can have a view built over their join** — SQLite
+refuses `CREATE VIEW` across attached databases outright — so this is the only
+route to a lookup you can store and come back to.
+
+`join_on` makes the tool report whether the match is actually complete, in both
+directions:
 
 ```json
-{
-  "mcpServers": {
-    "localdata": {
-      "command": "uvx",
-      "args": ["localdata-mcp"]
-    }
-  }
+"join": {
+  "complete": false,
+  "matched_keys": 1,
+  "missing_from_added":    {"values": ["b", "c"], "total": 2},
+  "missing_from_existing": {"values": ["z"],      "total": 1}
 }
 ```
 
-Then connect to any supported source and start querying:
+### Nothing survives unless you save it
+
+Attached data lives until `detach`, or until the server stops. `save` writes the
+whole database — tables you added, views you built — to a file:
 
 ```python
-connect_database("sales", "postgresql", "postgresql://user:pass@localhost/db")
-execute_query("sales", "SELECT product, SUM(amount) FROM orders GROUP BY product")
-
-connect_database("records", "csv", "./records.csv")
-analyze_hypothesis_test("records", "SELECT amount, region FROM data_table", column="amount", group_column="region")
+save("sales", "./analysis.db")
 ```
 
-A single-table file — CSV, TSV, JSON, XML, INI, Parquet, Feather, Arrow — is
-loaded into one table named `data_table`, whatever the connection is called. Run
-`describe_database(name)` after connecting if you are unsure what a source
-exposes; multi-sheet spreadsheets and databases keep their own table names.
+Attaching that file again later is an ordinary attach, so it comes back
+**read-only** unless you pass `writable=true`.
 
-## Feature Overview
+## What it will not do
 
-### Core Database (8 tools)
+These are deliberate, and each one is measured rather than assumed.
 
-Connect, query, and inspect databases and files. All queries execute within configurable memory limits (default 2 GB) with automatic chunked streaming for large result sets.
+- **Ten datasources at once.** SQLite refuses the eleventh `ATTACH`, and every
+  slot is an attached database — so the ceiling is not a policy choice. The
+  oldest is evicted when the limit is reached, and the eviction is *reported*
+  with everything needed to rebuild it.
+- **Write is not the default.** Anything attached from outside is read-only; the
+  grant is per-attach and is carried by the connection's own URI, so SQLite
+  enforces it rather than a check that could be reached around. A database built
+  from a flat file is yours, and is writable.
+- **The same file twice is refused**, naming the datasource already holding it.
+- **Paths are confined** to the working directory and any configured roots.
+  Symlinks and `..` are resolved before the check, not after.
+- **A mixed-type column is flagged on load.** An `avg()` over a column holding
+  both numbers and text silently counts the text as zero and keeps it in the
+  denominator — the answer is wrong and nothing says so, unless something says
+  so.
 
-| Tool | Description |
-| --- | --- |
-| `connect_database` | Open a connection to any supported database or file |
-| `disconnect_database` | Close a connection |
-| `list_databases` | List active connections |
-| `execute_query` | Run SQL with streaming, chunking, and preflight mode |
-| `describe_database` | Show schema and table list |
-| `describe_table` | Column types, indexes, row count |
-| `find_table` | Locate a table across all active connections |
-| `analyze_query_preview` | Estimate query cost before execution |
+## Memory
 
-### Streaming and Memory (9 tools)
+The working budget is small by default — 100 MB — because this runs on a machine
+doing other things. When a load crosses it, **the load finishes**: the overshoot
+is tolerated once. The *next* operation then moves the largest in-memory database
+out to a temp file and re-attaches it under the same nickname, and nothing in any
+response mentions that it happened.
 
-| Tool | Description |
-| --- | --- |
-| `next_chunk` | Retrieve the next chunk of a streamed result |
-| `request_data_chunk` | Fetch a specific chunk by row range |
-| `request_multiple_chunks` | Batch-fetch multiple chunks in one call |
-| `manage_memory_bounds` | View and configure memory limits |
-| `get_streaming_status` | Check active streams and buffer usage |
-| `clear_streaming_buffer` | Free memory from a specific buffer |
-| `get_query_metadata` | Rich metadata for a completed query |
-| `cancel_query_operation` | Cancel a running or buffered query |
-| `get_data_quality_report` | Column statistics, null rates, and quality metrics |
-
-### Tree / Structured Data (10 tools)
-
-Navigate and edit TOML, JSON, and YAML files as navigable trees. Supports full CRUD with auto-creation of ancestor nodes and round-trip export to any supported format.
-
-| Tool | Description |
-| --- | --- |
-| `get_node` / `get_children` | Navigate the tree |
-| `set_node` / `delete_node` | Create or remove nodes |
-| `get_value` / `set_value` / `delete_key` | Read and write properties |
-| `list_keys` | List key-value pairs at a node |
-| `move_node` | Relocate a node within the tree |
-| `export_structured` | Export as TOML, JSON, YAML, or Markdown |
-
-### Graph (7 tools)
-
-Work with DOT, GML, GraphML, and Mermaid files as directed multigraphs. Supports full CRUD on nodes and edges, shortest-path and all-paths queries, structural statistics, and multi-format export.
-
-| Tool | Description |
-| --- | --- |
-| `get_neighbors` / `get_edges` | Traverse from a node |
-| `add_edge` / `remove_edge` | Manage edges |
-| `find_path` | Shortest path or all paths between two nodes |
-| `get_graph_stats` | Node/edge counts, density, DAG validation |
-| `export_graph` | Export as DOT, GML, GraphML, Mermaid, or Markdown |
-
-Node-level operations reuse the tree tools above: `get_node`, `set_node`, `delete_node`, `list_keys`, `get_value`, `set_value`, and `delete_key` detect a graph connection and treat their `path` argument as a node ID. `get_children` and `move_node` are tree-only.
-
-### Search and Transform (2 tools)
-
-| Tool | Description |
-| --- | --- |
-| `search_data` | Regex search across query results |
-| `transform_data` | Apply column transformations to result sets |
-
-### Schema and Audit (3 tools)
-
-| Tool | Description |
-| --- | --- |
-| `export_schema` | Export schema as JSON Schema, Python dataclasses, TypeScript interfaces, or SQL DDL |
-| `get_query_log` | Recent query execution history |
-| `get_error_log` | Recent error log |
-
-### System (2 tools)
-
-| Tool | Description |
-| --- | --- |
-| `check_compatibility` | Verify API backward compatibility |
-| `get_metrics` | Prometheus metrics text. Registered only when metrics collection is enabled, which is the default |
-
-### Data Science (12 tools)
-
-Run statistical analysis, modeling, and pattern detection directly on query results from any connected source.
-
-| Tool | Domain |
-| --- | --- |
-| `analyze_hypothesis_test` | Statistical Analysis |
-| `analyze_anova` | Statistical Analysis |
-| `analyze_effect_sizes` | Statistical Analysis |
-| `analyze_regression` | Regression and Modeling |
-| `evaluate_model_performance` | Regression and Modeling |
-| `analyze_clusters` | Pattern Recognition |
-| `detect_anomalies` | Pattern Recognition |
-| `reduce_dimensions` | Pattern Recognition |
-| `analyze_time_series` | Time Series |
-| `forecast_time_series` | Time Series |
-| `analyze_rfm` | Business Intelligence |
-| `analyze_ab_test` | Business Intelligence |
-
-### Sampling and Estimation (4 tools)
-
-Draw samples and quantify uncertainty without assuming a distribution.
-
-| Tool | Description |
-| --- | --- |
-| `generate_sample` | Simple random, stratified, systematic, or cluster sample from a query |
-| `bootstrap_statistic` | Resampled confidence interval for a mean, median, or other statistic |
-| `monte_carlo_simulate` | Propagate input uncertainty through a simulation |
-| `bayesian_estimate` | Posterior estimate and credible interval under a chosen prior |
-
-### Optimization (4 tools)
-
-Solve allocation and routing problems over table data. These four read a whole
-table rather than a query, since a solver needs the full constraint set.
-
-| Tool | Description |
-| --- | --- |
-| `solve_linear_program` | Linear or mixed-integer program from objective and constraint columns |
-| `optimize_constrained` | Non-linear constrained minimisation (SLSQP and related methods) |
-| `analyze_network` | Graph structure and centrality from an edge table |
-| `solve_assignment_problem` | Hungarian-method matching of agents to tasks |
-
-### Geospatial (10 tools)
-
-Spatial statistics, joins, and network routing over coordinate or WKT geometry
-columns. Requires geopandas, shapely, and pyproj.
-
-| Tool | Description |
-| --- | --- |
-| `check_geospatial_capabilities` | Report which spatial backends are installed |
-| `analyze_spatial_autocorrelation` | Moran's I or Geary's C — is the pattern clustered or random? |
-| `find_spatial_hotspots` | Getis-Ord Gi* hot and cold spot labelling |
-| `calculate_spatial_distances` | Haversine or Euclidean distances and nearest neighbours |
-| `optimize_route` | Shortest route visiting a set of waypoints on a network |
-| `analyze_accessibility` | Travel time from demand points to services, with the unreachable named |
-| `generate_service_isochrones` | Reachable-area polygons per travel-time band |
-| `perform_spatial_join` | Join points or geometries to polygons by spatial relationship |
-| `perform_spatial_overlay` | Intersection, union, or difference of two polygon layers |
-| `aggregate_points_in_polygons` | Count or summarise point values per polygon |
-
-## Supported Data Sources
-
-### Databases
-
-| Type | Engines |
-| --- | --- |
-| SQL | SQLite, PostgreSQL, MySQL |
-| SQL (analytical) | DuckDB (`pip install duckdb duckdb-engine`) |
-| SQL (enterprise) | Oracle, MS SQL Server (`pip install localdata-mcp[enterprise]`) |
-| Document | MongoDB, CouchDB (`pip install localdata-mcp[modern-databases]`) |
-| Key-value | Redis (`pip install localdata-mcp[modern-databases]`) |
-| Search | Elasticsearch (`pip install localdata-mcp[modern-databases]`) |
-| Time series | InfluxDB (`pip install localdata-mcp[modern-databases]`) |
-| Graph | Neo4j (`pip install localdata-mcp[modern-databases]`) |
-| RDF / SPARQL | Turtle (.ttl), N-Triples (.nt), remote SPARQL endpoints |
-
-### File Formats
-
-| Category | Formats |
-| --- | --- |
-| Tabular | CSV, TSV |
-| Structured | JSON, YAML, TOML, XML, INI |
-| Spreadsheet | Excel (.xlsx, .xls), LibreOffice Calc (.ods), Apple Numbers (.numbers) |
-| Analytical | Parquet, Feather, Arrow, HDF5 |
-| Graph | DOT (Graphviz), GML, GraphML, Mermaid |
-| RDF | Turtle (.ttl), N-Triples (.nt) |
-
-Multi-sheet spreadsheets are supported: each sheet becomes a separately queryable table. To load one sheet only, pass its name as the fourth argument to `connect_database` — `connect_database("q1", "excel", "./report.xlsx", "Q1 Results")`. Use `"excel"` for both `.xlsx` and `.xls`; `"xlsx"` is not a connection type.
-
-## Data Science Domains
-
-**Statistical Analysis** — t-tests, chi-squared, Mann-Whitney, Kruskal-Wallis, and related hypothesis tests; one-way ANOVA with post-hoc tests; Cohen's d, eta-squared, and other effect size measures.
-
-**Regression and Modeling** — linear, polynomial, logistic, ridge, lasso, and elastic net regression; model evaluation with R², RMSE, MAE, and classification metrics. `analyze_regression` reports coefficients and fit statistics but no per-coefficient standard errors, t-statistics or p-values. The feature-selection transformer in the domain package has no MCP tool; use a lasso fit to shrink weak coefficients instead.
-
-**Pattern Recognition** — K-means, DBSCAN, hierarchical, GMM and spectral clustering; anomaly detection via isolation forest, LOF, one-class SVM and a z-score/IQR method; dimensionality reduction with PCA, t-SNE and ICA. `umap` is accepted but raises `ImportError` — `umap-learn` is neither a dependency nor an extra, so install it yourself before reaching for it.
-
-**Time Series** — trend and seasonality summaries, stationarity testing, autocorrelation analysis; ARIMA and ETS forecasting. `analyze_time_series` reports how strong the trend and seasonal signals are rather than returning the decomposed series themselves. `forecast_time_series` accepts `method="arima"` or `method="ets"` only; the SARIMA and ensemble models, change point detection, VAR, Granger causality and cointegration all exist in the domain package with no MCP tool.
-
-**Business Intelligence** — A/B test statistical analysis and RFM customer segmentation. Cohort analysis, CLV modeling, funnel analysis and attribution exist in the domain package but have no MCP tool.
-
-**Geospatial** — distance and coordinate calculations, spatial joins and overlays, hotspot and autocorrelation analysis, accessibility and routing. Spatial interpolation (IDW, kriging) has no MCP tool.
-
-**Optimization** — linear programming, constrained optimization, assignment problems, and network optimization.
-
-**Sampling and Estimation** — bootstrap confidence intervals, Bayesian estimation, Monte Carlo simulation, and stratified sampling.
-
-## Claude Code plugin
-
-The repository doubles as a Claude Code plugin. Its manifest (`.claude-plugin/plugin.json`) registers the `localdata` MCP server via `uvx localdata-mcp` and ships 18 skills and 11 agents that drive the tools above. See [the plugin page](docs/plugin.md) for how to install it and how to invoke a skill.
-
-Upgrading from 2.0.0: `graph-explore` is now `graph-data-explore` and `graph-analyst` is now `graph-data-analyst`, and every skill moved one directory deeper. Invoking an old name silently does nothing — the [changelog](CHANGELOG.md) lists the steps.
-
-Skills are grouped by domain under `skills/`:
-
-| Group | Skills |
-| --- | --- |
-| `exploration/` | `explore-data`, `data-quality`, `find-reference-data` |
-| `statistical/` | `hypothesis-test`, `ab-test`, `analyze-correlations`, `sampling-estimation` |
-| `modeling/` | `regression`, `cluster-analysis`, `anomaly-detection`, `dimensionality-reduction`, `forecast`, `geospatial`, `optimization` |
-| `graph-data/` | `graph-data-explore` |
-| `workflow/` | `data-pipeline`, `research-pipeline`, `process-control` |
-
-Agents in `agents/` take on longer analyses that span several tools:
-
-| Agent | Scope |
-| --- | --- |
-| `data-explorer` | Profiles an unfamiliar dataset and reports schema, quality, and candidate analyses |
-| `data-scientist` | Composes multi-step pipelines across domains when the right approach is not obvious |
-| `statistical-analyst` | Hypothesis tests, ANOVA, effect sizes, sampling design, bootstrap estimation |
-| `ml-analyst` | Clustering, anomaly detection, dimensionality reduction, regression modeling |
-| `forecaster` | Trend and seasonality summaries, stationarity testing, ARIMA/ETS choice, forecasts with uncertainty bounds |
-| `bi-analyst` | A/B tests and RFM segmentation; explains what cohort, CLV and attribution work would need |
-| `graph-data-analyst` | Centrality, community detection, path finding, graph export |
-| `geospatial-analyst` | Coordinate systems, distances, spatial clustering, accessibility |
-| `operations-analyst` | Statistical process control, optimization, capacity planning |
-| `research-analyst` | Power analysis, assumption documentation, reproducible reporting |
-| `data-researcher` | Finds and prepares public reference datasets to enrich your data |
-
-## Architecture
-
-- **One uniform call shape** — an analysis tool takes a connection name, a SQL query, and the column names it should work on. There is no separate load step and no data-frame argument: the query is the data selection, so the same call works against a CSV file and a PostgreSQL table. The four optimization tools are the one exception, taking a `table_name` and reading the whole table
-- **Named methods, sensible defaults** — the statistical procedure is chosen by name (`method="dbscan"`, `test_type="ttest_ind"`) and every method parameter has a default, so a call that names only the columns still runs. Thresholds such as `alpha` and `contamination` are numeric parameters, not inferred from intent
-- **Streaming-first execution** — query results are chunked and buffered rather than materialized whole. `execute_query` returns the first chunk plus a `query_id`, and `next_chunk` walks the rest, so a result larger than the configured memory ceiling (default 2 GB) is still workable
-- **Self-describing query results** — `execute_query` returns row counts, memory state, data-quality signals, and ready-to-run `next_chunk` calls alongside the rows, so an agent can decide what to do next without a second round trip
+There is deliberately no pre-flight estimate. What a file *will* cost is guessed
+from metadata and guessed wrong; what a database *holds* is read from the
+database. Residency is measured as `(page_count − freelist_count) × page_size`,
+freelist-corrected so a slot emptied by a `DROP` is not moved to disk for data it
+no longer has.
 
 ## Configuration
 
-LocalData MCP reads settings from a YAML config file, from environment variables, or from both; environment variables win. The defaults work for most cases. The most frequently changed variables:
+Optional. Discovery is a cascade — **first found wins**, not a merge:
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `LOCALDATA_MEMORY_LIMIT_MB` | `2048` | Memory ceiling for query results, in MB |
-| `LOCALDATA_CONNECTIONS_MAX_CONCURRENT` | `10` | Maximum simultaneous database connections |
-| `LOCALDATA_QUERY_CHUNK_SIZE` | `100` | Rows per streaming chunk |
-| `LOCALDATA_QUERY_BUFFER_TIMEOUT` | `600` | Seconds a streaming buffer is kept before expiry |
-| `LOCALDATA_SECURITY_RESTRICT_PATHS` | `true` | Confine file access to the configured `security.allowed_paths` (default `["."]`, the process working directory) |
-| `LOCALDATA_CONFIG` | unset | Path to a YAML config file, bypassing config-file discovery |
+1. `$LOCALDATA_CONFIG_PATH`
+2. `$XDG_CONFIG_HOME/localdata/config.toml` (defaults to `~/.config`)
+3. `./localdata.toml`
+4. `~/Library/Application Support/localdata/config.toml` (macOS) or `%APPDATA%\localdata\config.toml` (Windows)
 
-Set them in your MCP server configuration under `"env"`, or in a `.env` file in the working directory. The full set — staging, memory budget, disk budget, per-database `LOCALDATA_DB_<NAME>_*` definitions — is documented in the [configuration reference](docs/configuration.md).
+```toml
+[workspace]
+slots = 10                # 1-10; SQLite refuses the eleventh attachment
+memory_budget_mb = 100    # before a database is moved to disk
 
-## Security
+[paths]
+roots = ["~/data"]        # in addition to the working directory
+path_limited = true       # false removes the confinement entirely
 
-You are giving an LLM agent a live connection to your data. Two controls hold, and three do not.
+[network]
+enabled = false           # true allows a datasource URL naming a service
+```
 
-**Path restriction holds.** File connections are confined to `security.allowed_paths`, which defaults to `["."]` — the process working directory. A path outside it is refused.
+**An unknown section or key is refused rather than ignored.** A mistyped
+`path_limitted = false` that silently kept the safe default would be a security
+setting you believe you have changed.
 
-**SQL validation holds, but only on two tools.** `execute_query` and `analyze_query_preview` accept SELECT statements and common table expressions and refuse everything else. **No other tool is gated.** The analytical tools, and the regex tools `search_data` and `transform_data`, hand their query straight to pandas, so a statement those two would refuse executes through any of them — and a `CREATE TABLE ... AS SELECT` is DDL, so it commits and persists (issues #25 and #33).
+## Claude Code plugin
 
-**Three documented settings promise more than they deliver** (issue #33) — one is narrower than it reads, and two do nothing at all:
+The repository doubles as a Claude Code plugin, registering the server and
+shipping the `local-data` skill — the mental model, the naming conversation, and
+how to phrase an incomplete join in the user's own words rather than as an
+anti-join. The tools stay mechanical precisely because the skill carries that.
 
-| Setting | What it does |
-| --- | --- |
-| `security.readonly` | Blocks writes disguised as reads, but only on `execute_query` and `analyze_query_preview`; every other tool executes them |
-| `security.max_query_length` | Parsed and validated at startup, then never applied |
-| `security.blocked_keywords` | Read by no code at all |
+## Where this is going
 
-**Grant the connection read-only rights at the database.** That is the control that actually constrains what an agent can do, and it is the one to rely on for any database where a write would matter. Treat the in-process settings as defence in depth, not as the boundary.
+Level 0 is a gate: flat files and SQLite, done well. Only then more input and
+output formats, then more backends — file-based and endpoint-based, anything
+SQLAlchemy speaks. Building blocks first.
+
+The full specification is in [docs/architecture/LEVEL0.md](docs/architecture/LEVEL0.md).
 
 ## Documentation
 
-- [Getting started](docs/getting-started.md) — install, configure an MCP client, run the first queries
-- [Claude Code plugin](docs/plugin.md) — install the plugin, invoke a skill, what each skill and agent does
-- [Tools reference](docs/tools-reference.md) — every tool with parameters, return shape, and composition hints
-- [Configuration reference](docs/configuration.md) — config file discovery, every environment variable, every default
-- [Data sources](docs/data-sources/index.md) — connection strings and quirks per database and file format
-- [Data science domains](docs/domains/index.md) — what each of the eight analytical domains does
-- [Advanced examples](docs/advanced-examples.md) — multi-tool workflows, each one executed by the test suite
-- [Architecture](docs/architecture/index.md) — how a tool call is served, and where the boundaries are
-- [Error classification](docs/error-classification.md) — structured error types, retryability, and suggested recovery
-- [Docker usage](DOCKER_USAGE.md) — container deployment and configuration
-- [Troubleshooting](TROUBLESHOOTING.md) — common failures and their fixes
-- [Rendered documentation](https://localdata-mcp.readthedocs.io) — the same pages, searchable
+- [Level 0 specification](docs/architecture/LEVEL0.md) — the premise, the three user journeys, the seven verbs
+- [Measured constraints](docs/CONSTRAINTS.md) — the behaviour that shapes the design, with the numbers behind it
+- [First principles](docs/architecture/FIRST_PRINCIPLES.md) — the constitutional foundation
 
 ## Development
 
@@ -353,14 +194,15 @@ You are giving an LLM agent a live connection to your data. Two controls hold, a
 git clone https://github.com/ChrisGVE/localdata-mcp.git
 cd localdata-mcp
 uv sync --all-extras
-uv run pytest tests/ --ignore=tests/integration
+uv run --extra dev pytest
 ```
 
-That command collects the whole unit suite — over 2,400 tests, and growing. A further 357 integration tests live under `tests/integration/` and need live database services — start them with `docker-compose up -d`, then run `uv run pytest tests/integration/`. The enterprise-scale suite inside that set loads 100K rows into each of 7 database engines and is by far the slowest part.
+`-m 'not slow'` skips the volume suite.
 
 ## Contributing
 
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
+submitting a pull request.
 
 ## License
 

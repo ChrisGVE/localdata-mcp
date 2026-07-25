@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -723,3 +724,30 @@ def test_a_view_written_with_the_nickname_blocks_the_save_and_says_why(session):
     assert refused["ok"] is False
     assert "unqualified" in refused["error"]
     assert not (session / "keep.db").exists()
+
+
+# ---------------------------------------------------------------------------
+# The README is the one document everybody reads, and it drifted before
+# ---------------------------------------------------------------------------
+
+
+def test_every_tool_the_readme_names_actually_exists():
+    """A README claiming tools that do not exist is worse than none.
+
+    This branch inherited one advertising seventy-one tools across thirteen
+    database types, none of which were still there. Checking it mechanically is
+    what stops that happening quietly a second time.
+    """
+    readme = (Path(__file__).parent.parent / "README.md").read_text()
+    real = {tool.name for tool in listed_tools()}
+
+    # The verb table, and every call written at the start of a code-block line.
+    # Deliberately not every backticked `name(...)` in the prose: that also
+    # matches SQL functions like avg(), which are not ours to provide.
+    claimed = set(re.findall(r"^\| `([a-z_]+)\(", readme, re.MULTILINE))
+    claimed |= set(re.findall(r"^([a-z_]+)\(", readme, re.MULTILINE))
+    invented = claimed - real
+    assert not invented, f"README names tools that do not exist: {sorted(invented)}"
+
+    # And the surface it documents is the whole surface, not a flattering slice.
+    assert real <= claimed, f"README omits: {sorted(real - claimed)}"
