@@ -177,6 +177,29 @@ Consequence for the configuration: `workspace.slots` is validated against this c
 larger value, because the failure it would otherwise produce arrives mid-session, at attach time,
 long after the mistake was made.
 
+### 2.3 A join may cross attached databases; a **view** over that join may not
+
+Querying across two attached databases works in one ordinary statement (§2.2). Storing that same
+statement as a view does not:
+
+```
+sqlite3.OperationalError: view named cannot reference objects in database wh
+```
+
+The refusal is at `CREATE VIEW` time, not at read time — so this is not a fragile view that later
+goes stale, it is a view that never exists. The two halves are easy to conflate and behave
+completely differently:
+
+| Statement | Across attached databases |
+|---|---|
+| `SELECT … JOIN other.table` | works |
+| `CREATE VIEW … AS SELECT … JOIN other.table` | refused outright |
+
+**Consequence for the design.** A stored join can only be built over tables that live in *one*
+database. That is what makes `add_table` — landing a second datasource beside the first, inside the
+open slot — the only route to a reusable join, rather than merely the friendlier-sounding one. Any
+guidance that says "attach both files and join them" is offering something that cannot be saved.
+
 ---
 
 ## §3 — Volume, performance, concurrency

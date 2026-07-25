@@ -46,10 +46,14 @@ exactly like that, and it means three things:
    have no match in that file."*
 
 Adding to the existing database rather than attaching a second one is not only the
-friendlier mental model — it is the only one where **the view survives**. A view over an
-attached database goes invalid the moment that database is detached or evicted. Inside
-one database it is stable. Cross-database joins do work (§2.2 of CONSTRAINTS, verified),
-but they are harder to build over and fragile to hold.
+friendlier mental model — it is **the only route to a stored join**. Measured
+(CONSTRAINTS §2.3): a `SELECT` may join across two attached databases, but `CREATE VIEW`
+over that same join is refused outright — `view named cannot reference objects in
+database wh`. Not a view that later goes stale; a view that never exists.
+
+So the two halves behave differently and are easy to conflate. Joining across slots
+works and is worth doing for a one-off answer. Keeping that join — naming it, returning
+to it — requires both tables in one database, which is what `add_table` is for.
 
 ### Arc 3 — Spill
 

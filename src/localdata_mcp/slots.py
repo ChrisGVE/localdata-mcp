@@ -35,9 +35,12 @@ cannot cause a false positive.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import tempfile
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -54,13 +57,16 @@ from .loader import (
     _sanitize,
     read_frame,
 )
-from .paths import PathNotAllowed, resolve_read_path
+from .paths import PathNotAllowed, resolve_read_path, resolve_write_path
 
 __all__ = [
+    "AddedTable",
     "AttachRefused",
     "Attachment",
     "Collision",
     "Eviction",
+    "JoinReport",
+    "NotWritable",
     "Registry",
     "Slot",
     "SlotNotAvailable",
@@ -94,6 +100,10 @@ class AttachRefused(SlotError):
 
 class SlotNotAvailable(SlotError):
     """A nickname that names no live slot."""
+
+
+class NotWritable(SlotError):
+    """A slot this server will not change, and how to make it changeable."""
 
 
 def url_scheme(database: str) -> str | None:
@@ -147,6 +157,46 @@ class Collision:
 
     nickname: str
     source: str
+
+
+#: How many unmatched key values a join report carries. Enough to name them in
+#: a sentence; the counts beside them say how many more there are.
+_UNMATCHED_SAMPLE = 10
+
+
+@dataclass(frozen=True)
+class JoinReport:
+    """Whether two tables in one database actually line up on a shared key.
+
+    Stated as facts rather than as prose: which values on each side have no
+    partner on the other, and how many. Turning that into *"Acme, Globex and
+    Initech have no match in suppliers.csv"* is the skill's job — it knows what
+    the user called these things, and this module does not.
+    """
+
+    key: str
+    #: Qualified names, so a caller can quote them back without rebuilding them.
+    existing_table: str
+    added_table: str
+    matched_keys: int
+    #: Key values present in the existing table with no partner in the new one.
+    missing_from_added: tuple[Any, ...]
+    missing_from_added_total: int
+    #: And the other direction, which is just as often the interesting one.
+    missing_from_existing: tuple[Any, ...]
+    missing_from_existing_total: int
+
+    @property
+    def complete(self) -> bool:
+        return self.missing_from_added_total == self.missing_from_existing_total == 0
+
+
+@dataclass(frozen=True)
+class AddedTable:
+    """A table that landed in an existing slot, and how it lines up."""
+
+    info: TableInfo
+    join: JoinReport | None = None
 
 
 @dataclass(frozen=True)
@@ -444,6 +494,263 @@ class Registry:
         lowered = nickname.lower()
         if lowered in _RESERVED or lowered.startswith("sqlite_"):
             raise AttachRefused(f"{nickname!r} is a name SQLite reserves.")
+
+    # -- lifecycle and composition ------------------------------------------
+
+    def detach(self, nickname: str) -> Slot:
+        """Drop a slot on purpose, rather than waiting for FIFO to guess.
+
+        The deliberate counterpart to eviction: it frees the slot against
+        SQLite's ten-attachment ceiling, and takes the temp file with it if the
+        database had been moved out to disk.
+        """
+        self.slot(nickname)  # Explains an evicted or unknown nickname.
+        return self._release(nickname)
+
+    def add_table(
+        self,
+        nickname: str,
+        *,
+        table: str | None = None,
+        source: str | None = None,
+        columns: dict[str, str] | None = None,
+        join_on: str | None = None,
+        join_table: str | None = None,
+    ) -> AddedTable:
+        """Land another table inside a database that is already open.
+
+        This is what makes the lookup arc work. Adding beside the existing
+        tables rather than attaching a second slot is not only the friendlier
+        mental model — it is the only one where a view over the join *survives*,
+        because a view across attached databases goes invalid the moment either
+        one is detached or evicted.
+
+        Exactly one of ``source`` and ``columns`` says where the table comes
+        from: a datasource to read, or a schema to declare and fill later.
+        """
+        slot = self._writable(nickname, "add a table to")
+        if (source is None) == (columns is None):
+            raise SlotError(
+                "Adding a table needs exactly one of source (a file to read) or "
+                "columns (a schema to declare), not both and not neither."
+            )
+
+        name = self._table_name(table, source)
+        if self._workspace.has_table(nickname, name):
+            raise SlotError(
+                f"{nickname}.{name} already exists, holding "
+                f"{self._workspace.describe(nickname, name).row_count} rows. Drop "
+                f"it first if you meant to replace it."
+            )
+
+        if source is not None:
+            info = self._read_into(slot, name, source)
+        else:
+            assert columns is not None
+            try:
+                info = self._workspace.create_table(nickname, name, columns)
+            except LoadError as exc:
+                raise SlotError(str(exc)) from exc
+
+        report = None
+        if join_on is not None:
+            report = self._join_report(nickname, name, join_on, join_table)
+        return AddedTable(info=info, join=report)
+
+    def _read_into(self, slot: Slot, table: str, source: str) -> TableInfo:
+        """Read a datasource into an existing slot as one more table."""
+        try:
+            path = resolve_read_path(source)
+        except PathNotAllowed as exc:
+            raise SlotError(str(exc)) from exc
+        try:
+            frame = read_frame(path)
+            return self._workspace.insert_frame(
+                frame, table, source=str(path), schema=slot.nickname
+            )
+        except LoadError as exc:
+            raise SlotError(str(exc)) from exc
+
+    def _table_name(self, table: str | None, source: str | None) -> str:
+        """Settle on the table's name: given verbatim, or derived from the file."""
+        if table is not None:
+            if not _NICKNAME.match(table):
+                raise SlotError(
+                    f"{table!r} cannot be a table name. Use a letter or underscore "
+                    f"followed by letters, digits or underscores."
+                )
+            return table
+        if source is None:
+            raise SlotError("A declared table needs a name.")
+        return _sanitize(Path(source).stem, "table")
+
+    def drop_table(self, nickname: str, table: str) -> None:
+        """Remove a table from a slot. Composition needs both directions."""
+        self._writable(nickname, "drop a table from")
+        if not self._workspace.has_table(nickname, table):
+            known = ", ".join(self._workspace.table_names(nickname)) or "none"
+            raise SlotNotAvailable(
+                f"No such table: {nickname}.{table}. In {nickname}: {known}."
+            )
+        try:
+            self._workspace.drop_table(nickname, table)
+        except LoadError as exc:
+            raise SlotError(str(exc)) from exc
+
+    def save(self, nickname: str, path: str, *, overwrite: bool = False) -> Path:
+        """Write a slot's database out to a path the caller chose.
+
+        The escape from ephemerality: a database built in memory, or moved to a
+        temp file under memory pressure, becomes a file the user owns and can
+        attach again another day.
+
+        The slot is *copied*, not moved — it keeps answering under the same
+        nickname, with the same write access it had. Re-attaching the saved file
+        later is an ordinary attach, which is why it comes back read-only unless
+        write is granted again.
+        """
+        slot = self.slot(nickname)
+        if slot.engine is not None:
+            raise SlotError(
+                f"{nickname!r} is a service reached over its own connection, not a "
+                f"database this server holds, so there is nothing local to save. "
+                f"Copy the rows you want into a slot first."
+            )
+
+        try:
+            target = resolve_write_path(path, overwrite=overwrite)
+        except PathNotAllowed as exc:
+            raise SlotError(str(exc)) from exc
+
+        # VACUUM INTO refuses a target that is already a database — but not one
+        # that is zero-length, so its refusal is not the guard. The guard is
+        # resolve_write_path above; here we simply clear the way it authorised.
+        if target.exists():
+            target.unlink()
+
+        try:
+            self._workspace.vacuum_into(nickname, target)
+        except Exception as exc:
+            # A partial file looks like a complete save, which is worse than none.
+            target.unlink(missing_ok=True)
+            raise SlotError(f"Could not save {nickname} to {target}: {exc}") from exc
+
+        # SQLite creates the file 0o644 — world-readable, holding the user's
+        # actual data. Narrowed immediately; the window is small and known.
+        os.chmod(target, 0o600)
+        return target
+
+    # -- does the join actually line up? ------------------------------------
+
+    def _join_report(
+        self, nickname: str, added: str, key: str, join_table: str | None
+    ) -> JoinReport:
+        """Anti-join both ways, and say what has no partner on the other side.
+
+        Both directions, because which one matters is not ours to guess: rows in
+        the original file with nothing to look up are the usual worry, and rows
+        in the new file that nothing refers to are the usual surprise.
+        """
+        existing = self._join_partner(nickname, added, join_table)
+        column = self._shared_column(nickname, existing, added, key)
+
+        missing_from_added, added_total = self._unmatched(
+            nickname, existing, added, column
+        )
+        missing_from_existing, existing_total = self._unmatched(
+            nickname, added, existing, column
+        )
+        return JoinReport(
+            key=column,
+            existing_table=f"{nickname}.{existing}",
+            added_table=f"{nickname}.{added}",
+            matched_keys=self._matched(nickname, existing, added, column),
+            missing_from_added=missing_from_added,
+            missing_from_added_total=added_total,
+            missing_from_existing=missing_from_existing,
+            missing_from_existing_total=existing_total,
+        )
+
+    def _join_partner(self, nickname: str, added: str, requested: str | None) -> str:
+        """Which table the new one is being checked against."""
+        others = [t for t in self._workspace.table_names(nickname) if t != added]
+        if requested is not None:
+            if requested not in others:
+                known = ", ".join(others) or "no other table"
+                raise SlotNotAvailable(
+                    f"No such table to join against: {nickname}.{requested}. "
+                    f"In {nickname}: {known}."
+                )
+            return requested
+        if len(others) == 1:
+            return others[0]
+        if not others:
+            raise SlotError(
+                f"{nickname}.{added} is the only table in {nickname!r}, so there "
+                f"is nothing to check the join against."
+            )
+        raise SlotError(
+            f"{nickname!r} holds {', '.join(others)}, so which one "
+            f"{nickname}.{added} should line up with has to be said explicitly."
+        )
+
+    def _shared_column(self, nickname: str, existing: str, added: str, key: str) -> str:
+        """The key column, present on both sides or the check means nothing."""
+        for table in (existing, added):
+            names = [c.name for c in self._workspace.describe(nickname, table).columns]
+            if key not in names:
+                raise SlotError(
+                    f"{nickname}.{table} has no column {key!r}. Its columns are: "
+                    f"{', '.join(names)}."
+                )
+        return key
+
+    def _unmatched(
+        self, nickname: str, left: str, right: str, key: str
+    ) -> tuple[tuple[Any, ...], int]:
+        """Distinct key values in ``left`` with no partner in ``right``.
+
+        ``NOT EXISTS`` rather than a ``LEFT JOIN ... IS NULL``, because it says
+        what it means and stays right when the key column itself holds nulls —
+        which are excluded, since a null key has no partner anywhere and saying
+        so is noise rather than a finding.
+        """
+        absent = (
+            f'FROM "{nickname}"."{left}" l WHERE l."{key}" IS NOT NULL '
+            f'AND NOT EXISTS (SELECT 1 FROM "{nickname}"."{right}" r '
+            f'WHERE r."{key}" = l."{key}")'
+        )
+        _, counted = self._workspace.query(
+            f'SELECT count(*) FROM (SELECT DISTINCT l."{key}" {absent})'
+        )
+        _, sampled = self._workspace.query(
+            f'SELECT DISTINCT l."{key}" {absent} ORDER BY 1 LIMIT {_UNMATCHED_SAMPLE}'
+        )
+        return tuple(row[0] for row in sampled), int(counted[0][0])
+
+    def _matched(self, nickname: str, left: str, right: str, key: str) -> int:
+        _, rows = self._workspace.query(
+            f'SELECT count(*) FROM (SELECT DISTINCT l."{key}" '
+            f'FROM "{nickname}"."{left}" l WHERE EXISTS '
+            f'(SELECT 1 FROM "{nickname}"."{right}" r WHERE r."{key}" = l."{key}"))'
+        )
+        return int(rows[0][0])
+
+    def _writable(self, nickname: str, action: str) -> Slot:
+        """The slot for a nickname, refusing if it may not be changed."""
+        slot = self.slot(nickname)
+        if slot.engine is not None:
+            raise NotWritable(
+                f"{nickname!r} is reached over its own connection and is not "
+                f"composed here. Attach a local slot and copy into that instead."
+            )
+        if not slot.writable:
+            raise NotWritable(
+                f"{nickname!r} was attached read-only, so this server will not "
+                f"{action} it. Attach {slot.source} again with writable=true if "
+                f"you meant to change the file itself."
+            )
+        return slot
 
     # -- eviction -----------------------------------------------------------
 
