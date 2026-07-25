@@ -1019,3 +1019,256 @@ def test_saving_outside_the_allowed_area_is_refused(registry, root, tmp_path):
     registry.attach(str(root / "sales.csv"), "shop")
     with pytest.raises(SlotError, match="outside the allowed paths"):
         registry.save("shop", str(tmp_path / "elsewhere.db"))
+
+
+# ---------------------------------------------------------------------------
+# Outgrowing memory: spill to disk, in place, without saying so
+# ---------------------------------------------------------------------------
+
+
+def bulky_csv(path: Path, rows: int = 60_000, marker: str = "x") -> Path:
+    """A file large enough to cross a one-megabyte budget on its own."""
+    lines = "\n".join(f"{index},{marker}{index},{index * 3}" for index in range(rows))
+    path.write_text(f"id,label,amount\n{lines}\n")
+    return path
+
+
+def budgeted(root: Path, megabytes: int = 1, slots: int = 10) -> Registry:
+    config_module.use(
+        Config(roots=(root,), slots=slots, memory_budget_mb=megabytes)
+    )
+    return Registry()
+
+
+def test_a_database_that_outgrows_the_budget_still_answers_from_disk(root):
+    """Assert on what the queries return — a file appearing proves nothing."""
+    registry = budgeted(root)
+    try:
+        bulky_csv(root / "big.csv")
+        registry.attach(str(root / "big.csv"), "big")
+        before = registry.query(
+            "big", "SELECT count(*), sum(amount), min(label), max(label) FROM big.big"
+        )[1]
+
+        moved = registry.relieve_memory()
+
+        assert [slot.nickname for slot in moved] == ["big"]
+        after = registry.query(
+            "big", "SELECT count(*), sum(amount), min(label), max(label) FROM big.big"
+        )[1]
+        assert after == before
+        assert after[0][0] == 60_000
+    finally:
+        registry.close()
+
+
+def test_the_overshoot_is_tolerated_once_and_paid_for_next_time(root):
+    """The load that crosses the line finishes; the next operation clears it."""
+    registry = budgeted(root)
+    try:
+        bulky_csv(root / "big.csv")
+        registry.attach(str(root / "big.csv"), "big")
+
+        # Straight after the attach, nothing has moved: the overshoot stands.
+        assert registry.slot("big").spill_path is None
+
+        assert registry.relieve_memory() != ()
+        assert registry.slot("big").spill_path is not None
+    finally:
+        registry.close()
+
+
+def test_a_session_inside_its_budget_moves_nothing(root):
+    registry = budgeted(root, megabytes=100)
+    try:
+        csv_at(root / "sales.csv")
+        registry.attach(str(root / "sales.csv"), "shop")
+
+        assert registry.relieve_memory() == ()
+        assert registry.slot("shop").spill_path is None
+    finally:
+        registry.close()
+
+
+def test_the_spilled_slot_keeps_its_name_and_its_place_in_eviction_order(root):
+    """A database that moved to disk must not become the youngest slot."""
+    registry = budgeted(root, slots=3)
+    try:
+        csv_at(root / "first.csv", "a\n1\n")
+        bulky_csv(root / "big.csv")
+        csv_at(root / "third.csv", "c\n3\n")
+        registry.attach(str(root / "first.csv"), "one")
+        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "third.csv"), "three")
+
+        registry.relieve_memory()
+
+        assert [slot.nickname for slot in registry.slots()] == ["one", "big", "three"]
+
+        # The shelf is full, so the next attach evicts the oldest — which must
+        # still be 'one', not the slot that happens to have moved most recently.
+        csv_at(root / "fourth.csv", "d\n4\n")
+        evicted = registry.attach(str(root / "fourth.csv"), "four").evicted
+        assert evicted is not None
+        assert evicted.nickname == "one"
+    finally:
+        registry.close()
+
+
+def test_the_largest_database_is_the_one_that_moves(root):
+    registry = budgeted(root)
+    try:
+        csv_at(root / "small.csv", "a\n1\n")
+        bulky_csv(root / "big.csv")
+        registry.attach(str(root / "small.csv"), "small")
+        registry.attach(str(root / "big.csv"), "big")
+
+        moved = registry.relieve_memory()
+
+        assert [slot.nickname for slot in moved] == ["big"]
+        assert registry.slot("small").spill_path is None
+    finally:
+        registry.close()
+
+
+def test_a_spilled_database_is_still_writable_and_composable(root):
+    """Moving it must not quietly take away rights the caller already had."""
+    registry = budgeted(root)
+    try:
+        bulky_csv(root / "big.csv")
+        registry.attach(str(root / "big.csv"), "big")
+        registry.relieve_memory()
+
+        csv_at(root / "labels.csv", "id,note\n1,first\n")
+        registry.add_table("big", source=str(root / "labels.csv"))
+        registry.query("big", "INSERT INTO big.labels VALUES (2, 'second')")
+
+        _, rows = registry.query(
+            "big",
+            "SELECT l.note FROM big.big b JOIN big.labels l ON b.id = l.id "
+            "ORDER BY l.note",
+        )
+        assert rows == [("first",), ("second",)]
+    finally:
+        registry.close()
+
+
+def test_relieving_twice_does_not_move_an_already_spilled_database_again(root):
+    registry = budgeted(root)
+    try:
+        bulky_csv(root / "big.csv")
+        registry.attach(str(root / "big.csv"), "big")
+        first = registry.relieve_memory()
+
+        assert registry.relieve_memory() == ()
+        assert registry.slot("big").spill_path == first[0].spill_path
+    finally:
+        registry.close()
+
+
+def test_the_temp_file_goes_when_the_slot_is_detached(root):
+    registry = budgeted(root)
+    try:
+        bulky_csv(root / "big.csv")
+        registry.attach(str(root / "big.csv"), "big")
+        registry.relieve_memory()
+        spilled = registry.slot("big").spill_path
+        assert spilled is not None and spilled.exists()
+
+        registry.detach("big")
+
+        assert not spilled.exists()
+    finally:
+        registry.close()
+
+
+def test_the_temp_file_goes_when_the_slot_is_evicted(root):
+    registry = budgeted(root, slots=1)
+    try:
+        bulky_csv(root / "big.csv")
+        registry.attach(str(root / "big.csv"), "big")
+        registry.relieve_memory()
+        spilled = registry.slot("big").spill_path
+        assert spilled is not None and spilled.exists()
+
+        csv_at(root / "next.csv", "a\n1\n")
+        registry.attach(str(root / "next.csv"), "next")
+
+        assert not spilled.exists()
+    finally:
+        registry.close()
+
+
+def test_the_temp_directory_goes_when_the_session_ends_with_slots_live(root):
+    """The third exit, beside eviction and detach: closing with data attached."""
+    registry = budgeted(root)
+    bulky_csv(root / "big.csv")
+    registry.attach(str(root / "big.csv"), "big")
+    registry.relieve_memory()
+    spilled = registry.slot("big").spill_path
+    assert spilled is not None and spilled.exists()
+
+    registry.close()
+
+    assert not spilled.exists()
+    assert not spilled.parent.exists()
+
+
+def test_a_spilled_database_can_still_be_saved(root):
+    registry = budgeted(root)
+    try:
+        bulky_csv(root / "big.csv")
+        registry.attach(str(root / "big.csv"), "big")
+        registry.relieve_memory()
+
+        saved = registry.save("big", str(root / "keep.db"))
+
+        connection = sqlite3.connect(saved)
+        try:
+            assert connection.execute("SELECT count(*) FROM big").fetchone()[0] == 60_000
+        finally:
+            connection.close()
+    finally:
+        registry.close()
+
+
+def test_nothing_is_created_on_disk_until_something_has_to_move(root):
+    """A session that stays inside its budget writes nothing anywhere."""
+    registry = budgeted(root, megabytes=100)
+    try:
+        csv_at(root / "sales.csv")
+        registry.attach(str(root / "sales.csv"), "shop")
+        registry.relieve_memory()
+        assert registry._temp_dir is None
+    finally:
+        registry.close()
+
+
+def test_the_spill_really_moves_the_database_off_the_heap(root):
+    """A near-zero effect has the same shape as a no-op, so check the mechanism.
+
+    SQLite names the file behind each attached schema, and an in-memory database
+    has no file. Watching that entry go from empty to the temp path is direct
+    evidence the pages left the heap, which is not something the queries above
+    could distinguish from a rename.
+    """
+    registry = budgeted(root)
+    try:
+        bulky_csv(root / "big.csv")
+        registry.attach(str(root / "big.csv"), "big")
+        assert _backing_file(registry, "big") == ""
+
+        registry.relieve_memory()
+
+        spilled = registry.slot("big").spill_path
+        assert spilled is not None
+        assert _backing_file(registry, "big") == str(spilled)
+        assert spilled.stat().st_size > 0
+    finally:
+        registry.close()
+
+
+def _backing_file(registry: Registry, schema: str) -> str:
+    """The file SQLite has behind an attached schema; empty for in-memory."""
+    rows = registry.workspace._conn.execute("PRAGMA database_list").fetchall()
+    return next(row[2] for row in rows if row[1] == schema)

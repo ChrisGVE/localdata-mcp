@@ -216,6 +216,8 @@ class Registry:
         self._workspace = Workspace.in_memory()
         self._slots: dict[str, Slot] = {}
         self._evicted: deque[Eviction] = deque(maxlen=_EVICTION_MEMORY)
+        #: Where spilled databases live. Made on first need, and only then.
+        self._temp_dir: Path | None = None
 
     # -- introspection ------------------------------------------------------
 
@@ -752,6 +754,90 @@ class Registry:
             )
         return slot
 
+    # -- staying inside the memory budget -----------------------------------
+
+    def relieve_memory(self) -> tuple[Slot, ...]:
+        """Move databases out to disk until the session is inside its budget.
+
+        **Called on the way *into* an operation, and that placement is the whole
+        design.** The operation that crossed the budget has already finished by
+        the time this runs, so an overshoot is tolerated exactly once: going to
+        1.2 GB probably does not kill us, and unloading mid-load would. The
+        *next* operation, whatever it is, pays the cost first.
+
+        There is deliberately no pre-flight estimate. Deciding from a file's
+        size or metadata what it *will* cost is the fail-open pattern that has
+        already bitten this project; every number here is read from a database
+        that already holds the data.
+
+        Transparent, including to the LLM: nothing announces the move, and the
+        slot answers afterwards under the same nickname with the same rights.
+        """
+        budget = config.active().memory_budget_mb * 1024 * 1024
+        resident = {
+            slot.nickname: self._workspace.resident_bytes(slot.nickname)
+            for slot in self._slots.values()
+            if self._in_memory(slot)
+        }
+
+        total = sum(resident.values())
+        if total <= budget:
+            return ()
+
+        # Largest first: it buys the most room per move, and the database that
+        # pushed us over is usually the one that just arrived and is biggest.
+        moved = []
+        for nickname in sorted(resident, key=resident.__getitem__, reverse=True):
+            if total <= budget:
+                break
+            moved.append(self._spill(self._slots[nickname]))
+            total -= resident[nickname]
+        return tuple(moved)
+
+    @staticmethod
+    def _in_memory(slot: Slot) -> bool:
+        """Whether this slot's data is ours and sitting in RAM.
+
+        A slot already backed by a file is not a candidate — moving it would buy
+        nothing, and how much of it SQLite is holding in its page cache cannot
+        be observed from Python anyway (``docs/CONSTRAINTS.md`` §6).
+        """
+        return slot.engine is None and slot.kind == "file" and slot.spill_path is None
+
+    def _spill(self, slot: Slot) -> Slot:
+        """Write one database to a temp file and re-attach it in the same slot.
+
+        Re-assigning the existing key keeps the slot's place in insertion order,
+        which is also eviction order — a database that moved to disk must not
+        become the youngest and outlive the ones that were there before it.
+        """
+        target = self._scratch() / f"{slot.nickname}.sqlite"
+        target.unlink(missing_ok=True)
+
+        self._workspace.vacuum_into(slot.nickname, target)
+        self._workspace.detach(slot.nickname)
+        # Writable, because this database is still one we made: moving it must
+        # not quietly take away rights the caller already had.
+        self._workspace.attach_file(slot.nickname, target, readonly=False)
+
+        moved = replace(slot, spill_path=target)
+        self._slots[slot.nickname] = moved
+        return moved
+
+    def _scratch(self) -> Path:
+        """The directory spilled databases live in, made on first need.
+
+        OS-assigned, so nothing else knows the name and nothing collides with
+        it. It goes away with the session.
+        """
+        if self._temp_dir is None:
+            # Resolved, because the attach below records the resolved path and a
+            # slot whose remembered file does not match the one SQLite is
+            # holding is a temp file nobody will ever delete. On macOS the two
+            # differ: /var is a symlink to /private/var.
+            self._temp_dir = Path(tempfile.mkdtemp(prefix="localdata-")).resolve()
+        return self._temp_dir
+
     # -- eviction -----------------------------------------------------------
 
     def _make_room(self) -> Eviction | None:
@@ -909,3 +995,10 @@ class Registry:
                 slot.engine.dispose()
         self._slots.clear()
         self._workspace.close()
+
+        # The third exit for a spilled database, beside eviction and detach:
+        # the session ending with connections still live. Nothing outside this
+        # process knows these files, so leaving them behind is pure litter.
+        if self._temp_dir is not None:
+            shutil.rmtree(self._temp_dir, ignore_errors=True)
+            self._temp_dir = None
