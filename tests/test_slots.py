@@ -1034,9 +1034,7 @@ def bulky_csv(path: Path, rows: int = 60_000, marker: str = "x") -> Path:
 
 
 def budgeted(root: Path, megabytes: int = 1, slots: int = 10) -> Registry:
-    config_module.use(
-        Config(roots=(root,), slots=slots, memory_budget_mb=megabytes)
-    )
+    config_module.use(Config(roots=(root,), slots=slots, memory_budget_mb=megabytes))
     return Registry()
 
 
@@ -1225,7 +1223,9 @@ def test_a_spilled_database_can_still_be_saved(root):
 
         connection = sqlite3.connect(saved)
         try:
-            assert connection.execute("SELECT count(*) FROM big").fetchone()[0] == 60_000
+            assert (
+                connection.execute("SELECT count(*) FROM big").fetchone()[0] == 60_000
+            )
         finally:
             connection.close()
     finally:
@@ -1272,3 +1272,101 @@ def _backing_file(registry: Registry, schema: str) -> str:
     """The file SQLite has behind an attached schema; empty for in-memory."""
     rows = registry.workspace._conn.execute("PRAGMA database_list").fetchall()
     return next(row[2] for row in rows if row[1] == schema)
+
+
+# ---------------------------------------------------------------------------
+# A view carries the nickname it was built under, and that travels badly
+# ---------------------------------------------------------------------------
+
+
+def test_a_view_naming_tables_unqualified_survives_being_saved_and_renamed(
+    registry, root
+):
+    """Inside a view, an unqualified name already means *this* database.
+
+    So the portable spelling is the short one, and it keeps working under a
+    nickname nobody had thought of when the view was written.
+    """
+    csv_at(root / "sales.csv", "sku,qty\na,3\n")
+    csv_at(root / "prices.csv", "sku,price\na,10\n")
+    registry.attach(str(root / "sales.csv"), "shop")
+    registry.add_table("shop", source=str(root / "prices.csv"))
+    registry.query(
+        "shop",
+        "CREATE VIEW shop.revenue AS SELECT s.sku, s.qty * p.price AS total "
+        "FROM sales s JOIN prices p ON s.sku = p.sku",
+    )
+
+    saved = registry.save("shop", str(root / "keep.db"))
+    registry.detach("shop")
+    registry.attach(str(saved), "renamed")
+
+    _, rows = registry.query("renamed", "SELECT total FROM renamed.revenue")
+    assert rows == [(30,)]
+
+
+def test_saving_a_database_that_could_not_be_opened_again_is_refused(registry, root):
+    """A file that looks saved and cannot be attached is the worst outcome.
+
+    The whole database is rejected, not just the offending view, so this is not
+    a small blemish on an otherwise fine artifact.
+    """
+    csv_at(root / "sales.csv", "sku,qty\na,3\n")
+    csv_at(root / "prices.csv", "sku,price\na,10\n")
+    registry.attach(str(root / "sales.csv"), "shop")
+    registry.add_table("shop", source=str(root / "prices.csv"))
+    registry.query(
+        "shop",
+        "CREATE VIEW shop.revenue AS SELECT s.sku, s.qty * p.price AS total "
+        "FROM shop.sales s JOIN shop.prices p ON s.sku = p.sku",
+    )
+
+    with pytest.raises(SlotError, match="unqualified"):
+        registry.save("shop", str(root / "keep.db"))
+
+    # Refused means nothing left behind that could be mistaken for a save.
+    assert not (root / "keep.db").exists()
+    # And the session is undisturbed.
+    assert registry.query("shop", "SELECT total FROM shop.revenue")[1] == [(30,)]
+
+
+def test_a_table_aliased_to_the_nickname_does_not_trip_the_check(registry, root):
+    """The check attaches the file rather than scanning the view's text.
+
+    Text-scanning for the nickname would flag this view, whose 'shop' is an
+    alias and not a schema at all.
+    """
+    csv_at(root / "sales.csv", "sku,qty\na,3\n")
+    registry.attach(str(root / "sales.csv"), "shop")
+    registry.query("shop", "CREATE VIEW shop.totals AS SELECT shop.qty FROM sales shop")
+
+    saved = registry.save("shop", str(root / "keep.db"))
+    registry.detach("shop")
+    registry.attach(str(saved), "renamed")
+
+    assert registry.query("renamed", "SELECT qty FROM renamed.totals")[1] == [(3,)]
+
+
+def test_attaching_a_database_poisoned_by_such_a_view_explains_itself(registry, root):
+    """SQLite says 'malformed database schema', which reads as corruption.
+
+    The file is built the way one arrives in the wild: a view referencing its
+    *own* schema by name, which SQLite accepts at create time and only rejects
+    once the database is opened under some other name.
+    """
+    poisoned = root / "poisoned.db"
+    connection = sqlite3.connect(":memory:")
+    connection.execute("ATTACH DATABASE ':memory:' AS shop")
+    connection.execute("CREATE TABLE shop.sales (sku TEXT, qty INT)")
+    connection.execute("INSERT INTO shop.sales VALUES ('a', 3)")
+    connection.execute("CREATE VIEW shop.v AS SELECT qty FROM shop.sales")
+    connection.commit()
+    connection.execute("VACUUM shop INTO ?", (str(poisoned),))
+    connection.close()
+
+    with pytest.raises(AttachRefused, match="unqualified"):
+        registry.attach(str(poisoned), "kept")
+
+    # Under the name it was built with, the very same file is fine.
+    registry.attach(str(poisoned), "shop")
+    assert registry.query("shop", "SELECT qty FROM shop.v")[1] == [(3,)]

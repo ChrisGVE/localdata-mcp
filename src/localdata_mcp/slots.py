@@ -38,6 +38,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sqlite3
 import tempfile
 from collections import deque
 from dataclasses import dataclass, replace
@@ -409,6 +410,18 @@ class Registry:
         try:
             self._workspace.attach_file(nickname, path, readonly=not writable)
         except Exception as exc:
+            if "cannot reference objects in database" in str(exc):
+                # One bad view takes the whole database down, and SQLite's own
+                # wording ("malformed database schema") points at corruption
+                # rather than at the recoverable thing that actually happened.
+                raise AttachRefused(
+                    f"Could not attach {path}: it holds a view that names its "
+                    f"tables with the nickname of whatever database it was built "
+                    f"in, and that name is not in use here — so SQLite rejects the "
+                    f"whole file rather than just that view. Original complaint: "
+                    f"{exc}. Attach it under the nickname it was built under, or "
+                    f"rebuild the view naming its tables unqualified."
+                ) from exc
             raise AttachRefused(f"Could not attach {path}: {exc}") from exc
         return Slot(
             nickname=nickname,
@@ -637,10 +650,58 @@ class Registry:
             target.unlink(missing_ok=True)
             raise SlotError(f"Could not save {nickname} to {target}: {exc}") from exc
 
+        complaint = self._unopenable_elsewhere(target)
+        if complaint is not None:
+            target.unlink(missing_ok=True)
+            raise SlotError(
+                f"{nickname!r} cannot be saved as it stands: the file was written "
+                f"and then would not open under any other name — {complaint} A view "
+                f"in {nickname!r} names its tables as {nickname}.table, and that "
+                f"nickname is baked into the saved file, so attaching it later under "
+                f"a different name breaks the whole database rather than just that "
+                f"view. Rebuild the view naming its tables unqualified "
+                f"(FROM sales s, not FROM {nickname}.sales s) — inside a view an "
+                f"unqualified name already means this database — and save again. "
+                f"Views here now: {', '.join(self._workspace.view_names(nickname))}."
+            )
+
         # SQLite creates the file 0o644 — world-readable, holding the user's
         # actual data. Narrowed immediately; the window is small and known.
         os.chmod(target, 0o600)
         return target
+
+    @staticmethod
+    def _unopenable_elsewhere(target: Path) -> str | None:
+        """Open the saved file the way a future session will: under another name.
+
+        Measured rather than predicted. Scanning each view's SQL for the slot's
+        nickname would guess, and would guess wrong on a table *aliased* to the
+        same word. Actually attaching the file under a different name is exactly
+        the thing that has to work, costs one open of a file just written, and
+        cannot produce a false positive.
+        """
+        probe = sqlite3.connect(":memory:", uri=True)
+        try:
+            probe.execute(
+                "ATTACH DATABASE ? AS probe_under_another_name",
+                (f"file:{target}?mode=ro",),
+            )
+            # ATTACH alone may not parse the schema, so make something read it.
+            probe.execute(
+                "SELECT count(*) FROM probe_under_another_name.sqlite_master"
+            ).fetchone()
+            for view in probe.execute(
+                "SELECT name FROM probe_under_another_name.sqlite_master "
+                "WHERE type='view'"
+            ).fetchall():
+                probe.execute(
+                    f'SELECT * FROM probe_under_another_name."{view[0]}" LIMIT 0'
+                )
+            return None
+        except sqlite3.Error as exc:
+            return f"{exc}."
+        finally:
+            probe.close()
 
     # -- does the join actually line up? ------------------------------------
 

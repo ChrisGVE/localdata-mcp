@@ -200,6 +200,49 @@ database. That is what makes `add_table` — landing a second datasource beside 
 open slot — the only route to a reusable join, rather than merely the friendlier-sounding one. Any
 guidance that says "attach both files and join them" is offering something that cannot be saved.
 
+### 2.4 A view that names its own schema is not portable, and poisons the whole file
+
+Following on from §2.3: a view *may* name its own database, and SQLite accepts it at `CREATE VIEW`
+time.
+
+```sql
+CREATE VIEW shop.revenue AS SELECT … FROM shop.sales s JOIN shop.prices p ON …   -- accepted
+```
+
+The nickname is then stored inside the view's SQL. Copy that database to a file and attach it under
+any other name and the schema no longer parses:
+
+```
+sqlite3.OperationalError: malformed database schema (revenue)
+  - view revenue cannot reference objects in database shop
+```
+
+Three things make this worse than it first looks:
+
+- **It takes the whole database down, not just the view.** `ATTACH` itself fails, so every table in
+  the file becomes unreachable because of one view.
+- **The wording points at corruption.** "Malformed database schema" reads as a damaged file; the
+  data is perfectly intact and the problem is a name.
+- **It is latent.** The view is created, read and saved without complaint. The failure only appears
+  in some later session, under a different nickname — usually the one the user picked because it
+  read better.
+
+**The portable spelling is the short one, and it is verified:**
+
+```sql
+CREATE VIEW shop.revenue AS SELECT … FROM sales s JOIN prices p ON …   -- travels
+```
+
+Inside a view an unqualified table name already resolves to the view's own database, both in place
+and after re-attaching under a new name. So dropping the qualifier costs nothing and fixes it.
+
+**Consequence for the design.** `save` writes the file, then *attaches it under a different name* to
+check, and refuses the save if that fails — deleting the file, since one that looks saved and cannot
+be opened is worse than no file at all. The check is an attach rather than a scan of each view's
+SQL for the nickname, because the scan guesses and guesses wrong on a table *aliased* to the same
+word (`SELECT shop.qty FROM sales shop`). §5.1 again: assert on what the operation returns, never on
+what the text looks like.
+
 ---
 
 ## §3 — Volume, performance, concurrency

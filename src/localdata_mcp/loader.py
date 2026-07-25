@@ -412,6 +412,16 @@ class Workspace:
     def has_table(self, schema: str, table: str) -> bool:
         return table in self.table_names(schema)
 
+    def view_names(self, schema: str) -> tuple[str, ...]:
+        """Every view in an attached database, in name order."""
+        return tuple(
+            row[0]
+            for row in self._conn.execute(
+                f"SELECT name FROM {_quote(schema)}.sqlite_master "
+                f"WHERE type='view' ORDER BY name"
+            )
+        )
+
     def create_table(
         self, schema: str, table: str, columns: dict[str, str]
     ) -> TableInfo:
@@ -520,12 +530,19 @@ class Workspace:
     # -- inspection --------------------------------------------------------
 
     def table_names(self, schema: str) -> tuple[str, ...]:
-        """Every ordinary table in an attached database, in name order."""
+        """Everything in an attached database that can be selected from.
+
+        Views included, and deliberately: a view is the point of building one,
+        and a caller who cannot see it in the listing has no way to learn it is
+        there. They describe like tables and are queried like tables, so telling
+        them apart here would be a distinction without a use.
+        """
         return tuple(
             row[0]
             for row in self._conn.execute(
                 f"SELECT name FROM {_quote(schema)}.sqlite_master "
-                f"WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                f"WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
+                f"ORDER BY name"
             )
         )
 

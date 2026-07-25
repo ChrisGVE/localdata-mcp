@@ -189,12 +189,12 @@ def test_readers_running_against_a_load_do_not_lose_rows(session):
             # A table for the readers to hit, so they are doing real work
             # rather than erroring immediately on a missing table.
             await client.call_tool(
-                "attach_datasource", {"database": str(seed), "nickname": "seed"}
+                "attach", {"database": str(seed), "nickname": "seed"}
             )
 
             tasks = [
                 client.call_tool(
-                    "attach_datasource", {"database": str(big), "nickname": "big"}
+                    "attach", {"database": str(big), "nickname": "big"}
                 )
             ]
             tasks += [
@@ -240,7 +240,7 @@ def test_parallel_loads_all_land(session):
             results = await asyncio.gather(
                 *[
                     client.call_tool(
-                        "attach_datasource",
+                        "attach",
                         {"database": str(path), "nickname": table},
                     )
                     for path, table in files
@@ -304,12 +304,12 @@ def test_a_failing_load_does_not_damage_an_existing_table(session):
     async def _run():
         async with Client(server_module.mcp) as client:
             await client.call_tool(
-                "attach_datasource", {"database": str(good), "nickname": "good"}
+                "attach", {"database": str(good), "nickname": "good"}
             )
             failures = await asyncio.gather(
                 *[
                     client.call_tool(
-                        "attach_datasource",
+                        "attach",
                         {"database": str(missing), "nickname": "bad"},
                     )
                     for _ in range(4)
