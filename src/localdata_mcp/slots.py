@@ -45,7 +45,15 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, make_url
 
 from . import config
-from .loader import READERS, LoadError, TableInfo, Workspace, _sanitize, read_frame
+from .loader import (
+    READERS,
+    ColumnInfo,
+    LoadError,
+    TableInfo,
+    Workspace,
+    _sanitize,
+    read_frame,
+)
 from .paths import PathNotAllowed, resolve_read_path
 
 __all__ = [
@@ -409,8 +417,6 @@ class Registry:
         if table not in slot.tables:
             raise SlotNotAvailable(f"No such table: {slot.nickname}.{table}")
         inspector = inspect(slot.engine)
-        from .loader import ColumnInfo
-
         columns = [
             ColumnInfo(name=column["name"], declared_type=str(column["type"]))
             for column in inspector.get_columns(table)
