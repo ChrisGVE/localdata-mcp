@@ -1,7 +1,7 @@
 {
   "name": "localdata-mcp",
-  "version": "2.1.0",
-  "description": "Data science plugin for LLM agents. Connects to 13 database types, 20+ file formats, graph/RDF sources, and provides 8 analytical domains with 71 MCP tools, 18 skills, and 11 agents.",
+  "version": "3.0.0-dev",
+  "description": "SQL over local data files and SQLite databases. Every datasource becomes a database addressed by a nickname, so a spreadsheet and a database join in one statement.",
   "author": {
     "name": "Christian C. Berclaz",
     "email": "christian.berclaz@mac.com"
@@ -11,22 +11,13 @@
   "license": "Apache-2.0",
   "keywords": [
     "mcp",
-    "data-science",
-    "database",
-    "statistics",
-    "time-series",
-    "regression",
-    "clustering",
-    "graph",
-    "rdf",
-    "sparql"
+    "sql",
+    "sqlite",
+    "csv",
+    "data"
   ],
   "skills": [
-    "./skills/exploration/",
-    "./skills/statistical/",
-    "./skills/modeling/",
-    "./skills/graph-data/",
-    "./skills/workflow/"
+    "./skills/data/"
   ],
   "mcpServers": {
     "localdata": {
