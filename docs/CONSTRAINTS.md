@@ -150,6 +150,33 @@ Consequence: comparing column profiles between two files **cannot** detect the `
 case, because both sides look identical and correct. This is a real limitation to state, not a bug
 to fix.
 
+### 2.2 A connection holds ten attached databases, and the eleventh raises
+
+`SQLITE_LIMIT_ATTACHED` reports **10** (SQLite 3.47.1), and the eleventh `ATTACH` fails hard rather
+than degrading:
+
+```
+sqlite3.OperationalError: too many attached databases - max 10
+```
+
+Three facts follow from measurement rather than from the documentation:
+
+- **`main` is not counted.** After ten successful attaches, `PRAGMA database_list` returns **11**
+  rows. So ten is ten *besides* the host database, which stays free.
+- **An in-memory attach costs a slot like any other.** `ATTACH DATABASE ':memory:' AS nick` yields a
+  writable, private database — and consumes one of the ten. So a design where every datasource is an
+  attached database (a flat file included) has a **hard ceiling of ten datasources**, and the number
+  is not a policy choice.
+- **`DETACH` genuinely frees a slot**, so eviction recovers capacity rather than merely forgetting.
+
+Cross-database joins between two independently attached in-memory databases work in one ordinary
+statement — verified, not assumed. That is what makes "one nickname per datasource" cheap: the join
+is SQLite's, not ours.
+
+Consequence for the configuration: `workspace.slots` is validated against this ceiling and refuses a
+larger value, because the failure it would otherwise produce arrives mid-session, at attach time,
+long after the mistake was made.
+
 ---
 
 ## §3 — Volume, performance, concurrency
