@@ -1,8 +1,15 @@
-"""Loading sources into a queryable SQLite workspace.
+"""Loading sources into a queryable SQL workspace.
 
-A :class:`Workspace` is one SQLite connection plus what we know about the tables
-in it. Files are loaded into an in-memory database; an existing SQLite file is
-opened directly, read-only.
+A :class:`Workspace` is a SQLAlchemy engine over the session's SQLite database
+plus what we know about the tables in it. Files are loaded into an in-memory
+database; an existing SQLite file is opened directly, read-only.
+
+The engine, rather than a raw driver connection, is what keeps the backend
+replaceable: everything above this module works in SQL and table metadata, so
+reaching a different database means a different URL, not different code. The
+places that deliberately drop to the DBAPI cursor are marked and justified —
+``ATTACH``, ``PRAGMA``, and the insert path below, none of which survive being
+expressed through the Core layer with the properties we measured.
 
 The insert path is the part with a measured constraint behind it. Handing pandas
 a frame via ``to_sql`` peaks at **35×** the frame's own size — 3.20 MB of data
@@ -25,6 +32,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import pandas as pd
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.pool import StaticPool
 
 from . import binding
 from .paths import resolve_read_path
@@ -216,45 +225,83 @@ READERS = {
 
 
 class Workspace:
-    """One SQLite connection and the tables loaded into it."""
+    """A SQLAlchemy engine over the session's SQLite database, and its tables.
 
-    def __init__(self, connection: sqlite3.Connection, *, writable: bool) -> None:
+    The engine is the abstraction that lets a backend change without the code
+    above it changing — every source that is not a local SQLite file is reached
+    through :mod:`sqlalchemy` and needs no new connection handling here.
+
+    **Pool configuration is load-bearing, not incidental.** An in-memory SQLite
+    database exists only for as long as its connection does, so a fresh checkout
+    would find an empty database; ``StaticPool`` is therefore obligatory, and it
+    means every checkout is the *same* DBAPI connection. That is precisely the
+    configuration measured losing **79,807 of 200,000 rows** silently: the pool's
+    default rollback-on-return means an unrelated reader closing its checkout
+    discards a load in flight. Two things close it here — the session holds one
+    raw connection for its whole life, so the pool never resets anything
+    underneath a load, and callers serialise access (see the lock in
+    ``server.py``). ``docs/CONSTRAINTS.md`` §3.5 has the measurement, and §3.6
+    the posture to adopt if this stops being enough under load.
+    """
+
+    def __init__(self, engine: Engine, *, writable: bool) -> None:
         binding.install()
-        self._conn = connection
+        self._engine = engine
+        # Held for the session rather than checked out per operation. See the
+        # class docstring: releasing it is what lets the pool roll back a load.
+        self._raw = engine.raw_connection()
         self._writable = writable
         self._tables: dict[str, TableInfo] = {}
+
+    @property
+    def _conn(self):
+        """The underlying DBAPI connection.
+
+        Used where SQLite-specific work is unavoidable — ``ATTACH``, ``PRAGMA``,
+        and the non-materialising ``executemany`` — none of which SQLAlchemy's
+        Core layer expresses without giving up the properties we measured.
+        """
+        return self._raw.driver_connection
+
+    @property
+    def engine(self) -> Engine:
+        return self._engine
 
     # -- construction ------------------------------------------------------
 
     @classmethod
     def in_memory(cls) -> "Workspace":
-        connection = sqlite3.connect(
-            ":memory:",
-            # URI mode is a connection-level flag and applies to ATTACH as well,
-            # so it must be set here for `ATTACH DATABASE 'file:...?mode=ro'` to
-            # be honoured rather than read as a literal filename.
-            uri=True,
-            # Tool bodies are dispatched to worker OS threads, so the connection
-            # is legitimately reached from more than one. Callers serialise
-            # access themselves; see the lock in server.py.
-            check_same_thread=False,
+        engine = create_engine(
+            "sqlite://",
+            poolclass=StaticPool,
+            connect_args={
+                # URI mode is a connection-level flag that also governs ATTACH,
+                # so `ATTACH DATABASE 'file:...?mode=ro'` needs it set here or
+                # the argument is read as a literal filename.
+                "uri": True,
+                # Tool bodies are dispatched to worker OS threads, so the
+                # connection is legitimately reached from more than one.
+                "check_same_thread": False,
+            },
         )
-        return cls(connection, writable=True)
+        return cls(engine, writable=True)
 
     @classmethod
     def open_sqlite_file(cls, raw_path: str) -> "Workspace":
         """Open an existing SQLite database, read-only.
 
-        Read-only is carried by the connection's own state via the URI, not by a
-        wrapper object that callers are expected to route through. A guarantee
+        Read-only is carried by the connection's own state through the URI, not
+        by a wrapper object callers are expected to route through. A guarantee
         implemented as an interception point can be walked around by reaching
-        the intercepted object; there is nothing to reach around here.
+        the intercepted object; there is nothing here to reach around.
         """
         path = resolve_read_path(raw_path)
-        connection = sqlite3.connect(
-            f"file:{path}?mode=ro", uri=True, check_same_thread=False
+        engine = create_engine(
+            f"sqlite:///file:{path}?mode=ro&uri=true",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
         )
-        workspace = cls(connection, writable=False)
+        workspace = cls(engine, writable=False)
         workspace._adopt_existing_tables(str(path))
         return workspace
 
@@ -411,4 +458,5 @@ class Workspace:
         return names, rows
 
     def close(self) -> None:
-        self._conn.close()
+        self._raw.close()
+        self._engine.dispose()

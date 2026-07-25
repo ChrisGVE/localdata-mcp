@@ -24,18 +24,24 @@ keywords = [
 ]
 
 # Deliberately minimal. Every dependency here is load-bearing for the current
-# capability set; a format or engine that is not supported yet does not get a
-# dependency yet.
+# capability set; a file format we cannot read yet does not get a dependency yet.
 #
-# SQLite is reached through the stdlib `sqlite3` module, not SQLAlchemy. Beyond
-# being one less dependency, this avoids inheriting connection-pool semantics
-# that are actively dangerous for our access pattern — see docs/CONSTRAINTS.md
-# §3.5, where a pool's default rollback-on-return silently discarded 79,807 of
-# 200,000 rows. When a non-SQLite engine lands, the abstraction belongs behind
-# the source seam rather than under every call.
+# SQLAlchemy is the exception to that rule and is here from the start on purpose.
+# Additional database backends are a stated next step, and SQLAlchemy is a mature,
+# proven abstraction over exactly that: reaching PostgreSQL or MySQL becomes a
+# different URL and a driver package, not a rewrite of the connection layer.
+#
+# Its pool defaults do need care rather than trust — see docs/CONSTRAINTS.md §3.5,
+# where a shared connection under rollback-on-return silently discarded 79,807 of
+# 200,000 rows. That is a configuration to get right (loader.py documents how),
+# not a reason to hand-roll what this library already proved.
+#
+# Database drivers stay out until the backend they serve is supported; SQLite
+# needs none, since SQLAlchemy reaches it through the standard library.
 dependencies = [
   "fastmcp>=3.0.0",
   "pandas>=1.3.0",
+  "sqlalchemy>=2.0.0",
 ]
 
 [project.optional-dependencies]

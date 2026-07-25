@@ -229,8 +229,39 @@ and never awaits the handler:
 | Two **async** tools | Fully concurrent, 1.200 s overlap, same loop thread |
 | A fast call during a slow sync call | Completed while the slow one was in flight |
 
-**Sync tool bodies are dispatched to worker threads.** This is real parallelism, not async
-interleaving. Any "only one thing happens at a time" assumption is false from the first tool.
+**Sync tool bodies are dispatched to worker threads.** Any "only one thing happens at a time"
+assumption is false from the first tool.
+
+### 3.4a The GIL does not make this safe
+
+Worth stating precisely, because "Python has a GIL, so there is no concurrency" is half right and
+leads to the wrong conclusion. Measured on CPython 3.12.9, two threads against one:
+
+| Work | 2 threads / 1 thread | Reading |
+|---|---|---|
+| Pure-Python CPU loop | ~2.0× | No overlap — the GIL is held, as expected |
+| SQLite scan, **shared** connection | 2.14× | No overlap — but from SQLite's per-connection mutex, not the GIL |
+| SQLite scan, **separate** connections | **1.02×** | Genuine parallelism — `sqlite3` releases the GIL around its C calls |
+
+So parallelism is real for I/O and C-extension work. More importantly, **the data-loss hazard does
+not require parallelism at all — only interleaving**, which threads provide whatever the GIL is
+doing. A writer with an open transaction, and a reader that runs one statement and calls
+`rollback()` on the same connection:
+
+```
+rows inserted by the writer: 1000
+rows actually in the table:     0
+```
+
+No exception on either side. A connection has exactly one transaction, so any second user of that
+connection can discard the first's uncommitted work. This is §3.5's 79,807-row loss reduced to
+twenty lines, and it is why serialising access is not optional.
+
+**Corollary worth having: serialising a shared connection is nearly free.** It already serialises
+statements internally (2.14× above), so a lock costs throughput that was never available, and buys
+transaction-level safety that nothing else provides. The 11–16× throughput figure in §3.6 is the
+price of a lock in a *different* configuration — separate connections, where real parallelism exists
+to lose.
 
 ### 3.5 A shared connection loses data silently, at scale
 
