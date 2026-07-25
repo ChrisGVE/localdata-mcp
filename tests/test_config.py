@@ -14,7 +14,12 @@ from pathlib import Path
 import pytest
 
 from localdata_mcp import config as config_module
-from localdata_mcp.config import MAX_SLOTS, Config, ConfigError
+from localdata_mcp.config import (
+    DEFAULT_MEMORY_BUDGET_MB,
+    MAX_SLOTS,
+    Config,
+    ConfigError,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -210,6 +215,26 @@ def test_a_boolean_is_not_accepted_for_slots():
         config_module.load()
 
 
+def test_a_boolean_is_not_accepted_for_the_memory_budget():
+    """Same trap as slots: `= true` must not quietly become a 1 MB budget."""
+    write(Path("localdata.toml"), "[workspace]\nmemory_budget_mb = true\n")
+    with pytest.raises(ConfigError, match="memory_budget_mb"):
+        config_module.load()
+
+
+def test_a_memory_budget_of_zero_is_refused():
+    """A budget nothing can fit under would spill on every single operation."""
+    write(Path("localdata.toml"), "[workspace]\nmemory_budget_mb = 0\n")
+    with pytest.raises(ConfigError, match="memory_budget_mb"):
+        config_module.load()
+
+
+def test_a_typo_in_the_memory_budget_is_refused():
+    write(Path("localdata.toml"), "[workspace]\nmemory_budget = 200\n")
+    with pytest.raises(ConfigError, match="memory_budget"):
+        config_module.load()
+
+
 # ---------------------------------------------------------------------------
 # Values that are honoured
 # ---------------------------------------------------------------------------
@@ -228,6 +253,13 @@ def test_a_root_that_does_not_exist_is_kept_verbatim():
     write(Path("localdata.toml"), '[paths]\nroots = ["~/absent"]\n')
     roots = config_module.load().roots
     assert roots == ((Path.home() / "absent").resolve(),)
+
+
+def test_the_memory_budget_has_a_default_and_can_be_raised():
+    """The budget is a knob, not a constant — a 64 GB host may want more."""
+    assert config_module.load().memory_budget_mb == DEFAULT_MEMORY_BUDGET_MB
+    write(Path("localdata.toml"), "[workspace]\nmemory_budget_mb = 512\n")
+    assert config_module.load().memory_budget_mb == 512
 
 
 def test_widening_the_boundary_is_honoured_when_asked_for():

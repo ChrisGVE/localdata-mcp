@@ -37,6 +37,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on 3.10 only
 __all__ = [
     "Config",
     "ConfigError",
+    "DEFAULT_MEMORY_BUDGET_MB",
     "MAX_SLOTS",
     "active",
     "config_search_path",
@@ -59,6 +60,13 @@ PATH_ENV_VAR = "LOCALDATA_CONFIG_PATH"
 #: against it, so it stays free.
 MAX_SLOTS = 10
 
+#: How much data may sit in memory before a database is moved out to disk. A
+#: budget rather than a limit: the operation that crosses it is allowed to
+#: finish, and the *next* one relieves the pressure. Chosen for the machines
+#: this runs on — 16-64 GB shared with everything else the user is doing — and
+#: raised through configuration on a host with room to spare.
+DEFAULT_MEMORY_BUDGET_MB = 100
+
 
 class ConfigError(RuntimeError):
     """A configuration that will not be run under."""
@@ -70,6 +78,9 @@ class Config:
 
     #: How many datasource slots may be held at once.
     slots: int = MAX_SLOTS
+    #: Resident megabytes tolerated before an in-memory database is spilled to
+    #: a temporary file and re-attached in place.
+    memory_budget_mb: int = DEFAULT_MEMORY_BUDGET_MB
     #: Directories the server may reach, in addition to the working directory
     #: and everything below it, which is always in scope.
     roots: tuple[Path, ...] = ()
@@ -136,7 +147,7 @@ def load() -> Config:
 
 #: Every section, and every key each may hold. The gate against typos.
 _SCHEMA: dict[str, set[str]] = {
-    "workspace": {"slots"},
+    "workspace": {"slots", "memory_budget_mb"},
     "paths": {"roots", "path_limited"},
     "network": {"enabled"},
 }
@@ -159,6 +170,11 @@ def _parse(path: Path) -> Config:
 
     return Config(
         slots=_slots(workspace.get("slots", MAX_SLOTS), path),
+        memory_budget_mb=_megabytes(
+            workspace.get("memory_budget_mb", DEFAULT_MEMORY_BUDGET_MB),
+            "workspace.memory_budget_mb",
+            path,
+        ),
         roots=_roots(paths.get("roots", []), path),
         path_limited=_flag(paths.get("path_limited", True), "paths.path_limited", path),
         network_enabled=_flag(network.get("enabled", False), "network.enabled", path),
@@ -196,6 +212,19 @@ def _slots(value: Any, path: Path) -> int:
             f"{path}: workspace.slots must be between 1 and {MAX_SLOTS}, got {value}. "
             f"SQLite refuses the {MAX_SLOTS + 1}th attached database, and every slot "
             f"is an attached database."
+        )
+    return value
+
+
+def _megabytes(value: Any, name: str, path: Path) -> int:
+    # Same trap as _slots: a TOML boolean is an int in Python, so `= true`
+    # would otherwise be read as a one-megabyte budget that spills constantly.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{path}: {name} must be a whole number, got {value!r}.")
+    if value < 1:
+        raise ConfigError(
+            f"{path}: {name} must be at least 1, got {value}. A budget nothing "
+            f"can fit under would move every database to disk immediately."
         )
     return value
 
