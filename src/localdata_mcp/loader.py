@@ -1,8 +1,10 @@
-"""Loading sources into a queryable SQL workspace.
+"""Reading sources into a queryable SQL workspace.
 
-A :class:`Workspace` is a SQLAlchemy engine over the session's SQLite database
-plus what we know about the tables in it. Files are loaded into an in-memory
-database; an existing SQLite file is opened directly, read-only.
+A :class:`Workspace` is a SQLAlchemy engine over the session's SQLite connection
+plus what we know about the tables reachable through it. It is the *host*: every
+datasource is an attached database on this one connection, so joining across two
+of them is ordinary SQL rather than machinery we have to build. ``main`` stays
+empty in normal operation — slots attach beside it, never into it.
 
 The engine, rather than a raw driver connection, is what keeps the backend
 replaceable: everything above this module works in SQL and table metadata, so
@@ -95,6 +97,13 @@ class TableInfo:
     row_count: int
     columns: list[ColumnInfo]
     source: str
+    #: The attached database holding this table — a slot nickname in normal use.
+    schema: str = "main"
+
+    @property
+    def qualified(self) -> str:
+        """How a caller addresses this table in SQL."""
+        return f"{self.schema}.{self.name}"
 
     @property
     def mixed_columns(self) -> list[str]:
@@ -137,6 +146,11 @@ def _unique_columns(raw_names: list[Any]) -> list[str]:
 def _quote(identifier: str) -> str:
     """Quote an identifier for DDL. Doubling embedded quotes is the escape."""
     return '"' + identifier.replace('"', '""') + '"'
+
+
+def _target(schema: str, table: str) -> str:
+    """A schema-qualified table reference, both halves quoted."""
+    return f"{_quote(schema)}.{_quote(table)}"
 
 
 # ---------------------------------------------------------------------------
@@ -219,17 +233,39 @@ READERS = {
 }
 
 
+def read_frame(path: Path) -> pd.DataFrame:
+    """Read a tabular file into a frame, touching no database state.
+
+    Separate from the insert so a caller can find out whether a file is readable
+    *before* committing to it. That ordering matters once slots are limited: a
+    file that cannot be parsed must not cost a live datasource its place.
+    """
+    reader = READERS.get(path.suffix.lower())
+    if reader is None:
+        supported = ", ".join(sorted(READERS))
+        raise LoadError(f"No reader for {path.suffix!r}. Supported: {supported}")
+
+    try:
+        frame = reader(path)
+    except Exception as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+    if frame.empty and len(frame.columns) == 0:
+        raise LoadError(f"{path.name} contains no columns.")
+    return frame
+
+
 # ---------------------------------------------------------------------------
 # Workspace
 # ---------------------------------------------------------------------------
 
 
 class Workspace:
-    """A SQLAlchemy engine over the session's SQLite database, and its tables.
+    """The host connection: a SQLAlchemy engine, and the tables reached through it.
 
     The engine is the abstraction that lets a backend change without the code
-    above it changing — every source that is not a local SQLite file is reached
-    through :mod:`sqlalchemy` and needs no new connection handling here.
+    above it changing. Datasources arrive as attached databases on this one
+    connection — that is what makes a join across two of them a plain statement.
 
     **Pool configuration is load-bearing, not incidental.** An in-memory SQLite
     database exists only for as long as its connection does, so a fresh checkout
@@ -244,13 +280,12 @@ class Workspace:
     the posture to adopt if this stops being enough under load.
     """
 
-    def __init__(self, engine: Engine, *, writable: bool) -> None:
+    def __init__(self, engine: Engine) -> None:
         binding.install()
         self._engine = engine
         # Held for the session rather than checked out per operation. See the
         # class docstring: releasing it is what lets the pool roll back a load.
         self._raw = engine.raw_connection()
-        self._writable = writable
         self._tables: dict[str, TableInfo] = {}
 
     @property
@@ -284,67 +319,67 @@ class Workspace:
                 "check_same_thread": False,
             },
         )
-        return cls(engine, writable=True)
+        return cls(engine)
 
-    @classmethod
-    def open_sqlite_file(cls, raw_path: str) -> "Workspace":
-        """Open an existing SQLite database, read-only.
+    # -- attaching ---------------------------------------------------------
 
-        Read-only is carried by the connection's own state through the URI, not
-        by a wrapper object callers are expected to route through. A guarantee
-        implemented as an interception point can be walked around by reaching
-        the intercepted object; there is nothing here to reach around.
+    def attach_memory(self, schema: str) -> None:
+        """Attach a fresh, writable, empty database under ``schema``.
+
+        This is what a flat file becomes: its own database, so a later table can
+        be added beside the first one under the same nickname.
         """
-        path = resolve_read_path(raw_path)
-        engine = create_engine(
-            f"sqlite:///file:{path}?mode=ro&uri=true",
-            poolclass=StaticPool,
-            connect_args={"check_same_thread": False},
+        self._conn.execute(f"ATTACH DATABASE ':memory:' AS {_quote(schema)}")
+
+    def attach_readonly(self, schema: str, path: Path) -> None:
+        """Attach an existing SQLite file, read-only.
+
+        Read-only is carried by the connection's own URI, not by a wrapper
+        callers are expected to route through. A guarantee implemented as an
+        interception point can be walked around by reaching the intercepted
+        object; there is nothing here to reach around.
+        """
+        self._conn.execute(
+            f"ATTACH DATABASE ? AS {_quote(schema)}", (f"file:{path}?mode=ro",)
         )
-        workspace = cls(engine, writable=False)
-        workspace._adopt_existing_tables(str(path))
-        return workspace
+
+    def detach(self, schema: str) -> None:
+        """Release a schema, freeing its slot against SQLite's ATTACH limit."""
+        self._conn.execute(f"DETACH DATABASE {_quote(schema)}")
+        for key in [k for k in self._tables if k.startswith(f"{schema}.")]:
+            del self._tables[key]
 
     # -- loading -----------------------------------------------------------
 
-    def load_file(self, raw_path: str, table_name: str | None = None) -> TableInfo:
-        """Read a tabular file into a new table and describe what landed."""
-        if not self._writable:
-            raise LoadError(
-                "This workspace is read-only; open a file workspace to load."
-            )
+    def load_file(
+        self, raw_path: str, schema: str = "main", table_name: str | None = None
+    ) -> TableInfo:
+        """Read a tabular file into a new table and describe what landed.
 
+        ``schema`` is the attached database to land in — a slot nickname in
+        normal operation. It defaults to ``main`` so the reader and typing
+        behaviour can be exercised without slot ceremony.
+        """
         path = resolve_read_path(raw_path)
-        reader = READERS.get(path.suffix.lower())
-        if reader is None:
-            supported = ", ".join(sorted(READERS))
-            raise LoadError(f"No reader for {path.suffix!r}. Supported: {supported}")
-
-        try:
-            frame = reader(path)
-        except Exception as exc:
-            raise LoadError(f"Could not read {path.name}: {exc}") from exc
-
-        if frame.empty and len(frame.columns) == 0:
-            raise LoadError(f"{path.name} contains no columns.")
-
+        frame = read_frame(path)
         name = _sanitize(table_name or path.stem, "table")
-        return self._insert_frame(frame, name, source=str(path))
+        return self._insert_frame(frame, name, source=str(path), schema=schema)
 
     def _insert_frame(
-        self, frame: pd.DataFrame, table: str, *, source: str
+        self, frame: pd.DataFrame, table: str, *, source: str, schema: str = "main"
     ) -> TableInfo:
         columns = _unique_columns(list(frame.columns))
         declared = [_declared_type(frame[original].dtype) for original in frame.columns]
 
+        target = _target(schema, table)
         column_ddl = ", ".join(
             f"{_quote(name)} {sql_type}" for name, sql_type in zip(columns, declared)
         )
-        self._conn.execute(f"DROP TABLE IF EXISTS {_quote(table)}")
-        self._conn.execute(f"CREATE TABLE {_quote(table)} ({column_ddl})")
+        self._conn.execute(f"DROP TABLE IF EXISTS {target}")
+        self._conn.execute(f"CREATE TABLE {target} ({column_ddl})")
 
         placeholders = ", ".join("?" * len(columns))
-        statement = f"INSERT INTO {_quote(table)} VALUES ({placeholders})"
+        statement = f"INSERT INTO {target} VALUES ({placeholders})"
 
         try:
             # The iterator is passed through, never wrapped in list(). See the
@@ -364,11 +399,12 @@ class Workspace:
 
         info = TableInfo(
             name=table,
-            row_count=self._scalar(f"SELECT count(*) FROM {_quote(table)}"),
-            columns=self._describe_columns(table, columns, declared, frame),
+            row_count=self._scalar(f"SELECT count(*) FROM {target}"),
+            columns=self._describe_columns(schema, table, columns, declared, frame),
             source=source,
+            schema=schema,
         )
-        self._tables[table] = info
+        self._tables[info.qualified] = info
         return info
 
     @staticmethod
@@ -377,8 +413,42 @@ class Workspace:
 
     # -- inspection --------------------------------------------------------
 
+    def table_names(self, schema: str) -> tuple[str, ...]:
+        """Every ordinary table in an attached database, in name order."""
+        return tuple(
+            row[0]
+            for row in self._conn.execute(
+                f"SELECT name FROM {_quote(schema)}.sqlite_master "
+                f"WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        )
+
+    def describe(self, schema: str, table: str, source: str = "") -> TableInfo:
+        """Describe a table we did not load ourselves, by asking SQLite."""
+        known = self._tables.get(f"{schema}.{table}")
+        if known is not None:
+            return known
+
+        columns, declared = [], []
+        for row in self._conn.execute(
+            f"PRAGMA {_quote(schema)}.table_info({_quote(table)})"
+        ):
+            columns.append(row[1])
+            declared.append(row[2] or "")
+        if not columns:
+            raise LoadError(f"No such table: {schema}.{table}")
+
+        return TableInfo(
+            name=table,
+            row_count=self._scalar(f"SELECT count(*) FROM {_target(schema, table)}"),
+            columns=self._describe_columns(schema, table, columns, declared, None),
+            source=source,
+            schema=schema,
+        )
+
     def _describe_columns(
         self,
+        schema: str,
         table: str,
         columns: list[str],
         declared: list[str],
@@ -398,39 +468,20 @@ class Workspace:
                     name=name,
                     declared_type=sql_type,
                     temporal_kind=kind,
-                    storage_classes=self._storage_classes(table, name),
+                    storage_classes=self._storage_classes(schema, table, name),
                     numeric_values=numeric,
                     non_numeric_values=non_numeric,
                 )
             )
         return described
 
-    def _storage_classes(self, table: str, column: str) -> dict[str, int]:
+    def _storage_classes(self, schema: str, table: str, column: str) -> dict[str, int]:
         """Count actual storage classes present. Measured, not inferred."""
         rows = self._conn.execute(
-            f"SELECT typeof({_quote(column)}), count(*) FROM {_quote(table)} GROUP BY 1"
+            f"SELECT typeof({_quote(column)}), count(*) "
+            f"FROM {_target(schema, table)} GROUP BY 1"
         ).fetchall()
         return {storage_class: count for storage_class, count in rows}
-
-    def _adopt_existing_tables(self, source: str) -> None:
-        names = [
-            row[0]
-            for row in self._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
-            )
-        ]
-        for name in names:
-            columns, declared = [], []
-            for row in self._conn.execute(f"PRAGMA table_info({_quote(name)})"):
-                columns.append(row[1])
-                declared.append(row[2] or "")
-            self._tables[name] = TableInfo(
-                name=name,
-                row_count=self._scalar(f"SELECT count(*) FROM {_quote(name)}"),
-                columns=self._describe_columns(name, columns, declared, None),
-                source=source,
-            )
 
     def _scalar(self, sql: str) -> int:
         return int(self._conn.execute(sql).fetchone()[0])
@@ -439,6 +490,7 @@ class Workspace:
 
     @property
     def tables(self) -> dict[str, TableInfo]:
+        """Tables this workspace loaded, keyed by their qualified name."""
         return dict(self._tables)
 
     def query(
@@ -446,9 +498,9 @@ class Workspace:
     ) -> tuple[list[str], list[tuple]]:
         """Run a read query and return ``(column_names, rows)``.
 
-        No statement parsing happens here. On a workspace opened from a file the
-        connection itself is read-only, and an in-memory workspace holds only
-        what this session loaded, so there is nothing to protect from a write.
+        No statement parsing happens here. Attached datasources carry their own
+        read-only URI, and the writable schemas hold only what this session
+        loaded, so there is nothing to protect from a write.
         """
         cursor = self._conn.execute(sql)
         if cursor.description is None:

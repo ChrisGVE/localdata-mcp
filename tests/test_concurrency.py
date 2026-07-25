@@ -189,20 +189,26 @@ def test_readers_running_against_a_load_do_not_lose_rows(session):
             # A table for the readers to hit, so they are doing real work
             # rather than erroring immediately on a missing table.
             await client.call_tool(
-                "load_file", {"path": str(seed), "table_name": "seed"}
+                "attach_datasource", {"database": str(seed), "nickname": "seed"}
             )
 
             tasks = [
-                client.call_tool("load_file", {"path": str(big), "table_name": "big"})
+                client.call_tool(
+                    "attach_datasource", {"database": str(big), "nickname": "big"}
+                )
             ]
             tasks += [
-                client.call_tool("query", {"sql": "SELECT count(*) FROM seed"})
+                client.call_tool(
+                    "query",
+                    {"nickname": "seed", "sql": "SELECT count(*) FROM seed.seed"},
+                )
                 for _ in range(8)
             ]
             results = await asyncio.gather(*tasks)
 
             verify = await client.call_tool(
-                "query", {"sql": "SELECT count(*) FROM big", "limit": 0}
+                "query",
+                {"nickname": "big", "sql": "SELECT count(*) FROM big.big", "limit": 0},
             )
             return [_payload(r) for r in results], _payload(verify)
 
@@ -210,7 +216,7 @@ def test_readers_running_against_a_load_do_not_lose_rows(session):
 
     load_result = results[0]
     assert load_result["ok"] is True, load_result
-    assert load_result["rows"] == LOAD_ROWS
+    assert load_result["loaded"][0]["rows"] == LOAD_ROWS
 
     # Every reader answered, and none of them corrupted the load.
     for reader in results[1:]:
@@ -234,7 +240,8 @@ def test_parallel_loads_all_land(session):
             results = await asyncio.gather(
                 *[
                     client.call_tool(
-                        "load_file", {"path": str(path), "table_name": table}
+                        "attach_datasource",
+                        {"database": str(path), "nickname": table},
                     )
                     for path, table in files
                 ]
@@ -243,7 +250,11 @@ def test_parallel_loads_all_land(session):
                 *[
                     client.call_tool(
                         "query",
-                        {"sql": f"SELECT count(*) FROM {table}", "limit": 0},
+                        {
+                            "nickname": table,
+                            "sql": f"SELECT count(*) FROM {table}.{table}",
+                            "limit": 0,
+                        },
                     )
                     for _, table in files
                 ]
@@ -254,7 +265,7 @@ def test_parallel_loads_all_land(session):
 
     for result in results:
         assert result["ok"] is True, result
-        assert result["rows"] == 5_000
+        assert result["loaded"][0]["rows"] == 5_000
 
     for count in counts:
         assert count["rows"][0][0] == 5_000
@@ -266,11 +277,15 @@ def test_parallel_loads_all_land(session):
                 await client.call_tool(
                     "query",
                     {
+                        "nickname": "part0",
+                        # Four slots in one statement: separate databases on one
+                        # connection, so this is a plain query, not four trips.
                         "sql": (
                             "SELECT count(DISTINCT id) FROM ("
-                            "SELECT id FROM part0 UNION ALL SELECT id FROM part1 "
-                            "UNION ALL SELECT id FROM part2 "
-                            "UNION ALL SELECT id FROM part3)"
+                            "SELECT id FROM part0.part0 "
+                            "UNION ALL SELECT id FROM part1.part1 "
+                            "UNION ALL SELECT id FROM part2.part2 "
+                            "UNION ALL SELECT id FROM part3.part3)"
                         ),
                         "limit": 0,
                     },
@@ -289,18 +304,24 @@ def test_a_failing_load_does_not_damage_an_existing_table(session):
     async def _run():
         async with Client(server_module.mcp) as client:
             await client.call_tool(
-                "load_file", {"path": str(good), "table_name": "good"}
+                "attach_datasource", {"database": str(good), "nickname": "good"}
             )
             failures = await asyncio.gather(
                 *[
                     client.call_tool(
-                        "load_file", {"path": str(missing), "table_name": "bad"}
+                        "attach_datasource",
+                        {"database": str(missing), "nickname": "bad"},
                     )
                     for _ in range(4)
                 ]
             )
             survivor = await client.call_tool(
-                "query", {"sql": "SELECT count(*) FROM good", "limit": 0}
+                "query",
+                {
+                    "nickname": "good",
+                    "sql": "SELECT count(*) FROM good.good",
+                    "limit": 0,
+                },
             )
             return [_payload(f) for f in failures], _payload(survivor)
 

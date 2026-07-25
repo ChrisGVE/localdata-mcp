@@ -265,16 +265,11 @@ def test_attached_database_cannot_be_written(workspace, root):
         workspace._conn.execute("INSERT INTO hr.departments VALUES ('X', 9)")
 
 
-def test_opening_a_sqlite_file_is_read_only(root):
-    _build_database(root / "hr.db")
-    ws = Workspace.open_sqlite_file(str(root / "hr.db"))
-    try:
-        assert "departments" in ws.tables
-        assert ws.tables["departments"].row_count == 3
-        with pytest.raises(LoadError):
-            ws.load_file(str(root / "simple.csv"))
-    finally:
-        ws.close()
+# A read-only workspace opened directly from a database file no longer exists:
+# under the slot model a database file is attached beside the others, so its
+# read-only guarantee and its adopted tables are covered in test_slots.py by
+# test_an_attached_database_cannot_be_written_through and
+# test_a_database_file_arrives_with_its_existing_tables.
 
 
 # ---------------------------------------------------------------------------
