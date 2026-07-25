@@ -59,6 +59,7 @@ from .paths import PathNotAllowed, resolve_read_path
 __all__ = [
     "AttachRefused",
     "Attachment",
+    "Collision",
     "Eviction",
     "Registry",
     "Slot",
@@ -114,6 +115,13 @@ class Slot:
     tables: tuple[str, ...]
     #: Set only for ``"engine"`` slots; the others live on the host connection.
     engine: Engine | None = None
+    #: Whether this database may be written to. Only databases the server
+    #: created are writable by default; anything attached from outside arrives
+    #: read-only unless the caller granted write at attach time.
+    writable: bool = False
+    #: Where this database was moved to when it outgrew the memory budget. The
+    #: file is ours and is deleted when the slot goes.
+    spill_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -130,11 +138,25 @@ class Eviction:
 
 
 @dataclass(frozen=True)
+class Collision:
+    """The live slot a nickname ran into, and where its data came from.
+
+    Reported so a caller told ``sales_2`` can see *why* — and can offer the user
+    a name that will mean more later, which the source is what makes possible.
+    """
+
+    nickname: str
+    source: str
+
+
+@dataclass(frozen=True)
 class Attachment:
     """The result of attaching: the new slot, and whatever it displaced."""
 
     slot: Slot
     evicted: Eviction | None = None
+    #: What the derived or requested nickname collided with, if anything.
+    collided_with: Collision | None = None
 
 
 class Registry:
@@ -179,15 +201,24 @@ class Registry:
 
     # -- attaching ----------------------------------------------------------
 
-    def attach(self, database: str, nickname: str) -> Attachment:
-        """Open a datasource as a slot, evicting the oldest if the shelf is full."""
-        self._validate_nickname(nickname)
+    def attach(
+        self, database: str, nickname: str | None = None, *, writable: bool = False
+    ) -> Attachment:
+        """Open a datasource as a slot, evicting the oldest if the shelf is full.
 
+        The nickname is derived from the filename when none is given, and is
+        disambiguated with a numeric suffix when it runs into a live slot. The
+        name actually used comes back in the :class:`Attachment`, because it may
+        not be the one that was asked for and a caller who assumes otherwise
+        addresses the wrong database.
+        """
         scheme = url_scheme(database)
         if scheme is not None and not scheme.startswith("sqlite"):
-            return self._attach_url(database, nickname)
+            return self._attach_url(database, nickname, writable=writable)
 
         path = self._resolve(database, scheme)
+        self._refuse_duplicate(str(path))
+        chosen, collision = self._choose_nickname(nickname, path.stem)
 
         if path.suffix.lower() in READERS:
             # Read before making room. A file that cannot be parsed must not
@@ -197,11 +228,12 @@ class Registry:
                 frame = read_frame(path)
             except LoadError as exc:
                 raise AttachRefused(str(exc)) from exc
-            evicted = self._make_room(nickname)
-            slot = self._attach_frame(frame, path, nickname)
+            evicted = self._make_room()
+            slot = self._attach_frame(frame, path, chosen)
         elif self._is_sqlite(path):
-            evicted = self._make_room(nickname)
-            slot = self._attach_database(path, nickname)
+            evicted = self._make_room()
+            # An outside database is read-only unless the caller granted write.
+            slot = self._attach_database(path, chosen, writable=writable)
         else:
             supported = ", ".join(sorted(READERS))
             raise AttachRefused(
@@ -209,8 +241,66 @@ class Registry:
                 f"({supported}). Its first bytes are not the SQLite header."
             )
 
-        self._slots[nickname] = slot
-        return Attachment(slot=slot, evicted=evicted)
+        self._slots[chosen] = slot
+        return Attachment(slot=slot, evicted=evicted, collided_with=collision)
+
+    # -- naming a slot ------------------------------------------------------
+
+    def _refuse_duplicate(self, source: str) -> None:
+        """Refuse a datasource that is already attached, wherever it landed.
+
+        A second copy of identical data burns one of ten slots for nothing, and
+        the answer the caller needs is not a new slot but the name of the one
+        already holding it. The check is on the *source*, so asking for a
+        different nickname does not get around it.
+        """
+        for slot in self._slots.values():
+            if slot.source == source:
+                raise AttachRefused(
+                    f"{source} is already attached as {slot.nickname!r}, holding "
+                    f"{', '.join(slot.tables) or 'no tables'}. Query it there, or "
+                    f"detach it first if you want to re-read the file."
+                )
+
+    def _choose_nickname(
+        self, requested: str | None, stem: str
+    ) -> tuple[str, Collision | None]:
+        """Settle on a usable nickname, and report what it displaced.
+
+        A requested nickname is validated rather than rewritten — handing back a
+        silently corrected handle is the same class of defect as a config that
+        keeps its default after a typo. A *derived* one is sanitised, because
+        ``2024 Sales Report.csv`` has no legal spelling the caller chose.
+
+        Either way a collision is resolved with a numeric suffix rather than by
+        refusing: ``~/q1/sales.csv`` and ``~/q2/sales.csv`` are two real
+        datasources and both deserve a slot.
+        """
+        if requested is None:
+            base = _sanitize(stem, "db")
+        else:
+            self._validate_nickname(requested)
+            base = requested
+
+        if not self._nickname_taken(base):
+            return base, None
+
+        collided = self._slots.get(base)
+        index = 2
+        while self._nickname_taken(f"{base}_{index}"):
+            index += 1
+        return (
+            f"{base}_{index}",
+            None if collided is None else Collision(collided.nickname, collided.source),
+        )
+
+    def _nickname_taken(self, nickname: str) -> bool:
+        lowered = nickname.lower()
+        return (
+            nickname in self._slots
+            or lowered in _RESERVED
+            or lowered.startswith("sqlite_")
+        )
 
     def _resolve(self, database: str, scheme: str | None) -> Path:
         """A datasource path, containment-checked.
@@ -258,11 +348,14 @@ class Registry:
             kind="file",
             source=str(path),
             tables=(info.name,),
+            # This database is one we built. Nothing outside it is at risk from
+            # a write, so composition needs no grant.
+            writable=True,
         )
 
-    def _attach_database(self, path: Path, nickname: str) -> Slot:
+    def _attach_database(self, path: Path, nickname: str, *, writable: bool) -> Slot:
         try:
-            self._workspace.attach_file(nickname, path)
+            self._workspace.attach_file(nickname, path, readonly=not writable)
         except Exception as exc:
             raise AttachRefused(f"Could not attach {path}: {exc}") from exc
         return Slot(
@@ -270,9 +363,12 @@ class Registry:
             kind="database",
             source=str(path),
             tables=self._workspace.table_names(nickname),
+            writable=writable,
         )
 
-    def _attach_url(self, database: str, nickname: str) -> Attachment:
+    def _attach_url(
+        self, database: str, nickname: str | None, *, writable: bool
+    ) -> Attachment:
         """Open a service URL as its own engine, once the gate allows it."""
         try:
             url = make_url(database)
@@ -287,11 +383,15 @@ class Registry:
                 f"allow it."
             )
 
-        evicted = self._make_room(nickname)
-        slot = self._attach_engine(database, nickname)
-        return Attachment(slot=slot, evicted=evicted)
+        self._refuse_duplicate(safe)
+        chosen, collision = self._choose_nickname(
+            nickname, url.database or url.drivername
+        )
+        evicted = self._make_room()
+        slot = self._attach_engine(database, chosen, writable=writable)
+        return Attachment(slot=slot, evicted=evicted, collided_with=collision)
 
-    def _attach_engine(self, database: str, nickname: str) -> Slot:
+    def _attach_engine(self, database: str, nickname: str, *, writable: bool) -> Slot:
         """Create a slot backed by its own engine.
 
         Separate from :meth:`_attach_url` so the engine machinery can be
@@ -317,7 +417,11 @@ class Registry:
             source=safe,
             tables=tables,
             engine=engine,
+            writable=writable,
         )
+        # Registered here rather than by the caller: this is the only path that
+        # creates an engine slot, and it is reached directly by tests that
+        # exercise the engine machinery without a server to route through.
         self._slots[nickname] = slot
         return slot
 
@@ -343,15 +447,13 @@ class Registry:
 
     # -- eviction -----------------------------------------------------------
 
-    def _make_room(self, nickname: str) -> Eviction | None:
-        """Drop the oldest slot if the new one would not fit.
+    def _make_room(self) -> Eviction | None:
+        """Drop the oldest slot if the incoming one would not fit.
 
-        Re-attaching an existing nickname replaces that slot in place and costs
-        nothing, so it never evicts anyone.
+        Called only once the nickname is settled, and the nickname is settled to
+        one that is free — so this never has to consider replacing a slot in
+        place. Dropping a slot on purpose is what ``detach`` is for.
         """
-        if nickname in self._slots:
-            self._release(nickname)
-            return None
         if len(self._slots) < self.capacity():
             return None
 
@@ -368,12 +470,29 @@ class Registry:
         self._evicted.append(eviction)
         return eviction
 
-    def _release(self, nickname: str) -> None:
+    def _release(self, nickname: str) -> Slot:
         slot = self._slots.pop(nickname)
         if slot.engine is not None:
             slot.engine.dispose()
         else:
             self._workspace.detach(nickname)
+        self._discard_spill(slot)
+        return slot
+
+    @staticmethod
+    def _discard_spill(slot: Slot) -> None:
+        """Delete the temp file a spilled slot was living in.
+
+        The file is ours — nobody else knows its name — so a slot going away is
+        the end of it. Failing to remove it is not worth failing the operation
+        the caller actually asked for.
+        """
+        if slot.spill_path is None:
+            return
+        try:
+            slot.spill_path.unlink()
+        except OSError:
+            pass
 
     # -- using --------------------------------------------------------------
 

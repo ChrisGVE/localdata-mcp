@@ -213,15 +213,20 @@ def test_a_file_joins_a_database_in_one_statement(session):
     assert answer["rows"][0] == ["Alice Johnson", 3]
 
 
-def test_reattaching_a_nickname_replaces_it_rather_than_refusing(session):
-    """The nickname is a handle; pointing it somewhere else is a normal act."""
+def test_a_colliding_nickname_is_disambiguated_and_both_slots_survive(session):
+    """Pointing a handle at a second datasource must not take the first away.
+
+    The caller is told which name it actually got instead, because a caller that
+    assumes it got the name it asked for addresses the wrong database.
+    """
     call("attach_datasource", database=str(session / "simple.csv"), nickname="slot")
     second = call(
         "attach_datasource", database=str(session / "mixed_tabs.tsv"), nickname="slot"
     )
     assert second["ok"] is True
-    assert second["tables"] == ["slot.mixed_tabs"]
-    assert call("list_tables")["slots_used"] == 1
+    assert second["nickname"] == "slot_2"
+    assert second["tables"] == ["slot_2.mixed_tabs"]
+    assert call("list_tables")["slots_used"] == 2
 
 
 # ---------------------------------------------------------------------------

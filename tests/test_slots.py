@@ -235,16 +235,179 @@ def test_unusable_nicknames_are_rejected(registry, root, nickname):
         registry.attach(str(root / "sales.csv"), nickname)
 
 
-def test_reattaching_a_nickname_replaces_that_slot_in_place(registry, root):
+def test_a_colliding_nickname_is_disambiguated_rather_than_replacing_a_slot(
+    registry, root
+):
+    """Two real datasources both deserve a slot; only detach drops one."""
     csv_at(root / "first.csv", "a\n1\n")
     csv_at(root / "second.csv", "b\n2\n")
     registry.attach(str(root / "first.csv"), "slot")
     attachment = registry.attach(str(root / "second.csv"), "slot")
 
+    assert attachment.slot.nickname == "slot_2"
     assert attachment.slot.tables == ("second",)
-    assert len(registry.slots()) == 1
-    _, rows = registry.query("slot", "SELECT b FROM slot.second")
+    assert [s.nickname for s in registry.slots()] == ["slot", "slot_2"]
+
+    _, rows = registry.query("slot_2", "SELECT b FROM slot_2.second")
     assert rows == [(2,)]
+    # The first slot is untouched, which is the whole point of not replacing it.
+    _, first = registry.query("slot", "SELECT a FROM slot.first")
+    assert first == [(1,)]
+
+
+# ---------------------------------------------------------------------------
+# Nicknames: derived, disambiguated, and never silently rewritten
+# ---------------------------------------------------------------------------
+
+
+def test_a_nickname_is_derived_from_the_filename_when_none_is_given(registry, root):
+    csv_at(root / "sales.csv")
+    attachment = registry.attach(str(root / "sales.csv"))
+    assert attachment.slot.nickname == "sales"
+    assert attachment.collided_with is None
+
+
+def test_a_filename_that_is_not_a_legal_identifier_still_yields_one(registry, root):
+    """`2024 Sales Report.csv` has no legal spelling the caller chose for us."""
+    csv_at(root / "2024 Sales Report.csv")
+    attachment = registry.attach(str(root / "2024 Sales Report.csv"))
+
+    nickname = attachment.slot.nickname
+    (table,) = attachment.slot.tables
+    # Both are prefixed rather than left starting with a digit, and each says
+    # what it is: the database is a db_, the table inside it a table_.
+    assert nickname == "db_2024_sales_report"
+    assert table == "table_2024_sales_report"
+
+    # The proof they are usable is that they address the data.
+    _, rows = registry.query(nickname, f"SELECT qty FROM {nickname}.{table}")
+    assert sorted(r[0] for r in rows) == [3, 4]
+
+
+def test_a_derived_nickname_that_sqlite_reserves_is_stepped_over(registry, root):
+    """A file called main.csv must not try to claim SQLite's own schema name."""
+    csv_at(root / "main.csv")
+    attachment = registry.attach(str(root / "main.csv"))
+
+    assert attachment.slot.nickname == "main_2"
+    _, rows = registry.query("main_2", "SELECT count(*) FROM main_2.main")
+    assert rows == [(2,)]
+
+
+def test_two_same_named_files_in_different_directories_both_get_a_slot(registry, root):
+    """The nickname collides; the datasources do not. Both deserve a slot."""
+    (root / "q1").mkdir()
+    (root / "q2").mkdir()
+    csv_at(root / "q1" / "sales.csv", "sku,qty\na,1\n")
+    csv_at(root / "q2" / "sales.csv", "sku,qty\nb,2\n")
+
+    first = registry.attach(str(root / "q1" / "sales.csv"))
+    second = registry.attach(str(root / "q2" / "sales.csv"))
+
+    assert first.slot.nickname == "sales"
+    assert second.slot.nickname == "sales_2"
+    assert second.collided_with is not None
+    assert second.collided_with.nickname == "sales"
+    # The source is what actually distinguishes them, so it has to come back.
+    assert second.collided_with.source == str(root / "q1" / "sales.csv")
+
+    _, rows = registry.query("sales_2", "SELECT qty FROM sales_2.sales")
+    assert rows == [(2,)]
+
+
+def test_disambiguation_keeps_counting_past_the_second_collision(registry, root):
+    for index, directory in enumerate(("a", "b", "c")):
+        (root / directory).mkdir()
+        csv_at(root / directory / "sales.csv", f"sku,qty\nx,{index}\n")
+    names = [
+        registry.attach(str(root / directory / "sales.csv")).slot.nickname
+        for directory in ("a", "b", "c")
+    ]
+    assert names == ["sales", "sales_2", "sales_3"]
+
+
+def test_the_same_source_twice_is_refused_and_says_where_it_lives(registry, root):
+    """A second copy of identical data burns a slot for nothing."""
+    csv_at(root / "sales.csv")
+    registry.attach(str(root / "sales.csv"), "shop")
+
+    with pytest.raises(AttachRefused, match="already attached as 'shop'"):
+        registry.attach(str(root / "sales.csv"), "shop")
+
+
+def test_asking_for_a_different_nickname_does_not_get_around_the_duplicate_check(
+    registry, root
+):
+    csv_at(root / "sales.csv")
+    registry.attach(str(root / "sales.csv"), "shop")
+
+    with pytest.raises(AttachRefused, match="'shop'"):
+        registry.attach(str(root / "sales.csv"), "elsewhere")
+    assert [slot.nickname for slot in registry.slots()] == ["shop"]
+
+
+def test_a_refused_duplicate_costs_no_live_slot_its_place(root):
+    """Every refusal must happen while the shelf is still untouched."""
+    config_module.use(Config(roots=(root,), slots=2))
+    registry = Registry()
+    try:
+        csv_at(root / "first.csv", "a\n1\n")
+        csv_at(root / "second.csv", "b\n2\n")
+        registry.attach(str(root / "first.csv"), "one")
+        registry.attach(str(root / "second.csv"), "two")
+
+        with pytest.raises(AttachRefused):
+            registry.attach(str(root / "first.csv"), "three")
+
+        assert [slot.nickname for slot in registry.slots()] == ["one", "two"]
+        _, rows = registry.query("one", "SELECT a FROM one.first")
+        assert rows == [(1,)]
+    finally:
+        registry.close()
+
+
+def test_an_explicitly_requested_nickname_is_refused_rather_than_corrected(
+    registry, root
+):
+    """Handing back a silently corrected handle is the defect this avoids."""
+    csv_at(root / "sales.csv")
+    with pytest.raises(AttachRefused, match="cannot be a nickname"):
+        registry.attach(str(root / "sales.csv"), "2 bad")
+
+
+# ---------------------------------------------------------------------------
+# Write is not the default
+# ---------------------------------------------------------------------------
+
+
+def test_a_database_we_built_from_a_file_is_writable(registry, root):
+    """Nothing outside it is at risk, so composition needs no grant."""
+    csv_at(root / "sales.csv")
+    slot = registry.attach(str(root / "sales.csv"), "shop").slot
+
+    assert slot.writable is True
+    registry.query("shop", "INSERT INTO shop.sales VALUES ('c', 5)")
+    _, rows = registry.query("shop", "SELECT qty FROM shop.sales WHERE sku='c'")
+    assert rows == [(5,)]
+
+
+def test_an_outside_database_arrives_read_only(registry, root):
+    build_database(root / "warehouse.db")
+    slot = registry.attach(str(root / "warehouse.db"), "wh").slot
+
+    assert slot.writable is False
+    with pytest.raises(Exception, match="readonly"):
+        registry.query("wh", "INSERT INTO wh.products VALUES ('c', 'Thing')")
+
+
+def test_the_write_grant_is_honoured_when_it_is_asked_for(registry, root):
+    build_database(root / "warehouse.db")
+    slot = registry.attach(str(root / "warehouse.db"), "wh", writable=True).slot
+
+    assert slot.writable is True
+    registry.query("wh", "INSERT INTO wh.products VALUES ('c', 'Thing')")
+    _, rows = registry.query("wh", "SELECT name FROM wh.products WHERE sku='c'")
+    assert rows == [("Thing",)]
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +433,8 @@ def test_the_cap_comes_from_the_configuration(root):
 
 def test_the_eleventh_attachment_evicts_the_first(registry, root):
     fill(registry, root, 10)
-    attachment = registry.attach(str(root / "f0.csv"), "eleventh")
+    csv_at(root / "eleventh.csv", "a\n1\n")
+    attachment = registry.attach(str(root / "eleventh.csv"), "eleventh")
 
     assert attachment.evicted is not None
     assert attachment.evicted.nickname == "s0"
@@ -282,7 +446,8 @@ def test_eviction_takes_the_oldest_not_the_newest(root):
     registry = Registry()
     try:
         fill(registry, root, 3)
-        registry.attach(str(root / "f0.csv"), "fresh")
+        csv_at(root / "fresh.csv", "a\n1\n")
+        registry.attach(str(root / "fresh.csv"), "fresh")
         assert [slot.nickname for slot in registry.slots()] == ["s1", "s2", "fresh"]
     finally:
         registry.close()
@@ -413,7 +578,9 @@ def test_a_slot_on_its_own_engine_answers_its_own_sql(registry, root):
     without a server is SQLite, and a sqlite: URL routes to ATTACH at the
     surface, so the separate-engine path is reached directly here."""
     build_database(root / "remote.db")
-    slot = registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote")
+    slot = registry._attach_engine(
+        f"sqlite:///{root / 'remote.db'}", "remote", writable=False
+    )
 
     assert slot.kind == "engine"
     assert slot.tables == ("products",)
@@ -426,7 +593,7 @@ def test_a_join_across_two_engines_explains_the_one_engine_rule(registry, root):
     build_database(root / "remote.db")
     csv_at(root / "sales.csv")
     registry.attach(str(root / "sales.csv"), "shop")
-    registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote")
+    registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=False)
 
     with pytest.raises(Exception) as raised:
         registry.query("remote", "SELECT * FROM products JOIN shop.sales USING (sku)")
@@ -435,7 +602,9 @@ def test_a_join_across_two_engines_explains_the_one_engine_rule(registry, root):
 
 def test_an_engine_slot_reports_a_source_without_its_password(registry, root):
     build_database(root / "remote.db")
-    slot = registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote")
+    slot = registry._attach_engine(
+        f"sqlite:///{root / 'remote.db'}", "remote", writable=False
+    )
     assert "remote.db" in slot.source
 
 
