@@ -21,9 +21,10 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from . import config
 from .export import export_csv
 from .loader import LoadError, TableInfo, Workspace, _quote
-from .paths import PathNotAllowed, allowed_root, resolve_read_path
+from .paths import PathNotAllowed, allowed_paths, resolve_read_path
 
 mcp = FastMCP(
     "localdata",
@@ -215,7 +216,9 @@ def list_tables() -> dict[str, Any]:
             )
         return {
             "ok": True,
-            "root": str(allowed_root()),
+            # The posture the LLM is working under, where it will read it.
+            "roots": [str(path) for path in allowed_paths()],
+            "path_limited": config.active().path_limited,
             "loaded": loaded,
             "attached": attached,
         }

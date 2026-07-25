@@ -3,63 +3,78 @@
 Every path in this server arrives from an LLM, which means it arrives from
 whatever the LLM read most recently. Treat all of them as untrusted input.
 
-Two rules do most of the work:
+Three rules do the work:
 
 * **Resolve first, then check.** ``Path.resolve()`` collapses ``..`` segments
-  *and* follows symlinks, so a link pointing outside the allowed root resolves
+  *and* follows symlinks, so a link pointing outside the allowed area resolves
   to its real location and fails the containment test. Checking before
   resolving would pass a link whose name looks innocent.
+* **The working directory is always in scope**, together with everything below
+  it. An MCP client launches this server somewhere deliberate, so the common
+  case needs no configuration at all; ``paths.roots`` adds to that rather than
+  replacing it.
 * **Never silently overwrite.** SQLite's own ``VACUUM INTO`` refuses an existing
   target rather than replacing it, and that is the right default to copy: an
   export that quietly replaces a file the user still needed is unrecoverable,
   while one that refuses costs a single retry with an explicit flag.
+
+``paths.path_limited = false`` switches containment off, and nothing else. It
+does not relax the overwrite refusal, which guards against a different accident
+and stays in force regardless.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-__all__ = ["PathNotAllowed", "allowed_root", "resolve_read_path", "resolve_write_path"]
+from . import config
 
-#: Environment variable naming the directory this server may read and write.
-ROOT_ENV_VAR = "LOCALDATA_ROOT"
+__all__ = [
+    "PathNotAllowed",
+    "allowed_paths",
+    "resolve_read_path",
+    "resolve_write_path",
+]
 
 
 class PathNotAllowed(ValueError):
     """A path that this server will not read from or write to."""
 
 
-def allowed_root() -> Path:
-    """The single directory tree this server may touch.
+def allowed_paths() -> tuple[Path, ...]:
+    """Everywhere the server may reach: the working directory, then the roots.
 
-    Defaults to the process working directory, which for an MCP server is
-    whatever the client launched it in. Override with ``LOCALDATA_ROOT`` to point
-    at a data directory instead.
+    Recomputed per call rather than cached, because the configuration can be
+    replaced at startup and the working directory is read at the moment of use.
     """
-    return Path(os.environ.get(ROOT_ENV_VAR, os.getcwd())).resolve()
+    return (Path.cwd().resolve(), *config.active().roots)
 
 
-def _contained(path: Path, root: Path) -> Path:
-    try:
-        path.relative_to(root)
-    except ValueError:
-        raise PathNotAllowed(
-            f"{path} is outside the allowed root {root}. "
-            f"Set {ROOT_ENV_VAR} to widen the allowed area."
-        ) from None
-    return path
+def _contained(path: Path) -> Path:
+    if not config.active().path_limited:
+        return path
+
+    permitted = allowed_paths()
+    for root in permitted:
+        if path == root or path.is_relative_to(root):
+            return path
+
+    listed = ", ".join(str(root) for root in permitted)
+    raise PathNotAllowed(
+        f"{path} is outside the allowed paths ({listed}). Add its directory to "
+        f"paths.roots in the configuration file, or set paths.path_limited = "
+        f"false to remove the restriction."
+    )
 
 
 def resolve_read_path(raw: str) -> Path:
     """Resolve a path to read, or explain why it is refused."""
-    root = allowed_root()
     try:
         path = Path(raw).expanduser().resolve()
     except (OSError, ValueError) as exc:
         raise PathNotAllowed(f"Invalid path {raw!r}: {exc}") from exc
 
-    _contained(path, root)
+    _contained(path)
 
     if not path.exists():
         raise PathNotAllowed(f"No such file: {path}")
@@ -75,13 +90,12 @@ def resolve_write_path(raw: str, *, overwrite: bool = False) -> Path:
     exist yet, which is not an error. Containment is still checked against the
     fully-resolved path, so a ``..`` escape or a symlinked parent is caught.
     """
-    root = allowed_root()
     try:
         path = Path(raw).expanduser().resolve(strict=False)
     except (OSError, ValueError) as exc:
         raise PathNotAllowed(f"Invalid path {raw!r}: {exc}") from exc
 
-    _contained(path, root)
+    _contained(path)
 
     parent = path.parent
     if not parent.is_dir():

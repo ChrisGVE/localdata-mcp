@@ -23,7 +23,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from localdata_mcp import paths as paths_module
+from localdata_mcp import config as config_module
+from localdata_mcp.config import Config
 from localdata_mcp.loader import Workspace
 
 pytestmark = pytest.mark.slow
@@ -34,7 +35,7 @@ LARGE_ROWS = 200_000
 
 @pytest.fixture()
 def root(monkeypatch, tmp_path):
-    monkeypatch.setenv(paths_module.ROOT_ENV_VAR, str(tmp_path))
+    config_module.use(Config(roots=(tmp_path,)))
     return tmp_path
 
 

@@ -45,8 +45,9 @@ from pathlib import Path
 import pytest
 from fastmcp import Client, FastMCP
 
-from localdata_mcp import paths as paths_module
+from localdata_mcp import config as config_module
 from localdata_mcp import server as server_module
+from localdata_mcp.config import Config
 
 LOAD_ROWS = 40_000
 
@@ -55,7 +56,7 @@ LOAD_ROWS = 40_000
 def session(monkeypatch, tmp_path):
     root = tmp_path / "root"
     root.mkdir()
-    monkeypatch.setenv(paths_module.ROOT_ENV_VAR, str(root))
+    config_module.use(Config(roots=(root,)))
     server_module._reset()
     yield root
     server_module._reset()

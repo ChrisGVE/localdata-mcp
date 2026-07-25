@@ -21,8 +21,9 @@ from pathlib import Path
 import pytest
 from fastmcp import Client
 
-from localdata_mcp import paths as paths_module
+from localdata_mcp import config as config_module
 from localdata_mcp import server as server_module
+from localdata_mcp.config import Config
 
 ASSETS = Path(__file__).parent / "assets"
 
@@ -34,7 +35,7 @@ def session(monkeypatch, tmp_path):
     root.mkdir()
     for asset in ASSETS.iterdir():
         (root / asset.name).write_bytes(asset.read_bytes())
-    monkeypatch.setenv(paths_module.ROOT_ENV_VAR, str(root))
+    config_module.use(Config(roots=(root,)))
     server_module._reset()
     yield root
     server_module._reset()
@@ -123,7 +124,9 @@ def test_list_tables_reports_what_is_loaded(session):
     listing = call("list_tables")
     assert listing["ok"] is True
     assert [entry["table"] for entry in listing["loaded"]] == ["simple"]
-    assert listing["root"] == str(session)
+    # The posture is reported so the LLM can see what it may reach.
+    assert str(session) in listing["roots"]
+    assert listing["path_limited"] is True
 
 
 def test_describe_table_names_columns_and_types(session):
@@ -187,7 +190,7 @@ def test_attaching_the_same_alias_twice_is_refused(session):
 def test_a_bad_path_is_answered_not_raised(session, tmp_path):
     answer = call("load_file", path=str(tmp_path / "elsewhere.csv"))
     assert answer["ok"] is False
-    assert "outside the allowed root" in answer["error"]
+    assert "outside the allowed paths" in answer["error"]
 
 
 def test_a_missing_file_is_answered(session):

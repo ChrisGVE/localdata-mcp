@@ -14,8 +14,9 @@ from pathlib import Path
 
 import pytest
 
+from localdata_mcp import config as config_module
 from localdata_mcp import export as export_module
-from localdata_mcp import paths as paths_module
+from localdata_mcp.config import Config
 from localdata_mcp.loader import LoadError, Workspace
 from localdata_mcp.paths import PathNotAllowed
 
@@ -29,7 +30,7 @@ def root(monkeypatch, tmp_path):
     shared.mkdir()
     for asset in ASSETS.iterdir():
         (shared / asset.name).write_bytes(asset.read_bytes())
-    monkeypatch.setenv(paths_module.ROOT_ENV_VAR, str(shared))
+    config_module.use(Config(roots=(shared,)))
     return shared
 
 
