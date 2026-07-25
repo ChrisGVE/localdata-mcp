@@ -157,5 +157,5 @@ oracle-datasets/
 tests/fixtures/
 
 # Task files
-# tasks.json
-# tasks/
+tasks.json
+tasks/ 

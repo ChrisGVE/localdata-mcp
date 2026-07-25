@@ -153,6 +153,26 @@ def _target(schema: str, table: str) -> str:
     return f"{_quote(schema)}.{_quote(table)}"
 
 
+def _file_uri(path: Path, *, readonly: bool) -> str:
+    """A SQLite URI for a database file, with the mode carried in the URI.
+
+    Built with :meth:`Path.as_uri` rather than by formatting the path into a
+    string, because the connection runs in URI mode: a ``?`` or ``#`` in a
+    filename would otherwise be read as the start of the query fragment and the
+    file would be opened under a name nobody chose. Percent-encoding is what
+    makes those characters ordinary again.
+    """
+    uri = path.resolve().as_uri()
+    return f"{uri}?mode=ro" if readonly else uri
+
+
+#: Column types a declared schema may ask for. Restricted to SQLite's own
+#: storage classes: the value reaches DDL, so an open vocabulary would be an
+#: injection point, and a closed one is also the more useful answer to "what
+#: can I write here".
+COLUMN_TYPES = ("TEXT", "INTEGER", "REAL", "BLOB", "NUMERIC")
+
+
 # ---------------------------------------------------------------------------
 # Type mapping
 # ---------------------------------------------------------------------------
@@ -331,16 +351,20 @@ class Workspace:
         """
         self._conn.execute(f"ATTACH DATABASE ':memory:' AS {_quote(schema)}")
 
-    def attach_readonly(self, schema: str, path: Path) -> None:
-        """Attach an existing SQLite file, read-only.
+    def attach_file(self, schema: str, path: Path, *, readonly: bool = True) -> None:
+        """Attach an existing SQLite file, read-only unless told otherwise.
 
         Read-only is carried by the connection's own URI, not by a wrapper
         callers are expected to route through. A guarantee implemented as an
         interception point can be walked around by reaching the intercepted
         object; there is nothing here to reach around.
+
+        Writable is therefore not a flag this module honours by being careful —
+        it is a different URI, and SQLite is what refuses the write.
         """
         self._conn.execute(
-            f"ATTACH DATABASE ? AS {_quote(schema)}", (f"file:{path}?mode=ro",)
+            f"ATTACH DATABASE ? AS {_quote(schema)}",
+            (_file_uri(path, readonly=readonly),),
         )
 
     def detach(self, schema: str) -> None:
@@ -348,6 +372,88 @@ class Workspace:
         self._conn.execute(f"DETACH DATABASE {_quote(schema)}")
         for key in [k for k in self._tables if k.startswith(f"{schema}.")]:
             del self._tables[key]
+
+    # -- moving a database out of memory -----------------------------------
+
+    def resident_bytes(self, schema: str) -> int:
+        """How much an attached database is actually holding, right now.
+
+        **Freelist-corrected, and that is the whole point.** ``page_count`` does
+        not shrink when a table is dropped — 1,058 pages before and after, with
+        1,057 of them free — so a schema that was loaded and emptied would
+        otherwise keep measuring at its high-water mark and be spilled for data
+        it no longer holds. See ``docs/CONSTRAINTS.md`` §6.
+
+        Measured rather than estimated. Deciding from file size or metadata what
+        a load *will* cost is the fail-open pattern this project has already
+        been bitten by; this asks the database what it *has*.
+        """
+        quoted = _quote(schema)
+        pages = self._scalar(f"PRAGMA {quoted}.page_count")
+        free = self._scalar(f"PRAGMA {quoted}.freelist_count")
+        return max(pages - free, 0) * self._scalar(f"PRAGMA {quoted}.page_size")
+
+    def vacuum_into(self, schema: str, path: Path) -> None:
+        """Write a consistent, compacted copy of an attached database to a file.
+
+        ``VACUUM`` cannot run inside a transaction (``docs/CONSTRAINTS.md``
+        §4.3), so anything in flight is committed first. At that moment there is
+        no transaction left to roll back, which is why the undo path for a
+        failed copy is deleting the target rather than aborting.
+
+        The target must not exist; SQLite refuses rather than overwriting, and
+        that refusal is a feature worth keeping rather than working around.
+        """
+        self._conn.commit()
+        self._conn.execute(f"VACUUM {_quote(schema)} INTO ?", (str(path),))
+
+    # -- composing a database ----------------------------------------------
+
+    def has_table(self, schema: str, table: str) -> bool:
+        return table in self.table_names(schema)
+
+    def create_table(
+        self, schema: str, table: str, columns: dict[str, str]
+    ) -> TableInfo:
+        """Create an empty table from a declared schema.
+
+        The column *types* are checked against :data:`COLUMN_TYPES` rather than
+        quoted, because a type cannot be quoted in DDL and so must come from a
+        closed set. Names are quoted and sanitised like any other identifier.
+        """
+        if not columns:
+            raise LoadError(
+                f"Declaring {schema}.{table} needs at least one column, as "
+                f"{{'name': 'TEXT'}}."
+            )
+
+        declared: list[tuple[str, str]] = []
+        for raw_name, raw_type in columns.items():
+            sql_type = str(raw_type).strip().upper()
+            if sql_type not in COLUMN_TYPES:
+                raise LoadError(
+                    f"{raw_name!r} is declared {raw_type!r}, which is not a "
+                    f"SQLite column type. Use one of: {', '.join(COLUMN_TYPES)}."
+                )
+            declared.append((_sanitize(raw_name, "column"), sql_type))
+
+        target = _target(schema, table)
+        column_ddl = ", ".join(f"{_quote(name)} {kind}" for name, kind in declared)
+        try:
+            self._conn.execute(f"CREATE TABLE {target} ({column_ddl})")
+            self._conn.commit()
+        except sqlite3.Error as exc:
+            raise LoadError(f"Could not create {schema}.{table}: {exc}") from exc
+
+        return self.describe(schema, table, source="declared")
+
+    def drop_table(self, schema: str, table: str) -> None:
+        try:
+            self._conn.execute(f"DROP TABLE {_target(schema, table)}")
+            self._conn.commit()
+        except sqlite3.Error as exc:
+            raise LoadError(f"Could not drop {schema}.{table}: {exc}") from exc
+        self._tables.pop(f"{schema}.{table}", None)
 
     # -- loading -----------------------------------------------------------
 
@@ -363,9 +469,9 @@ class Workspace:
         path = resolve_read_path(raw_path)
         frame = read_frame(path)
         name = _sanitize(table_name or path.stem, "table")
-        return self._insert_frame(frame, name, source=str(path), schema=schema)
+        return self.insert_frame(frame, name, source=str(path), schema=schema)
 
-    def _insert_frame(
+    def insert_frame(
         self, frame: pd.DataFrame, table: str, *, source: str, schema: str = "main"
     ) -> TableInfo:
         columns = _unique_columns(list(frame.columns))

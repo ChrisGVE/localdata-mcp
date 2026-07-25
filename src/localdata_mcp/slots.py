@@ -247,7 +247,7 @@ class Registry:
         self._workspace.attach_memory(nickname)
         table = _sanitize(path.stem, "table")
         try:
-            info = self._workspace._insert_frame(
+            info = self._workspace.insert_frame(
                 frame, table, source=str(path), schema=nickname
             )
         except LoadError as exc:
@@ -262,7 +262,7 @@ class Registry:
 
     def _attach_database(self, path: Path, nickname: str) -> Slot:
         try:
-            self._workspace.attach_readonly(nickname, path)
+            self._workspace.attach_file(nickname, path)
         except Exception as exc:
             raise AttachRefused(f"Could not attach {path}: {exc}") from exc
         return Slot(

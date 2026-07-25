@@ -273,6 +273,180 @@ def test_attached_database_cannot_be_written(workspace, root):
 
 
 # ---------------------------------------------------------------------------
+# Residency, and moving a database out of memory
+# ---------------------------------------------------------------------------
+
+
+def test_residency_is_measured_and_grows_with_the_data(workspace, root):
+    """The number the spill decision reads must track what is actually held."""
+    workspace.attach_memory("scratch")
+    empty = workspace.resident_bytes("scratch")
+
+    workspace.load_file(str(root / "simple.csv"), schema="scratch")
+    loaded = workspace.resident_bytes("scratch")
+
+    assert empty == 0
+    assert loaded > empty
+
+
+def test_residency_falls_back_after_a_drop_despite_the_freelist(workspace, root):
+    """page_count alone ratchets: it never shrinks once pages have been used.
+
+    Without the freelist correction a slot that had been loaded and emptied
+    would keep measuring at its high-water mark, and would be spilled to disk
+    for data it no longer holds.
+    """
+    workspace.attach_memory("scratch")
+    workspace.load_file(str(root / "large_dataset.csv"), schema="scratch")
+    full = workspace.resident_bytes("scratch")
+
+    workspace.drop_table("scratch", "large_dataset")
+    emptied = workspace.resident_bytes("scratch")
+
+    assert full > 0
+    assert emptied < full
+    # The uncorrected reading is the one that would have ratcheted: it stays at
+    # the high-water mark, which is exactly what the correction is subtracting.
+    page_size = workspace._scalar('PRAGMA "scratch".page_size')
+    uncorrected = workspace._scalar('PRAGMA "scratch".page_count') * page_size
+    assert uncorrected >= full
+    assert uncorrected > emptied
+
+
+def test_vacuum_into_produces_a_database_that_still_answers(workspace, root, tmp_path):
+    """Assert on what the copy returns, never on the fact that a file appeared."""
+    workspace.attach_memory("scratch")
+    workspace.load_file(str(root / "simple.csv"), schema="scratch")
+    original = workspace.query("SELECT name, salary FROM scratch.simple ORDER BY name")
+    target = tmp_path / "copy.sqlite"
+
+    workspace.vacuum_into("scratch", target)
+
+    copied = sqlite3.connect(target)
+    try:
+        assert copied.execute("SELECT count(*) FROM simple").fetchone()[0] == 5
+        assert [
+            tuple(r)
+            for r in copied.execute("SELECT name, salary FROM simple ORDER BY name")
+        ] == [tuple(r) for r in original[1]]
+        assert (
+            copied.execute("SELECT sum(salary) FROM simple").fetchone()[0]
+            == (workspace.query("SELECT sum(salary) FROM scratch.simple")[1][0][0])
+        )
+    finally:
+        copied.close()
+
+
+def test_vacuum_into_refuses_to_replace_an_existing_database(workspace, root, tmp_path):
+    """The refusal holds only when the target *is* a database.
+
+    Onto a zero-length file SQLite writes happily, and onto a non-database it
+    fails with an unrelated complaint about the file's contents. So this is not
+    a guard anything may lean on: the overwrite refusal lives at the path
+    boundary, where it is unconditional.
+    """
+    workspace.attach_memory("scratch")
+    workspace.load_file(str(root / "simple.csv"), schema="scratch")
+    target = tmp_path / "copy.sqlite"
+    workspace.vacuum_into("scratch", target)
+
+    with pytest.raises(sqlite3.Error, match="already exists"):
+        workspace.vacuum_into("scratch", target)
+
+
+def test_vacuum_into_does_not_refuse_a_zero_length_target(workspace, root, tmp_path):
+    """Recorded because it is the gap that makes the path-boundary guard load-bearing."""
+    workspace.attach_memory("scratch")
+    workspace.load_file(str(root / "simple.csv"), schema="scratch")
+    target = tmp_path / "copy.sqlite"
+    target.write_bytes(b"")
+
+    workspace.vacuum_into("scratch", target)
+
+    assert target.stat().st_size > 0
+
+
+def test_a_writable_attach_accepts_what_a_readonly_one_refuses(workspace, root):
+    """The grant is a different URI, not a check this module is trusted to make."""
+    _build_database(root / "hr.db")
+    workspace.attach_file("locked", root / "hr.db")
+    workspace.attach_file("open", root / "hr.db", readonly=False)
+
+    with pytest.raises(sqlite3.OperationalError):
+        workspace._conn.execute("INSERT INTO locked.departments VALUES ('X', 9)")
+
+    workspace._conn.execute("INSERT INTO open.departments VALUES ('X', 9)")
+    workspace._conn.commit()
+    _, rows = workspace.query("SELECT floor FROM open.departments WHERE department='X'")
+    assert [tuple(r) for r in rows] == [(9,)]
+
+
+def test_a_question_mark_in_a_filename_is_not_read_as_a_uri_query(workspace, root):
+    """The connection runs in URI mode, so the path has to be percent-encoded."""
+    awkward = root / "why? not.db"
+    _build_database(awkward)
+
+    workspace.attach_file("odd", awkward)
+
+    _, rows = workspace.query("SELECT count(*) FROM odd.departments")
+    assert [tuple(r) for r in rows] == [(3,)]
+
+
+# ---------------------------------------------------------------------------
+# Composing a database from a declared schema
+# ---------------------------------------------------------------------------
+
+
+def test_a_declared_table_is_created_and_writable(workspace):
+    workspace.attach_memory("book")
+
+    info = workspace.create_table(
+        "book", "ledger", {"entry": "TEXT", "amount": "INTEGER"}
+    )
+
+    assert info.qualified == "book.ledger"
+    assert info.row_count == 0
+    assert [c.name for c in info.columns] == ["entry", "amount"]
+
+    workspace._conn.execute("INSERT INTO book.ledger VALUES ('rent', 1200)")
+    workspace._conn.commit()
+    _, rows = workspace.query("SELECT sum(amount) FROM book.ledger")
+    assert [tuple(r) for r in rows] == [(1200,)]
+
+
+def test_a_declared_type_outside_sqlites_own_is_refused(workspace):
+    """The type reaches DDL unquoted, so the vocabulary has to be closed."""
+    workspace.attach_memory("book")
+    with pytest.raises(LoadError, match="INTEGER"):
+        workspace.create_table("book", "ledger", {"amount": "BIGINT); DROP TABLE x--"})
+    assert not workspace.has_table("book", "ledger")
+
+
+def test_a_declared_table_with_no_columns_is_refused(workspace):
+    workspace.attach_memory("book")
+    with pytest.raises(LoadError, match="at least one column"):
+        workspace.create_table("book", "ledger", {})
+
+
+def test_declared_column_names_are_sanitised_like_any_other(workspace):
+    workspace.attach_memory("book")
+    info = workspace.create_table("book", "ledger", {"Total Amount (£)": "REAL"})
+    assert [c.name for c in info.columns] == ["total_amount"]
+
+
+def test_dropping_a_table_removes_it_and_dropping_it_twice_is_an_error(workspace, root):
+    workspace.attach_memory("scratch")
+    workspace.load_file(str(root / "simple.csv"), schema="scratch")
+    assert workspace.has_table("scratch", "simple")
+
+    workspace.drop_table("scratch", "simple")
+
+    assert not workspace.has_table("scratch", "simple")
+    with pytest.raises(LoadError, match="simple"):
+        workspace.drop_table("scratch", "simple")
+
+
+# ---------------------------------------------------------------------------
 # Export — the overwrite boundary
 # ---------------------------------------------------------------------------
 

@@ -355,6 +355,19 @@ Require an explicit `overwrite=True`, and treat the target path as a trust bound
 symlink-swap between check and write). Prior work in this codebase already treated file-identity
 races as real; keep that posture.
 
+**But the refusal is conditional, so nothing may lean on it.** Measured across three target states:
+
+| Existing target | Result |
+|---|---|
+| A valid SQLite database | refused — `output file already exists` |
+| A zero-length file | **allowed**, written in place |
+| A non-empty non-database | refused — `file is not a database`, an unrelated complaint |
+
+Only the first row is the refusal the design wants, and a zero-length file is exactly what a
+half-finished earlier write leaves behind. **The overwrite guard therefore belongs at the path
+boundary**, where it is unconditional and reads the same for every writer, rather than being
+delegated to SQLite.
+
 ### 4.3 `VACUUM INTO` cannot run inside a transaction
 
 `cannot VACUUM from within a transaction`. Any flow that wants to copy or compact mid-write must

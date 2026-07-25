@@ -66,7 +66,7 @@ def _insert_peak(path: Path, table: str) -> tuple[float, int, float]:
 
         tracemalloc.start()
         started = time.perf_counter()
-        info = workspace._insert_frame(frame, table, source=str(path))
+        info = workspace.insert_frame(frame, table, source=str(path))
         elapsed = time.perf_counter() - started
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
