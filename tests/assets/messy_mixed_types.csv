@@ -1,0 +1,10 @@
+id,name,value,date,notes
+1,John Doe,123.45,2023-01-15,Normal entry
+2,María García,456abc,2023/02/20,Contains unicode
+3a,Bob Smith,,15-Mar-2023,Empty value cell
+4,"User "Special"",N/A,invalid-date,Contains quotes
+5,Line
+Break,999.99,2023-04-01T10:30:00,Line break in data
+,,,,
+6,"Final,Entry","123,456.78",2023-05-15,Contains commas
+7,🚀 Emoji User,-123.45,2023-06-01,Unicode emoji
