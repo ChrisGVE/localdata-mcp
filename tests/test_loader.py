@@ -91,6 +91,50 @@ def test_messy_csv_loads_without_losing_rows(workspace, root):
     assert by_name["value"].declared_type == "TEXT"
 
 
+def test_mostly_numeric_text_column_is_flagged_as_mixed(workspace, root):
+    """The case a storage-class histogram alone cannot see.
+
+    pandas reads a column of 1, 2, 3a as ``object``; we declare it TEXT; every
+    value stores as text. The histogram therefore reports a single storage class
+    and says nothing — while ``avg()`` over the column silently returns a wrong
+    answer, because SQLite coerces the text to 0 and keeps it in the divisor.
+    """
+    target = root / "partly_numeric.csv"
+    # 'n/a' is one of pandas' default null markers and lands as SQL NULL;
+    # 'unknown' is not, so it survives as text. Both behaviours are asserted
+    # here because the difference decides what the counts below mean.
+    target.write_text("v\n1\n2\n3\n4\n5\nn/a\nunknown\n")
+    info = workspace.load_file(str(target))
+
+    column = info.columns[0]
+    assert column.declared_type == "TEXT"
+    assert column.storage_classes == {"null": 1, "text": 6}
+    assert len([c for c in column.storage_classes if c != "null"]) == 1
+    assert column.numeric_values == 5
+    assert column.non_numeric_values == 1
+    assert column.is_mixed is True
+    assert info.mixed_columns == ["v"]
+
+    # Why the flag matters: the naive average is wrong, and the guarded one is not.
+    # SQLite skips the NULL, coerces 'unknown' to 0, and keeps it in the divisor.
+    _, naive = workspace.query("SELECT avg(v) FROM partly_numeric")
+    assert naive[0][0] == pytest.approx(15 / 6)
+    _, guarded = workspace.query(
+        "SELECT avg(CAST(v AS REAL)) FROM partly_numeric WHERE typeof(v) = 'text' "
+        "AND CAST(v AS REAL) != 0"
+    )
+    assert guarded[0][0] == pytest.approx(3.0)
+
+
+def test_uniformly_numeric_text_column_is_not_flagged(workspace, root):
+    """No false positive: a column that is entirely non-numeric is not mixed."""
+    target = root / "all_text.csv"
+    target.write_text("v\nalpha\nbeta\ngamma\n")
+    info = workspace.load_file(str(target))
+    assert info.columns[0].is_mixed is False
+    assert info.mixed_columns == []
+
+
 def test_unicode_survives_the_round_trip(workspace, root):
     workspace.load_file(str(root / "messy_mixed_types.csv"))
     _, rows = workspace.query(

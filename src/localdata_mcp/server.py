@@ -85,7 +85,11 @@ def _table_payload(info: TableInfo) -> dict[str, Any]:
                     else {}
                 ),
                 **(
-                    {"storage_classes": column.storage_classes}
+                    {
+                        "storage_classes": column.storage_classes,
+                        "numeric_values": column.numeric_values,
+                        "non_numeric_values": column.non_numeric_values,
+                    }
                     if column.is_mixed
                     else {}
                 ),

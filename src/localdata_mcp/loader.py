@@ -51,10 +51,14 @@ class ColumnInfo:
     #: Storage classes actually present, as ``{"integer": 120, "text": 3}``.
     #: Measured with a GROUP BY after the load rather than predicted from dtypes.
     storage_classes: dict[str, int] = field(default_factory=dict)
+    #: Among non-null values in a TEXT column, how many parse as a number and how
+    #: many do not. Both zero for a column that is already numerically typed.
+    numeric_values: int = 0
+    non_numeric_values: int = 0
 
     @property
     def is_mixed(self) -> bool:
-        """True when the column holds more than one storage class.
+        """True when the column holds values of more than one kind.
 
         Worth surfacing, because **aggregates over a mixed column silently
         coerce text to 0 and keep it in the denominator** — the average of
@@ -62,8 +66,18 @@ class ColumnInfo:
         affinity fixes that; it is a property of the aggregate. A caller told
         about it can work around it with ``WHERE typeof(col)='integer'`` or an
         explicit ``CAST``.
+
+        Two signals, because one of them alone misses the common case. The
+        storage-class count catches genuinely heterogeneous storage. But a CSV
+        column mixing ``1``, ``2`` and ``3a`` is read by pandas as ``object``,
+        declared ``TEXT``, and stored entirely as text — so its storage classes
+        read as *one* class and the histogram says nothing. The numeric-parse
+        split is what catches that, and it is the shape most real files take.
         """
-        return len([c for c in self.storage_classes if c != "null"]) > 1
+        distinct_classes = [c for c in self.storage_classes if c != "null"]
+        if len(distinct_classes) > 1:
+            return True
+        return self.numeric_values > 0 and self.non_numeric_values > 0
 
 
 @dataclass(frozen=True)
@@ -143,6 +157,22 @@ def _declared_type(dtype: Any) -> str:
 # ---------------------------------------------------------------------------
 # Readers
 # ---------------------------------------------------------------------------
+
+
+def _numeric_split(series: pd.Series) -> tuple[int, int]:
+    """Count how many non-null values in a text column parse as numbers.
+
+    A column where both counts are non-zero is the ordinary "mostly numbers,
+    some junk" CSV column — the one whose ``avg()`` is silently wrong and whose
+    storage-class histogram shows nothing, because every value was stored as
+    text.
+    """
+    non_null = series.dropna()
+    if non_null.empty:
+        return 0, 0
+    parsed = pd.to_numeric(non_null, errors="coerce")
+    numeric = int(parsed.notna().sum())
+    return numeric, len(non_null) - numeric
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
@@ -294,14 +324,20 @@ class Workspace:
         described = []
         for index, (name, sql_type) in enumerate(zip(columns, declared)):
             kind = None
+            numeric = non_numeric = 0
             if frame is not None:
-                kind = binding.temporal_kind(frame[frame.columns[index]].dtype)
+                series = frame[frame.columns[index]]
+                kind = binding.temporal_kind(series.dtype)
+                if sql_type == "TEXT":
+                    numeric, non_numeric = _numeric_split(series)
             described.append(
                 ColumnInfo(
                     name=name,
                     declared_type=sql_type,
                     temporal_kind=kind,
                     storage_classes=self._storage_classes(table, name),
+                    numeric_values=numeric,
+                    non_numeric_values=non_numeric,
                 )
             )
         return described
