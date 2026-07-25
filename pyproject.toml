@@ -73,6 +73,9 @@ known_first_party = ["localdata_mcp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: volume and timing tests; excluded with -m 'not slow'",
+]
 
 [tool.mypy]
 python_version = "3.10"

@@ -159,6 +159,11 @@ def _declared_type(dtype: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: Rows per block when scanning a column for numeric-ness. Bounds the scan's
+#: peak allocation without changing its result — see :func:`_numeric_split`.
+_SCAN_BLOCK = 50_000
+
+
 def _numeric_split(series: pd.Series) -> tuple[int, int]:
     """Count how many non-null values in a text column parse as numbers.
 
@@ -166,13 +171,24 @@ def _numeric_split(series: pd.Series) -> tuple[int, int]:
     some junk" CSV column — the one whose ``avg()`` is silently wrong and whose
     storage-class histogram shows nothing, because every value was stored as
     text.
+
+    Scanned in blocks. ``pd.to_numeric`` over a whole column allocates a second
+    array the length of the column, which made loading a 200,000-row file peak
+    four times higher than a 50,000-row one — turning an otherwise flat insert
+    path into a linear one. Blocking bounds the peak while keeping the count
+    exact; sampling would bound it too, and would miss the single odd value that
+    is the entire point of the check.
     """
-    non_null = series.dropna()
-    if non_null.empty:
-        return 0, 0
-    parsed = pd.to_numeric(non_null, errors="coerce")
-    numeric = int(parsed.notna().sum())
-    return numeric, len(non_null) - numeric
+    numeric = non_numeric = 0
+    for start in range(0, len(series), _SCAN_BLOCK):
+        block = series.iloc[start : start + _SCAN_BLOCK].dropna()
+        if block.empty:
+            continue
+        parsed = pd.to_numeric(block, errors="coerce")
+        block_numeric = int(parsed.notna().sum())
+        numeric += block_numeric
+        non_numeric += len(block) - block_numeric
+    return numeric, non_numeric
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
