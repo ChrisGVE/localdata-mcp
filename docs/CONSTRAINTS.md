@@ -116,9 +116,19 @@ Five numeric rows (1..5, true mean 3.0) followed by two text rows in the same co
 **Do:** keep the declared affinity, detect the conflict, and **signal** it — record the column as
 mixed and expose the per-storage-class histogram (`SELECT typeof(col), count(*) … GROUP BY 1` —
 cheap, exact, measured rather than predicted). Silence is the defect; refusing the whole load is an
-over-correction that fails the flagship path for a condition the caller can work around once told
-(`WHERE typeof(col)='integer'`, or an explicit `CAST`). Make strictness a config knob defaulting to
-signal-and-continue.
+over-correction that fails the flagship path for a condition the caller can work around once told.
+Make strictness a config knob defaulting to signal-and-continue.
+
+> **The work-around is not one work-around (2026-07-26).** This section used to close by naming
+> `WHERE typeof(col)='integer'` as the thing to tell the caller — and conclusion 2 above already
+> said why that cannot be right in general: once everything reads `text 7`, `typeof` has no signal
+> left to give. **A column read from a CSV is always that case.** pandas types it `object`, it is
+> declared `TEXT`, and every value stores as text however numeric it looks, so the prescribed
+> filter returns the whole column. The advice was copied from here into the server's warning and
+> into the shipped skill, and live-agent validation caught it there (§7.2): four of six agents ran
+> it, got everything back, and had to go and find the sentinel value themselves. The remedy has to
+> branch on which signal fired — `typeof` where the storage classes really differ, and **the
+> offending values, by name** where they do not.
 
 **State plainly, wherever the SQL surface is documented, that aggregates over a mixed column
 silently coerce text to 0.** Nobody infers it from the affinity discussion, and it is the entire
@@ -617,3 +627,75 @@ Not needed for a single-file, fits-in-RAM path. Recorded so it is not re-derived
   file-backed database's memory use cannot be measured from inside the process; only the configured
   ceiling can be charged, and that is conservative *only if the unit is right* — which is why the
   point above matters.
+
+---
+
+## §7 — Driving the surface as an agent (2026-07-26)
+
+A different instrument from the rest of this file. Everything above was established by executing
+code; this section was established by giving the **finished tool surface** to agents that had never
+seen it, with the source unreachable and every route to the data except the tools closed off, and
+watching which verb they reached for. It answers the one question a test suite cannot: not *does
+the surface work*, but *does it read the way it was meant to*.
+
+**Method.** Six runs — the three arcs of `LEVEL0.md`, each driven once with the shipped skill
+loaded and once without it, so the skill's contribution is visible rather than assumed. Each agent
+got a request phrased the way a person phrases it, a command that spoke the real MCP protocol
+in-process, and nothing else. Every call was logged by the harness independently of the agent, and
+scored against answers computed outside the server; the agents' own accounts were read against that
+log rather than taken. The fixtures were built to arm four specific traps: a mixed column, a
+nickname collision, a join incomplete in **both** directions, and an occupied `save` path.
+
+### 7.1 What the surface got right, measured rather than hoped
+
+- **Every number matched ground truth**, in all six runs, across both the 300-row and the
+  400,000-row file.
+- **Nobody wrote `nickname.table`.** Not once, in any of six runs, with or without the skill. The
+  addressing change of the previous session reached the model through the instructions and the
+  docstrings.
+- **Nobody tried to write through `query`.** No `INSERT`, no `CREATE TABLE`, in any run.
+- **Nobody attached the second file as a second slot.** Every arc-2 and arc-3 agent reached for
+  `add_table`, which is the single choice this design most wanted to make obvious — and the bare
+  runs made it as reliably as the skill-loaded ones.
+- **The collision protocol held.** The agent that hit `q1_sales_2` read the returned nickname and
+  used it, and quoted `collided_with` back.
+- **The mixed-column *signal* did its job.** Every agent that touched the column checked it rather
+  than averaging blind. The naive average is 10.82 against a true 12.53 — a wrong answer nothing
+  would have flagged, and none of them reported it.
+
+### 7.2 What it got wrong
+
+Each of these is fixed; they are recorded because the *class* recurs.
+
+| Found | Where the fix belonged |
+|---|---|
+| `info` raised a driver error for **every** table inside an attached database — schema inspection ran on the read engine, whose authorizer refuses the `PRAGMA` the inspector speaks | the code: inspect over the write engine, as residency already does |
+| The mixed-column warning prescribed `typeof(col)='integer'`, which cannot discriminate on the column that produced it (§1.5) | the code and the skill, and §1.5 above, which is where the advice came from |
+| `query`'s docstring advertised writes it refuses, contradicting the server instructions | the docstring |
+| The README taught `nickname.table` in both worked examples | the README, plus a test that greps for it |
+| All three skill-less agents called `info` immediately after `attach`, for a payload they already held | the docstrings — the skill already said it, and its readers mostly skipped the call |
+
+**The two that matter beyond themselves.** The `info` failure had been shipped and green for a
+session: every table the test suite describes is one the loader *remembered loading*, so the branch
+that asks the database was never entered. A suite can be exhaustive over the path its fixtures
+build and blind to the path a user takes. And the mixed-column advice was correct where it was
+written, copied to two other places, and wrong in the case those places actually meet — the same
+shape as the four instances in this project's log of specifications written from side-effects.
+
+### 7.3 Arc 3, where the agent is the wrong instrument
+
+The spill is invisible by design, so an agent cannot confirm it and neither can this method. Both
+arc-3 agents were asked "will memory be a problem" and both answered honestly that they could not
+tell, offered behavioural evidence, and named the absence — which is the right behaviour and not a
+defect. Verified separately from inside, at an 8 MB budget: residency measured **16.4 MB** after the
+load, the operation that crossed the budget completed, the **next** operation found the database
+moved to a temp file, and the same query returned identical rows either side of the move.
+
+### 7.4 What this method cannot see
+
+Stated so its coverage is not overread. The harness closed off `Read` and `Glob`, so an agent's
+complaint that it could not list a directory before attaching is an artefact of the harness, not of
+the product — a real client has those tools. Both arc-2 agents invented a `save` name rather than
+the obvious one, so the occupied-path refusal was never reached by an agent; its wording is verified
+only by direct execution. And a single run of one model is a sample, not a distribution: what six
+runs establish is that a choice is *reachable*, never that it is *reliable*.
