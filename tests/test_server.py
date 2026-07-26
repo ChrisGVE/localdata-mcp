@@ -17,6 +17,7 @@ import asyncio
 import json
 import re
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -855,3 +856,62 @@ def test_a_saved_database_can_be_described_when_it_comes_back(session):
     described = call("info", nickname="lastweek", table=reopened["tables"][0])
     assert described["ok"] is True
     assert described["columns"]
+
+
+#: Verbs of the v2 surface, which this branch does not implement. Named
+#: explicitly rather than derived: the rule is not "every identifier must be a
+#: tool" — a document may legitimately mention ``avg()`` or ``inspect()`` — it is
+#: that no shipped document may offer a caller a tool that is not there.
+DEPARTED = (
+    "connect_database",
+    "disconnect_database",
+    "execute_query",
+    "execute_query_json",
+    "list_databases",
+    "describe_database",
+    "describe_table",
+    "list_tables",
+    "find_table",
+    "read_text_file",
+    "next_chunk",
+    "get_query_chunk",
+    "analyze_regression",
+    "analyze_time_series",
+    "analyze_clusters",
+)
+
+DEPARTED_CALL = re.compile(r"\b(" + "|".join(DEPARTED) + r")\s*\(")
+
+
+def test_no_shipped_document_offers_a_tool_that_is_gone():
+    """The README was not the only one, and it was not the worst one.
+
+    Sweeping every tracked document rather than the README alone found the issue
+    templates, the Docker guide and the troubleshooting guide still instructing
+    people to call ``connect_database`` and ``execute_query`` — a reader who
+    follows a troubleshooting page into a tool that does not exist has been sent
+    somewhere by us, which is worse than being left to ask.
+
+    ``CHANGELOG.md`` is exempt on purpose: naming a departed tool is what a
+    record of the past is for. ``non_factual/`` is exempt because it is
+    quarantined by construction and says so on its own front page.
+    """
+    root = Path(__file__).parent.parent
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.md"], cwd=root, capture_output=True, text=True
+    ).stdout.split()
+
+    offenders = {}
+    for name in tracked:
+        if name.startswith("non_factual/") or name == "CHANGELOG.md":
+            continue
+        text = (root / name).read_text()
+        # Call-shaped, so a document may still *refer* to a departed tool where
+        # that is the point — LEVEL0 records that `info` absorbed `list_tables`,
+        # which is history rather than an offer. Followed by an open paren, it
+        # is being held out as callable.
+        named = sorted(set(re.findall(DEPARTED_CALL, text)))
+        if named:
+            offenders[name] = named
+
+    assert not offenders, f"documents offering tools that do not exist: {offenders}"

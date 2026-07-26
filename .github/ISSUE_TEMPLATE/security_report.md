@@ -38,12 +38,13 @@ Select the type of security issue:
 ## 🔍 Vulnerability Details
 
 **Affected Component(s)**:
-- [ ] Path security (`_sanitize_path()` method)
-- [ ] SQL query execution (`execute_query`, `execute_query_json`)
-- [ ] Database connection management
-- [ ] File handling (CSV, JSON, YAML, TOML)
-- [ ] Query buffering system
-- [ ] Connection limiting
+- [ ] Path containment (which files the server may read and write)
+- [ ] SQL execution (`query`) — including anything that writes through it
+- [ ] The read-only posture, or the per-attach `writable` grant
+- [ ] Attaching a datasource (`attach`, `add_table`)
+- [ ] Writing files out (`save`, `query` with a `path`)
+- [ ] File handling (CSV, TSV, SQLite)
+- [ ] Slot lifecycle and eviction
 - [ ] Input validation
 - [ ] Other: ___________
 
@@ -54,8 +55,8 @@ A clear description of the security vulnerability. Include technical details but
 
 Provide minimal steps to demonstrate the vulnerability:
 
-1. Setup: `connect_database(...)`
-2. Action: `execute_query(...)`
+1. Setup: `attach(...)`
+2. Action: `query(...)`, or whichever verb is involved
 3. Observe: [security issue manifests]
 
 **Test Environment**:

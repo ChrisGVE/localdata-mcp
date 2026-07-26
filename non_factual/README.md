@@ -24,9 +24,19 @@ product was not built. This branch is a database server with seven verbs (`attac
 describe tools that do not exist, at paths that do not exist, with parameters that were
 never implemented.
 
-The Sphinx build files (`docs/conf.py`, `docs/requirements.txt`) stayed behind, so the
-documentation site currently has almost no content to build. That is a known, deliberate
-state, not an accident.
+> **Resolved (2026-07-26).** The Sphinx build files stayed behind when the rest moved, so
+> the site had almost nothing left to build and `conf.py` excluded pages that were no
+> longer there. `docs/conf.py`, `docs/requirements.txt` and `.readthedocs.yaml` have been
+> deleted, and with them the three include-stubs that were their only remaining content.
+> Nothing is published: the four documents this project ships — `README.md`, `LEVEL0.md`,
+> `CONSTRAINTS.md` and the skill — are read where they live. A generated site for a
+> seven-verb server was a fifth surface to keep current and no reader's shortest path to
+> anything.
+>
+> `TROUBLESHOOTING.md` and `DOCKER_USAGE.md` arrived here at the same time and for the
+> original reason: both described the v2 product end to end. The Docker image itself still
+> ships, so a correct Docker guide is wanted — it is just not this one, and a wrong guide
+> is worse than an absent one.
 
 **One file was removed rather than quarantined:** `docs/architecture/FIRST_PRINCIPLES.md`,
 the v2 "constitutional foundation". This is a public repository and that filename is on

@@ -57,36 +57,25 @@ localdata-mcp --version
 
 ```
 localdata-mcp/
-├── src/localdata_mcp/            # Main package
-│   ├── localdata_mcp.py          # Entry point and MCP tool registration
-│   ├── server/                   # CLI, database manager, query execution
-│   ├── config_manager/           # Configuration loading and validation
-│   ├── connection_manager/       # Database connections and pooling
-│   ├── streaming/                # Memory-bounded query streaming
-│   ├── security/                 # Path restrictions, SQL validation
-│   ├── error_handler/            # Circuit breaker, retry, recovery
-│   ├── file_processor/           # Tabular, Excel, JSON file processors
-│   ├── tree_storage/             # JSON/YAML/TOML tree operations
-│   ├── domains/                  # 8 data science domain modules
-│   ├── pipeline/                 # Data preprocessing and transforms
-│   └── ...                       # Additional modules
-├── tests/                        # Test suite
-│   ├── domains/                  # Domain-specific tests
-│   ├── integration/              # Integration tests (databases, formats)
-│   ├── pipeline/                 # Pipeline tests
-│   └── assets/                   # Test data files
-├── docs/                         # Sphinx documentation (Markdown/MyST)
-├── skills/                       # Claude Code skills, grouped by domain
-│   ├── exploration/              # explore-data, data-quality, find-reference-data
-│   ├── statistical/              # hypothesis-test, ab-test, analyze-correlations, sampling-estimation
-│   ├── modeling/                 # regression, cluster-analysis, forecast, geospatial, optimization, ...
-│   ├── graph-data/               # graph-data-explore
-│   └── workflow/                 # data-pipeline, research-pipeline, process-control
-├── agents/                       # Claude Code agent definitions (one .md per agent)
+├── src/localdata_mcp/            # The whole package — nine modules, no sub-packages
+│   ├── server.py                 # The seven MCP tools, and nothing else
+│   ├── slots.py                  # The registry: nicknames, lifecycle, eviction, spill
+│   ├── loader.py                 # Reading a datasource in, and describing it
+│   ├── dialects.py               # What differs per backend, and only that
+│   ├── binding.py                # Type adapters — see CONSTRAINTS §1
+│   ├── config.py                 # Configuration discovery and validation
+│   ├── paths.py                  # Path containment at the trust boundary
+│   └── export.py                 # Writing a result out
+├── tests/                        # One test module per source module
+│   └── assets/                   # Deliberately hostile test files
+├── docs/
+│   ├── architecture/LEVEL0.md    # The specification: premise, three arcs, seven verbs
+│   └── CONSTRAINTS.md            # Measured behaviour, with the evidence
+├── non_factual/                  # Quarantined prose — see its README before reading
+├── skills/data/local-data/       # The skill that ships with the server
 ├── .claude-plugin/plugin.json    # Claude Code plugin manifest
 ├── server.json                   # MCP registry entry
-├── examples/                     # Runnable examples and sample config files
-├── scripts/                      # Test-data generation and integration-test runners
+├── scripts/                      # Test-data generation
 ├── .github/                      # CI workflows and issue templates
 ├── pyproject.toml                # Project metadata and dependencies
 ├── Dockerfile                    # Container build
@@ -216,12 +205,28 @@ docker-compose down
 
 ## Documentation
 
-The main documentation lives under `docs/` and is built with Sphinx using Markdown (MyST). When adding features:
+There are four documents and each has one job. Update the one that owns what you
+changed, in the same commit as the change — documentation that lags is a defect,
+not a chore:
 
-- Update the relevant page under `docs/`
-- Add connection examples to `docs/data-sources/` for new data sources
-- Add domain documentation to `docs/domains/` for new analytical tools
-- Test code examples to ensure they work
+- **`README.md`** — what the server is and how to use it. Any change to the tool
+  surface lands here.
+- **`docs/architecture/LEVEL0.md`** — the specification. Change it when the
+  design changes, not when the code does.
+- **`docs/CONSTRAINTS.md`** — behaviour established by measurement, with the
+  numbers. Add to it when you measure something that shaped a decision; a
+  constraint nobody recorded is one the next person re-derives.
+- **`skills/data/local-data/SKILL.md`** — how an agent should talk to a user
+  about their data. It ships with the server and is versioned with it, because
+  the two are only correct against each other.
+
+Test the code examples you write. A worked example that does not run is the
+failure mode this project has hit most often — the README taught an addressing
+its own code refused for a full session before a test caught it.
+
+Everything under `non_factual/` is quarantined and unverified by construction.
+Do not cite it, and do not restore anything from it without checking it against
+the code first.
 
 ## Versioning
 
