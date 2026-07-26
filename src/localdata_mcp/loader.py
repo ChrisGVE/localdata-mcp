@@ -50,7 +50,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from itertools import islice
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 from uuid import uuid4
@@ -304,21 +303,28 @@ def _unique_columns(raw_names: list[Any]) -> list[str]:
 _CORE_TYPES = {"INTEGER": INTEGER, "REAL": REAL, "TEXT": TEXT}
 
 
-def _declared_type(dtype: Any) -> str:
-    """Map a pandas dtype to a column type.
+def _declared_type(values: pd.Series) -> str:
+    """Map a column to the type it is declared as.
 
-    An ``object`` column becomes ``TEXT`` rather than being left un-affined.
-    That matters most in joins: ``INTEGER`` affinity on *either* side of a join
-    collapses ``1``, ``1.0``, ``01`` and ``1.00`` into one value and fans the
-    result out, and only all-``TEXT`` returns the truthful row count.
+    Takes the column rather than its dtype because one case cannot be decided
+    from a dtype at all: temporal values inside an ``object`` column are stored
+    as integer ticks, so declaring them ``TEXT`` would have SQLite's affinity
+    turn each tick back into a string (:func:`binding.column_temporal_kind`).
+
+    Otherwise an ``object`` column becomes ``TEXT`` rather than being left
+    un-affined. That matters most in joins: ``INTEGER`` affinity on *either*
+    side of a join collapses ``1``, ``1.0``, ``01`` and ``1.00`` into one value
+    and fans the result out, and only all-``TEXT`` returns the truthful row
+    count.
     """
+    dtype = values.dtype
     if pd.api.types.is_bool_dtype(dtype):
         return "INTEGER"
     if pd.api.types.is_integer_dtype(dtype):
         return "INTEGER"
     if pd.api.types.is_float_dtype(dtype):
         return "REAL"
-    if binding.temporal_kind(dtype) is not None:
+    if binding.column_temporal_kind(values) is not None:
         return "INTEGER"
     return "TEXT"
 
@@ -423,20 +429,6 @@ def read_frame(path: Path) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _blocks(rows: Iterator[dict], size: int) -> Iterator[list[dict]]:
-    """Pull ``size`` rows at a time from a lazy iterator, never more.
-
-    The whole insert-path memory property lives in this function: ``rows`` is
-    never materialised, only ``size`` of it exists at once, and the peak is
-    therefore a function of ``size`` rather than of the file.
-    """
-    while True:
-        block = list(islice(rows, size))
-        if not block:
-            return
-        yield block
-
-
 def _unrepresentable(exc: BaseException) -> binding.UnrepresentableValue | None:
     """Find an unrepresentable-value error anywhere in a raised chain.
 
@@ -466,7 +458,6 @@ class Workspace:
     """
 
     def __init__(self) -> None:
-        binding.install()
         self._tags: dict[str, Tagged] = {}
         self._tables: dict[str, TableInfo] = {}
         #: Distinguishes this workspace's memory databases from any other
@@ -765,7 +756,7 @@ class Workspace:
     ) -> TableInfo:
         entry = self.entry(tag)
         columns = _unique_columns(list(frame.columns))
-        declared = [_declared_type(frame[original].dtype) for original in frame.columns]
+        declared = [_declared_type(frame[original]) for original in frame.columns]
 
         target = Table(
             table,
@@ -781,17 +772,17 @@ class Workspace:
                 target.drop(conn, checkfirst=True)
                 target.create(conn)
                 statement = target.insert()
-                # The row iterator is never materialised — only one chunk of it
+                # The frame is never materialised as rows — only one chunk of it
                 # exists at a time. See the module docstring for the numbers.
-                for block in _blocks(self._rows(frame, columns), _INSERT_CHUNK):
+                for block in self._blocks(frame, columns):
                     conn.execute(statement, block)
         except Exception as exc:
             unrepresentable = _unrepresentable(exc)
             if unrepresentable is not None:
                 raise LoadError(
                     f"{source}: {unrepresentable.reason}. Value "
-                    f"{unrepresentable.value!r} cannot be stored in SQLite "
-                    f"without corrupting it."
+                    f"{unrepresentable.value!r} cannot be stored in a 64-bit "
+                    f"column without corrupting it."
                 ) from exc
             if isinstance(exc, (SQLAlchemyError, OverflowError)):
                 raise LoadError(f"Could not insert rows from {source}: {exc}") from exc
@@ -808,14 +799,23 @@ class Workspace:
         return info
 
     @staticmethod
-    def _rows(frame: pd.DataFrame, columns: list[str]) -> Iterator[dict]:
-        """Frame rows as bind-parameter mappings, lazily.
+    def _blocks(frame: pd.DataFrame, columns: list[str]) -> Iterator[list[dict]]:
+        """Frame rows as bind-parameter mappings, one insertable chunk at a time.
 
         A generator, not a list comprehension: the difference between the two is
         0.81 MB and 511 MB at 800,000 rows.
+
+        Each chunk is converted **by column** rather than by value
+        (:func:`binding.adapt_column`), which is both the driver-independence and
+        the reason the conversion is close to free — a typed column becomes a
+        list of Python natives in one numpy pass. Chunking before converting is
+        what keeps the peak flat: converting the whole column first would
+        materialise exactly what the generator exists to avoid.
         """
-        for row in frame.itertuples(index=False, name=None):
-            yield dict(zip(columns, row))
+        for start in range(0, len(frame), _INSERT_CHUNK):
+            chunk = frame.iloc[start : start + _INSERT_CHUNK]
+            adapted = [binding.adapt_column(chunk[name]) for name in chunk.columns]
+            yield [dict(zip(columns, values)) for values in zip(*adapted)]
 
     # -- inspection --------------------------------------------------------
 
@@ -874,7 +874,7 @@ class Workspace:
                 examples: tuple[str, ...] = ()
                 if frame is not None:
                     series = frame[frame.columns[index]]
-                    kind = binding.temporal_kind(series.dtype)
+                    kind = binding.column_temporal_kind(series)
                     if sql_type == "TEXT":
                         numeric, non_numeric, examples = _numeric_split(series)
                 described.append(

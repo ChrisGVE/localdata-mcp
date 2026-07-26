@@ -1,4 +1,4 @@
-"""Value binding between pandas/numpy and SQLite.
+"""Value binding between pandas/numpy and whatever database is underneath.
 
 **Read `docs/CONSTRAINTS.md` §1 before changing anything in this file.** Every
 adapter below exists because the un-adapted value was measured doing something
@@ -20,17 +20,18 @@ The short version:
   even with adapters registered, because it is genuinely out of range) and
   Python `int` wider than 64 bits.
 
-Registration is **process-global** — `sqlite3.register_adapter` has no per-
-connection scope. That is acceptable here because this package owns its process
-(an MCP server speaking stdio), but it means a library embedding us would
-inherit these adapters. `install()` is therefore explicit and idempotent rather
-than an import side effect.
+**Nothing here registers anything with a driver.** These conversions used to be
+`sqlite3.register_adapter` entries, which made the correctness of a load depend
+on a process-global registry belonging to one driver — and left every other
+backend unprotected against the very failures listed above, since a PostgreSQL
+or DuckDB driver is handed the same numpy scalars. Values are now converted at
+the frame boundary, before any driver sees them, so the protection is the same
+whatever answers.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
-import sqlite3
 from decimal import Decimal
 from typing import Any
 
@@ -41,7 +42,8 @@ __all__ = [
     "EPOCH",
     "TICK_UNIT",
     "UnrepresentableValue",
-    "install",
+    "adapt_column",
+    "adapt_value",
     "temporal_kind",
     "to_timestamp",
     "to_timedelta",
@@ -133,6 +135,52 @@ def temporal_kind(dtype: Any) -> str | None:
     return None
 
 
+#: Value types that become ticks. Kept beside the dispatch table above, which is
+#: what actually converts them, so the two cannot drift apart.
+_INSTANTS = (_dt.date, _dt.datetime, _dt.time, pd.Timestamp, np.datetime64)
+_DURATIONS = (pd.Timedelta, np.timedelta64)
+
+
+def column_temporal_kind(values: pd.Series) -> str | None:
+    """Name a *column's* temporal semantics, looking at values when it must.
+
+    A dtype is not always enough, and the gap was a real defect rather than a
+    nicety. A ``datetime.date`` or ``np.datetime64`` sitting in an ``object``
+    column — which is what an Excel date cell and a CSV pandas declined to parse
+    both produce — has dtype ``object``. It was therefore declared ``TEXT``,
+    and SQLite's TEXT affinity stored the integer ticks *as a string*: ``max()``
+    picked the lexically-largest and ``ORDER BY`` sorted wrong. That is the exact
+    failure `CONSTRAINTS` §1.4 says the tick representation exists to prevent,
+    reintroduced one layer up by the declaration.
+
+    The scan exits at the first value that is not temporal, so an ordinary text
+    column pays for one comparison.
+    """
+    by_dtype = temporal_kind(values.dtype)
+    if by_dtype is not None:
+        return by_dtype
+    if values.dtype != object:
+        return None
+
+    kind: str | None = None
+    for value in values:
+        if value is None or value is pd.NA or value is pd.NaT:
+            continue
+        if isinstance(value, _DURATIONS):
+            seen = "duration"
+        elif isinstance(value, _INSTANTS):
+            seen = "timestamp"
+        else:
+            return None
+        # Instants and durations in one column are not a temporal column; they
+        # are a mixed one, and mixing their ticks would compare epochs against
+        # elapsed time.
+        if kind is not None and kind != seen:
+            return None
+        kind = seen
+    return kind
+
+
 # ---------------------------------------------------------------------------
 # Adapters
 # ---------------------------------------------------------------------------
@@ -215,57 +263,117 @@ def _adapt_decimal(value: Decimal) -> float:
     return float(value)
 
 
-_installed = False
+#: Exact type to the conversion it needs, keyed the way the driver registry used
+#: to be: on ``type(value)`` rather than ``isinstance``. ``bool`` is here in its
+#: own right because it subclasses ``int`` and would otherwise be stored as one,
+#: and ``datetime`` is here separately from ``date`` for the same reason.
+_BY_TYPE: dict[type, Any] = {
+    np.int8: _adapt_int,
+    np.int16: _adapt_int,
+    np.int32: _adapt_int,
+    np.int64: _adapt_int,
+    np.uint8: _adapt_int,
+    np.uint16: _adapt_int,
+    np.uint32: _adapt_int,
+    # The one integer width that can leave the representable range, so it
+    # carries a check the others do not need.
+    np.uint64: _adapt_uint64,
+    np.float16: _adapt_float,
+    np.float32: _adapt_float,
+    np.float64: _adapt_float,
+    np.bool_: _adapt_bool,
+    bool: _adapt_bool,
+    # pandas' two missing markers. Passed through, both reach the driver as
+    # objects it has never heard of.
+    type(pd.NA): _adapt_missing,
+    type(pd.NaT): _adapt_missing,
+    pd.Timestamp: _adapt_datetime64,
+    pd.Timedelta: _adapt_timedelta64,
+    np.datetime64: _adapt_datetime64,
+    np.timedelta64: _adapt_timedelta64,
+    _dt.datetime: _adapt_datetime64,
+    _dt.date: _adapt_date,
+    _dt.time: _adapt_time,
+    Decimal: _adapt_decimal,
+}
 
 
-def install() -> None:
-    """Register every adapter. Idempotent; safe to call from multiple entry points.
+def adapt_value(value: Any) -> Any:
+    """One value, converted to something any driver can bind.
 
-    Deliberately explicit rather than an import side effect — the registry is
-    process-global and silently mutating it on import would be a surprise to any
-    caller that embeds this package.
+    The fallback path, for a column whose dtype is ``object`` and whose values
+    therefore have to be looked at one at a time. A column with a real dtype
+    goes through :func:`adapt_column` instead and never arrives here.
     """
-    global _installed
-    if _installed:
-        return
+    handler = _BY_TYPE.get(type(value))
+    if handler is not None:
+        return handler(value)
+    if value is None:
+        return None
+    if type(value) is int and not _INT64_MIN <= value <= _INT64_MAX:
+        # Refused rather than passed on: it is wider than a 64-bit column can
+        # hold, and every backend either truncates it or raises from inside the
+        # driver, where the message names neither the column nor the value.
+        raise UnrepresentableValue(value, "integer wider than the 64-bit range")
+    if isinstance(value, np.generic):
+        # A numpy scalar we did not name. ``item()`` is numpy's own answer for
+        # "give me the Python equivalent", so this stays correct as numpy grows
+        # types rather than silently storing the next one as a blob.
+        return value.item()
+    return value
 
-    integer_types = [
-        np.int8,
-        np.int16,
-        np.int32,
-        np.int64,
-        np.uint8,
-        np.uint16,
-        np.uint32,
-    ]
-    for np_type in integer_types:
-        sqlite3.register_adapter(np_type, _adapt_int)
 
-    # Separate: this is the one integer width that can leave the representable
-    # range, so it carries a check the others do not need.
-    sqlite3.register_adapter(np.uint64, _adapt_uint64)
+def adapt_column(values: pd.Series) -> list[Any]:
+    """A whole column, converted, in one pass rather than one value at a time.
 
-    for np_type in (np.float16, np.float32, np.float64):
-        sqlite3.register_adapter(np_type, _adapt_float)
+    **This is where the driver-independence lives.** Every conversion below used
+    to be a ``sqlite3.register_adapter`` entry, which meant two things that were
+    both wrong: the correctness of a load depended on a *process-global* registry
+    belonging to one driver, and any other backend — PostgreSQL, DuckDB — got no
+    conversion at all and would have stored the same silent blobs that
+    ``CONSTRAINTS`` §1 measured. Converting here, before a value is ever handed
+    to a driver, is the same protection for every backend at once.
 
-    sqlite3.register_adapter(np.bool_, _adapt_bool)
-    sqlite3.register_adapter(bool, _adapt_bool)
+    Typed columns are converted with numpy rather than per value, so the common
+    case never pays for the dispatch. ``object`` columns fall back to
+    :func:`adapt_value`, which is the only case that genuinely needs to look at
+    each value.
+    """
+    dtype = values.dtype
+    missing = values.isna().to_numpy()
 
-    # pandas' two missing markers. Un-adapted, both raise mid-insert.
-    sqlite3.register_adapter(type(pd.NA), _adapt_missing)
-    sqlite3.register_adapter(type(pd.NaT), _adapt_missing)
+    if pd.api.types.is_datetime64_any_dtype(dtype):
+        instants = values
+        if getattr(dtype, "tz", None) is not None:
+            # To UTC first: the offset is deliberately not preserved, because
+            # the same instant written in two offsets must compare equal.
+            instants = instants.dt.tz_convert("UTC").dt.tz_localize(None)
+        converted = instants.to_numpy("datetime64[ns]").view("int64").tolist()
+    elif pd.api.types.is_timedelta64_dtype(dtype):
+        converted = values.to_numpy("timedelta64[ns]").view("int64").tolist()
+    elif pd.api.types.is_bool_dtype(dtype):
+        converted = values.to_numpy(dtype="int8", na_value=0).tolist()
+    elif pd.api.types.is_integer_dtype(dtype):
+        converted = _integers(values, dtype)
+    elif pd.api.types.is_float_dtype(dtype):
+        converted = values.to_numpy(dtype="float64", na_value=np.nan).tolist()
+    else:
+        return [adapt_value(value) for value in values]
 
-    sqlite3.register_adapter(pd.Timestamp, _adapt_datetime64)
-    sqlite3.register_adapter(pd.Timedelta, _adapt_timedelta64)
-    sqlite3.register_adapter(np.datetime64, _adapt_datetime64)
-    sqlite3.register_adapter(np.timedelta64, _adapt_timedelta64)
+    # One mask for every typed branch. ``isna`` is what recognises NaN, NaT,
+    # None and ``pd.NA`` alike, and the null has to be restored *after* the
+    # conversion because each of those becomes a sentinel number on the way
+    # through — NaT views as the smallest int64 there is.
+    return [None if absent else value for value, absent in zip(converted, missing)]
 
-    # `datetime` before `date`: datetime subclasses date, but the registry keys
-    # on exact type, so both need their own entry.
-    sqlite3.register_adapter(_dt.datetime, _adapt_datetime64)
-    sqlite3.register_adapter(_dt.date, _adapt_date)
-    sqlite3.register_adapter(_dt.time, _adapt_time)
 
-    sqlite3.register_adapter(Decimal, _adapt_decimal)
-
-    _installed = True
+def _integers(values: pd.Series, dtype: Any) -> list[int]:
+    """An integer column, refusing any value the 64-bit range cannot hold."""
+    if not pd.api.types.is_signed_integer_dtype(dtype):
+        present = values.dropna()
+        if len(present) and int(present.max()) > _INT64_MAX:
+            offending = present[present > _INT64_MAX].iloc[0]
+            raise UnrepresentableValue(
+                offending, "unsigned 64-bit value exceeds the signed INTEGER range"
+            )
+    return values.to_numpy(dtype="int64", na_value=0).tolist()
