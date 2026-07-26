@@ -288,12 +288,11 @@ def test_the_export_ignores_the_display_limit(session):
     assert result["rows_written"] == 5
 
 
-def test_the_export_refuses_to_clobber_and_offers_no_flag(session):
-    """The refusal names the file and points at the user, not at a flag.
+def test_the_export_refuses_to_clobber_then_takes_the_users_answer(session):
+    """The refusal has to read as a question, or the agent just retries.
 
-    An agent that could set overwrite=true would set it, having relayed a path
-    the user chose rather than chosen one itself. So the flag does not exist on
-    the tool surface, and the message tells the agent whose call it is.
+    It relayed a path the user chose rather than choosing one, so replacing what
+    is there is the user's call — and force is how that answer comes back.
     """
     call("attach", database=str(session / "simple.csv"), nickname="staff")
     target = session / "out.csv"
@@ -306,19 +305,36 @@ def test_the_export_refuses_to_clobber_and_offers_no_flag(session):
         path=str(target),
     )
     assert refused["ok"] is False
-    assert "will not replace it" in refused["error"]
-    assert "Tell the user" in refused["error"]
+    assert "Ask the user" in refused["error"]
     assert target.read_text() == "existing content\n"
 
-    with pytest.raises(Exception):
-        call(
-            "query",
-            nickname="staff",
-            sql="SELECT name FROM staff.simple",
-            path=str(target),
-            overwrite=True,
-        )
-    assert target.read_text() == "existing content\n"
+    forced = call(
+        "query",
+        nickname="staff",
+        sql="SELECT name FROM staff.simple",
+        path=str(target),
+        force=True,
+    )
+    assert forced["ok"] is True
+    assert target.read_text().splitlines()[0] == "name"
+
+
+def test_an_export_will_not_be_forced_over_an_attached_file(session):
+    """force is the user's consent to lose a spare file, nothing more."""
+    source = session / "simple.csv"
+    call("attach", database=str(source), nickname="staff")
+    before = source.read_text()
+
+    refused = call(
+        "query",
+        nickname="staff",
+        sql="SELECT name FROM staff.simple",
+        path=str(source),
+        force=True,
+    )
+    assert refused["ok"] is False
+    assert "'staff'" in refused["error"]
+    assert source.read_text() == before
 
 
 # ---------------------------------------------------------------------------
@@ -544,20 +560,29 @@ def test_saving_then_attaching_again_brings_the_whole_session_back(session):
     assert answer["rows"] == [["a", 30], ["b", 80]]
 
 
-def test_saving_refuses_an_existing_file_and_has_no_override(session):
+def test_saving_refuses_an_existing_file_until_the_user_says_replace_it(session):
     call("attach", database=str(session / "simple.csv"), nickname="staff")
     target = session / "keep.db"
     call("save", nickname="staff", path=str(target))
-    kept = target.read_bytes()
 
     refused = call("save", nickname="staff", path=str(target))
     assert refused["ok"] is False
-    assert "will not replace it" in refused["error"]
+    assert "Ask the user" in refused["error"]
 
-    with pytest.raises(Exception):
-        call("save", nickname="staff", path=str(target), overwrite=True)
+    assert call("save", nickname="staff", path=str(target), force=True)["ok"] is True
 
-    assert target.read_bytes() == kept
+
+def test_saving_will_not_be_forced_over_the_file_it_came_from(session):
+    """The sharpest case: the slot's own source. Unlinking it would succeed
+    while the slot carried on answering from an inode with no name."""
+    source = session / "simple.csv"
+    call("attach", database=str(source), nickname="staff")
+
+    refused = call("save", nickname="staff", path=str(source), force=True)
+
+    assert refused["ok"] is False
+    assert "'staff'" in refused["error"]
+    assert source.exists()
 
 
 # ---------------------------------------------------------------------------

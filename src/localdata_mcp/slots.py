@@ -612,7 +612,30 @@ class Registry:
         except LoadError as exc:
             raise SlotError(str(exc)) from exc
 
-    def save(self, nickname: str, path: str) -> Path:
+    def claimed_paths(self) -> dict[Path, str]:
+        """Every file a live slot is sitting on, mapped to its nickname.
+
+        Two kinds, and both matter for the same reason — something is reading
+        them right now. A slot's original source (the SQLite file it attached,
+        or the flat file it was built from and would be rebuilt from after an
+        eviction), and the temp file a spilled slot moved into.
+
+        Sources that are not filesystem paths — a database URL behind an engine
+        slot — resolve to nothing here and simply do not appear.
+        """
+        claimed: dict[Path, str] = {}
+        for slot in self._slots.values():
+            if slot.spill_path is not None:
+                claimed[slot.spill_path] = slot.nickname
+            if url_scheme(slot.source) is not None:
+                continue
+            try:
+                claimed[Path(slot.source).expanduser().resolve()] = slot.nickname
+            except (OSError, ValueError):
+                continue
+        return claimed
+
+    def save(self, nickname: str, path: str, *, force: bool = False) -> Path:
         """Write a slot's database out to a path the caller chose.
 
         The escape from ephemerality: a database built in memory, or moved to a
@@ -623,6 +646,10 @@ class Registry:
         nickname, with the same write access it had. Re-attaching the saved file
         later is an ordinary attach, which is why it comes back read-only unless
         write is granted again.
+
+        ``force`` replaces a file already at the path, and carries the *user's*
+        decision to lose it. It does not extend to a file some live slot is
+        sitting on, including this one's own source — that stays refused.
         """
         slot = self.slot(nickname)
         if slot.engine is not None:
@@ -633,7 +660,7 @@ class Registry:
             )
 
         try:
-            target = resolve_write_path(path)
+            target = resolve_write_path(path, force=force, claimed=self.claimed_paths())
         except PathNotAllowed as exc:
             raise SlotError(str(exc)) from exc
 

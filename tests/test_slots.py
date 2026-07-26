@@ -987,12 +987,11 @@ def test_saving_keeps_the_slot_answering_and_writable(registry, root):
     assert rows == [(3,)]
 
 
-def test_saving_refuses_an_existing_file_and_leaves_it_untouched(registry, root):
-    """A second save to the same name must not cost the user the first one.
+def test_saving_refuses_an_existing_file_then_replaces_it_when_forced(registry, root):
+    """A second save must not cost the user the first one by accident.
 
-    There is deliberately no overwrite parameter to reach for: the path came
-    from the user via an agent, so replacing what is there is not the agent's
-    call to make.
+    The path came from the user via an agent, so replacing what is there is the
+    user's decision — `force` is that decision arriving, not the agent's own.
     """
     csv_at(root / "sales.csv")
     registry.attach(str(root / "sales.csv"), "shop")
@@ -1001,13 +1000,38 @@ def test_saving_refuses_an_existing_file_and_leaves_it_untouched(registry, root)
 
     registry.query("shop", "INSERT INTO shop.sales VALUES ('c', 9)")
 
-    with pytest.raises(SlotError, match="will not replace it"):
+    with pytest.raises(SlotError, match="Ask the user"):
         registry.save("shop", str(root / "keep.db"))
-
-    with pytest.raises(TypeError):
-        registry.save("shop", str(root / "keep.db"), overwrite=True)
-
     assert saved.read_bytes() == kept
+
+    replaced = registry.save("shop", str(root / "keep.db"), force=True)
+    connection = sqlite3.connect(replaced)
+    try:
+        assert connection.execute("SELECT count(*) FROM sales").fetchone()[0] == 3
+    finally:
+        connection.close()
+
+
+def test_forcing_a_save_over_a_live_slots_own_file_is_refused(registry, root):
+    """Not the same slot only — any live slot's file, including a spilled one.
+
+    The unlink would succeed and the slot would keep answering from an unnamed
+    inode, so the divergence would never surface as an error.
+    """
+    csv_at(root / "sales.csv")
+    csv_at(root / "prices.csv")
+    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "prices.csv"), "wh")
+
+    for target, holder in ((root / "sales.csv", "shop"), (root / "prices.csv", "wh")):
+        with pytest.raises(SlotError, match=f"'{holder}'"):
+            registry.save("shop", str(target), force=True)
+        assert target.exists()
+
+    assert registry.claimed_paths() == {
+        (root / "sales.csv").resolve(): "shop",
+        (root / "prices.csv").resolve(): "wh",
+    }
 
 
 def test_a_saved_file_is_not_world_readable(registry, root):

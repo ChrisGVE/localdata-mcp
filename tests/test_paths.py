@@ -189,20 +189,38 @@ def test_a_write_into_a_configured_root_is_allowed(tmp_path):
     assert resolve_write_path(str(root / "out.csv")) == (root / "out.csv").resolve()
 
 
-def test_an_existing_file_is_refused_with_no_way_to_override(tmp_path):
-    """There is no overwrite flag, by design.
+def test_an_existing_file_is_refused_until_forced(tmp_path):
+    """The refusal asks a question; ``force`` carries back the user's answer.
 
-    A destination is a name the user chose and an agent relayed. Consent to
-    destroy what sits there is the user's to give, outside this server, so the
-    refusal has no parameter that defeats it — and it says so.
+    A destination is a name the user chose and an agent relayed, so replacing
+    what sits there is the user's call. The message has to read as a decision to
+    put to them rather than a retry to make — otherwise an agent simply retries.
     """
-    make(Path("report.csv"))
+    existing = make(Path("report.csv"))
 
-    with pytest.raises(PathNotAllowed, match="will not replace it"):
+    with pytest.raises(PathNotAllowed) as refusal:
         resolve_write_path("report.csv")
+    assert "Ask the user" in str(refusal.value)
 
-    with pytest.raises(TypeError):
-        resolve_write_path("report.csv", overwrite=True)
+    assert resolve_write_path("report.csv", force=True) == existing.resolve()
+    assert not existing.exists(), "force clears the way, so callers may just write"
+
+
+def test_a_file_a_slot_is_sitting_on_is_refused_even_with_force(tmp_path):
+    """``force`` is authority over the user's spare files, not over open state.
+
+    Deleting a file an attached datasource is reading would succeed on POSIX
+    while that slot went on answering from an unnamed inode — a divergence
+    nothing would report.
+    """
+    held = make(Path("sales.csv"))
+    claimed = {held.resolve(): "shop"}
+
+    with pytest.raises(PathNotAllowed) as refusal:
+        resolve_write_path("sales.csv", force=True, claimed=claimed)
+
+    assert "'shop'" in str(refusal.value)
+    assert held.exists()
 
 
 def test_a_write_through_a_symlink_leaving_scope_is_refused(tmp_path):

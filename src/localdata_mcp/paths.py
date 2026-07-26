@@ -13,20 +13,28 @@ Three rules do the work:
   it. An MCP client launches this server somewhere deliberate, so the common
   case needs no configuration at all; ``paths.roots`` adds to that rather than
   replacing it.
-* **Never overwrite, and offer no way to.** A destination path is the *user's*
-  choice, relayed through the agent — so the authority to destroy what is
-  already there is the user's too, and cannot be delegated to a parameter the
-  agent sets. An existing target is refused, full stop. If the user wants that
-  file replaced they clear it or name another, outside this server.
+* **Never overwrite by default; replace only when told to.** A destination path
+  is the *user's* choice, relayed through an agent, so the decision to destroy
+  what is already there is the user's as well. ``force`` carries that decision
+  in — it is the user's answer, not the agent's judgement, which is why the
+  refusal names the file and says who has to be asked rather than reading as an
+  instruction to retry.
+* **A file some slot is living on is never a target, force or not.** Deleting
+  it would pull the ground out from under a datasource that is currently
+  attached, and on POSIX the unlink would *succeed* while that slot went on
+  answering from an inode with no name — a divergence nothing would report.
+  ``force`` is authority over the user's own spare files; it is not authority
+  to break this server's open state.
 
 ``paths.path_limited = false`` switches containment off, and nothing else. It
-does not relax the overwrite refusal, which guards against a different accident
-and stays in force regardless.
+relaxes neither of the two rules above, which guard against different accidents
+and stay in force regardless.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Mapping
 
 from . import config
 
@@ -84,12 +92,21 @@ def resolve_read_path(raw: str) -> Path:
     return path
 
 
-def resolve_write_path(raw: str) -> Path:
-    """Resolve a path to write, refusing an existing target.
+def resolve_write_path(
+    raw: str,
+    *,
+    force: bool = False,
+    claimed: Mapping[Path, str] | None = None,
+) -> Path:
+    """Resolve a path to write, clearing an existing target only if forced.
 
     ``strict=False`` on the resolve is deliberate: the target usually does not
     exist yet, which is not an error. Containment is still checked against the
     fully-resolved path, so a ``..`` escape or a symlinked parent is caught.
+
+    ``claimed`` maps the files live slots are sitting on to the nickname of the
+    slot holding each. Those are refused as targets whatever ``force`` says.
+    Returns a path with nothing at it, so every caller may simply write.
     """
     try:
         path = Path(raw).expanduser().resolve(strict=False)
@@ -102,12 +119,29 @@ def resolve_write_path(raw: str) -> Path:
     if not parent.is_dir():
         raise PathNotAllowed(f"Directory does not exist: {parent}")
 
-    if path.exists():
-        # No overwrite flag to offer here on purpose: the agent is relaying a
-        # name the user chose and cannot consent to destroying what is at it.
+    holder = (claimed or {}).get(path)
+    if holder is not None:
+        # Checked before `force`, deliberately: force is the user's consent to
+        # lose a file of their own, never consent to cut a live slot loose.
         raise PathNotAllowed(
-            f"{path} already exists and this server will not replace it. Tell "
-            f"the user, and write to a different name unless they clear it."
+            f"{path} is the file {holder!r} is attached to, so writing over it "
+            f"would break that datasource while it carried on answering. "
+            f"Detach {holder!r} first, or choose another name."
         )
+
+    if path.exists():
+        if not force:
+            # The wording asks for a decision rather than announcing a retry:
+            # the agent is relaying a name the user chose, so replacing what is
+            # there is the user's call and has to be put to them.
+            raise PathNotAllowed(
+                f"{path} already exists. Ask the user whether to replace it — "
+                f"if they say yes, call again with force=true; otherwise write "
+                f"to a different name."
+            )
+        if not path.is_file():
+            # A directory, socket or device would not be replaced by a write.
+            raise PathNotAllowed(f"Refusing to replace a non-file: {path}")
+        path.unlink()
 
     return path

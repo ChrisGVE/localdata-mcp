@@ -107,9 +107,10 @@ save("sales", "./analysis.db")
 Attaching that file again later is an ordinary attach, so it comes back
 **read-only** unless you pass `writable=true`.
 
-An existing file is refused, and there is no flag to override that. The
-destination is a name a person chose; deciding to destroy what is already there
-is theirs to make, not the agent's — so clearing it happens outside this server.
+An existing file is refused. The destination is a name a person chose, so
+whether to replace what is already there is their decision — ask, and pass
+`force=true` once they have said yes. A file an attached datasource is sitting
+on is refused either way, forced or not.
 
 ## What it will not do
 

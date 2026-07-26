@@ -437,15 +437,26 @@ An earlier draft of this section conflated two separate questions — *whether* 
 target, and *who* enforces the refusal — and got both answers from the same place. They are
 unrelated.
 
-**Whether: always, and no parameter defeats it.** The earlier answer was "require an explicit
-`overwrite=True`", which is wrong here for a reason that has nothing to do with SQLite. A
-destination path in this server arrives from an LLM relaying a name the *user* chose. The agent
-therefore has no standing to consent to destroying whatever sits at that name — and an `overwrite`
-flag is exactly that consent, handed to the party that cannot give it. Worse, offering the flag
-invites its use: the refusal message used to end "Pass overwrite=true to replace it", which reads
-as an instruction. So there is no flag. An existing target is refused, the message names the file
-and points at the user, and the destructive act — clearing the old file, or picking another name —
-happens outside this server where the authority actually lives.
+**Whether: refuse by default, and let the user's answer come back as `force`.** A destination path
+in this server arrives from an LLM relaying a name the *user* chose, so consent to destroy whatever
+sits at that name is the user's to give. `force` is how that consent travels — the user was asked
+and said yes, and the round trip is spared.
+
+What makes this different from the `overwrite=True` it replaces is **the wording of the refusal.**
+The old message ended `"Pass overwrite=true to replace it"`, which reads as an instruction to the
+agent, and an agent will take it — the flag then quietly becomes the agent's own judgement. The
+message now names the file and says *"Ask the user whether to replace it — if they say yes, call
+again with force=true"*: a decision to put to somebody, not a retry to make. The parameter is the
+same shape; who it is understood to speak for is not. There is a test asserting on that wording,
+because the wording is the guard.
+
+**And `force` has a hard limit: a file some live slot is sitting on is refused regardless.** That
+covers every attached SQLite database, every flat file a slot was built from and would be rebuilt
+from after eviction, and every spill file — `Registry.claimed_paths()`. The failure mode if it were
+allowed is silent: on POSIX the unlink *succeeds*, the holding slot keeps answering from an inode
+with no name, and nothing anywhere reports that the file the user believes they are looking at has
+diverged from the datasource. `force` is authority over the user's spare files; it is not authority
+over this server's open state.
 
 **Who: the path boundary, never SQLite.** `VACUUM INTO` does refuse *some* existing targets, and
 the earlier draft leaned on that. It does not hold. Measured across three target states:

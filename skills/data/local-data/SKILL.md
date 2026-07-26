@@ -107,10 +107,14 @@ Writes the whole database — every table added — to a file they own. It stays
 open afterwards. Attaching it again another day is an ordinary `attach`, so it
 comes back **read-only** unless they pass `writable=true`.
 
-**The path is theirs, not yours.** Ask for the name rather than inventing one,
-and if `save` reports the file already exists, that refusal is final — there is
-no flag to force it. Tell them what is in the way and let them choose: a
-different name, or clearing the old file themselves.
+**The path is theirs, not yours.** Ask for the name rather than inventing one.
+If `save` reports the file already exists, that is a question for them, not a
+retry for you — say what is in the way and ask. Once they say replace it, pass
+`force=true`. Never set it because a first attempt failed.
+
+A file that some attached datasource is sitting on is refused even with
+`force`, including the one the slot was built from. If you hit that, the name
+is wrong, not the flag.
 
 ## The naming conversation
 

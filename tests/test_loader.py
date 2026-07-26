@@ -472,19 +472,32 @@ def test_export_refuses_an_existing_file(workspace, root):
     assert target.read_text() == "do not lose me\n"
 
 
-def test_export_offers_no_way_to_replace_an_existing_file(workspace, root):
-    """The refusal is absolute: no parameter an agent can set defeats it.
-
-    The destination is a name the *user* chose and the agent only relayed, so
-    the agent has no standing to consent to destroying what is already there.
-    """
+def test_export_replaces_only_when_forced(workspace, root):
     target = root / "out.csv"
     target.write_text("stale\n")
 
-    with pytest.raises(TypeError):
-        export_module.export_csv(["a"], [(1,)], str(target), overwrite=True)
+    result = export_module.export_csv(["a"], [(1,), (2,)], str(target), force=True)
 
-    assert target.read_text() == "stale\n"
+    assert result.row_count == 2
+    assert target.read_text().splitlines() == ["a", "1", "2"]
+
+
+def test_export_will_not_force_over_a_file_a_slot_is_sitting_on(workspace, root):
+    """Even forced. The user consented to lose a spare file, not to cut a slot
+    loose from the file it is reading."""
+    source = root / "simple.csv"
+    before = source.read_text()
+
+    with pytest.raises(PathNotAllowed, match="attached to"):
+        export_module.export_csv(
+            ["a"],
+            [(1,)],
+            str(source),
+            force=True,
+            claimed={source.resolve(): "simple"},
+        )
+
+    assert source.read_text() == before
 
 
 def test_export_is_owner_readable_only(workspace, root):

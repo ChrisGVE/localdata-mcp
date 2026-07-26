@@ -2,11 +2,10 @@
 
 Two decisions worth stating, because both are refusals:
 
-* **An existing file is never replaced, and there is no flag to make it so.**
-  The destination is a name the user chose and relayed through an agent, which
-  leaves the agent no standing to consent to destroying what is already there
-  (``paths``). A refusal costs a retry under another name; a replacement is
-  unrecoverable.
+* **An existing file is replaced only when ``force`` says so**, and ``force``
+  means the user was asked and answered — the destination is a name they chose
+  and the agent relayed (``paths``). A file some live slot is sitting on is
+  refused regardless.
 * **Exports are created ``0o600``.** A file written by SQLite lands ``0o644`` by
   default, world-readable on a shared host, containing the user's actual data.
   Rows leaving a database are exactly the payload that should not be readable by
@@ -23,7 +22,7 @@ import csv
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from .paths import resolve_write_path
 
@@ -44,12 +43,16 @@ def export_csv(
     columns: Sequence[str],
     rows: Iterable[Sequence[object]],
     raw_path: str,
+    *,
+    force: bool = False,
+    claimed: Mapping[Path, str] | None = None,
 ) -> ExportResult:
     """Write ``rows`` to ``raw_path`` as CSV.
 
-    Refuses an existing target, and refuses any path outside the allowed root.
+    Refuses a path outside the allowed root, a file a live slot is sitting on,
+    and an existing file unless ``force``.
     """
-    path = resolve_write_path(raw_path)
+    path = resolve_write_path(raw_path, force=force, claimed=claimed)
 
     written = 0
     # Open through a file descriptor so the mode is set at creation rather than
@@ -64,8 +67,8 @@ def export_csv(
                 written += 1
     except Exception:
         # A partial file is worse than none: it looks like a complete export.
-        # Safe to delete unconditionally — an existing target was refused above,
-        # so this file is one we just created.
+        # Safe to delete unconditionally — resolve_write_path returns a path
+        # with nothing at it, so this file is one we just created.
         _remove_quietly(path)
         raise
 

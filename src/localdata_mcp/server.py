@@ -357,6 +357,7 @@ def query(
     sql: str,
     limit: int = 100,
     path: str | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Run SQL against a datasource, returning rows or writing them to a file.
 
@@ -374,8 +375,10 @@ def query(
         limit: Maximum rows to return. Use 0 for no limit. Ignored when writing
             to a file, which always receives the whole result.
         path: Write the full result to this CSV file instead of returning rows.
-            An existing file is refused — the path is the user's to choose, so
-            report the refusal and let them decide.
+        force: Replace the file if it is already there. Set this only after the
+            user has said to — the path is theirs, so the refusal you get
+            without it is a question to put to them, not a retry to make. A file
+            an attached datasource is sitting on is refused either way.
     """
     with _lock:
         registry = _session()
@@ -398,7 +401,9 @@ def query(
             }
 
         try:
-            result = export_csv(columns, rows, path)
+            result = export_csv(
+                columns, rows, path, force=force, claimed=registry.claimed_paths()
+            )
         except PathNotAllowed as exc:
             return _failed(exc)
         except OSError as exc:
@@ -490,7 +495,7 @@ def drop_table(nickname: str, table: str) -> dict[str, Any]:
 
 
 @mcp.tool
-def save(nickname: str, path: str) -> dict[str, Any]:
+def save(nickname: str, path: str, force: bool = False) -> dict[str, Any]:
     """Write a datasource out to a SQLite file the user keeps.
 
     Everything attached is otherwise ephemeral — it dies on detach and when this
@@ -503,14 +508,16 @@ def save(nickname: str, path: str) -> dict[str, Any]:
 
     Args:
         nickname: The datasource to write out.
-        path: Destination file, within the allowed paths. The user chooses this
-            name, so an existing file is refused rather than replaced: report
-            the refusal and let them pick a name or clear the old file.
+        path: Destination file, within the allowed paths.
+        force: Replace the file if it is already there. Set this only after the
+            user has said to — the name is theirs, so the refusal you get
+            without it is a question to put to them, not a retry to make. A file
+            an attached datasource is sitting on is refused either way.
     """
     with _lock:
         registry = _session()
         try:
-            written = registry.save(nickname, path)
+            written = registry.save(nickname, path, force=force)
             tables = registry.tables(nickname)
         except (SlotError, PathNotAllowed) as exc:
             return _failed(exc)
