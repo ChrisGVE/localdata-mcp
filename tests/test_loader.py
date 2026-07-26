@@ -459,7 +459,6 @@ def test_export_writes_the_rows(workspace, root):
     result = export_module.export_csv(columns, rows, str(target))
 
     assert result.row_count == 5
-    assert result.replaced_existing is False
     written = target.read_text().splitlines()
     assert written[0] == "name,salary"
     assert len(written) == 6
@@ -473,12 +472,19 @@ def test_export_refuses_an_existing_file(workspace, root):
     assert target.read_text() == "do not lose me\n"
 
 
-def test_export_replaces_when_told_to(workspace, root):
+def test_export_offers_no_way_to_replace_an_existing_file(workspace, root):
+    """The refusal is absolute: no parameter an agent can set defeats it.
+
+    The destination is a name the *user* chose and the agent only relayed, so
+    the agent has no standing to consent to destroying what is already there.
+    """
     target = root / "out.csv"
     target.write_text("stale\n")
-    result = export_module.export_csv(["a"], [(1,), (2,)], str(target), overwrite=True)
-    assert result.replaced_existing is True
-    assert target.read_text().splitlines() == ["a", "1", "2"]
+
+    with pytest.raises(TypeError):
+        export_module.export_csv(["a"], [(1,)], str(target), overwrite=True)
+
+    assert target.read_text() == "stale\n"
 
 
 def test_export_is_owner_readable_only(workspace, root):

@@ -612,7 +612,7 @@ class Registry:
         except LoadError as exc:
             raise SlotError(str(exc)) from exc
 
-    def save(self, nickname: str, path: str, *, overwrite: bool = False) -> Path:
+    def save(self, nickname: str, path: str) -> Path:
         """Write a slot's database out to a path the caller chose.
 
         The escape from ephemerality: a database built in memory, or moved to a
@@ -633,15 +633,9 @@ class Registry:
             )
 
         try:
-            target = resolve_write_path(path, overwrite=overwrite)
+            target = resolve_write_path(path)
         except PathNotAllowed as exc:
             raise SlotError(str(exc)) from exc
-
-        # VACUUM INTO refuses a target that is already a database — but not one
-        # that is zero-length, so its refusal is not the guard. The guard is
-        # resolve_write_path above; here we simply clear the way it authorised.
-        if target.exists():
-            target.unlink()
 
         try:
             self._workspace.vacuum_into(nickname, target)
@@ -656,13 +650,10 @@ class Registry:
             raise SlotError(
                 f"{nickname!r} cannot be saved as it stands: the file was written "
                 f"and then would not open under any other name — {complaint} A view "
-                f"in {nickname!r} names its tables as {nickname}.table, and that "
-                f"nickname is baked into the saved file, so attaching it later under "
-                f"a different name breaks the whole database rather than just that "
-                f"view. Rebuild the view naming its tables unqualified "
-                f"(FROM sales s, not FROM {nickname}.sales s) — inside a view an "
-                f"unqualified name already means this database — and save again. "
-                f"Views here now: {', '.join(self._workspace.view_names(nickname))}."
+                f"in it names tables as {nickname}.table, which bakes the nickname "
+                f"into the file. Rebuild it unqualified (FROM sales, not "
+                f"FROM {nickname}.sales) and save again. Views here: "
+                f"{', '.join(self._workspace.view_names(nickname))}."
             )
 
         # SQLite creates the file 0o644 — world-readable, holding the user's

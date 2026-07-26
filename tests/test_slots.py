@@ -987,21 +987,27 @@ def test_saving_keeps_the_slot_answering_and_writable(registry, root):
     assert rows == [(3,)]
 
 
-def test_saving_refuses_an_existing_file_unless_told_to_replace_it(registry, root):
+def test_saving_refuses_an_existing_file_and_leaves_it_untouched(registry, root):
+    """A second save to the same name must not cost the user the first one.
+
+    There is deliberately no overwrite parameter to reach for: the path came
+    from the user via an agent, so replacing what is there is not the agent's
+    call to make.
+    """
     csv_at(root / "sales.csv")
     registry.attach(str(root / "sales.csv"), "shop")
-    registry.save("shop", str(root / "keep.db"))
-
-    with pytest.raises(SlotError, match="already exists"):
-        registry.save("shop", str(root / "keep.db"))
+    saved = registry.save("shop", str(root / "keep.db"))
+    kept = saved.read_bytes()
 
     registry.query("shop", "INSERT INTO shop.sales VALUES ('c', 9)")
-    replaced = registry.save("shop", str(root / "keep.db"), overwrite=True)
-    connection = sqlite3.connect(replaced)
-    try:
-        assert connection.execute("SELECT count(*) FROM sales").fetchone()[0] == 3
-    finally:
-        connection.close()
+
+    with pytest.raises(SlotError, match="will not replace it"):
+        registry.save("shop", str(root / "keep.db"))
+
+    with pytest.raises(TypeError):
+        registry.save("shop", str(root / "keep.db"), overwrite=True)
+
+    assert saved.read_bytes() == kept
 
 
 def test_a_saved_file_is_not_world_readable(registry, root):

@@ -13,10 +13,11 @@ Three rules do the work:
   it. An MCP client launches this server somewhere deliberate, so the common
   case needs no configuration at all; ``paths.roots`` adds to that rather than
   replacing it.
-* **Never silently overwrite.** SQLite's own ``VACUUM INTO`` refuses an existing
-  target rather than replacing it, and that is the right default to copy: an
-  export that quietly replaces a file the user still needed is unrecoverable,
-  while one that refuses costs a single retry with an explicit flag.
+* **Never overwrite, and offer no way to.** A destination path is the *user's*
+  choice, relayed through the agent — so the authority to destroy what is
+  already there is the user's too, and cannot be delegated to a parameter the
+  agent sets. An existing target is refused, full stop. If the user wants that
+  file replaced they clear it or name another, outside this server.
 
 ``paths.path_limited = false`` switches containment off, and nothing else. It
 does not relax the overwrite refusal, which guards against a different accident
@@ -83,8 +84,8 @@ def resolve_read_path(raw: str) -> Path:
     return path
 
 
-def resolve_write_path(raw: str, *, overwrite: bool = False) -> Path:
-    """Resolve a path to write, refusing an existing target unless asked.
+def resolve_write_path(raw: str) -> Path:
+    """Resolve a path to write, refusing an existing target.
 
     ``strict=False`` on the resolve is deliberate: the target usually does not
     exist yet, which is not an error. Containment is still checked against the
@@ -102,13 +103,11 @@ def resolve_write_path(raw: str, *, overwrite: bool = False) -> Path:
         raise PathNotAllowed(f"Directory does not exist: {parent}")
 
     if path.exists():
-        if not overwrite:
-            raise PathNotAllowed(
-                f"{path} already exists. Pass overwrite=true to replace it."
-            )
-        if not path.is_file():
-            # A directory, socket or device would not be replaced by a write;
-            # refusing is clearer than whatever the OS would do instead.
-            raise PathNotAllowed(f"Refusing to overwrite a non-file: {path}")
+        # No overwrite flag to offer here on purpose: the agent is relaying a
+        # name the user chose and cannot consent to destroying what is at it.
+        raise PathNotAllowed(
+            f"{path} already exists and this server will not replace it. Tell "
+            f"the user, and write to a different name unless they clear it."
+        )
 
     return path

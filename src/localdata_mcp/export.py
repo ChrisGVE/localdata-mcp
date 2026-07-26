@@ -2,9 +2,11 @@
 
 Two decisions worth stating, because both are refusals:
 
-* **An existing file is not replaced unless the caller says so.** SQLite's own
-  ``VACUUM INTO`` behaves this way and it is the right default — a silently
-  replaced file is unrecoverable, while a refusal costs one retry.
+* **An existing file is never replaced, and there is no flag to make it so.**
+  The destination is a name the user chose and relayed through an agent, which
+  leaves the agent no standing to consent to destroying what is already there
+  (``paths``). A refusal costs a retry under another name; a replacement is
+  unrecoverable.
 * **Exports are created ``0o600``.** A file written by SQLite lands ``0o644`` by
   default, world-readable on a shared host, containing the user's actual data.
   Rows leaving a database are exactly the payload that should not be readable by
@@ -36,23 +38,18 @@ class ExportResult:
     path: str
     row_count: int
     columns: list[str]
-    replaced_existing: bool
 
 
 def export_csv(
     columns: Sequence[str],
     rows: Iterable[Sequence[object]],
     raw_path: str,
-    *,
-    overwrite: bool = False,
 ) -> ExportResult:
     """Write ``rows`` to ``raw_path`` as CSV.
 
-    Refuses an existing target unless ``overwrite`` is set, and refuses any path
-    outside the allowed root.
+    Refuses an existing target, and refuses any path outside the allowed root.
     """
-    path = resolve_write_path(raw_path, overwrite=overwrite)
-    replaced = path.exists()
+    path = resolve_write_path(raw_path)
 
     written = 0
     # Open through a file descriptor so the mode is set at creation rather than
@@ -67,7 +64,9 @@ def export_csv(
                 written += 1
     except Exception:
         # A partial file is worse than none: it looks like a complete export.
-        _remove_quietly(path, existed_before=replaced)
+        # Safe to delete unconditionally — an existing target was refused above,
+        # so this file is one we just created.
+        _remove_quietly(path)
         raise
 
     # O_CREAT honours the umask, so an inherited umask can widen the mode. Set it
@@ -78,15 +77,10 @@ def export_csv(
         path=str(path),
         row_count=written,
         columns=list(columns),
-        replaced_existing=replaced,
     )
 
 
-def _remove_quietly(path: Path, *, existed_before: bool) -> None:
-    if existed_before:
-        # We truncated a file the caller authorised us to replace. Deleting it
-        # now would destroy more than we were asked to.
-        return
+def _remove_quietly(path: Path) -> None:
     try:
         path.unlink()
     except OSError:

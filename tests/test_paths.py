@@ -189,11 +189,20 @@ def test_a_write_into_a_configured_root_is_allowed(tmp_path):
     assert resolve_write_path(str(root / "out.csv")) == (root / "out.csv").resolve()
 
 
-def test_an_existing_file_is_replaced_only_when_asked(tmp_path):
-    existing = make(Path("report.csv"))
-    with pytest.raises(PathNotAllowed, match="already exists"):
+def test_an_existing_file_is_refused_with_no_way_to_override(tmp_path):
+    """There is no overwrite flag, by design.
+
+    A destination is a name the user chose and an agent relayed. Consent to
+    destroy what sits there is the user's to give, outside this server, so the
+    refusal has no parameter that defeats it — and it says so.
+    """
+    make(Path("report.csv"))
+
+    with pytest.raises(PathNotAllowed, match="will not replace it"):
         resolve_write_path("report.csv")
-    assert resolve_write_path("report.csv", overwrite=True) == existing.resolve()
+
+    with pytest.raises(TypeError):
+        resolve_write_path("report.csv", overwrite=True)
 
 
 def test_a_write_through_a_symlink_leaving_scope_is_refused(tmp_path):

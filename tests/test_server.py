@@ -270,7 +270,6 @@ def test_a_path_turns_the_same_query_into_an_export(session):
     )
     assert result["ok"] is True
     assert result["rows_written"] == 5
-    assert result["replaced_existing"] is False
     assert target.read_text().splitlines()[0] == "name,salary"
 
 
@@ -289,7 +288,13 @@ def test_the_export_ignores_the_display_limit(session):
     assert result["rows_written"] == 5
 
 
-def test_the_export_refuses_to_clobber_then_accepts_the_flag(session):
+def test_the_export_refuses_to_clobber_and_offers_no_flag(session):
+    """The refusal names the file and points at the user, not at a flag.
+
+    An agent that could set overwrite=true would set it, having relayed a path
+    the user chose rather than chosen one itself. So the flag does not exist on
+    the tool surface, and the message tells the agent whose call it is.
+    """
     call("attach", database=str(session / "simple.csv"), nickname="staff")
     target = session / "out.csv"
     target.write_text("existing content\n")
@@ -301,19 +306,19 @@ def test_the_export_refuses_to_clobber_then_accepts_the_flag(session):
         path=str(target),
     )
     assert refused["ok"] is False
-    assert "overwrite=true" in refused["error"]
+    assert "will not replace it" in refused["error"]
+    assert "Tell the user" in refused["error"]
     assert target.read_text() == "existing content\n"
 
-    allowed = call(
-        "query",
-        nickname="staff",
-        sql="SELECT name FROM staff.simple",
-        path=str(target),
-        overwrite=True,
-    )
-    assert allowed["ok"] is True
-    assert allowed["replaced_existing"] is True
-    assert target.read_text().splitlines()[0] == "name"
+    with pytest.raises(Exception):
+        call(
+            "query",
+            nickname="staff",
+            sql="SELECT name FROM staff.simple",
+            path=str(target),
+            overwrite=True,
+        )
+    assert target.read_text() == "existing content\n"
 
 
 # ---------------------------------------------------------------------------
@@ -539,18 +544,20 @@ def test_saving_then_attaching_again_brings_the_whole_session_back(session):
     assert answer["rows"] == [["a", 30], ["b", 80]]
 
 
-def test_saving_refuses_an_existing_file_unless_told_to_replace_it(session):
+def test_saving_refuses_an_existing_file_and_has_no_override(session):
     call("attach", database=str(session / "simple.csv"), nickname="staff")
     target = session / "keep.db"
     call("save", nickname="staff", path=str(target))
+    kept = target.read_bytes()
 
     refused = call("save", nickname="staff", path=str(target))
     assert refused["ok"] is False
-    assert "overwrite=true" in refused["error"]
+    assert "will not replace it" in refused["error"]
 
-    assert (
-        call("save", nickname="staff", path=str(target), overwrite=True)["ok"] is True
-    )
+    with pytest.raises(Exception):
+        call("save", nickname="staff", path=str(target), overwrite=True)
+
+    assert target.read_bytes() == kept
 
 
 # ---------------------------------------------------------------------------

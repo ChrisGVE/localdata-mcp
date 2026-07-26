@@ -50,16 +50,11 @@ mcp = FastMCP(
         "nickname it actually used, which may not be the one you asked for — use "
         "what it returns.\n\n"
         "One query can join across datasources: SELECT ... FROM shop.sales JOIN "
-        "wh.products ... . But a CREATE VIEW cannot cross that line, so when a "
+        "wh.products ... . But save writes one database, not the join, so when a "
         "second file is meant to be looked up against one already open, use "
         "add_table(nickname, source=...) to land it *inside* that database rather "
         "than attaching it separately. Pass join_on to be told which key values "
         "have no match on the other side.\n\n"
-        "When writing a CREATE VIEW, name its tables **unqualified** — CREATE VIEW "
-        "shop.revenue AS SELECT ... FROM sales s JOIN prices p ... , not FROM "
-        "shop.sales s. Inside a view an unqualified name already means that view's "
-        "own database, and writing the nickname there bakes it into the file so it "
-        "cannot be attached under any other name later.\n\n"
         "Files you attach are read-only unless you pass writable=true; a database "
         "built from a flat file is yours and is always writable. Slots are limited "
         "and the oldest is evicted when the limit is reached, so check the "
@@ -272,8 +267,8 @@ def attach(
 def detach(nickname: str) -> dict[str, Any]:
     """Close a datasource and free its slot.
 
-    Everything the slot held is gone: tables added to it, views built over it,
-    and any rows not written out with ``save`` first.
+    Everything the slot held is gone: tables added to it, and any rows not
+    written out with ``save`` first.
 
     Args:
         nickname: The datasource to close.
@@ -362,7 +357,6 @@ def query(
     sql: str,
     limit: int = 100,
     path: str | None = None,
-    overwrite: bool = False,
 ) -> dict[str, Any]:
     """Run SQL against a datasource, returning rows or writing them to a file.
 
@@ -371,10 +365,8 @@ def query(
     datasource opened from a URL is a separate engine and cannot be joined
     against the others without copying the rows in first.
 
-    Writes (INSERT, CREATE VIEW, UPDATE) go through here too, and succeed only
-    where the datasource is writable. In a CREATE VIEW, name the tables
-    unqualified — ``FROM sales s``, not ``FROM shop.sales s`` — or the nickname
-    is stored inside the view and the datasource cannot be saved.
+    Writes (INSERT, UPDATE, CREATE TABLE) go through here too, and succeed only
+    where the datasource is writable.
 
     Args:
         nickname: Which datasource executes the statement.
@@ -382,7 +374,8 @@ def query(
         limit: Maximum rows to return. Use 0 for no limit. Ignored when writing
             to a file, which always receives the whole result.
         path: Write the full result to this CSV file instead of returning rows.
-        overwrite: Replace the file if it already exists.
+            An existing file is refused — the path is the user's to choose, so
+            report the refusal and let them decide.
     """
     with _lock:
         registry = _session()
@@ -405,7 +398,7 @@ def query(
             }
 
         try:
-            result = export_csv(columns, rows, path, overwrite=overwrite)
+            result = export_csv(columns, rows, path)
         except PathNotAllowed as exc:
             return _failed(exc)
         except OSError as exc:
@@ -416,7 +409,6 @@ def query(
             "path": result.path,
             "rows_written": result.row_count,
             "columns": result.columns,
-            "replaced_existing": result.replaced_existing,
         }
 
 
@@ -498,12 +490,12 @@ def drop_table(nickname: str, table: str) -> dict[str, Any]:
 
 
 @mcp.tool
-def save(nickname: str, path: str, overwrite: bool = False) -> dict[str, Any]:
+def save(nickname: str, path: str) -> dict[str, Any]:
     """Write a datasource out to a SQLite file the user keeps.
 
     Everything attached is otherwise ephemeral — it dies on detach and when this
     server stops. This is how a session's work survives, including tables added
-    to a slot and views built inside it.
+    to a slot.
 
     The datasource stays open and unchanged; this writes a copy. Attaching that
     copy later is an ordinary attach, so it comes back read-only unless write is
@@ -511,13 +503,14 @@ def save(nickname: str, path: str, overwrite: bool = False) -> dict[str, Any]:
 
     Args:
         nickname: The datasource to write out.
-        path: Destination file, within the allowed paths.
-        overwrite: Replace the file if it already exists.
+        path: Destination file, within the allowed paths. The user chooses this
+            name, so an existing file is refused rather than replaced: report
+            the refusal and let them pick a name or clear the old file.
     """
     with _lock:
         registry = _session()
         try:
-            written = registry.save(nickname, path, overwrite=overwrite)
+            written = registry.save(nickname, path)
             tables = registry.tables(nickname)
         except (SlotError, PathNotAllowed) as exc:
             return _failed(exc)
