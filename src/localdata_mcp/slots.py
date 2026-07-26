@@ -81,11 +81,10 @@ SQLITE_MAGIC = b"SQLite format 3\x00"
 #: mistaken for one, and the ``://`` must be present so a bare path never is.
 _URL = re.compile(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]+)://")
 
-#: A nickname becomes a SQL schema name, so it must be usable as an identifier.
+#: A nickname names the slot's own database and is carried in the URI that
+#: opens it, so it must be a plain identifier: punctuation would be read as URI
+#: syntax and open a database nobody chose.
 _NICKNAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-#: Schema names SQLite keeps for itself.
-_RESERVED = {"main", "temp"}
 
 #: How many evictions to remember, so a later reference can still be explained.
 _EVICTION_MEMORY = 64
@@ -348,12 +347,7 @@ class Registry:
         )
 
     def _nickname_taken(self, nickname: str) -> bool:
-        lowered = nickname.lower()
-        return (
-            nickname in self._slots
-            or lowered in _RESERVED
-            or lowered.startswith("sqlite_")
-        )
+        return nickname in self._slots
 
     def _resolve(self, database: str, scheme: str | None) -> Path:
         """A datasource path, containment-checked.
@@ -515,12 +509,9 @@ class Registry:
             raise AttachRefused(
                 f"{nickname!r} cannot be a nickname. Use a letter or underscore "
                 f"followed by letters, digits or underscores — the nickname "
-                f"becomes a SQL name, and quietly rewriting it would hand back a "
-                f"handle you did not ask for."
+                f"is carried in the URI that opens its database, and quietly "
+                f"rewriting it would hand back a handle you did not ask for."
             )
-        lowered = nickname.lower()
-        if lowered in _RESERVED or lowered.startswith("sqlite_"):
-            raise AttachRefused(f"{nickname!r} is a name SQLite reserves.")
 
     # -- lifecycle and composition ------------------------------------------
 

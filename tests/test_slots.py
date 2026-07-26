@@ -210,10 +210,18 @@ def test_a_nickname_is_rejected_rather_than_silently_mangled(registry, root):
 
 
 @pytest.mark.parametrize("nickname", ["main", "temp", "sqlite_master", "MAIN"])
-def test_names_sqlite_reserves_are_rejected(registry, root, nickname):
+def test_names_sqlite_once_reserved_are_now_ordinary(registry, root, nickname):
+    """These were refused because a nickname became a SQL schema name.
+
+    A slot is its own database now and its nickname never appears in a
+    statement, so there is nothing left for them to collide with. Kept as a test
+    rather than deleted: the refusal was visible in the surface, and this is what
+    says it went away on purpose.
+    """
     csv_at(root / "sales.csv")
-    with pytest.raises(AttachRefused):
-        registry.attach(str(root / "sales.csv"), nickname)
+    attachment = registry.attach(str(root / "sales.csv"), nickname)
+    assert attachment.slot.nickname == nickname
+    assert registry.query(nickname, "SELECT count(*) FROM sales")[1] == [(2,)]
 
 
 @pytest.mark.parametrize("nickname", ["", "1st", "a b", "a;b", "a'b"])
@@ -272,13 +280,13 @@ def test_a_filename_that_is_not_a_legal_identifier_still_yields_one(registry, ro
     assert sorted(r[0] for r in rows) == [3, 4]
 
 
-def test_a_derived_nickname_that_sqlite_reserves_is_stepped_over(registry, root):
-    """A file called main.csv must not try to claim SQLite's own schema name."""
+def test_a_file_called_main_keeps_its_own_name(registry, root):
+    """It used to become main_2, to stay off SQLite's own schema name."""
     csv_at(root / "main.csv")
     attachment = registry.attach(str(root / "main.csv"))
 
-    assert attachment.slot.nickname == "main_2"
-    _, rows = registry.query("main_2", "SELECT count(*) FROM main")
+    assert attachment.slot.nickname == "main"
+    _, rows = registry.query("main", "SELECT count(*) FROM main")
     assert rows == [(2,)]
 
 

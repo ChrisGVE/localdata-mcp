@@ -184,7 +184,7 @@ def test_the_error_for_an_unknown_key_names_the_alternatives():
         config_module.load()
 
 
-def test_more_slots_than_sqlite_allows_is_refused():
+def test_more_slots_than_the_ceiling_allows_is_refused():
     write(Path("localdata.toml"), f"[workspace]\nslots = {MAX_SLOTS + 1}\n")
     with pytest.raises(ConfigError, match=str(MAX_SLOTS)):
         config_module.load()

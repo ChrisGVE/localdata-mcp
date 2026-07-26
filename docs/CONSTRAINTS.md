@@ -152,6 +152,12 @@ to fix.
 
 ### 2.2 A connection holds ten attached databases, and the eleventh raises
 
+> **No longer constrains this server (2026-07-26).** Every datasource now holds its own
+> engine, so nothing `ATTACH`es and no ceiling is reached. The ten-slot limit survives as a
+> *choice* — each slot costs live connections and, until it is spilled, memory — and both
+> `config.py` and the README now say so rather than citing this number. The measurement
+> below is still true of SQLite; it just no longer decides anything here.
+
 `SQLITE_LIMIT_ATTACHED` reports **10** (SQLite 3.47.1), and the eleventh `ATTACH` fails hard rather
 than degrading:
 
@@ -178,6 +184,11 @@ larger value, because the failure it would otherwise produce arrives mid-session
 long after the mistake was made.
 
 ### 2.3 A join may cross attached databases; a **view** over that join may not
+
+> **No longer reachable (2026-07-26).** A statement reaches one datasource, so there is no
+> cross-database join to store as a view. Retained because it records why the cross-database
+> `CREATE VIEW` refusal was once cited as a justification for `add_table` — a feature that
+> did not exist justifying a design decision, which is the error this file exists to prevent.
 
 Querying across two attached databases works in one ordinary statement (§2.2). Storing that same
 statement as a view does not:
@@ -207,6 +218,12 @@ being saved. Guidance that says "attach both files and join them" offers an answ
 not something the user can keep.
 
 ### 2.4 A view that names its own schema is not portable, and poisons the whole file
+
+> **Sharper now, not gone (2026-07-26).** Such a view used to be usable under exactly one
+> nickname — the one it was built under, because the file was `ATTACH`ed under that name.
+> Each datasource is now opened as a database in its own right, so **no** name resolves it:
+> the file is refused at attach, under every nickname. The save-time openability check this
+> section used to justify became unreachable and was removed.
 
 Following on from §2.3: a view *may* name its own database, and SQLite accepts it at `CREATE VIEW`
 time.
@@ -311,6 +328,43 @@ The adapter layer §1 requires does **not** break the invariant, but it does mov
 
 Flat across a 4× row increase — a constant, not a per-row accumulation. Quote **~2.5 MB** for the
 adapted path, not the bare path's 0.008 MB. Adaptation costs **~2.9× wall clock**.
+
+### 3.2a SQLAlchemy Core cannot take the lazy iterator, and chunking it is what bounds the peak
+
+Measured 2026-07-26, deciding the insert path when the workspace moved onto Core.
+
+**Core refuses an iterator outright.** `connection.execute(table.insert(), rows)`,
+`connection.execute(text(...), rows)` and `connection.exec_driver_sql(sql, rows)` all raise on a
+generator — `ArgumentError: mapping or list expected for parameters` — so the property in §3.2
+cannot simply be carried over. Materialising for it is worse than the path already rejected:
+
+| Path | 100,000 rows | 800,000 rows |
+|---|---|---|
+| driver `executemany` over a lazy iterator | 0.0137 MB / 1.44 s | 0.0106 MB / 12.14 s |
+| **Core `insert()`, list of dicts** | **63.78 MB** / 4.43 s | **511.12 MB** / 33.06 s |
+
+**Chunking a lazy iterator bounds it, and pandas' failure does not carry over.** `to_sql(chunksize=K)`
+does not bound its peak because pandas materialises the whole frame *before* it chunks (§3.1). Pulling
+`K` rows at a time from a generator has no such upstream step, and the peak tracks the chunk size and
+nothing else:
+
+| Chunk | 100,000 rows | 800,000 rows |
+|---|---|---|
+| 1,000 | **0.8446 MB** | **0.8139 MB** |
+| 5,000 | 3.5849 MB | 3.6000 MB |
+| 20,000 | 13.7852 MB | 13.8244 MB |
+| 100,000 | 63.7352 MB | 68.2710 MB |
+
+800,000 rows at chunk 1,000 cost what 100,000 do. **The smallest chunk measured is also the fastest**,
+so there is no memory-for-speed trade to weigh inside Core and nothing to tune. What Core does cost is
+a flat **~2.6× wall clock** against handing the driver an iterator (33 s vs 12.8 s at 800,000),
+independent of chunk size — it is per-row parameter processing, not batching. That is the price of the
+abstraction, and it is paid once per load rather than per query.
+
+**Residency has no portable form.** `inspect()` covers schema, not storage, so
+`(page_count − freelist_count) × page_size` stays a per-dialect answer. It reports `None` — not `0` —
+for a database whose data is not in this process: a tag that cannot be measured is not a tag holding
+nothing, and zero would mean never spilling it.
 
 ### 3.3 `memory_usage(deep=True)` undercounts object columns by ~6×
 
