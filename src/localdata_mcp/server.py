@@ -14,6 +14,12 @@ database has: lifecycle (``attach``, ``detach``, ``save``), composition
 several of them multi-faceted — **few and multi-faceted beats many and narrow**,
 because the model has less to choose between and each choice is obvious.
 
+**A query reads.** Every write — ``INSERT``, ``CREATE TABLE``, ``CREATE VIEW``,
+``PRAGMA`` — is refused by ``query`` whatever the datasource itself permits, so
+mutation happens only through the composition verbs and there is exactly one way
+to change a slot. SQLite's own authorizer enforces it while the statement is
+being prepared, so nothing here parses SQL to decide.
+
 Two behaviours are deliberately invisible from out here. A database that outgrows
 the memory budget is moved to a temp file and re-attached under the same nickname
 between one call and the next, and no result mentions it. And write access is not
@@ -55,6 +61,10 @@ mcp = FastMCP(
         "add_table(nickname, source=...) to land it *inside* that database rather "
         "than attaching it separately. Pass join_on to be told which key values "
         "have no match on the other side.\n\n"
+        "**query only reads.** INSERT, UPDATE, CREATE TABLE, CREATE VIEW and every "
+        "other write are refused there whatever the datasource allows — composition "
+        "has its own verbs, add_table and drop_table, and those are the ones the "
+        "writable grant governs.\n\n"
         "Files you attach are read-only unless you pass writable=true; a database "
         "built from a flat file is yours and is always writable. Slots are limited "
         "and the oldest is evicted when the limit is reached, so check the "
@@ -420,26 +430,22 @@ def query(
 @mcp.tool
 def add_table(
     nickname: str,
+    source: str,
     table: str | None = None,
-    source: str | None = None,
-    columns: dict[str, str] | None = None,
     join_on: str | None = None,
     join_table: str | None = None,
 ) -> dict[str, Any]:
     """Add another table inside a datasource that is already open.
 
     Use this — rather than attaching a second slot — when a new file is meant to
-    be looked up against one already loaded. Only tables in the same database
-    can have a view built over their join, so this is what makes a saved lookup
-    possible at all.
+    be looked up against one already loaded. ``save`` writes one database rather
+    than a join, so landing both sides in the same slot is what makes the lookup
+    outlive the session.
 
     Args:
         nickname: The datasource to add to. Must be writable.
+        source: A file to read in.
         table: Name for the new table. Derived from the filename when omitted.
-        source: A file to read in. Give this or ``columns``, not both.
-        columns: A schema to declare and fill later, as
-            ``{"sku": "TEXT", "qty": "INTEGER"}``. Each type must be one of
-            TEXT, INTEGER, REAL, BLOB or NUMERIC.
         join_on: A column shared with a table already in this datasource. Given
             one, the result reports which key values have no match on the other
             side, in both directions.
@@ -451,9 +457,8 @@ def add_table(
         try:
             added = registry.add_table(
                 nickname,
-                table=table,
                 source=source,
-                columns=columns,
+                table=table,
                 join_on=join_on,
                 join_table=join_table,
             )

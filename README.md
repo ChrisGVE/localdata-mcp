@@ -60,11 +60,11 @@ collided with. Always read it back rather than assuming.
 | --- | --- |
 | `attach(database, nickname?, writable?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. |
 | `detach(nickname)` | Close it and free the slot. |
-| `query(nickname, sql, limit?, path?)` | Run SQL. With `path`, the whole result is written to CSV instead of returned. |
+| `query(nickname, sql, limit?, path?, force?)` | Run SQL. **Reads only.** With `path`, the whole result is written to CSV instead of returned. |
 | `info(nickname?, table?)` | Three altitudes: the whole session, one datasource, or one table's columns and row count. |
-| `add_table(nickname, source\|columns, join_on?)` | Land another table *inside* an open database. With `join_on`, reports which keys have no match. |
+| `add_table(nickname, source, table?, join_on?)` | Land another table *inside* an open database. With `join_on`, reports which keys have no match. |
 | `drop_table(nickname, table)` | Remove a table. |
-| `save(nickname, path)` | Write the database out to a file you keep. |
+| `save(nickname, path, force?)` | Write the database out to a file you keep. |
 
 ### Looking one file up against another
 
@@ -77,6 +77,10 @@ add_table("sales", source="./prices.csv", join_on="sku")
 query("sales", "SELECT s.sku, s.qty * p.price AS total "
                "FROM sales.sales s JOIN sales.prices p ON s.sku = p.sku")
 ```
+
+`query` reads and only reads — `INSERT`, `CREATE TABLE`, `CREATE VIEW` and the
+rest are refused there however writable the datasource is. Changing a slot goes
+through `add_table` and `drop_table`, which is what `writable=true` governs.
 
 Landing the second file inside the first database is not just tidier. **`save`
 writes one database, not a join** — so attaching the two files separately gives

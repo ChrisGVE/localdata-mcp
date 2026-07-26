@@ -72,6 +72,18 @@ def csv_at(path: Path, text: str = "sku,qty\na,3\nb,4\n") -> Path:
     return path
 
 
+def view_from_outside(registry: Registry, sql: str) -> None:
+    """Create a view the only way one can still come into existence.
+
+    ``query`` refuses every write, so the surface cannot make a view at all any
+    more. One can still *arrive* inside a SQLite file somebody else built, which
+    is the case ``save`` has to keep defending against — this reaches past the
+    surface to produce that state.
+    """
+    registry._workspace._conn.execute(sql)
+    registry._workspace._conn.commit()
+
+
 # ---------------------------------------------------------------------------
 # Recognising what a datasource is
 # ---------------------------------------------------------------------------
@@ -388,9 +400,13 @@ def test_a_database_we_built_from_a_file_is_writable(registry, root):
     slot = registry.attach(str(root / "sales.csv"), "shop").slot
 
     assert slot.writable is True
-    registry.query("shop", "INSERT INTO shop.sales VALUES ('c', 5)")
-    _, rows = registry.query("shop", "SELECT qty FROM shop.sales WHERE sku='c'")
-    assert rows == [(5,)]
+    # The grant is what add_table and drop_table consult. query never writes,
+    # whatever the grant says, so it is no longer the way to observe this.
+    csv_at(root / "prices.csv", "sku,price\na,10\n")
+    registry.add_table("shop", source=str(root / "prices.csv"))
+    assert "prices" in registry.tables("shop")
+    registry.drop_table("shop", "prices")
+    assert "prices" not in registry.tables("shop")
 
 
 def test_an_outside_database_arrives_read_only(registry, root):
@@ -398,8 +414,9 @@ def test_an_outside_database_arrives_read_only(registry, root):
     slot = registry.attach(str(root / "warehouse.db"), "wh").slot
 
     assert slot.writable is False
-    with pytest.raises(Exception, match="readonly"):
-        registry.query("wh", "INSERT INTO wh.products VALUES ('c', 'Thing')")
+    csv_at(root / "prices.csv", "sku,price\na,10\n")
+    with pytest.raises(NotWritable, match="writable=true"):
+        registry.add_table("wh", source=str(root / "prices.csv"))
 
 
 def test_the_write_grant_is_honoured_when_it_is_asked_for(registry, root):
@@ -407,9 +424,10 @@ def test_the_write_grant_is_honoured_when_it_is_asked_for(registry, root):
     slot = registry.attach(str(root / "warehouse.db"), "wh", writable=True).slot
 
     assert slot.writable is True
-    registry.query("wh", "INSERT INTO wh.products VALUES ('c', 'Thing')")
-    _, rows = registry.query("wh", "SELECT name FROM wh.products WHERE sku='c'")
-    assert rows == [("Thing",)]
+    csv_at(root / "prices.csv", "sku,price\na,10\n")
+    added = registry.add_table("wh", source=str(root / "prices.csv"))
+    assert added.info.row_count == 1
+    assert "prices" in registry.tables("wh")
 
 
 # ---------------------------------------------------------------------------
@@ -694,60 +712,6 @@ def test_a_second_file_joins_the_first_inside_one_database(registry, root):
     assert rows == [("a", 30), ("b", 80)]
 
 
-def test_a_view_can_only_be_built_over_tables_in_one_database(registry, root):
-    """This is why the lookup arc adds a table instead of attaching a slot.
-
-    The cross-database view is not merely fragile — SQLite refuses to create it
-    at all, while the same join written over two tables in one database is an
-    ordinary view that keeps answering. So "add the second file here" is not a
-    preference about mental models; it is the only route to a stored join.
-    """
-    csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    csv_at(root / "prices.csv", "sku,price\na,10\n")
-    build_database(root / "warehouse.db")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.add_table("shop", source=str(root / "prices.csv"))
-    registry.attach(str(root / "warehouse.db"), "wh")
-
-    registry.query(
-        "shop",
-        "CREATE VIEW shop.revenue AS SELECT s.sku, s.qty * p.price AS total "
-        "FROM shop.sales s JOIN shop.prices p ON s.sku = p.sku",
-    )
-    assert registry.query("shop", "SELECT total FROM shop.revenue")[1] == [(30,)]
-
-    with pytest.raises(Exception, match="cannot reference objects in database"):
-        registry.query(
-            "shop",
-            "CREATE VIEW shop.named AS SELECT w.name FROM shop.sales s "
-            "JOIN wh.products w ON s.sku = w.sku",
-        )
-
-    # The join itself is fine across databases — it is only *storing* it that
-    # cannot cross the line. That distinction is what the skill has to teach.
-    assert registry.query(
-        "shop",
-        "SELECT w.name FROM shop.sales s JOIN wh.products w ON s.sku = w.sku",
-    )[1] == [("Widget",)]
-
-
-def test_a_declared_table_can_be_added_and_filled(registry, root):
-    csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
-
-    added = registry.add_table(
-        "shop", table="notes", columns={"sku": "TEXT", "note": "TEXT"}
-    )
-
-    assert added.info.qualified == "shop.notes"
-    assert added.info.row_count == 0
-    registry.query("shop", "INSERT INTO shop.notes VALUES ('a', 'backordered')")
-    _, rows = registry.query(
-        "shop", "SELECT n.note FROM shop.sales s JOIN shop.notes n ON s.sku = n.sku"
-    )
-    assert rows == [("backordered",)]
-
-
 def test_the_added_table_is_named_from_its_file_unless_told_otherwise(registry, root):
     csv_at(root / "sales.csv")
     csv_at(root / "2025 prices.csv", "sku,price\na,10\n")
@@ -771,18 +735,6 @@ def test_adding_over_an_existing_table_is_refused(registry, root):
 
     _, rows = registry.query("shop", "SELECT count(*) FROM shop.sales")
     assert rows == [(2,)]
-
-
-def test_adding_needs_exactly_one_of_a_source_or_a_schema(registry, root):
-    csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
-
-    with pytest.raises(SlotError, match="exactly one"):
-        registry.add_table("shop", table="x")
-    with pytest.raises(SlotError, match="exactly one"):
-        registry.add_table(
-            "shop", table="x", source=str(root / "sales.csv"), columns={"a": "TEXT"}
-        )
 
 
 def test_a_read_only_slot_refuses_composition_and_says_how_to_allow_it(registry, root):
@@ -971,8 +923,8 @@ def test_a_saved_database_comes_back_read_only(registry, root):
 
     slot = registry.attach(str(saved), "kept").slot
     assert slot.writable is False
-    with pytest.raises(Exception, match="readonly"):
-        registry.query("kept", "DELETE FROM kept.sales")
+    with pytest.raises(NotWritable, match="writable=true"):
+        registry.drop_table("kept", "sales")
 
 
 def test_saving_keeps_the_slot_answering_and_writable(registry, root):
@@ -982,9 +934,11 @@ def test_saving_keeps_the_slot_answering_and_writable(registry, root):
 
     registry.save("shop", str(root / "keep.db"))
 
-    registry.query("shop", "INSERT INTO shop.sales VALUES ('c', 9)")
+    csv_at(root / "prices.csv", "sku,price\na,10\n")
+    registry.add_table("shop", source=str(root / "prices.csv"))
+    assert "prices" in registry.tables("shop")
     _, rows = registry.query("shop", "SELECT count(*) FROM shop.sales")
-    assert rows == [(3,)]
+    assert rows == [(2,)]
 
 
 def test_saving_refuses_an_existing_file_then_replaces_it_when_forced(registry, root):
@@ -998,7 +952,8 @@ def test_saving_refuses_an_existing_file_then_replaces_it_when_forced(registry, 
     saved = registry.save("shop", str(root / "keep.db"))
     kept = saved.read_bytes()
 
-    registry.query("shop", "INSERT INTO shop.sales VALUES ('c', 9)")
+    csv_at(root / "prices.csv", "sku,price\na,10\n")
+    registry.add_table("shop", source=str(root / "prices.csv"))
 
     with pytest.raises(SlotError, match="Ask the user"):
         registry.save("shop", str(root / "keep.db"))
@@ -1007,7 +962,15 @@ def test_saving_refuses_an_existing_file_then_replaces_it_when_forced(registry, 
     replaced = registry.save("shop", str(root / "keep.db"), force=True)
     connection = sqlite3.connect(replaced)
     try:
-        assert connection.execute("SELECT count(*) FROM sales").fetchone()[0] == 3
+        # The forced write carries the slot as it stands now, not as it was:
+        # the table added after the first save is in the replacement.
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert tables == {"sales", "prices"}
     finally:
         connection.close()
 
@@ -1169,14 +1132,17 @@ def test_a_spilled_database_is_still_writable_and_composable(root):
 
         csv_at(root / "labels.csv", "id,note\n1,first\n")
         registry.add_table("big", source=str(root / "labels.csv"))
-        registry.query("big", "INSERT INTO big.labels VALUES (2, 'second')")
+        csv_at(root / "more.csv", "id,note\n2,second\n")
+        registry.add_table("big", source=str(root / "more.csv"), table="more")
 
         _, rows = registry.query(
             "big",
             "SELECT l.note FROM big.big b JOIN big.labels l ON b.id = l.id "
             "ORDER BY l.note",
         )
-        assert rows == [("first",), ("second",)]
+        assert rows == [("first",)]
+        # Composable after the move: both added tables landed in the same slot.
+        assert {"labels", "more"} <= set(registry.tables("big"))
     finally:
         registry.close()
 
@@ -1321,8 +1287,8 @@ def test_a_view_naming_tables_unqualified_survives_being_saved_and_renamed(
     csv_at(root / "prices.csv", "sku,price\na,10\n")
     registry.attach(str(root / "sales.csv"), "shop")
     registry.add_table("shop", source=str(root / "prices.csv"))
-    registry.query(
-        "shop",
+    view_from_outside(
+        registry,
         "CREATE VIEW shop.revenue AS SELECT s.sku, s.qty * p.price AS total "
         "FROM sales s JOIN prices p ON s.sku = p.sku",
     )
@@ -1345,8 +1311,8 @@ def test_saving_a_database_that_could_not_be_opened_again_is_refused(registry, r
     csv_at(root / "prices.csv", "sku,price\na,10\n")
     registry.attach(str(root / "sales.csv"), "shop")
     registry.add_table("shop", source=str(root / "prices.csv"))
-    registry.query(
-        "shop",
+    view_from_outside(
+        registry,
         "CREATE VIEW shop.revenue AS SELECT s.sku, s.qty * p.price AS total "
         "FROM shop.sales s JOIN shop.prices p ON s.sku = p.sku",
     )
@@ -1368,7 +1334,9 @@ def test_a_table_aliased_to_the_nickname_does_not_trip_the_check(registry, root)
     """
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
     registry.attach(str(root / "sales.csv"), "shop")
-    registry.query("shop", "CREATE VIEW shop.totals AS SELECT shop.qty FROM sales shop")
+    view_from_outside(
+        registry, "CREATE VIEW shop.totals AS SELECT shop.qty FROM sales shop"
+    )
 
     saved = registry.save("shop", str(root / "keep.db"))
     registry.detach("shop")

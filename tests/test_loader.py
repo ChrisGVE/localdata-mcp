@@ -397,43 +397,6 @@ def test_a_question_mark_in_a_filename_is_not_read_as_a_uri_query(workspace, roo
 # ---------------------------------------------------------------------------
 
 
-def test_a_declared_table_is_created_and_writable(workspace):
-    workspace.attach_memory("book")
-
-    info = workspace.create_table(
-        "book", "ledger", {"entry": "TEXT", "amount": "INTEGER"}
-    )
-
-    assert info.qualified == "book.ledger"
-    assert info.row_count == 0
-    assert [c.name for c in info.columns] == ["entry", "amount"]
-
-    workspace._conn.execute("INSERT INTO book.ledger VALUES ('rent', 1200)")
-    workspace._conn.commit()
-    _, rows = workspace.query("SELECT sum(amount) FROM book.ledger")
-    assert [tuple(r) for r in rows] == [(1200,)]
-
-
-def test_a_declared_type_outside_sqlites_own_is_refused(workspace):
-    """The type reaches DDL unquoted, so the vocabulary has to be closed."""
-    workspace.attach_memory("book")
-    with pytest.raises(LoadError, match="INTEGER"):
-        workspace.create_table("book", "ledger", {"amount": "BIGINT); DROP TABLE x--"})
-    assert not workspace.has_table("book", "ledger")
-
-
-def test_a_declared_table_with_no_columns_is_refused(workspace):
-    workspace.attach_memory("book")
-    with pytest.raises(LoadError, match="at least one column"):
-        workspace.create_table("book", "ledger", {})
-
-
-def test_declared_column_names_are_sanitised_like_any_other(workspace):
-    workspace.attach_memory("book")
-    info = workspace.create_table("book", "ledger", {"Total Amount (£)": "REAL"})
-    assert [c.name for c in info.columns] == ["total_amount"]
-
-
 def test_dropping_a_table_removes_it_and_dropping_it_twice_is_an_error(workspace, root):
     workspace.attach_memory("scratch")
     workspace.load_file(str(root / "simple.csv"), schema="scratch")

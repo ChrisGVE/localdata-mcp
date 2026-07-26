@@ -392,27 +392,6 @@ def test_a_second_file_lands_inside_the_open_database_and_joins(session):
     assert answer["rows"] == [["a", 30], ["b", 80]]
 
 
-def test_a_view_over_that_join_can_be_created_and_read_back(session):
-    """The reason to add here rather than attach: only this join can be stored."""
-    write_csv(session / "sales.csv", "sku,qty\na,3\n")
-    write_csv(session / "prices.csv", "sku,price\na,10\n")
-    call("attach", database=str(session / "sales.csv"), nickname="shop")
-    call("add_table", nickname="shop", source=str(session / "prices.csv"))
-
-    made = call(
-        "query",
-        nickname="shop",
-        sql=(
-            "CREATE VIEW shop.revenue AS SELECT s.sku, s.qty * p.price AS total "
-            "FROM shop.sales s JOIN shop.prices p ON s.sku = p.sku"
-        ),
-    )
-    assert made["ok"] is True
-
-    answer = call("query", nickname="shop", sql="SELECT total FROM shop.revenue")
-    assert answer["rows"] == [[30]]
-
-
 def test_an_incomplete_join_is_reported_with_the_values_that_do_not_match(session):
     write_csv(session / "sales.csv", "sku,qty\na,3\nb,4\nc,5\n")
     write_csv(session / "prices.csv", "sku,price\na,10\nz,99\n")
@@ -448,40 +427,6 @@ def test_a_complete_join_says_so(session):
     )
     assert added["join"]["complete"] is True
     assert added["join"]["missing_from_added"]["values"] == []
-
-
-def test_a_table_can_be_declared_and_then_filled(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
-
-    declared = call(
-        "add_table",
-        nickname="staff",
-        table="notes",
-        columns={"name": "TEXT", "note": "TEXT"},
-    )
-    assert declared["ok"] is True
-    assert declared["rows"] == 0
-
-    call(
-        "query",
-        nickname="staff",
-        sql="INSERT INTO staff.notes VALUES ('Alice Johnson', 'on leave')",
-    )
-    answer = call(
-        "query",
-        nickname="staff",
-        sql=("SELECT n.note FROM staff.simple s JOIN staff.notes n ON s.name = n.name"),
-    )
-    assert answer["rows"] == [["on leave"]]
-
-
-def test_a_declared_type_outside_sqlites_own_is_answered(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
-    answer = call(
-        "add_table", nickname="staff", table="notes", columns={"n": "VARCHAR(10)"}
-    )
-    assert answer["ok"] is False
-    assert "INTEGER" in answer["error"]
 
 
 def test_adding_to_a_read_only_datasource_says_how_to_allow_it(session):
@@ -694,13 +639,65 @@ def test_invalid_sql_returns_the_engine_message(session):
     assert "no such table" in answer["error"].lower()
 
 
-def test_writing_to_a_read_only_datasource_is_answered(session):
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DELETE FROM staff.simple",
+        "INSERT INTO staff.simple (name) VALUES ('x')",
+        "UPDATE staff.simple SET salary = 0",
+        "CREATE TABLE staff.t (a TEXT)",
+        "CREATE VIEW staff.v AS SELECT name FROM staff.simple",
+        "DROP TABLE staff.simple",
+        "ALTER TABLE staff.simple RENAME TO other",
+        "CREATE INDEX staff.i ON simple (name)",
+        "PRAGMA staff.journal_mode = WAL",
+    ],
+)
+def test_query_reads_and_refuses_every_way_of_writing(session, sql):
+    """A query is a query. The datasource here is fully writable, which is the
+    point: the refusal is a property of the verb, not of the grant."""
+    attached = call("attach", database=str(session / "simple.csv"), nickname="staff")
+    assert attached["writable"] is True
+
+    answer = call("query", nickname="staff", sql=sql)
+
+    assert answer["ok"] is False, sql
+    assert "does not write" in answer["error"], answer["error"]
+    # Still intact, and still answering.
+    rows = call("query", nickname="staff", sql="SELECT count(*) FROM staff.simple")
+    assert rows["rows"][0][0] == 5
+
+
+def test_the_refusal_says_what_was_attempted_and_where_to_go(session):
+    """An agent told only "denied" cannot tell which clause offended.
+
+    DDL is described as a schema change rather than as the INSERT that SQLite
+    happens to refuse first — see ``_describe_action``. Reporting the raw first
+    refusal would tell an agent that wrote CREATE VIEW it attempted an INSERT.
+    """
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+
+    ddl = call(
+        "query",
+        nickname="staff",
+        sql="CREATE VIEW staff.v AS SELECT name FROM staff.simple",
+    )
+    assert "change the database schema" in ddl["error"]
+    assert "add_table" in ddl["error"]
+
+    plain = call(
+        "query", nickname="staff", sql="INSERT INTO staff.simple (name) VALUES ('x')"
+    )
+    assert "asks to INSERT" in plain["error"]
+
+
+def test_a_read_only_datasource_is_still_readable(session):
     _build_database(session / "hr.db")
     call("attach", database=str(session / "hr.db"), nickname="hr")
 
-    answer = call("query", nickname="hr", sql="DELETE FROM hr.departments")
-    assert answer["ok"] is False
-    assert "readonly" in answer["error"].lower()
+    answer = call("query", nickname="hr", sql="SELECT count(*) FROM hr.departments")
+    assert answer["ok"] is True
+    assert answer["rows"][0][0] == 3
 
 
 def test_mixed_columns_are_flagged_on_attach(session):
@@ -719,36 +716,25 @@ def test_the_mixed_column_detail_is_available_from_info(session):
     assert "id" in described["mixed_columns"]
 
 
-def test_a_view_is_listed_so_an_agent_can_find_it(session):
-    """Building a view no caller can see afterwards would be pointless."""
-    write_csv(session / "sales.csv", "sku,qty\na,3\n")
-    write_csv(session / "prices.csv", "sku,price\na,10\n")
-    call("attach", database=str(session / "sales.csv"), nickname="shop")
-    call("add_table", nickname="shop", source=str(session / "prices.csv"))
-    call(
-        "query",
-        nickname="shop",
-        sql=(
-            "CREATE VIEW shop.revenue AS SELECT s.sku, s.qty * p.price AS total "
-            "FROM sales s JOIN prices p ON s.sku = p.sku"
-        ),
-    )
+def test_a_view_that_arrived_from_outside_still_blocks_the_save(session):
+    """The surface can no longer make a view, but a file can still carry one.
 
-    detail = call("info", nickname="shop")
-    assert "shop.revenue" in detail["tables"]
-    assert {"table": "shop.revenue", "rows": 1} in detail["contents"]
-    # And it describes like anything else you can select from.
-    assert call("info", nickname="shop", table="revenue")["columns"][0]["name"] == "sku"
+    Somebody else's SQLite database may hold a schema-qualified view, and saving
+    it would produce a file that refuses to open under any other nickname. So
+    the check at save time keeps its job even with query read-only — it is only
+    the *source* of the offending view that changed.
+    """
+    source = session / "carried.db"
+    connection = sqlite3.connect(source)
+    connection.execute("CREATE TABLE sales (sku TEXT, qty INTEGER)")
+    connection.execute("INSERT INTO sales VALUES ('a', 3)")
+    connection.commit()
+    connection.close()
 
-
-def test_a_view_written_with_the_nickname_blocks_the_save_and_says_why(session):
-    """Latent otherwise: the file writes fine and fails in some later session."""
-    write_csv(session / "sales.csv", "sku,qty\na,3\n")
-    call("attach", database=str(session / "sales.csv"), nickname="shop")
-    call(
-        "query",
-        nickname="shop",
-        sql="CREATE VIEW shop.v AS SELECT qty FROM shop.sales",
+    call("attach", database=str(source), nickname="shop", writable=True)
+    # Written the way an outside tool would, naming its own schema.
+    server_module._registry._workspace._conn.execute(
+        "CREATE VIEW shop.v AS SELECT qty FROM shop.sales"
     )
 
     refused = call("save", nickname="shop", path=str(session / "keep.db"))

@@ -526,9 +526,8 @@ class Registry:
         self,
         nickname: str,
         *,
+        source: str,
         table: str | None = None,
-        source: str | None = None,
-        columns: dict[str, str] | None = None,
         join_on: str | None = None,
         join_table: str | None = None,
     ) -> AddedTable:
@@ -536,20 +535,11 @@ class Registry:
 
         This is what makes the lookup arc work. Adding beside the existing
         tables rather than attaching a second slot is not only the friendlier
-        mental model — it is the only one where a view over the join *survives*,
-        because a view across attached databases goes invalid the moment either
-        one is detached or evicted.
-
-        Exactly one of ``source`` and ``columns`` says where the table comes
-        from: a datasource to read, or a schema to declare and fill later.
+        mental model — it is what makes the result *keepable*, because ``save``
+        writes one database rather than a join, so both sides have to live in
+        the slot being saved.
         """
         slot = self._writable(nickname, "add a table to")
-        if (source is None) == (columns is None):
-            raise SlotError(
-                "Adding a table needs exactly one of source (a file to read) or "
-                "columns (a schema to declare), not both and not neither."
-            )
-
         name = self._table_name(table, source)
         if self._workspace.has_table(nickname, name):
             raise SlotError(
@@ -558,14 +548,7 @@ class Registry:
                 f"it first if you meant to replace it."
             )
 
-        if source is not None:
-            info = self._read_into(slot, name, source)
-        else:
-            assert columns is not None
-            try:
-                info = self._workspace.create_table(nickname, name, columns)
-            except LoadError as exc:
-                raise SlotError(str(exc)) from exc
+        info = self._read_into(slot, name, source)
 
         report = None
         if join_on is not None:
@@ -586,7 +569,7 @@ class Registry:
         except LoadError as exc:
             raise SlotError(str(exc)) from exc
 
-    def _table_name(self, table: str | None, source: str | None) -> str:
+    def _table_name(self, table: str | None, source: str) -> str:
         """Settle on the table's name: given verbatim, or derived from the file."""
         if table is not None:
             if not _NICKNAME.match(table):
@@ -595,8 +578,6 @@ class Registry:
                     f"followed by letters, digits or underscores."
                 )
             return table
-        if source is None:
-            raise SlotError("A declared table needs a name.")
         return _sanitize(Path(source).stem, "table")
 
     def drop_table(self, nickname: str, table: str) -> None:

@@ -41,7 +41,7 @@ is named after the file unless the caller names it at attach time.
 exactly like that, and it means three things:
 
 1. **Add a table to the database already open** — not a second slot.
-2. Join the two tables in ordinary SQL through `query`; no verb needed.
+2. Join the two tables in ordinary SQL through `query`, which reads and only reads.
 3. **Check whether the join is complete**, and say so in the user's terms: *"X, Y and Z
    have no match in that file."*
 
@@ -88,9 +88,9 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 |---|---|---|
 | `attach` | `database`, `nickname?`, `writable?` | Multipurpose — flat file, SQLite file, later an endpoint. Returns the nickname **actually used**. |
 | `detach` | `nickname` | Drop a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if spilled. |
-| `query` | `nickname`, `sql`, `path?` | The optional path is where results are written, which **absorbs `export_query`**. |
+| `query` | `nickname`, `sql`, `path?` | **Reads only** — every write is refused by SQLite's authorizer, whatever the slot allows. The optional path is where results are written, which **absorbs `export_query`**. |
 | `info` | — \| `nickname` \| `nickname`+`table` | Polymorphic: bare → every slot; nickname → its tables; nickname+table → schema and row count. **Absorbs `list_tables` + `describe_table`.** |
-| `add_table` | `nickname`, `table`, `source` \| `columns` | From a datasource or a declared schema. This is what makes arc 2 possible. |
+| `add_table` | `nickname`, `source`, `table?` | Reads a datasource in beside the tables already there. This is what makes arc 2 possible. |
 | `drop_table` | `nickname`, `table` | Composition needs both directions. |
 | `save` | `nickname`, `path` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. |
 
@@ -98,8 +98,14 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 
 Only databases **the MCP created** are read/write. A flat file becomes our own in-memory
 database, so it is writable by construction. Everything attached from outside is
-**read-only — query only**. The caller can grant write on an external database at attach
-time (`writable=true`), and that grant is per-attach.
+**read-only**. The caller can grant write on an external database at attach time
+(`writable=true`), and that grant is per-attach.
+
+The grant governs `add_table` and `drop_table` — and only those, because **`query` never
+writes to anything**. A query reads: `INSERT`, `CREATE TABLE`, `CREATE VIEW`, `PRAGMA`
+and the rest are refused there even on a database the caller owns outright. So there is
+exactly one way to change a slot, and it is a named verb rather than a clause buried in
+a statement.
 
 That is deliberately not a permission model. The enforcement is SQLite's own: a
 read-only attach carries `mode=ro` in the connection URI, so a write fails in the engine

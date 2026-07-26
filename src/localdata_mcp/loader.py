@@ -166,13 +166,6 @@ def _file_uri(path: Path, *, readonly: bool) -> str:
     return f"{uri}?mode=ro" if readonly else uri
 
 
-#: Column types a declared schema may ask for. Restricted to SQLite's own
-#: storage classes: the value reaches DDL, so an open vocabulary would be an
-#: injection point, and a closed one is also the more useful answer to "what
-#: can I write here".
-COLUMN_TYPES = ("TEXT", "INTEGER", "REAL", "BLOB", "NUMERIC")
-
-
 # ---------------------------------------------------------------------------
 # Type mapping
 # ---------------------------------------------------------------------------
@@ -205,6 +198,76 @@ def _declared_type(dtype: Any) -> str:
 #: Rows per block when scanning a column for numeric-ness. Bounds the scan's
 #: peak allocation without changing its result — see :func:`_numeric_split`.
 _SCAN_BLOCK = 50_000
+
+
+#: What a read query is allowed to do, as SQLite authorizer action codes.
+#:
+#: A **whitelist**, deliberately. SQLite has some thirty action codes and gains
+#: more between versions; a denylist would silently admit whatever arrives next,
+#: which is the wrong direction to fail in. Anything not named here is refused.
+#:
+#: ``SQLITE_READ`` covers each column touched, ``SQLITE_FUNCTION`` the builtins
+#: (``count``, ``upper``, …) that an ordinary query leans on, and
+#: ``SQLITE_RECURSIVE`` the recursive CTEs that are still just reading.
+_READ_ACTIONS = frozenset(
+    {
+        sqlite3.SQLITE_SELECT,
+        sqlite3.SQLITE_READ,
+        sqlite3.SQLITE_FUNCTION,
+        sqlite3.SQLITE_RECURSIVE,
+    }
+)
+
+#: Refused actions in words, so the error names what was attempted rather than
+#: quoting a number. Written out rather than derived from ``vars(sqlite3)``,
+#: because the result codes share integer values with action codes
+#: (``SQLITE_DENY`` is 1, and so is ``SQLITE_CREATE_INDEX``) and a derived map
+#: would mislabel them.
+_ACTION_NAMES = {
+    sqlite3.SQLITE_INSERT: "INSERT",
+    sqlite3.SQLITE_UPDATE: "UPDATE",
+    sqlite3.SQLITE_DELETE: "DELETE",
+    sqlite3.SQLITE_CREATE_TABLE: "CREATE TABLE",
+    sqlite3.SQLITE_CREATE_VIEW: "CREATE VIEW",
+    sqlite3.SQLITE_CREATE_INDEX: "CREATE INDEX",
+    sqlite3.SQLITE_CREATE_TRIGGER: "CREATE TRIGGER",
+    sqlite3.SQLITE_CREATE_TEMP_TABLE: "CREATE TEMP TABLE",
+    sqlite3.SQLITE_CREATE_TEMP_VIEW: "CREATE TEMP VIEW",
+    sqlite3.SQLITE_CREATE_TEMP_INDEX: "CREATE TEMP INDEX",
+    sqlite3.SQLITE_CREATE_TEMP_TRIGGER: "CREATE TEMP TRIGGER",
+    sqlite3.SQLITE_DROP_TABLE: "DROP TABLE",
+    sqlite3.SQLITE_DROP_VIEW: "DROP VIEW",
+    sqlite3.SQLITE_DROP_INDEX: "DROP INDEX",
+    sqlite3.SQLITE_DROP_TRIGGER: "DROP TRIGGER",
+    sqlite3.SQLITE_DROP_TEMP_TABLE: "DROP TEMP TABLE",
+    sqlite3.SQLITE_DROP_TEMP_VIEW: "DROP TEMP VIEW",
+    sqlite3.SQLITE_ALTER_TABLE: "ALTER TABLE",
+    sqlite3.SQLITE_REINDEX: "REINDEX",
+    sqlite3.SQLITE_ANALYZE: "ANALYZE",
+    sqlite3.SQLITE_ATTACH: "ATTACH a database",
+    sqlite3.SQLITE_DETACH: "DETACH a database",
+    sqlite3.SQLITE_PRAGMA: "set a PRAGMA",
+    sqlite3.SQLITE_TRANSACTION: "control a transaction",
+}
+
+
+def _describe_action(action: int, target: str | None) -> str:
+    """Name a refused action in words an agent can act on.
+
+    One wrinkle worth stating, because the naive version is actively
+    misleading: SQLite authorizes a DDL statement's write to ``sqlite_master``
+    *before* it authorizes the statement's own action code. The first refusal
+    therefore arrives as ``INSERT``, and reporting that verbatim tells an agent
+    that wrote ``CREATE VIEW`` it attempted an INSERT. Naming the schema write
+    for what it is keeps the message true without guessing at the statement.
+    """
+    if action in (
+        sqlite3.SQLITE_INSERT,
+        sqlite3.SQLITE_UPDATE,
+        sqlite3.SQLITE_DELETE,
+    ) and (target or "").startswith("sqlite_"):
+        return "change the database schema"
+    return _ACTION_NAMES.get(action, f"perform action {action}")
 
 
 def _numeric_split(series: pd.Series) -> tuple[int, int]:
@@ -307,6 +370,33 @@ class Workspace:
         # class docstring: releasing it is what lets the pool roll back a load.
         self._raw = engine.raw_connection()
         self._tables: dict[str, TableInfo] = {}
+        #: True only while :meth:`query` has a statement in flight. The
+        #: authorizer is installed permanently and consults this, so the
+        #: connection's own posture is never toggled — see :meth:`query`.
+        self._reading = False
+        #: What the authorizer last refused, in words, for the error message.
+        self._denied: str | None = None
+        self._conn.set_authorizer(self._authorize)
+
+    def _authorize(
+        self,
+        action: int,
+        arg1: str | None,
+        arg2: str | None,
+        database: str | None,
+        trigger: str | None,
+    ) -> int:
+        """Refuse anything but reading, and only while a query is in flight.
+
+        Consulted by SQLite for each action a statement being prepared would
+        take. Outside :meth:`query` this permits everything — ``add_table`` and
+        the spill machinery write through the same connection and are not
+        subject to it.
+        """
+        if not self._reading or action in _READ_ACTIONS:
+            return sqlite3.SQLITE_OK
+        self._denied = _describe_action(action, arg1)
+        return sqlite3.SQLITE_DENY
 
     @property
     def _conn(self):
@@ -421,41 +511,6 @@ class Workspace:
                 f"WHERE type='view' ORDER BY name"
             )
         )
-
-    def create_table(
-        self, schema: str, table: str, columns: dict[str, str]
-    ) -> TableInfo:
-        """Create an empty table from a declared schema.
-
-        The column *types* are checked against :data:`COLUMN_TYPES` rather than
-        quoted, because a type cannot be quoted in DDL and so must come from a
-        closed set. Names are quoted and sanitised like any other identifier.
-        """
-        if not columns:
-            raise LoadError(
-                f"Declaring {schema}.{table} needs at least one column, as "
-                f"{{'name': 'TEXT'}}."
-            )
-
-        declared: list[tuple[str, str]] = []
-        for raw_name, raw_type in columns.items():
-            sql_type = str(raw_type).strip().upper()
-            if sql_type not in COLUMN_TYPES:
-                raise LoadError(
-                    f"{raw_name!r} is declared {raw_type!r}, which is not a "
-                    f"SQLite column type. Use one of: {', '.join(COLUMN_TYPES)}."
-                )
-            declared.append((_sanitize(raw_name, "column"), sql_type))
-
-        target = _target(schema, table)
-        column_ddl = ", ".join(f"{_quote(name)} {kind}" for name, kind in declared)
-        try:
-            self._conn.execute(f"CREATE TABLE {target} ({column_ddl})")
-            self._conn.commit()
-        except sqlite3.Error as exc:
-            raise LoadError(f"Could not create {schema}.{table}: {exc}") from exc
-
-        return self.describe(schema, table, source="declared")
 
     def drop_table(self, schema: str, table: str) -> None:
         try:
@@ -619,18 +674,45 @@ class Workspace:
     def query(
         self, sql: str, limit: int | None = None
     ) -> tuple[list[str], list[tuple]]:
-        """Run a read query and return ``(column_names, rows)``.
+        """Run a **read** query and return ``(column_names, rows)``.
 
-        No statement parsing happens here. Attached datasources carry their own
-        read-only URI, and the writable schemas hold only what this session
-        loaded, so there is nothing to protect from a write.
+        A query reads. Anything that would change the database — ``INSERT``,
+        ``CREATE TABLE``, ``CREATE VIEW``, ``ATTACH``, a ``PRAGMA`` — is refused
+        here, whatever rights the datasource itself carries. Mutation has its
+        own verbs (``add_table``, ``drop_table``) which do not come through this
+        method, so the refusal costs the surface nothing.
+
+        Enforced by SQLite's authorizer rather than by reading the SQL: the
+        callback runs while the statement is being *prepared*, so a refused
+        statement never executes and there is no text to parse and mis-parse.
+        ``PRAGMA query_only`` would be the blunter alternative, but it is
+        database state that would have to be toggled around every call — and
+        ``CONSTRAINTS`` §3 is explicit that a connection's posture is set once,
+        never flipped around an operation.
         """
-        cursor = self._conn.execute(sql)
-        if cursor.description is None:
-            return [], []
-        names = [description[0] for description in cursor.description]
-        rows = cursor.fetchmany(limit) if limit else cursor.fetchall()
-        return names, rows
+        self._denied = None
+        self._reading = True
+        try:
+            cursor = self._conn.execute(sql)
+            if cursor.description is None:
+                return [], []
+            names = [description[0] for description in cursor.description]
+            rows = cursor.fetchmany(limit) if limit else cursor.fetchall()
+            return names, rows
+        except sqlite3.DatabaseError as exc:
+            if self._denied is None:
+                raise
+            raise LoadError(
+                f"query reads; it does not write. This statement asks to "
+                f"{self._denied}, which is refused here even on a writable "
+                f"datasource. To add data use add_table, to remove a table use "
+                f"drop_table; there is no verb for arbitrary DDL by design."
+            ) from exc
+        finally:
+            # Cleared before returning the rows, not after: everything the
+            # cursor still has to do is reading, and leaving the flag set would
+            # arm the authorizer against the next write this session makes.
+            self._reading = False
 
     def close(self) -> None:
         self._raw.close()

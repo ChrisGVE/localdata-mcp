@@ -82,6 +82,10 @@ Two reasons, and the second is the one that bites later:
 `join_on` names the column the two files share. Pass it, and the response tells
 you whether the match is actually complete.
 
+**`query` will not write.** Not a permission you can ask for — a property of the
+verb. If you find yourself reaching for `INSERT` or `CREATE TABLE`, the answer is
+`add_table`; for removing one, `drop_table`.
+
 **Then say what you found, in their terms.** The response gives facts; the
 sentence is yours:
 
