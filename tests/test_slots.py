@@ -22,7 +22,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Index, MetaData, Table, create_engine, text
 
 from localdata_mcp import config as config_module
 from localdata_mcp.config import Config
@@ -909,12 +909,17 @@ def test_a_read_only_slot_refuses_indexes_in_both_directions(registry, root):
 
 
 def test_indexes_a_datasource_arrived_with_are_reported(registry, root):
-    """Reported whoever made them — an attached database is not a blank slate."""
+    """Reported whoever made them — an attached database is not a blank slate.
+
+    The pre-existing index is built through SQLAlchemy over a URL, not through
+    the ``sqlite3`` driver: a fixture that reaches past the abstraction proves
+    the abstraction only for the one backend it reached past.
+    """
     build_database(root / "warehouse.db")
-    connection = sqlite3.connect(root / "warehouse.db")
-    connection.execute("CREATE INDEX ix_products_sku ON products (sku)")
-    connection.commit()
-    connection.close()
+    outside = create_engine(f"sqlite:///{root / 'warehouse.db'}")
+    products = Table("products", MetaData(), autoload_with=outside)
+    Index("ix_products_sku", products.c.sku).create(outside)
+    outside.dispose()
     registry.attach(str(root / "warehouse.db"), "wh")
 
     assert [index.name for index in registry.indexes("wh")] == ["ix_products_sku"]

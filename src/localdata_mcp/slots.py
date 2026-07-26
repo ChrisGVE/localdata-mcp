@@ -818,10 +818,20 @@ class Registry:
     # -- using --------------------------------------------------------------
 
     def query(self, nickname: str, sql: str) -> tuple[list[str], list[tuple]]:
-        """Run a statement against the database the nickname names."""
+        """Run a statement against the database the nickname names.
+
+        A ``LoadError`` from below carries a message written *for the caller* —
+        it already says what was refused and which verb to use instead. It is
+        translated rather than re-raised so the surface reports it as one of
+        ours, without the exception's class name prefixed to a sentence that
+        was already a complete answer.
+        """
         slot = self.slot(nickname)
         try:
             return self._workspace.query(nickname, sql)
+        except LoadError as exc:
+            self._explain(exc, sql, slot)
+            raise SlotError(str(exc)) from exc
         except Exception as exc:
             self._explain(exc, sql, slot)
             raise

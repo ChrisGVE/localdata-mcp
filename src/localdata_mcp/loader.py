@@ -241,6 +241,30 @@ def _sanitize(name: str, fallback: str) -> str:
     return cleaned.lower()
 
 
+#: How the backends we have seen say "that table is not here". Matching driver
+#: prose is **enrichment, not detection**: a phrasing we do not recognise simply
+#: falls through to the driver's own message, which is never worse than what the
+#: caller would have got. Nothing branches on the outcome, so an unrecognised
+#: dialect loses a listing of table names and nothing else.
+_NO_SUCH_TABLE = re.compile(
+    r"""(?x)
+    no\ such\ table:\s*(?P<sqlite>[\w.]+)
+    | relation\ "(?P<postgres>[^"]+)"\ does\ not\ exist
+    | Table\ '[^.']*\.?(?P<mysql>[^.']+)'\ doesn't\ exist
+    """,
+    re.IGNORECASE,
+)
+
+
+def _missing_table(message: str) -> str | None:
+    """The table name a driver is complaining about, if we recognise the phrasing."""
+    found = _NO_SUCH_TABLE.search(message)
+    if found is None:
+        return None
+    name = next((value for value in found.groupdict().values() if value), None)
+    return name.rsplit(".", 1)[-1] if name else None
+
+
 def _index_name(table: str, columns: Sequence[str]) -> str:
     """What an index on these columns is called.
 
@@ -637,8 +661,9 @@ class Workspace:
         """Every index in this tag's database, or only those on one table.
 
         Inspected over the *write* engine for the reason :meth:`describe` gives:
-        the inspector is PRAGMA underneath, and the read engine's authorizer
-        refuses PRAGMA so that a caller's SQL cannot reach one.
+        this is the server asking about the schema, not the caller's statement
+        running, so it does not go through the posture the read engine carries
+        on the caller's behalf.
         """
         entry = self.entry(tag)
         inspector = inspect(entry.engines.write)
@@ -812,12 +837,13 @@ class Workspace:
         entry = self.entry(tag)
         # Inspected over the *write* engine, as residency is, and for the same
         # reason: this is the server asking about the schema, not the caller's
-        # SQL running. The read engine's authorizer refuses PRAGMA — rightly, it
-        # is what stops ``query`` reaching one — and SQLAlchemy's inspector is
-        # PRAGMA underneath, so inspecting there refuses every table the server
-        # did not load itself. No write ability is implied: a read-only
-        # datasource carries ``mode=ro`` on both engines and SQLite refuses the
-        # write whichever one asks.
+        # SQL running, so it must not be subject to the read posture the
+        # backend installs on the caller's behalf. That posture is a
+        # ``Backend.read_posture`` hook and each dialect decides how strict it
+        # is; SQLite's is strict enough to refuse introspection itself. No write
+        # ability is implied either way — a read-only datasource is opened
+        # read-only on *both* engines, so the database refuses a write whichever
+        # one asks.
         described = inspect(entry.engines.write).get_columns(table)
         if not described:
             raise LoadError(f"No such table: {tag}.{table}")
@@ -941,6 +967,13 @@ class Workspace:
                 f"No such table: {entry.tag}.{table}. Tables are addressed by "
                 f"their own name inside the datasource you named — write "
                 f"FROM {table}, not FROM {entry.tag}.{table}. Available here: "
+                f"{', '.join(self.table_names(entry.tag)) or 'none'}."
+            )
+
+        missing = _missing_table(message)
+        if missing is not None:
+            return LoadError(
+                f"No such table: {entry.tag}.{missing}. In {entry.tag}: "
                 f"{', '.join(self.table_names(entry.tag)) or 'none'}."
             )
         return LoadError(message)
