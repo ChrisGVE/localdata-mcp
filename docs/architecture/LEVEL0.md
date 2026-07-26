@@ -41,19 +41,24 @@ is named after the file unless the caller names it at attach time.
 exactly like that, and it means three things:
 
 1. **Add a table to the database already open** — not a second slot.
-2. Build a **view** over the join (ordinary SQL through `query`; no verb needed).
+2. Join the two tables in ordinary SQL through `query`; no verb needed.
 3. **Check whether the join is complete**, and say so in the user's terms: *"X, Y and Z
    have no match in that file."*
 
 Adding to the existing database rather than attaching a second one is not only the
-friendlier mental model — it is **the only route to a stored join**. Measured
-(CONSTRAINTS §2.3): a `SELECT` may join across two attached databases, but `CREATE VIEW`
-over that same join is refused outright — `view named cannot reference objects in
-database wh`. Not a view that later goes stale; a view that never exists.
+friendlier mental model — it is **what makes the result keepable**. `save` writes one
+database, not a join, so a lookup meant to outlive the session needs both sides inside
+the slot being saved.
 
 So the two halves behave differently and are easy to conflate. Joining across slots
-works and is worth doing for a one-off answer. Keeping that join — naming it, returning
-to it — requires both tables in one database, which is what `add_table` is for.
+works and is worth doing for a one-off answer. Keeping that relationship — coming back
+to it next session — requires both tables in one database, which is what `add_table` is
+for.
+
+> **Superseded (2026-07-26).** An earlier draft made step 2 *"build a view over the
+> join"* and justified `add_table` by SQLite's refusal of a cross-database `CREATE VIEW`
+> (CONSTRAINTS §2.3). Creating views was never part of this product; that justification
+> rested on a feature that does not exist, and the reason above holds without it.
 
 ### Arc 3 — Spill
 

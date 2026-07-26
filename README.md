@@ -191,7 +191,11 @@ The full specification is in [docs/architecture/LEVEL0.md](docs/architecture/LEV
 
 - [Level 0 specification](docs/architecture/LEVEL0.md) — the premise, the three user journeys, the seven verbs
 - [Measured constraints](docs/CONSTRAINTS.md) — the behaviour that shapes the design, with the numbers behind it
-- [First principles](docs/architecture/FIRST_PRINCIPLES.md) — the constitutional foundation
+
+Those two are the whole of it. Everything else that used to live under `docs/` described
+a data-science platform that was never built, and now sits in
+[`non_factual/`](non_factual/README.md) — quarantined rather than deleted, and not to be
+cited or acted on until somebody has checked it against the code.
 
 ## Development
 
