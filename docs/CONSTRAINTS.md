@@ -195,15 +195,27 @@ completely differently:
 | `SELECT … JOIN other.table` | works |
 | `CREATE VIEW … AS SELECT … JOIN other.table` | refused outright |
 
-**Consequence for the design.** A stored join can only be built over tables that live in *one*
-database. That is what makes `add_table` — landing a second datasource beside the first, inside the
-open slot — the only route to a reusable join, rather than merely the friendlier-sounding one. Any
-guidance that says "attach both files and join them" is offering something that cannot be saved.
+**Deduced, not discovered.** A view is SQL text stored inside one file; a file has no way to name a
+table in another. The behaviour follows from that in one step and needed no experiment. It is
+recorded here because the exact error text is worth quoting, not because it was a surprise.
+
+**Consequence for the design.** Little, as it turns out. Views are not part of this package, so
+this refusal is not what justifies `add_table` — an earlier draft of this section claimed it did.
+`add_table` exists for a simpler reason that holds whether or not views are in play: `save` writes
+one database, not a join. A lookup meant to outlive the session needs both sides *inside* the slot
+being saved. Guidance that says "attach both files and join them" offers an answer to a question,
+not something the user can keep.
 
 ### 2.4 A view that names its own schema is not portable, and poisons the whole file
 
 Following on from §2.3: a view *may* name its own database, and SQLite accepts it at `CREATE VIEW`
 time.
+
+**Mostly deduced too.** A nickname is a connection-scoped label that appears nowhere in the file,
+and a view is SQL text that does live in the file — so a qualified name inside a view cannot
+survive being attached under a different label. One deduction, no experiment. What *was* worth
+measuring is the blast radius below: lazy failure of the single view is the reasonable expectation,
+and it is not what happens.
 
 ```sql
 CREATE VIEW shop.revenue AS SELECT … FROM shop.sales s JOIN shop.prices p ON …   -- accepted
@@ -242,6 +254,12 @@ be opened is worse than no file at all. The check is an attach rather than a sca
 SQL for the nickname, because the scan guesses and guesses wrong on a table *aliased* to the same
 word (`SELECT shop.qty FROM sales shop`). §5.1 again: assert on what the operation returns, never on
 what the text looks like.
+
+The check is a **net, not a feature**. Creating views is no part of this package and the tool
+surface no longer mentions them; but `query` runs arbitrary SQL against a writable slot, so a view
+can still arise, and silently handing back a file that will not open is data loss. Refusing `CREATE
+VIEW` outright would need statement classification — more code, and fragile — to forbid something a
+SQL tool has no particular reason to forbid.
 
 ---
 
@@ -413,15 +431,24 @@ host, containing the user's actual data. Any file this tool writes on the user's
 created `0o600` unless the user asked otherwise, and the mode must be set by pre-creating with a
 restrictive umask or `chmod`-ing immediately, with the race acknowledged.
 
-### 4.2 Refusing an existing target is a feature — design *for* it
+### 4.2 The overwrite guard is unconditional, and belongs at the path boundary
 
-`VACUUM INTO` fails with `output file already exists` rather than overwriting. That removes a
-silent-data-loss class and is the behaviour to copy: **an export must not silently overwrite.**
-Require an explicit `overwrite=True`, and treat the target path as a trust boundary (traversal,
-symlink-swap between check and write). Prior work in this codebase already treated file-identity
-races as real; keep that posture.
+An earlier draft of this section conflated two separate questions — *whether* to refuse an existing
+target, and *who* enforces the refusal — and got both answers from the same place. They are
+unrelated.
 
-**But the refusal is conditional, so nothing may lean on it.** Measured across three target states:
+**Whether: always, and no parameter defeats it.** The earlier answer was "require an explicit
+`overwrite=True`", which is wrong here for a reason that has nothing to do with SQLite. A
+destination path in this server arrives from an LLM relaying a name the *user* chose. The agent
+therefore has no standing to consent to destroying whatever sits at that name — and an `overwrite`
+flag is exactly that consent, handed to the party that cannot give it. Worse, offering the flag
+invites its use: the refusal message used to end "Pass overwrite=true to replace it", which reads
+as an instruction. So there is no flag. An existing target is refused, the message names the file
+and points at the user, and the destructive act — clearing the old file, or picking another name —
+happens outside this server where the authority actually lives.
+
+**Who: the path boundary, never SQLite.** `VACUUM INTO` does refuse *some* existing targets, and
+the earlier draft leaned on that. It does not hold. Measured across three target states:
 
 | Existing target | Result |
 |---|---|
@@ -433,6 +460,11 @@ Only the first row is the refusal the design wants, and a zero-length file is ex
 half-finished earlier write leaves behind. **The overwrite guard therefore belongs at the path
 boundary**, where it is unconditional and reads the same for every writer, rather than being
 delegated to SQLite.
+
+Worth being plain about the weight of this one: delegating a filesystem policy to a SQL statement's
+incidental behaviour was never sound, whatever that behaviour turned out to be. Measuring the three
+rows corrected a *claim in this document*; it did not change a design, because nothing should have
+been resting there in the first place.
 
 ### 4.3 `VACUUM INTO` cannot run inside a transaction
 

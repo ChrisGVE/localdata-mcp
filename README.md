@@ -78,10 +78,10 @@ query("sales", "SELECT s.sku, s.qty * p.price AS total "
                "FROM sales.sales s JOIN sales.prices p ON s.sku = p.sku")
 ```
 
-Landing the second file inside the first database is not just tidier. **Only
-tables in the same database can have a view built over their join** — SQLite
-refuses `CREATE VIEW` across attached databases outright — so this is the only
-route to a lookup you can store and come back to.
+Landing the second file inside the first database is not just tidier. **`save`
+writes one database, not a join** — so attaching the two files separately gives
+you an answer now and nothing to come back to, while this gives you a lookup you
+can keep.
 
 `join_on` makes the tool report whether the match is actually complete, in both
 directions:
@@ -98,7 +98,7 @@ directions:
 ### Nothing survives unless you save it
 
 Attached data lives until `detach`, or until the server stops. `save` writes the
-whole database — tables you added, views you built — to a file:
+whole database — including tables you added — to a file:
 
 ```python
 save("sales", "./analysis.db")
@@ -106,6 +106,10 @@ save("sales", "./analysis.db")
 
 Attaching that file again later is an ordinary attach, so it comes back
 **read-only** unless you pass `writable=true`.
+
+An existing file is refused, and there is no flag to override that. The
+destination is a name a person chose; deciding to destroy what is already there
+is theirs to make, not the agent's — so clearing it happens outside this server.
 
 ## What it will not do
 

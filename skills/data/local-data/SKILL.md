@@ -71,12 +71,13 @@ datasource. **Add it to the database that is already open:**
 add_table(nickname="shop", source="/path/prices.csv", join_on="sku")
 ```
 
-Two reasons, and the second is hard:
+Two reasons, and the second is the one that bites later:
 
 - One database, so `shop.sales` and `shop.prices` join in plain SQL.
-- **Only tables in the same database can have a view built over their join.**
-  SQLite refuses `CREATE VIEW` across databases outright. Attaching both files
-  separately gives you a join you can run once and never store.
+- **`save` writes one database, not a join.** Attach the two files separately
+  and you get an answer now and nothing to keep — the moment the session ends,
+  the relationship between them is gone. Landing the second file inside the
+  first is what makes the lookup survivable.
 
 `join_on` names the column the two files share. Pass it, and the response tells
 you whether the match is actually complete.
@@ -96,27 +97,20 @@ Never say "anti-join". Never hand back the raw payload. And check **both**
 directions — the rows in the new file that nothing refers to are usually the
 surprise.
 
-To keep the lookup, store it as a view, and **name the tables unqualified**:
-
-```sql
-CREATE VIEW shop.revenue AS
-  SELECT s.sku, s.qty * p.price AS total
-  FROM sales s JOIN prices p ON s.sku = p.sku      -- not shop.sales / shop.prices
-```
-
-Writing `shop.sales` here bakes the nickname into the file, and the saved
-database then cannot be opened under any other name. `save` catches it and
-refuses, but it is easier not to do it.
-
 ### 3. "Keep this"
 
 ```
 save(nickname, path="/path/analysis.db")
 ```
 
-Writes the whole database — every table added, every view built — to a file they
-own. It stays open afterwards. Attaching it again another day is an ordinary
-`attach`, so it comes back **read-only** unless they pass `writable=true`.
+Writes the whole database — every table added — to a file they own. It stays
+open afterwards. Attaching it again another day is an ordinary `attach`, so it
+comes back **read-only** unless they pass `writable=true`.
+
+**The path is theirs, not yours.** Ask for the name rather than inventing one,
+and if `save` reports the file already exists, that refusal is final — there is
+no flag to force it. Tell them what is in the way and let them choose: a
+different name, or clearing the old file themselves.
 
 ## The naming conversation
 
