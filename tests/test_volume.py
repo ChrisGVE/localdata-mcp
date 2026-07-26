@@ -61,19 +61,20 @@ def _insert_peak(path: Path, table: str) -> tuple[float, int, float]:
     this reason.
     """
     workspace = Workspace.in_memory()
+    workspace.attach_memory("bulk")
     try:
         frame = pd.read_csv(path)
 
         tracemalloc.start()
         started = time.perf_counter()
-        info = workspace.insert_frame(frame, table, source=str(path))
+        info = workspace.insert_frame(frame, table, source=str(path), tag="bulk")
         elapsed = time.perf_counter() - started
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
         # A write that does nothing is very fast and allocates nothing, which is
         # the same shape as the result we want. Prove the rows are really there.
-        _, rows = workspace.query(f"SELECT count(*) FROM {table}", limit=None)
+        _, rows = workspace.query("bulk", f"SELECT count(*) FROM {table}", limit=None)
         assert rows[0][0] == info.row_count
         return peak / 1_048_576, info.row_count, elapsed
     finally:
@@ -109,17 +110,20 @@ def test_large_file_answers_correctly(root):
     _write_csv(path, LARGE_ROWS)
 
     workspace = Workspace.in_memory()
+    workspace.attach_memory("bulk")
     try:
-        info = workspace.load_file(str(path))
+        info = workspace.load_file(str(path), "bulk")
         assert info.row_count == LARGE_ROWS
 
-        _, rows = workspace.query("SELECT sum(id) FROM big", limit=None)
+        _, rows = workspace.query("bulk", "SELECT sum(id) FROM big", limit=None)
         assert rows[0][0] == LARGE_ROWS * (LARGE_ROWS - 1) // 2
 
-        _, rows = workspace.query("SELECT count(*) FROM big WHERE flag = 1", limit=None)
+        _, rows = workspace.query(
+            "bulk", "SELECT count(*) FROM big WHERE flag = 1", limit=None
+        )
         assert rows[0][0] == LARGE_ROWS // 2
 
-        _, rows = workspace.query("SELECT max(score) FROM big", limit=None)
+        _, rows = workspace.query("bulk", "SELECT max(score) FROM big", limit=None)
         assert rows[0][0] == pytest.approx((LARGE_ROWS - 1) * 1.5)
     finally:
         workspace.close()
@@ -133,9 +137,10 @@ def test_export_of_a_large_result_is_complete(root):
     _write_csv(path, SMALL_ROWS)
 
     workspace = Workspace.in_memory()
+    workspace.attach_memory("bulk")
     try:
-        workspace.load_file(str(path))
-        columns, rows = workspace.query("SELECT id, score FROM big", limit=None)
+        workspace.load_file(str(path), "bulk")
+        columns, rows = workspace.query("bulk", "SELECT id, score FROM big", limit=None)
         target = root / "exported.csv"
         result = export_csv(columns, rows, str(target))
 

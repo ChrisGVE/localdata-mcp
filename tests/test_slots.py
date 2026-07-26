@@ -22,6 +22,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from localdata_mcp import config as config_module
 from localdata_mcp.config import Config
@@ -72,16 +73,16 @@ def csv_at(path: Path, text: str = "sku,qty\na,3\nb,4\n") -> Path:
     return path
 
 
-def view_from_outside(registry: Registry, sql: str) -> None:
+def view_from_outside(registry: Registry, tag: str, sql: str) -> None:
     """Create a view the only way one can still come into existence.
 
     ``query`` refuses every write, so the surface cannot make a view at all any
-    more. One can still *arrive* inside a SQLite file somebody else built, which
-    is the case ``save`` has to keep defending against — this reaches past the
-    surface to produce that state.
+    more. One can still *arrive* inside a SQLite file somebody else built — this
+    reaches past the surface to produce that state, writing through the tag's own
+    engine because that is the only connection its database has.
     """
-    registry._workspace._conn.execute(sql)
-    registry._workspace._conn.commit()
+    with registry.workspace.engine(tag).begin() as connection:
+        connection.execute(text(sql))
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +131,7 @@ def test_the_table_is_named_from_the_file_not_from_the_nickname(registry, root):
 def test_a_file_slot_is_addressed_as_nickname_dot_table(registry, root):
     csv_at(root / "sales.csv")
     registry.attach(str(root / "sales.csv"), "shop")
-    columns, rows = registry.query(
-        "shop", "SELECT sku, qty FROM shop.sales ORDER BY sku"
-    )
+    columns, rows = registry.query("shop", "SELECT sku, qty FROM sales ORDER BY sku")
     assert columns == ["sku", "qty"]
     assert rows == [("a", 3), ("b", 4)]
 
@@ -184,7 +183,7 @@ def test_an_attached_database_cannot_be_written_through(registry, root):
     build_database(root / "warehouse.db")
     registry.attach(str(root / "warehouse.db"), "wh")
     with pytest.raises(Exception):
-        registry.query("wh", "DELETE FROM wh.products")
+        registry.query("wh", "DELETE FROM products")
 
 
 def test_a_path_outside_the_allowed_area_is_refused(registry, tmp_path):
@@ -196,31 +195,6 @@ def test_a_path_outside_the_allowed_area_is_refused(registry, tmp_path):
 # ---------------------------------------------------------------------------
 # The flagship: one statement across two slots
 # ---------------------------------------------------------------------------
-
-
-def test_a_file_slot_joins_a_database_slot_in_one_statement(registry, root):
-    csv_at(root / "sales.csv")
-    build_database(root / "warehouse.db")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.attach(str(root / "warehouse.db"), "wh")
-
-    columns, rows = registry.query(
-        "shop",
-        "SELECT p.name, s.qty FROM shop.sales s "
-        "JOIN wh.products p ON s.sku = p.sku ORDER BY p.name",
-    )
-    assert columns == ["name", "qty"]
-    assert rows == [("Gadget", 4), ("Widget", 3)]
-
-
-def test_two_file_slots_join_each_other(registry, root):
-    csv_at(root / "left.csv", "k,v\n1,a\n")
-    csv_at(root / "right.csv", "k,w\n1,b\n")
-    registry.attach(str(root / "left.csv"), "l")
-    registry.attach(str(root / "right.csv"), "r")
-
-    _, rows = registry.query("l", "SELECT v, w FROM l.left JOIN r.right USING (k)")
-    assert rows == [("a", "b")]
 
 
 # ---------------------------------------------------------------------------
@@ -262,10 +236,10 @@ def test_a_colliding_nickname_is_disambiguated_rather_than_replacing_a_slot(
     assert attachment.slot.tables == ("second",)
     assert [s.nickname for s in registry.slots()] == ["slot", "slot_2"]
 
-    _, rows = registry.query("slot_2", "SELECT b FROM slot_2.second")
+    _, rows = registry.query("slot_2", "SELECT b FROM second")
     assert rows == [(2,)]
     # The first slot is untouched, which is the whole point of not replacing it.
-    _, first = registry.query("slot", "SELECT a FROM slot.first")
+    _, first = registry.query("slot", "SELECT a FROM first")
     assert first == [(1,)]
 
 
@@ -294,7 +268,7 @@ def test_a_filename_that_is_not_a_legal_identifier_still_yields_one(registry, ro
     assert table == "table_2024_sales_report"
 
     # The proof they are usable is that they address the data.
-    _, rows = registry.query(nickname, f"SELECT qty FROM {nickname}.{table}")
+    _, rows = registry.query(nickname, f"SELECT qty FROM {table}")
     assert sorted(r[0] for r in rows) == [3, 4]
 
 
@@ -304,7 +278,7 @@ def test_a_derived_nickname_that_sqlite_reserves_is_stepped_over(registry, root)
     attachment = registry.attach(str(root / "main.csv"))
 
     assert attachment.slot.nickname == "main_2"
-    _, rows = registry.query("main_2", "SELECT count(*) FROM main_2.main")
+    _, rows = registry.query("main_2", "SELECT count(*) FROM main")
     assert rows == [(2,)]
 
 
@@ -325,7 +299,7 @@ def test_two_same_named_files_in_different_directories_both_get_a_slot(registry,
     # The source is what actually distinguishes them, so it has to come back.
     assert second.collided_with.source == str(root / "q1" / "sales.csv")
 
-    _, rows = registry.query("sales_2", "SELECT qty FROM sales_2.sales")
+    _, rows = registry.query("sales_2", "SELECT qty FROM sales")
     assert rows == [(2,)]
 
 
@@ -374,7 +348,7 @@ def test_a_refused_duplicate_costs_no_live_slot_its_place(root):
             registry.attach(str(root / "first.csv"), "three")
 
         assert [slot.nickname for slot in registry.slots()] == ["one", "two"]
-        _, rows = registry.query("one", "SELECT a FROM one.first")
+        _, rows = registry.query("one", "SELECT a FROM first")
         assert rows == [(1,)]
     finally:
         registry.close()
@@ -497,7 +471,7 @@ def test_using_an_evicted_nickname_explains_the_eviction(root):
     try:
         fill(registry, root, 2)
         with pytest.raises(SlotNotAvailable, match="evicted"):
-            registry.query("s0", "SELECT * FROM s0.f0")
+            registry.query("s0", "SELECT * FROM f0")
     finally:
         registry.close()
 
@@ -506,18 +480,6 @@ def test_an_unknown_nickname_is_distinguished_from_an_evicted_one(registry, root
     with pytest.raises(SlotNotAvailable) as raised:
         registry.query("neverexisted", "SELECT 1")
     assert "evicted" not in str(raised.value).lower()
-
-
-def test_a_qualified_reference_to_an_evicted_slot_is_also_explained(root):
-    """The nickname routed on is live; the one inside the SQL is gone."""
-    config_module.use(Config(roots=(root,), slots=2))
-    registry = Registry()
-    try:
-        fill(registry, root, 3)
-        with pytest.raises(SlotNotAvailable, match="evicted"):
-            registry.query("s2", "SELECT * FROM s2.f2 JOIN s0.f0 USING (a)")
-    finally:
-        registry.close()
 
 
 def test_a_refused_attachment_costs_no_live_slot_its_place(root):
@@ -537,7 +499,7 @@ def test_a_refused_attachment_costs_no_live_slot_its_place(root):
             registry.attach(str(root / "keeper.csv"), "not-a-name")
 
         assert [slot.nickname for slot in registry.slots()] == ["keeper"]
-        _, rows = registry.query("keeper", "SELECT count(*) FROM keeper.keeper")
+        _, rows = registry.query("keeper", "SELECT count(*) FROM keeper")
         assert rows == [(2,)]
     finally:
         registry.close()
@@ -549,7 +511,7 @@ def test_a_slot_can_be_attached_again_after_eviction(root):
     try:
         fill(registry, root, 2)
         registry.attach(str(root / "f0.csv"), "s0")
-        _, rows = registry.query("s0", "SELECT a FROM s0.f0")
+        _, rows = registry.query("s0", "SELECT a FROM f0")
         assert rows == [(1,)]
     finally:
         registry.close()
@@ -559,7 +521,7 @@ def test_a_genuine_missing_table_still_reports_itself_plainly(registry, root):
     csv_at(root / "sales.csv")
     registry.attach(str(root / "sales.csv"), "shop")
     with pytest.raises(Exception) as raised:
-        registry.query("shop", "SELECT * FROM shop.absent")
+        registry.query("shop", "SELECT * FROM absent")
     assert "evicted" not in str(raised.value).lower()
 
 
@@ -609,17 +571,6 @@ def test_a_slot_on_its_own_engine_answers_its_own_sql(registry, root):
     assert rows == [("a",), ("b",)]
 
 
-def test_a_join_across_two_engines_explains_the_one_engine_rule(registry, root):
-    build_database(root / "remote.db")
-    csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=False)
-
-    with pytest.raises(Exception) as raised:
-        registry.query("remote", "SELECT * FROM products JOIN shop.sales USING (sku)")
-    assert "engine" in str(raised.value).lower()
-
-
 def test_an_engine_slot_reports_a_source_without_its_password(registry, root):
     build_database(root / "remote.db")
     slot = registry._attach_engine(
@@ -661,7 +612,7 @@ def test_detaching_frees_the_slot_for_another_datasource(root):
 
         assert attachment.evicted is None
         assert [slot.nickname for slot in registry.slots()] == ["two"]
-        _, rows = registry.query("two", "SELECT b FROM two.second")
+        _, rows = registry.query("two", "SELECT b FROM second")
         assert rows == [(2,)]
     finally:
         registry.close()
@@ -675,7 +626,7 @@ def test_a_detached_source_can_be_attached_again(registry, root):
 
     again = registry.attach(str(root / "sales.csv"), "shop")
     assert again.slot.nickname == "shop"
-    _, rows = registry.query("shop", "SELECT count(*) FROM shop.sales")
+    _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
 
 
@@ -702,12 +653,13 @@ def test_a_second_file_joins_the_first_inside_one_database(registry, root):
 
     added = registry.add_table("shop", source=str(root / "prices.csv"))
 
+    # `qualified` identifies the table; it is not how a statement addresses it.
     assert added.info.qualified == "shop.prices"
     assert added.info.row_count == 2
     _, rows = registry.query(
         "shop",
-        "SELECT s.sku, s.qty * p.price FROM shop.sales s "
-        "JOIN shop.prices p ON s.sku = p.sku ORDER BY s.sku",
+        "SELECT s.sku, s.qty * p.price FROM sales s "
+        "JOIN prices p ON s.sku = p.sku ORDER BY s.sku",
     )
     assert rows == [("a", 30), ("b", 80)]
 
@@ -733,7 +685,7 @@ def test_adding_over_an_existing_table_is_refused(registry, root):
     with pytest.raises(SlotError, match="already exists"):
         registry.add_table("shop", table="sales", source=str(root / "sales.csv"))
 
-    _, rows = registry.query("shop", "SELECT count(*) FROM shop.sales")
+    _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
 
 
@@ -755,7 +707,7 @@ def test_composition_is_allowed_once_write_is_granted(registry, root):
 
     registry.add_table("wh", source=str(root / "extra.csv"))
     _, rows = registry.query(
-        "wh", "SELECT p.name FROM wh.products p JOIN wh.extra e ON p.sku = e.sku"
+        "wh", "SELECT p.name FROM products p JOIN extra e ON p.sku = e.sku"
     )
     assert rows == [("Widget",)]
 
@@ -769,7 +721,7 @@ def test_dropping_a_table_leaves_the_rest_of_the_slot_answering(registry, root):
     registry.drop_table("shop", "prices")
 
     assert registry.tables("shop") == ("sales",)
-    _, rows = registry.query("shop", "SELECT count(*) FROM shop.sales")
+    _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
 
 
@@ -814,8 +766,8 @@ def test_an_incomplete_join_names_the_values_on_the_correct_side(registry, root)
     assert report is not None
     assert report.complete is False
     assert report.key == "sku"
-    assert report.existing_table == "shop.sales"
-    assert report.added_table == "shop.prices"
+    assert report.existing_table == "sales"
+    assert report.added_table == "prices"
     assert report.matched_keys == 1
     # b and c are in sales with no price.
     assert report.missing_from_added == ("b", "c")
@@ -877,7 +829,7 @@ def test_the_partner_table_is_honoured_when_it_is_named(registry, root):
     ).join
 
     assert report is not None
-    assert report.existing_table == "shop.prices"
+    assert report.existing_table == "prices"
     assert report.missing_from_existing == ("z",)
 
 
@@ -908,8 +860,8 @@ def test_a_saved_database_can_be_attached_again_with_its_rows(registry, root):
     assert sorted(again.slot.tables) == ["prices", "sales"]
     _, rows = registry.query(
         "kept",
-        "SELECT s.sku, s.qty * p.price FROM kept.sales s "
-        "JOIN kept.prices p ON s.sku = p.sku ORDER BY s.sku",
+        "SELECT s.sku, s.qty * p.price FROM sales s "
+        "JOIN prices p ON s.sku = p.sku ORDER BY s.sku",
     )
     assert rows == [("a", 30), ("b", 80)]
 
@@ -937,7 +889,7 @@ def test_saving_keeps_the_slot_answering_and_writable(registry, root):
     csv_at(root / "prices.csv", "sku,price\na,10\n")
     registry.add_table("shop", source=str(root / "prices.csv"))
     assert "prices" in registry.tables("shop")
-    _, rows = registry.query("shop", "SELECT count(*) FROM shop.sales")
+    _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
 
 
@@ -1038,14 +990,14 @@ def test_a_database_that_outgrows_the_budget_still_answers_from_disk(root):
         bulky_csv(root / "big.csv")
         registry.attach(str(root / "big.csv"), "big")
         before = registry.query(
-            "big", "SELECT count(*), sum(amount), min(label), max(label) FROM big.big"
+            "big", "SELECT count(*), sum(amount), min(label), max(label) FROM big"
         )[1]
 
         moved = registry.relieve_memory()
 
         assert [slot.nickname for slot in moved] == ["big"]
         after = registry.query(
-            "big", "SELECT count(*), sum(amount), min(label), max(label) FROM big.big"
+            "big", "SELECT count(*), sum(amount), min(label), max(label) FROM big"
         )[1]
         assert after == before
         assert after[0][0] == 60_000
@@ -1137,8 +1089,7 @@ def test_a_spilled_database_is_still_writable_and_composable(root):
 
         _, rows = registry.query(
             "big",
-            "SELECT l.note FROM big.big b JOIN big.labels l ON b.id = l.id "
-            "ORDER BY l.note",
+            "SELECT l.note FROM big b JOIN labels l ON b.id = l.id ORDER BY l.note",
         )
         assert rows == [("first",)]
         # Composable after the move: both added tables landed in the same slot.
@@ -1264,10 +1215,15 @@ def test_the_spill_really_moves_the_database_off_the_heap(root):
         registry.close()
 
 
-def _backing_file(registry: Registry, schema: str) -> str:
-    """The file SQLite has behind an attached schema; empty for in-memory."""
-    rows = registry.workspace._conn.execute("PRAGMA database_list").fetchall()
-    return next(row[2] for row in rows if row[1] == schema)
+def _backing_file(registry: Registry, tag: str) -> str:
+    """The file behind a tag's database; empty while it is still in memory.
+
+    The tag dict carries this directly: ``uri`` is where the data came from and
+    never moves, ``location`` is where it sits now. A spill is exactly the moment
+    those two stop being equal.
+    """
+    location = registry.workspace.location(tag)
+    return "" if location == ":memory:" else location
 
 
 # ---------------------------------------------------------------------------
@@ -1289,7 +1245,8 @@ def test_a_view_naming_tables_unqualified_survives_being_saved_and_renamed(
     registry.add_table("shop", source=str(root / "prices.csv"))
     view_from_outside(
         registry,
-        "CREATE VIEW shop.revenue AS SELECT s.sku, s.qty * p.price AS total "
+        "shop",
+        "CREATE VIEW revenue AS SELECT s.sku, s.qty * p.price AS total "
         "FROM sales s JOIN prices p ON s.sku = p.sku",
     )
 
@@ -1297,33 +1254,8 @@ def test_a_view_naming_tables_unqualified_survives_being_saved_and_renamed(
     registry.detach("shop")
     registry.attach(str(saved), "renamed")
 
-    _, rows = registry.query("renamed", "SELECT total FROM renamed.revenue")
+    _, rows = registry.query("renamed", "SELECT total FROM revenue")
     assert rows == [(30,)]
-
-
-def test_saving_a_database_that_could_not_be_opened_again_is_refused(registry, root):
-    """A file that looks saved and cannot be attached is the worst outcome.
-
-    The whole database is rejected, not just the offending view, so this is not
-    a small blemish on an otherwise fine artifact.
-    """
-    csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.add_table("shop", source=str(root / "prices.csv"))
-    view_from_outside(
-        registry,
-        "CREATE VIEW shop.revenue AS SELECT s.sku, s.qty * p.price AS total "
-        "FROM shop.sales s JOIN shop.prices p ON s.sku = p.sku",
-    )
-
-    with pytest.raises(SlotError, match="unqualified"):
-        registry.save("shop", str(root / "keep.db"))
-
-    # Refused means nothing left behind that could be mistaken for a save.
-    assert not (root / "keep.db").exists()
-    # And the session is undisturbed.
-    assert registry.query("shop", "SELECT total FROM shop.revenue")[1] == [(30,)]
 
 
 def test_a_table_aliased_to_the_nickname_does_not_trip_the_check(registry, root):
@@ -1335,14 +1267,14 @@ def test_a_table_aliased_to_the_nickname_does_not_trip_the_check(registry, root)
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
     registry.attach(str(root / "sales.csv"), "shop")
     view_from_outside(
-        registry, "CREATE VIEW shop.totals AS SELECT shop.qty FROM sales shop"
+        registry, "shop", "CREATE VIEW totals AS SELECT shop.qty FROM sales shop"
     )
 
     saved = registry.save("shop", str(root / "keep.db"))
     registry.detach("shop")
     registry.attach(str(saved), "renamed")
 
-    assert registry.query("renamed", "SELECT qty FROM renamed.totals")[1] == [(3,)]
+    assert registry.query("renamed", "SELECT qty FROM totals")[1] == [(3,)]
 
 
 def test_attaching_a_database_poisoned_by_such_a_view_explains_itself(registry, root):
@@ -1365,6 +1297,11 @@ def test_attaching_a_database_poisoned_by_such_a_view_explains_itself(registry, 
     with pytest.raises(AttachRefused, match="unqualified"):
         registry.attach(str(poisoned), "kept")
 
-    # Under the name it was built with, the very same file is fine.
-    registry.attach(str(poisoned), "shop")
-    assert registry.query("shop", "SELECT qty FROM shop.v")[1] == [(3,)]
+    # And under the name it was built with too. A tag is not a schema alias any
+    # more, so there is no name that makes the view resolve — which is why the
+    # refusal is the whole answer rather than a hint to try another nickname.
+    with pytest.raises(AttachRefused, match="unqualified"):
+        registry.attach(str(poisoned), "shop")
+
+    # A refusal costs nothing: no slot was taken by either attempt.
+    assert registry.slots() == []

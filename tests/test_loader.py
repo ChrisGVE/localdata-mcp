@@ -13,6 +13,8 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from localdata_mcp import config as config_module
 from localdata_mcp import export as export_module
@@ -36,7 +38,14 @@ def root(monkeypatch, tmp_path):
 
 @pytest.fixture()
 def workspace():
+    """A workspace with one tag open, since a tag is now what holds tables.
+
+    ``main`` here is an ordinary tag name and carries no special meaning — the
+    shared ``main`` schema every datasource used to attach beside is exactly what
+    the per-tag model removed.
+    """
     ws = Workspace.in_memory()
+    ws.attach_memory("main")
     yield ws
     ws.close()
 
@@ -47,7 +56,7 @@ def workspace():
 
 
 def test_simple_csv_loads_and_answers_correctly(workspace, root):
-    info = workspace.load_file(str(root / "simple.csv"))
+    info = workspace.load_file(str(root / "simple.csv"), "main")
 
     assert info.row_count == 5
     assert [c.name for c in info.columns] == [
@@ -59,17 +68,17 @@ def test_simple_csv_loads_and_answers_correctly(workspace, root):
         "active",
     ]
 
-    _, rows = workspace.query("SELECT sum(salary) FROM simple")
+    _, rows = workspace.query("main", "SELECT sum(salary) FROM simple")
     assert rows[0][0] == 75000 + 65000 + 70000 + 80000 + 55000
 
     _, rows = workspace.query(
-        "SELECT count(*) FROM simple WHERE department = 'Engineering'"
+        "main", "SELECT count(*) FROM simple WHERE department = 'Engineering'"
     )
     assert rows[0][0] == 2
 
 
 def test_numeric_column_is_declared_numeric(workspace, root):
-    info = workspace.load_file(str(root / "simple.csv"))
+    info = workspace.load_file(str(root / "simple.csv"), "main")
     by_name = {c.name: c for c in info.columns}
     assert by_name["age"].declared_type == "INTEGER"
     assert by_name["salary"].declared_type == "INTEGER"
@@ -78,11 +87,11 @@ def test_numeric_column_is_declared_numeric(workspace, root):
 
 def test_messy_csv_loads_without_losing_rows(workspace, root):
     """Quoted newlines, embedded commas, emoji and a blank row all survive."""
-    info = workspace.load_file(str(root / "messy_mixed_types.csv"))
+    info = workspace.load_file(str(root / "messy_mixed_types.csv"), "main")
     assert info.row_count > 0
 
     _, rows = workspace.query(
-        "SELECT count(*) FROM messy_mixed_types WHERE name LIKE '%Emoji%'"
+        "main", "SELECT count(*) FROM messy_mixed_types WHERE name LIKE '%Emoji%'"
     )
     assert rows[0][0] == 1
 
@@ -105,7 +114,7 @@ def test_mostly_numeric_text_column_is_flagged_as_mixed(workspace, root):
     # 'unknown' is not, so it survives as text. Both behaviours are asserted
     # here because the difference decides what the counts below mean.
     target.write_text("v\n1\n2\n3\n4\n5\nn/a\nunknown\n")
-    info = workspace.load_file(str(target))
+    info = workspace.load_file(str(target), "main")
 
     column = info.columns[0]
     assert column.declared_type == "TEXT"
@@ -118,11 +127,12 @@ def test_mostly_numeric_text_column_is_flagged_as_mixed(workspace, root):
 
     # Why the flag matters: the naive average is wrong, and the guarded one is not.
     # SQLite skips the NULL, coerces 'unknown' to 0, and keeps it in the divisor.
-    _, naive = workspace.query("SELECT avg(v) FROM partly_numeric")
+    _, naive = workspace.query("main", "SELECT avg(v) FROM partly_numeric")
     assert naive[0][0] == pytest.approx(15 / 6)
     _, guarded = workspace.query(
+        "main",
         "SELECT avg(CAST(v AS REAL)) FROM partly_numeric WHERE typeof(v) = 'text' "
-        "AND CAST(v AS REAL) != 0"
+        "AND CAST(v AS REAL) != 0",
     )
     assert guarded[0][0] == pytest.approx(3.0)
 
@@ -131,36 +141,38 @@ def test_uniformly_numeric_text_column_is_not_flagged(workspace, root):
     """No false positive: a column that is entirely non-numeric is not mixed."""
     target = root / "all_text.csv"
     target.write_text("v\nalpha\nbeta\ngamma\n")
-    info = workspace.load_file(str(target))
+    info = workspace.load_file(str(target), "main")
     assert info.columns[0].is_mixed is False
     assert info.mixed_columns == []
 
 
 def test_unicode_survives_the_round_trip(workspace, root):
-    workspace.load_file(str(root / "messy_mixed_types.csv"))
+    workspace.load_file(str(root / "messy_mixed_types.csv"), "main")
     _, rows = workspace.query(
-        "SELECT name FROM messy_mixed_types WHERE name LIKE '%Garc%'"
+        "main", "SELECT name FROM messy_mixed_types WHERE name LIKE '%Garc%'"
     )
     assert rows and "í" in rows[0][0]
 
 
 def test_truncated_file_loads(workspace, root):
     """A missing trailing value is a NULL, not a failure."""
-    info = workspace.load_file(str(root / "truncated.csv"))
+    info = workspace.load_file(str(root / "truncated.csv"), "main")
     assert info.row_count == 2
-    _, rows = workspace.query("SELECT count(*) FROM truncated WHERE value IS NULL")
+    _, rows = workspace.query(
+        "main", "SELECT count(*) FROM truncated WHERE value IS NULL"
+    )
     assert rows[0][0] == 1
 
 
 def test_empty_file_is_refused_clearly(workspace, root):
     with pytest.raises(LoadError):
-        workspace.load_file(str(root / "empty.csv"))
+        workspace.load_file(str(root / "empty.csv"), "main")
 
 
 def test_duplicate_and_blank_headers_become_usable_columns(workspace, root, tmp_path):
     target = root / "dupes.csv"
     target.write_text("a,a,,1x\n1,2,3,4\n")
-    info = workspace.load_file(str(target))
+    info = workspace.load_file(str(target), "main")
     names = [c.name for c in info.columns]
     assert len(set(names)) == len(names), names
     assert all(names), names
@@ -170,13 +182,13 @@ def test_unsupported_extension_names_what_is_supported(workspace, root):
     target = root / "thing.parquet"
     target.write_bytes(b"not really parquet")
     with pytest.raises(LoadError, match="csv"):
-        workspace.load_file(str(target))
+        workspace.load_file(str(target), "main")
 
 
 def test_table_name_can_be_overridden(workspace, root):
-    info = workspace.load_file(str(root / "simple.csv"), table_name="staff")
+    info = workspace.load_file(str(root / "simple.csv"), "main", table_name="staff")
     assert info.name == "staff"
-    _, rows = workspace.query("SELECT count(*) FROM staff")
+    _, rows = workspace.query("main", "SELECT count(*) FROM staff")
     assert rows[0][0] == 5
 
 
@@ -189,14 +201,14 @@ def test_path_outside_root_is_refused(workspace, tmp_path):
     outside = tmp_path / "outside.csv"
     outside.write_text("a\n1\n")
     with pytest.raises(PathNotAllowed):
-        workspace.load_file(str(outside))
+        workspace.load_file(str(outside), "main")
 
 
 def test_traversal_out_of_root_is_refused(workspace, root, tmp_path):
     outside = tmp_path / "secret.csv"
     outside.write_text("a\n1\n")
     with pytest.raises(PathNotAllowed):
-        workspace.load_file(str(root / ".." / "secret.csv"))
+        workspace.load_file(str(root / ".." / "secret.csv"), "main")
 
 
 def test_symlink_pointing_outside_root_is_refused(workspace, root, tmp_path):
@@ -206,12 +218,12 @@ def test_symlink_pointing_outside_root_is_refused(workspace, root, tmp_path):
     link = root / "innocent.csv"
     link.symlink_to(outside)
     with pytest.raises(PathNotAllowed):
-        workspace.load_file(str(link))
+        workspace.load_file(str(link), "main")
 
 
 def test_missing_file_is_refused(workspace, root):
     with pytest.raises(PathNotAllowed, match="No such file"):
-        workspace.load_file(str(root / "nope.csv"))
+        workspace.load_file(str(root / "nope.csv"), "main")
 
 
 # ---------------------------------------------------------------------------
@@ -228,41 +240,6 @@ def _build_database(path: Path) -> None:
     )
     connection.commit()
     connection.close()
-
-
-def test_join_across_a_csv_and_a_database(workspace, root):
-    _build_database(root / "hr.db")
-    workspace.load_file(str(root / "simple.csv"))
-    workspace._conn.execute(
-        "ATTACH DATABASE ? AS hr", (f"file:{root / 'hr.db'}?mode=ro",)
-    )
-
-    columns, rows = workspace.query(
-        "SELECT s.name, d.floor FROM simple s "
-        "JOIN hr.departments d ON s.department = d.department "
-        "ORDER BY s.name"
-    )
-    assert columns == ["name", "floor"]
-    # Four, not five: the CSV's fifth employee is in HR, which the database has
-    # no row for, so an inner join correctly drops her.
-    assert len(rows) == 4
-    assert ("Alice Johnson", 3) in [tuple(r) for r in rows]
-
-    _, unmatched = workspace.query(
-        "SELECT s.name FROM simple s "
-        "LEFT JOIN hr.departments d ON s.department = d.department "
-        "WHERE d.floor IS NULL"
-    )
-    assert [r[0] for r in unmatched] == ["Eve Davis"]
-
-
-def test_attached_database_cannot_be_written(workspace, root):
-    _build_database(root / "hr.db")
-    workspace._conn.execute(
-        "ATTACH DATABASE ? AS hr", (f"file:{root / 'hr.db'}?mode=ro",)
-    )
-    with pytest.raises(sqlite3.OperationalError):
-        workspace._conn.execute("INSERT INTO hr.departments VALUES ('X', 9)")
 
 
 # A read-only workspace opened directly from a database file no longer exists:
@@ -282,7 +259,7 @@ def test_residency_is_measured_and_grows_with_the_data(workspace, root):
     workspace.attach_memory("scratch")
     empty = workspace.resident_bytes("scratch")
 
-    workspace.load_file(str(root / "simple.csv"), schema="scratch")
+    workspace.load_file(str(root / "simple.csv"), "scratch")
     loaded = workspace.resident_bytes("scratch")
 
     assert empty == 0
@@ -297,7 +274,7 @@ def test_residency_falls_back_after_a_drop_despite_the_freelist(workspace, root)
     for data it no longer holds.
     """
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "large_dataset.csv"), schema="scratch")
+    workspace.load_file(str(root / "large_dataset.csv"), "scratch")
     full = workspace.resident_bytes("scratch")
 
     workspace.drop_table("scratch", "large_dataset")
@@ -307,8 +284,9 @@ def test_residency_falls_back_after_a_drop_despite_the_freelist(workspace, root)
     assert emptied < full
     # The uncorrected reading is the one that would have ratcheted: it stays at
     # the high-water mark, which is exactly what the correction is subtracting.
-    page_size = workspace._scalar('PRAGMA "scratch".page_size')
-    uncorrected = workspace._scalar('PRAGMA "scratch".page_count') * page_size
+    with workspace.engine("scratch").connect() as conn:
+        page_size = conn.execute(text("PRAGMA page_size")).scalar_one()
+        uncorrected = conn.execute(text("PRAGMA page_count")).scalar_one() * page_size
     assert uncorrected >= full
     assert uncorrected > emptied
 
@@ -316,11 +294,13 @@ def test_residency_falls_back_after_a_drop_despite_the_freelist(workspace, root)
 def test_vacuum_into_produces_a_database_that_still_answers(workspace, root, tmp_path):
     """Assert on what the copy returns, never on the fact that a file appeared."""
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "simple.csv"), schema="scratch")
-    original = workspace.query("SELECT name, salary FROM scratch.simple ORDER BY name")
+    workspace.load_file(str(root / "simple.csv"), "scratch")
+    original = workspace.query(
+        "scratch", "SELECT name, salary FROM simple ORDER BY name"
+    )
     target = tmp_path / "copy.sqlite"
 
-    workspace.vacuum_into("scratch", target)
+    workspace.snapshot("scratch", target)
 
     copied = sqlite3.connect(target)
     try:
@@ -331,7 +311,7 @@ def test_vacuum_into_produces_a_database_that_still_answers(workspace, root, tmp
         ] == [tuple(r) for r in original[1]]
         assert (
             copied.execute("SELECT sum(salary) FROM simple").fetchone()[0]
-            == (workspace.query("SELECT sum(salary) FROM scratch.simple")[1][0][0])
+            == (workspace.query("scratch", "SELECT sum(salary) FROM simple")[1][0][0])
         )
     finally:
         copied.close()
@@ -346,22 +326,22 @@ def test_vacuum_into_refuses_to_replace_an_existing_database(workspace, root, tm
     boundary, where it is unconditional.
     """
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "simple.csv"), schema="scratch")
+    workspace.load_file(str(root / "simple.csv"), "scratch")
     target = tmp_path / "copy.sqlite"
-    workspace.vacuum_into("scratch", target)
+    workspace.snapshot("scratch", target)
 
-    with pytest.raises(sqlite3.Error, match="already exists"):
-        workspace.vacuum_into("scratch", target)
+    with pytest.raises(SQLAlchemyError, match="already exists"):
+        workspace.snapshot("scratch", target)
 
 
 def test_vacuum_into_does_not_refuse_a_zero_length_target(workspace, root, tmp_path):
     """Recorded because it is the gap that makes the path-boundary guard load-bearing."""
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "simple.csv"), schema="scratch")
+    workspace.load_file(str(root / "simple.csv"), "scratch")
     target = tmp_path / "copy.sqlite"
     target.write_bytes(b"")
 
-    workspace.vacuum_into("scratch", target)
+    workspace.snapshot("scratch", target)
 
     assert target.stat().st_size > 0
 
@@ -372,12 +352,15 @@ def test_a_writable_attach_accepts_what_a_readonly_one_refuses(workspace, root):
     workspace.attach_file("locked", root / "hr.db")
     workspace.attach_file("open", root / "hr.db", readonly=False)
 
-    with pytest.raises(sqlite3.OperationalError):
-        workspace._conn.execute("INSERT INTO locked.departments VALUES ('X', 9)")
+    with pytest.raises(SQLAlchemyError):
+        with workspace.engine("locked").begin() as conn:
+            conn.execute(text("INSERT INTO departments VALUES ('X', 9)"))
 
-    workspace._conn.execute("INSERT INTO open.departments VALUES ('X', 9)")
-    workspace._conn.commit()
-    _, rows = workspace.query("SELECT floor FROM open.departments WHERE department='X'")
+    with workspace.engine("open").begin() as conn:
+        conn.execute(text("INSERT INTO departments VALUES ('X', 9)"))
+    _, rows = workspace.query(
+        "open", "SELECT floor FROM departments WHERE department='X'"
+    )
     assert [tuple(r) for r in rows] == [(9,)]
 
 
@@ -388,7 +371,7 @@ def test_a_question_mark_in_a_filename_is_not_read_as_a_uri_query(workspace, roo
 
     workspace.attach_file("odd", awkward)
 
-    _, rows = workspace.query("SELECT count(*) FROM odd.departments")
+    _, rows = workspace.query("odd", "SELECT count(*) FROM departments")
     assert [tuple(r) for r in rows] == [(3,)]
 
 
@@ -399,7 +382,7 @@ def test_a_question_mark_in_a_filename_is_not_read_as_a_uri_query(workspace, roo
 
 def test_dropping_a_table_removes_it_and_dropping_it_twice_is_an_error(workspace, root):
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "simple.csv"), schema="scratch")
+    workspace.load_file(str(root / "simple.csv"), "scratch")
     assert workspace.has_table("scratch", "simple")
 
     workspace.drop_table("scratch", "simple")
@@ -415,8 +398,10 @@ def test_dropping_a_table_removes_it_and_dropping_it_twice_is_an_error(workspace
 
 
 def test_export_writes_the_rows(workspace, root):
-    workspace.load_file(str(root / "simple.csv"))
-    columns, rows = workspace.query("SELECT name, salary FROM simple ORDER BY name")
+    workspace.load_file(str(root / "simple.csv"), "main")
+    columns, rows = workspace.query(
+        "main", "SELECT name, salary FROM simple ORDER BY name"
+    )
     target = root / "out.csv"
 
     result = export_module.export_csv(columns, rows, str(target))
@@ -481,10 +466,10 @@ def test_export_to_a_missing_directory_is_refused(root):
 
 def test_export_round_trips_back_into_the_workspace(workspace, root):
     """The strongest check that the export is really well-formed."""
-    workspace.load_file(str(root / "messy_mixed_types.csv"))
-    columns, rows = workspace.query("SELECT * FROM messy_mixed_types")
+    workspace.load_file(str(root / "messy_mixed_types.csv"), "main")
+    columns, rows = workspace.query("main", "SELECT * FROM messy_mixed_types")
     target = root / "exported.csv"
     export_module.export_csv(columns, rows, str(target))
 
-    reloaded = workspace.load_file(str(target), table_name="reloaded")
+    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
     assert reloaded.row_count == len(rows)

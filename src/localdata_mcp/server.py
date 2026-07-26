@@ -2,11 +2,16 @@
 
 There is one idea to learn here, and everything else follows from it: **a
 datasource is attached under a nickname, and the nickname is a database.** A CSV,
-a SQLite file and a service URL all become the same kind of thing, so tables are
-always addressed as ``nickname.table`` and a join across two datasources is
-ordinary SQL:
+a SQLite file and a service URL all become the same kind of thing. Each call names
+the datasource it is for, and the SQL then addresses tables inside it by their own
+names:
 
-    SELECT * FROM shop.sales JOIN warehouse.products ON sales.sku = products.sku
+    query(nickname="shop", sql="SELECT * FROM sales WHERE qty > 10")
+
+One statement reaches one datasource. Looking two of them up against each other is
+``add_table``, which copies the second *into* the first and reports whether the
+keys line up — a named act, rather than something that falls out of how the
+databases happen to be connected.
 
 Because a slot is a database rather than a view over a file, it has the verbs a
 database has: lifecycle (``attach``, ``detach``, ``save``), composition
@@ -17,11 +22,12 @@ because the model has less to choose between and each choice is obvious.
 **A query reads.** Every write — ``INSERT``, ``CREATE TABLE``, ``CREATE VIEW``,
 ``PRAGMA`` — is refused by ``query`` whatever the datasource itself permits, so
 mutation happens only through the composition verbs and there is exactly one way
-to change a slot. SQLite's own authorizer enforces it while the statement is
-being prepared, so nothing here parses SQL to decide.
+to change a slot. Enforced by the connection: reads go over an engine whose
+connections are read-only from the moment they are opened, so nothing here parses
+SQL to decide and there is no window in which the posture is anything else.
 
 Two behaviours are deliberately invisible from out here. A database that outgrows
-the memory budget is moved to a temp file and re-attached under the same nickname
+the memory budget is moved to a temp file and goes on answering under the same nickname
 between one call and the next, and no result mentions it. And write access is not
 a flag this module honours by being careful: a read-only slot carries ``mode=ro``
 in its own connection URI, so SQLite is what refuses the write.
@@ -51,15 +57,15 @@ mcp = FastMCP(
         "SQL over local data files and databases.\n\n"
         "Attach each datasource with attach(database) — a CSV/TSV file, a SQLite "
         "database file, or a database URL. **Every datasource becomes a database, "
-        "named by a nickname**, so even a single CSV holds its rows in a table: "
-        "address them as nickname.table, never as the filename. attach returns the "
-        "nickname it actually used, which may not be the one you asked for — use "
-        "what it returns.\n\n"
-        "One query can join across datasources: SELECT ... FROM shop.sales JOIN "
-        "wh.products ... . But save writes one database, not the join, so when a "
-        "second file is meant to be looked up against one already open, use "
-        "add_table(nickname, source=...) to land it *inside* that database rather "
-        "than attaching it separately. Pass join_on to be told which key values "
+        "named by a nickname**, so even a single CSV holds its rows in a table. "
+        "attach returns the nickname it actually used, which may not be the one "
+        "you asked for — use what it returns.\n\n"
+        "**Each call names one datasource, and the SQL addresses tables inside it "
+        "by their own names**: query(nickname='shop', sql='SELECT * FROM sales'), "
+        "not FROM shop.sales. One statement reaches one datasource. To look a "
+        "second file up against one already open, use add_table(nickname, "
+        "source=...) to land it *inside* that database, then join the two tables "
+        "there in an ordinary statement. Pass join_on to be told which key values "
         "have no match on the other side.\n\n"
         "**query only reads.** INSERT, UPDATE, CREATE TABLE, CREATE VIEW and every "
         "other write are refused there whatever the datasource allows — composition "
@@ -141,7 +147,9 @@ def _column_payload(column: Any) -> dict[str, Any]:
 
 def _table_payload(info: TableInfo) -> dict[str, Any]:
     return {
-        "table": info.qualified,
+        # The bare name, because it is what a statement against this datasource
+        # uses. The payload already carries the nickname it belongs to.
+        "table": info.name,
         "rows": info.row_count,
         "source": info.source,
         "columns": [_column_payload(column) for column in info.columns],
@@ -151,7 +159,8 @@ def _table_payload(info: TableInfo) -> dict[str, Any]:
 
 def _mixed_column_warning(info: TableInfo) -> str:
     return (
-        f"In {info.qualified}, columns {', '.join(info.mixed_columns)} hold more "
+        f"In {info.tag}, table {info.name}: columns "
+        f"{', '.join(info.mixed_columns)} hold more "
         f"than one storage class. Aggregates over such a column silently coerce "
         f"text to 0 and keep it in the denominator, so avg() and sum() will be "
         f"wrong. Filter with typeof(col)='integer' or CAST explicitly."
@@ -164,9 +173,9 @@ def _slot_payload(slot: Slot, registry: Registry) -> dict[str, Any]:
         "kind": slot.kind,
         "source": slot.source,
         "writable": slot.writable,
-        "tables": [
-            f"{slot.nickname}.{table}" for table in registry.tables(slot.nickname)
-        ],
+        # Bare names: this payload already says which nickname it describes, and
+        # these are the names a statement against that nickname actually uses.
+        "tables": list(registry.tables(slot.nickname)),
     }
 
 
@@ -253,10 +262,10 @@ def attach(
     Args:
         database: A tabular file (.csv, .tsv, .txt), a SQLite database file, or a
             database URL.
-        nickname: How to address it in SQL, as ``nickname.table``. Derived from
-            the filename when omitted. If it collides with a slot already open,
-            a numeric suffix is added — so always use the nickname that comes
-            back rather than the one you asked for.
+        nickname: The name this datasource answers to — pass it to every later
+            call. Derived from the filename when omitted. If it collides with a
+            slot already open, a numeric suffix is added — so always use the
+            nickname that comes back rather than the one you asked for.
         writable: Allow writes to a datasource that came from outside. Ignored
             for a flat file, whose database is built here and always writable.
 
@@ -341,7 +350,7 @@ def _slot_detail(registry: Registry, nickname: str) -> dict[str, Any]:
         "ok": True,
         **_slot_payload(slot, registry),
         "contents": [
-            {"table": info.qualified, "rows": info.row_count} for info in described
+            {"table": info.name, "rows": info.row_count} for info in described
         ],
     }
     if warnings:
@@ -371,10 +380,11 @@ def query(
 ) -> dict[str, Any]:
     """Run SQL against a datasource, returning rows or writing them to a file.
 
-    Tables are addressed as ``nickname.table``. A single statement may join
-    across every datasource attached from a file or a SQLite database; a
-    datasource opened from a URL is a separate engine and cannot be joined
-    against the others without copying the rows in first.
+    ``nickname`` chooses the datasource; the SQL then names tables inside it
+    directly — ``SELECT * FROM sales``, not ``FROM shop.sales``. One statement
+    reaches one datasource. To query two of them together, ``add_table`` copies
+    one into the other first, and the join is then ordinary SQL over two tables
+    in the same database.
 
     Writes (INSERT, UPDATE, CREATE TABLE) go through here too, and succeed only
     where the datasource is writable.
@@ -494,8 +504,8 @@ def drop_table(nickname: str, table: str) -> dict[str, Any]:
         return {
             "ok": True,
             "nickname": nickname,
-            "dropped": f"{nickname}.{table}",
-            "tables": [f"{nickname}.{name}" for name in remaining],
+            "dropped": table,
+            "tables": list(remaining),
         }
 
 
@@ -530,7 +540,7 @@ def save(nickname: str, path: str, force: bool = False) -> dict[str, Any]:
             "ok": True,
             "nickname": nickname,
             "path": str(written),
-            "tables": [f"{nickname}.{name}" for name in tables],
+            "tables": list(tables),
         }
 
 

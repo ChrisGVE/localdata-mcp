@@ -114,9 +114,15 @@ def test_the_nickname_is_required_everywhere_it_routes():
 
 
 def test_the_instructions_teach_the_premise_where_the_model_reads_it():
-    """A CSV is a table inside a database, and that has to be said up front."""
+    """A CSV is a table inside a database, and that has to be said up front.
+
+    The addressing has to be there too, and stated as the thing an agent will
+    otherwise get wrong: it will reach for ``nickname.table``, which is what the
+    previous design taught and what every listing used to print.
+    """
     instructions = server_module.mcp.instructions
-    assert "nickname.table" in instructions
+    assert "Each call names one datasource" in instructions
+    assert "not FROM shop.sales" in instructions
     assert "add_table" in instructions
 
 
@@ -131,7 +137,7 @@ def test_a_file_attaches_as_a_database_holding_one_table(session):
     assert attached["ok"] is True
     assert attached["kind"] == "file"
     assert attached["nickname"] == "staff"
-    assert attached["tables"] == ["staff.simple"]
+    assert attached["tables"] == ["simple"]
     assert attached["writable"] is True
     assert attached["evicted"] is None
     assert attached["collided_with"] is None
@@ -140,15 +146,13 @@ def test_a_file_attaches_as_a_database_holding_one_table(session):
 def test_a_nickname_is_derived_when_none_is_given(session):
     attached = call("attach", database=str(session / "simple.csv"))
     assert attached["nickname"] == "simple"
-    assert attached["tables"] == ["simple.simple"]
+    assert attached["tables"] == ["simple"]
 
 
 def test_attach_then_query_over_the_protocol(session):
     call("attach", database=str(session / "simple.csv"), nickname="staff")
 
-    answer = call(
-        "query", nickname="staff", sql="SELECT sum(salary) AS t FROM staff.simple"
-    )
+    answer = call("query", nickname="staff", sql="SELECT sum(salary) AS t FROM simple")
     assert answer["ok"] is True
     assert answer["columns"] == ["t"]
     assert answer["rows"][0][0] == 345000
@@ -174,7 +178,7 @@ def test_a_colliding_nickname_is_disambiguated_and_both_slots_survive(session):
 
     assert second["ok"] is True
     assert second["nickname"] == "slot_2"
-    assert second["tables"] == ["slot_2.mixed_tabs"]
+    assert second["tables"] == ["mixed_tabs"]
     assert second["collided_with"] == {
         "nickname": "slot",
         "source": str(session / "simple.csv"),
@@ -198,7 +202,7 @@ def test_info_with_nothing_reports_every_datasource_and_the_posture(session):
             "kind": "file",
             "source": str(session / "simple.csv"),
             "writable": True,
-            "tables": ["staff.simple"],
+            "tables": ["simple"],
         }
     ]
     assert listing["slots_used"] == 1
@@ -216,10 +220,10 @@ def test_info_with_a_nickname_reports_that_datasources_tables(session):
 
     assert detail["ok"] is True
     assert detail["nickname"] == "staff"
-    assert sorted(detail["tables"]) == ["staff.mixed_tabs", "staff.simple"]
+    assert sorted(detail["tables"]) == ["mixed_tabs", "simple"]
     assert {entry["table"]: entry["rows"] for entry in detail["contents"]} == {
-        "staff.simple": 5,
-        "staff.mixed_tabs": 5,
+        "simple": 5,
+        "mixed_tabs": 5,
     }
 
 
@@ -228,7 +232,7 @@ def test_info_with_a_table_describes_its_columns_and_types(session):
     described = call("info", nickname="staff", table="simple")
 
     assert described["ok"] is True
-    assert described["table"] == "staff.simple"
+    assert described["table"] == "simple"
     assert described["rows"] == 5
     types = {column["name"]: column["type"] for column in described["columns"]}
     assert types["salary"] == "INTEGER"
@@ -249,11 +253,11 @@ def test_info_reports_an_unknown_nickname_as_an_answer(session):
 def test_query_limit_is_reported_as_truncation(session):
     call("attach", database=str(session / "simple.csv"), nickname="staff")
 
-    answer = call("query", nickname="staff", sql="SELECT * FROM staff.simple", limit=2)
+    answer = call("query", nickname="staff", sql="SELECT * FROM simple", limit=2)
     assert answer["row_count"] == 2
     assert answer["truncated"] is True
 
-    full = call("query", nickname="staff", sql="SELECT * FROM staff.simple", limit=0)
+    full = call("query", nickname="staff", sql="SELECT * FROM simple", limit=0)
     assert full["row_count"] == 5
     assert full["truncated"] is False
 
@@ -265,7 +269,7 @@ def test_a_path_turns_the_same_query_into_an_export(session):
     result = call(
         "query",
         nickname="staff",
-        sql="SELECT name, salary FROM staff.simple ORDER BY name",
+        sql="SELECT name, salary FROM simple ORDER BY name",
         path=str(target),
     )
     assert result["ok"] is True
@@ -281,7 +285,7 @@ def test_the_export_ignores_the_display_limit(session):
     result = call(
         "query",
         nickname="staff",
-        sql="SELECT * FROM staff.simple",
+        sql="SELECT * FROM simple",
         limit=2,
         path=str(target),
     )
@@ -301,7 +305,7 @@ def test_the_export_refuses_to_clobber_then_takes_the_users_answer(session):
     refused = call(
         "query",
         nickname="staff",
-        sql="SELECT name FROM staff.simple",
+        sql="SELECT name FROM simple",
         path=str(target),
     )
     assert refused["ok"] is False
@@ -311,7 +315,7 @@ def test_the_export_refuses_to_clobber_then_takes_the_users_answer(session):
     forced = call(
         "query",
         nickname="staff",
-        sql="SELECT name FROM staff.simple",
+        sql="SELECT name FROM simple",
         path=str(target),
         force=True,
     )
@@ -328,7 +332,7 @@ def test_an_export_will_not_be_forced_over_an_attached_file(session):
     refused = call(
         "query",
         nickname="staff",
-        sql="SELECT name FROM staff.simple",
+        sql="SELECT name FROM simple",
         path=str(source),
         force=True,
     )
@@ -340,29 +344,6 @@ def test_an_export_will_not_be_forced_over_an_attached_file(session):
 # ---------------------------------------------------------------------------
 # Joining across datasources — the capability the tool exists for
 # ---------------------------------------------------------------------------
-
-
-def test_a_file_joins_a_database_in_one_statement(session):
-    _build_database(session / "hr.db")
-
-    attached = call("attach", database=str(session / "hr.db"), nickname="hr")
-    assert attached["ok"] is True
-    assert attached["kind"] == "database"
-    assert attached["tables"] == ["hr.departments"]
-    assert attached["writable"] is False
-
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
-    answer = call(
-        "query",
-        nickname="staff",
-        sql=(
-            "SELECT s.name, d.floor FROM staff.simple s "
-            "JOIN hr.departments d ON s.department = d.department "
-            "ORDER BY s.name"
-        ),
-    )
-    assert answer["ok"] is True
-    assert answer["rows"][0] == ["Alice Johnson", 3]
 
 
 # ---------------------------------------------------------------------------
@@ -378,15 +359,15 @@ def test_a_second_file_lands_inside_the_open_database_and_joins(session):
     added = call("add_table", nickname="shop", source=str(session / "prices.csv"))
 
     assert added["ok"] is True
-    assert added["table"] == "shop.prices"
+    assert added["table"] == "prices"
     assert added["rows"] == 2
 
     answer = call(
         "query",
         nickname="shop",
         sql=(
-            "SELECT s.sku, s.qty * p.price FROM shop.sales s "
-            "JOIN shop.prices p ON s.sku = p.sku ORDER BY s.sku"
+            "SELECT s.sku, s.qty * p.price FROM sales s "
+            "JOIN prices p ON s.sku = p.sku ORDER BY s.sku"
         ),
     )
     assert answer["rows"] == [["a", 30], ["b", 80]]
@@ -407,8 +388,8 @@ def test_an_incomplete_join_is_reported_with_the_values_that_do_not_match(sessio
     report = added["join"]
     assert report["complete"] is False
     assert report["key"] == "sku"
-    assert report["existing_table"] == "shop.sales"
-    assert report["added_table"] == "shop.prices"
+    assert report["existing_table"] == "sales"
+    assert report["added_table"] == "prices"
     assert report["matched_keys"] == 1
     assert report["missing_from_added"] == {"values": ["b", "c"], "total": 2}
     assert report["missing_from_existing"] == {"values": ["z"], "total": 1}
@@ -444,7 +425,7 @@ def test_the_write_grant_is_honoured_over_the_protocol(session):
 
     added = call("add_table", nickname="hr", source=str(session / "simple.csv"))
     assert added["ok"] is True
-    assert added["table"] == "hr.simple"
+    assert added["table"] == "simple"
 
 
 def test_dropping_a_table_leaves_the_rest_answering(session):
@@ -454,9 +435,9 @@ def test_dropping_a_table_leaves_the_rest_answering(session):
     dropped = call("drop_table", nickname="staff", table="mixed_tabs")
 
     assert dropped["ok"] is True
-    assert dropped["dropped"] == "staff.mixed_tabs"
-    assert dropped["tables"] == ["staff.simple"]
-    assert call("query", nickname="staff", sql="SELECT count(*) FROM staff.simple")[
+    assert dropped["dropped"] == "mixed_tabs"
+    assert dropped["tables"] == ["simple"]
+    assert call("query", nickname="staff", sql="SELECT count(*) FROM simple")[
         "rows"
     ] == [[5]]
 
@@ -486,20 +467,20 @@ def test_saving_then_attaching_again_brings_the_whole_session_back(session):
 
     saved = call("save", nickname="shop", path=str(target))
     assert saved["ok"] is True
-    assert sorted(saved["tables"]) == ["shop.prices", "shop.sales"]
+    assert sorted(saved["tables"]) == ["prices", "sales"]
 
     call("detach", nickname="shop")
     restored = call("attach", database=str(target), nickname="kept")
 
-    assert sorted(restored["tables"]) == ["kept.prices", "kept.sales"]
+    assert sorted(restored["tables"]) == ["prices", "sales"]
     # Like any other outside database, it comes back read-only.
     assert restored["writable"] is False
     answer = call(
         "query",
         nickname="kept",
         sql=(
-            "SELECT s.sku, s.qty * p.price FROM kept.sales s "
-            "JOIN kept.prices p ON s.sku = p.sku ORDER BY s.sku"
+            "SELECT s.sku, s.qty * p.price FROM sales s "
+            "JOIN prices p ON s.sku = p.sku ORDER BY s.sku"
         ),
     )
     assert answer["rows"] == [["a", 30], ["b", 80]]
@@ -542,17 +523,13 @@ def test_a_database_moved_to_disk_says_nothing_and_answers_the_same(session):
     write_csv(session / "big.csv", f"id,label,amount\n{rows}\n")
 
     call("attach", database=str(session / "big.csv"), nickname="big")
-    before = call(
-        "query", nickname="big", sql="SELECT count(*), sum(amount) FROM big.big"
-    )
+    before = call("query", nickname="big", sql="SELECT count(*), sum(amount) FROM big")
     described_before = call("info", nickname="big")
 
     # The next call is the one that pays for the overshoot, whatever it is.
     call("info")
 
-    after = call(
-        "query", nickname="big", sql="SELECT count(*), sum(amount) FROM big.big"
-    )
+    after = call("query", nickname="big", sql="SELECT count(*), sum(amount) FROM big")
     assert after["rows"] == before["rows"]
     assert after["rows"][0][0] == 60_000
 
@@ -585,7 +562,7 @@ def test_querying_an_evicted_datasource_says_it_was_evicted(session):
     call("attach", database=str(session / "simple.csv"), nickname="a")
     call("attach", database=str(session / "mixed_tabs.tsv"), nickname="b")
 
-    answer = call("query", nickname="a", sql="SELECT * FROM a.simple")
+    answer = call("query", nickname="a", sql="SELECT * FROM simple")
     assert answer["ok"] is False
     assert "evicted" in answer["error"]
     # Enough to rebuild it without guessing.
@@ -642,15 +619,15 @@ def test_invalid_sql_returns_the_engine_message(session):
 @pytest.mark.parametrize(
     "sql",
     [
-        "DELETE FROM staff.simple",
-        "INSERT INTO staff.simple (name) VALUES ('x')",
-        "UPDATE staff.simple SET salary = 0",
-        "CREATE TABLE staff.t (a TEXT)",
-        "CREATE VIEW staff.v AS SELECT name FROM staff.simple",
-        "DROP TABLE staff.simple",
-        "ALTER TABLE staff.simple RENAME TO other",
-        "CREATE INDEX staff.i ON simple (name)",
-        "PRAGMA staff.journal_mode = WAL",
+        "DELETE FROM simple",
+        "INSERT INTO simple (name) VALUES ('x')",
+        "UPDATE simple SET salary = 0",
+        "CREATE TABLE t (a TEXT)",
+        "CREATE VIEW v AS SELECT name FROM simple",
+        "DROP TABLE simple",
+        "ALTER TABLE simple RENAME TO other",
+        "CREATE INDEX i ON simple (name)",
+        "PRAGMA journal_mode = WAL",
     ],
 )
 def test_query_reads_and_refuses_every_way_of_writing(session, sql):
@@ -664,7 +641,7 @@ def test_query_reads_and_refuses_every_way_of_writing(session, sql):
     assert answer["ok"] is False, sql
     assert "does not write" in answer["error"], answer["error"]
     # Still intact, and still answering.
-    rows = call("query", nickname="staff", sql="SELECT count(*) FROM staff.simple")
+    rows = call("query", nickname="staff", sql="SELECT count(*) FROM simple")
     assert rows["rows"][0][0] == 5
 
 
@@ -680,13 +657,13 @@ def test_the_refusal_says_what_was_attempted_and_where_to_go(session):
     ddl = call(
         "query",
         nickname="staff",
-        sql="CREATE VIEW staff.v AS SELECT name FROM staff.simple",
+        sql="CREATE VIEW v AS SELECT name FROM simple",
     )
     assert "change the database schema" in ddl["error"]
     assert "add_table" in ddl["error"]
 
     plain = call(
-        "query", nickname="staff", sql="INSERT INTO staff.simple (name) VALUES ('x')"
+        "query", nickname="staff", sql="INSERT INTO simple (name) VALUES ('x')"
     )
     assert "asks to INSERT" in plain["error"]
 
@@ -695,7 +672,7 @@ def test_a_read_only_datasource_is_still_readable(session):
     _build_database(session / "hr.db")
     call("attach", database=str(session / "hr.db"), nickname="hr")
 
-    answer = call("query", nickname="hr", sql="SELECT count(*) FROM hr.departments")
+    answer = call("query", nickname="hr", sql="SELECT count(*) FROM departments")
     assert answer["ok"] is True
     assert answer["rows"][0][0] == 3
 
@@ -707,41 +684,13 @@ def test_mixed_columns_are_flagged_on_attach(session):
     )
     assert attached["ok"] is True
     assert any("coerce text to 0" in warning for warning in attached["warnings"])
-    assert any("messy.messy_mixed_types" in w for w in attached["warnings"])
+    assert any("In messy, table messy_mixed_types" in w for w in attached["warnings"])
 
 
 def test_the_mixed_column_detail_is_available_from_info(session):
     call("attach", database=str(session / "messy_mixed_types.csv"), nickname="messy")
     described = call("info", nickname="messy", table="messy_mixed_types")
     assert "id" in described["mixed_columns"]
-
-
-def test_a_view_that_arrived_from_outside_still_blocks_the_save(session):
-    """The surface can no longer make a view, but a file can still carry one.
-
-    Somebody else's SQLite database may hold a schema-qualified view, and saving
-    it would produce a file that refuses to open under any other nickname. So
-    the check at save time keeps its job even with query read-only — it is only
-    the *source* of the offending view that changed.
-    """
-    source = session / "carried.db"
-    connection = sqlite3.connect(source)
-    connection.execute("CREATE TABLE sales (sku TEXT, qty INTEGER)")
-    connection.execute("INSERT INTO sales VALUES ('a', 3)")
-    connection.commit()
-    connection.close()
-
-    call("attach", database=str(source), nickname="shop", writable=True)
-    # Written the way an outside tool would, naming its own schema.
-    server_module._registry._workspace._conn.execute(
-        "CREATE VIEW shop.v AS SELECT qty FROM shop.sales"
-    )
-
-    refused = call("save", nickname="shop", path=str(session / "keep.db"))
-
-    assert refused["ok"] is False
-    assert "unqualified" in refused["error"]
-    assert not (session / "keep.db").exists()
 
 
 # ---------------------------------------------------------------------------

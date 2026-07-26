@@ -1,50 +1,96 @@
-"""Reading sources into a queryable SQL workspace.
+"""Reading sources into queryable databases, one per tag.
 
-A :class:`Workspace` is a SQLAlchemy engine over the session's SQLite connection
-plus what we know about the tables reachable through it. It is the *host*: every
-datasource is an attached database on this one connection, so joining across two
-of them is ordinary SQL rather than machinery we have to build. ``main`` stays
-empty in normal operation — slots attach beside it, never into it.
+A :class:`Workspace` is a **dict keyed by tag**. Each entry holds the URI the
+caller gave, where that data currently lives — which may be the URI, may be
+memory, may be a temp file it was spilled to — and the SQLAlchemy engines the
+database is reached through. Every access takes that tag's engines and runs a
+transaction.
 
-The engine, rather than a raw driver connection, is what keeps the backend
-replaceable: everything above this module works in SQL and table metadata, so
-reaching a different database means a different URL, not different code. The
-places that deliberately drop to the DBAPI cursor are marked and justified —
-``ATTACH``, ``PRAGMA``, and the insert path below, none of which survive being
-expressed through the Core layer with the properties we measured.
+**A tag is a database, not a schema on a shared connection.** The earlier design
+made every datasource an ``ATTACH``ed schema on one SQLite connection, which is
+what made ``SELECT … FROM shop.sales JOIN wh.products …`` work, and which tied
+the whole layer to one backend's statement vocabulary. Tables are now addressed
+bare inside the tag the caller named — ``FROM sales``, not ``FROM shop.sales`` —
+because the tag parameter has already chosen the database, exactly as connecting
+to a database does everywhere else in SQL.
+
+Everything here is SQLAlchemy **Core**, never the ORM: there are no mapped
+classes, because there is no fixed schema to map — the tables arrive at runtime
+from whatever file was read. What Core buys is that reaching a different backend
+is a different URL rather than different code. The handful of things that cannot
+be said portably live behind the seam in :mod:`dialects`, and the test for
+belonging there is whether the *meaning* changes on another backend, not whether
+the SQL is awkward.
 
 The insert path is the part with a measured constraint behind it. Handing pandas
 a frame via ``to_sql`` peaks at **35×** the frame's own size — 3.20 MB of data
 allocating 113.75 MB — and sub-batching does not bound it, because pandas
 materialises the whole frame into insert-ready sequences *before* it chunks.
-Feeding ``executemany`` a lazy row iterator instead holds a flat **0.008 MB**
-peak from 100,000 rows through 1,600,000, and runs 4-5× faster.
+Core will not take a lazy iterator at all (``ArgumentError: mapping or list
+expected for parameters``) and materialising 800,000 rows for it costs **511 MB**.
+Chunking a lazy iterator *ourselves* is what bounds it, and unlike pandas there is
+no eager step upstream to defeat the chunking:
 
-The property is one sentence: **the row sequence handed to executemany is never
-materialised.** Wrapping the iterator in ``list()`` puts the 40 MB straight back.
-``docs/CONSTRAINTS.md`` §3 has the numbers.
+===========================  ==============  ==============
+Rows                         100,000         800,000
+===========================  ==============  ==============
+Core, one chunk of 100,000   63.74 MB        68.27 MB
+Core, chunks of 20,000       13.79 MB        13.82 MB
+Core, chunks of 1,000        **0.84 MB**     **0.81 MB**
+===========================  ==============  ==============
+
+The peak tracks the **chunk size and nothing else** — 800,000 rows cost what
+100,000 do. The smallest chunk measured is also the fastest, so there is no
+memory-for-speed trade to weigh here. Core costs a flat ~2.6× wall clock against
+handing the driver an iterator directly; that is the price of the abstraction and
+it is paid once per load, not per query.
 """
 
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import Any, Iterator
+from uuid import uuid4
 
 import pandas as pd
-from sqlalchemy import Engine, create_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import (
+    INTEGER,
+    REAL,
+    TEXT,
+    Column,
+    Engine,
+    MetaData,
+    Table,
+    func,
+    inspect,
+    select,
+    text,
+)
+from sqlalchemy.exc import SQLAlchemyError
 
 from . import binding
+from .dialects import Backend, Engines, backend_for
 from .paths import resolve_read_path
 
-__all__ = ["ColumnInfo", "TableInfo", "Workspace", "LoadError"]
+__all__ = ["ColumnInfo", "TableInfo", "Tagged", "Workspace", "LoadError"]
 
 
 class LoadError(RuntimeError):
     """A source that could not be loaded."""
+
+
+#: Rows handed to Core in one execute. Bounds the insert's peak allocation; see
+#: the module docstring for the measurement it comes from. Not a config knob:
+#: 1,000 rows measured both smallest and fastest, so there is nothing to tune.
+_INSERT_CHUNK = 1_000
+
+#: Rows the read path pulls from the driver at a time. The point of streaming is
+#: that a caller taking ten rows out of a million-row result never materialises
+#: the rest.
+_YIELD_PER = 1_000
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +107,7 @@ class ColumnInfo:
     temporal_kind: str | None = None
     #: Storage classes actually present, as ``{"integer": 120, "text": 3}``.
     #: Measured with a GROUP BY after the load rather than predicted from dtypes.
+    #: Empty on a backend whose columns carry a single real type.
     storage_classes: dict[str, int] = field(default_factory=dict)
     #: Among non-null values in a TEXT column, how many parse as a number and how
     #: many do not. Both zero for a column that is already numerically typed.
@@ -97,17 +144,41 @@ class TableInfo:
     row_count: int
     columns: list[ColumnInfo]
     source: str
-    #: The attached database holding this table — a slot nickname in normal use.
-    schema: str = "main"
+    #: The tag whose database holds this table.
+    tag: str = "main"
 
     @property
     def qualified(self) -> str:
-        """How a caller addresses this table in SQL."""
-        return f"{self.schema}.{self.name}"
+        """``tag.table`` — how this table is *identified*, not how it is addressed.
+
+        A caller querying it writes the bare name, because the tag has already
+        been chosen by the call. This form exists so two tables of the same name
+        in different tags stay distinguishable in listings and in our own
+        bookkeeping.
+        """
+        return f"{self.tag}.{self.name}"
 
     @property
     def mixed_columns(self) -> list[str]:
         return [c.name for c in self.columns if c.is_mixed]
+
+
+@dataclass
+class Tagged:
+    """One tag's database: where it came from, where it is now, how to reach it.
+
+    ``uri`` is what the caller asked for and never changes — it is the identity
+    of the datasource. ``location`` is where the data actually sits *now*, and
+    moves when a database is spilled from memory to a temp file. Keeping both is
+    what lets a spilled tag keep answering under its own name while still
+    reporting honestly where it came from.
+    """
+
+    tag: str
+    uri: str
+    location: str
+    engines: Engines
+    backend: Backend
 
 
 # ---------------------------------------------------------------------------
@@ -143,36 +214,18 @@ def _unique_columns(raw_names: list[Any]) -> list[str]:
     return out
 
 
-def _quote(identifier: str) -> str:
-    """Quote an identifier for DDL. Doubling embedded quotes is the escape."""
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def _target(schema: str, table: str) -> str:
-    """A schema-qualified table reference, both halves quoted."""
-    return f"{_quote(schema)}.{_quote(table)}"
-
-
-def _file_uri(path: Path, *, readonly: bool) -> str:
-    """A SQLite URI for a database file, with the mode carried in the URI.
-
-    Built with :meth:`Path.as_uri` rather than by formatting the path into a
-    string, because the connection runs in URI mode: a ``?`` or ``#`` in a
-    filename would otherwise be read as the start of the query fragment and the
-    file would be opened under a name nobody chose. Percent-encoding is what
-    makes those characters ordinary again.
-    """
-    uri = path.resolve().as_uri()
-    return f"{uri}?mode=ro" if readonly else uri
-
-
 # ---------------------------------------------------------------------------
 # Type mapping
 # ---------------------------------------------------------------------------
 
+#: Declared type to the Core type that renders it. The uppercase spellings are
+#: SQLAlchemy's "exactly this SQL type" forms — ``Float`` would render ``FLOAT``
+#: and quietly change what ``info`` reports a column to be.
+_CORE_TYPES = {"INTEGER": INTEGER, "REAL": REAL, "TEXT": TEXT}
+
 
 def _declared_type(dtype: Any) -> str:
-    """Map a pandas dtype to a SQLite column affinity.
+    """Map a pandas dtype to a column type.
 
     An ``object`` column becomes ``TEXT`` rather than being left un-affined.
     That matters most in joins: ``INTEGER`` affinity on *either* side of a join
@@ -198,76 +251,6 @@ def _declared_type(dtype: Any) -> str:
 #: Rows per block when scanning a column for numeric-ness. Bounds the scan's
 #: peak allocation without changing its result — see :func:`_numeric_split`.
 _SCAN_BLOCK = 50_000
-
-
-#: What a read query is allowed to do, as SQLite authorizer action codes.
-#:
-#: A **whitelist**, deliberately. SQLite has some thirty action codes and gains
-#: more between versions; a denylist would silently admit whatever arrives next,
-#: which is the wrong direction to fail in. Anything not named here is refused.
-#:
-#: ``SQLITE_READ`` covers each column touched, ``SQLITE_FUNCTION`` the builtins
-#: (``count``, ``upper``, …) that an ordinary query leans on, and
-#: ``SQLITE_RECURSIVE`` the recursive CTEs that are still just reading.
-_READ_ACTIONS = frozenset(
-    {
-        sqlite3.SQLITE_SELECT,
-        sqlite3.SQLITE_READ,
-        sqlite3.SQLITE_FUNCTION,
-        sqlite3.SQLITE_RECURSIVE,
-    }
-)
-
-#: Refused actions in words, so the error names what was attempted rather than
-#: quoting a number. Written out rather than derived from ``vars(sqlite3)``,
-#: because the result codes share integer values with action codes
-#: (``SQLITE_DENY`` is 1, and so is ``SQLITE_CREATE_INDEX``) and a derived map
-#: would mislabel them.
-_ACTION_NAMES = {
-    sqlite3.SQLITE_INSERT: "INSERT",
-    sqlite3.SQLITE_UPDATE: "UPDATE",
-    sqlite3.SQLITE_DELETE: "DELETE",
-    sqlite3.SQLITE_CREATE_TABLE: "CREATE TABLE",
-    sqlite3.SQLITE_CREATE_VIEW: "CREATE VIEW",
-    sqlite3.SQLITE_CREATE_INDEX: "CREATE INDEX",
-    sqlite3.SQLITE_CREATE_TRIGGER: "CREATE TRIGGER",
-    sqlite3.SQLITE_CREATE_TEMP_TABLE: "CREATE TEMP TABLE",
-    sqlite3.SQLITE_CREATE_TEMP_VIEW: "CREATE TEMP VIEW",
-    sqlite3.SQLITE_CREATE_TEMP_INDEX: "CREATE TEMP INDEX",
-    sqlite3.SQLITE_CREATE_TEMP_TRIGGER: "CREATE TEMP TRIGGER",
-    sqlite3.SQLITE_DROP_TABLE: "DROP TABLE",
-    sqlite3.SQLITE_DROP_VIEW: "DROP VIEW",
-    sqlite3.SQLITE_DROP_INDEX: "DROP INDEX",
-    sqlite3.SQLITE_DROP_TRIGGER: "DROP TRIGGER",
-    sqlite3.SQLITE_DROP_TEMP_TABLE: "DROP TEMP TABLE",
-    sqlite3.SQLITE_DROP_TEMP_VIEW: "DROP TEMP VIEW",
-    sqlite3.SQLITE_ALTER_TABLE: "ALTER TABLE",
-    sqlite3.SQLITE_REINDEX: "REINDEX",
-    sqlite3.SQLITE_ANALYZE: "ANALYZE",
-    sqlite3.SQLITE_ATTACH: "ATTACH a database",
-    sqlite3.SQLITE_DETACH: "DETACH a database",
-    sqlite3.SQLITE_PRAGMA: "set a PRAGMA",
-    sqlite3.SQLITE_TRANSACTION: "control a transaction",
-}
-
-
-def _describe_action(action: int, target: str | None) -> str:
-    """Name a refused action in words an agent can act on.
-
-    One wrinkle worth stating, because the naive version is actively
-    misleading: SQLite authorizes a DDL statement's write to ``sqlite_master``
-    *before* it authorizes the statement's own action code. The first refusal
-    therefore arrives as ``INSERT``, and reporting that verbatim tells an agent
-    that wrote ``CREATE VIEW`` it attempted an INSERT. Naming the schema write
-    for what it is keeps the message true without guessing at the statement.
-    """
-    if action in (
-        sqlite3.SQLITE_INSERT,
-        sqlite3.SQLITE_UPDATE,
-        sqlite3.SQLITE_DELETE,
-    ) and (target or "").startswith("sqlite_"):
-        return "change the database schema"
-    return _ACTION_NAMES.get(action, f"perform action {action}")
 
 
 def _numeric_split(series: pd.Series) -> tuple[int, int]:
@@ -339,330 +322,344 @@ def read_frame(path: Path) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _blocks(rows: Iterator[dict], size: int) -> Iterator[list[dict]]:
+    """Pull ``size`` rows at a time from a lazy iterator, never more.
+
+    The whole insert-path memory property lives in this function: ``rows`` is
+    never materialised, only ``size`` of it exists at once, and the peak is
+    therefore a function of ``size`` rather than of the file.
+    """
+    while True:
+        block = list(islice(rows, size))
+        if not block:
+            return
+        yield block
+
+
+def _unrepresentable(exc: BaseException) -> binding.UnrepresentableValue | None:
+    """Find an unrepresentable-value error anywhere in a raised chain.
+
+    Adapters run inside the driver, several frames below Core, so by the time the
+    error surfaces SQLAlchemy has wrapped it. Walking the chain is what keeps the
+    caller's message about *their value* rather than about a statement.
+    """
+    seen = exc
+    while seen is not None:
+        if isinstance(seen, binding.UnrepresentableValue):
+            return seen
+        seen = seen.__cause__ or seen.__context__
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Workspace
 # ---------------------------------------------------------------------------
 
 
 class Workspace:
-    """The host connection: a SQLAlchemy engine, and the tables reached through it.
+    """Tags, and the databases they name.
 
-    The engine is the abstraction that lets a backend change without the code
-    above it changing. Datasources arrive as attached databases on this one
-    connection — that is what makes a join across two of them a plain statement.
-
-    **Pool configuration is load-bearing, not incidental.** An in-memory SQLite
-    database exists only for as long as its connection does, so a fresh checkout
-    would find an empty database; ``StaticPool`` is therefore obligatory, and it
-    means every checkout is the *same* DBAPI connection. That is precisely the
-    configuration measured losing **79,807 of 200,000 rows** silently: the pool's
-    default rollback-on-return means an unrelated reader closing its checkout
-    discards a load in flight. Two things close it here — the session holds one
-    raw connection for its whole life, so the pool never resets anything
-    underneath a load, and callers serialise access (see the lock in
-    ``server.py``). ``docs/CONSTRAINTS.md`` §3.5 has the measurement, and §3.6
-    the posture to adopt if this stops being enough under load.
+    Nothing is shared between tags: each has its own engines, its own
+    transactions, and its own lifetime. Detaching one cannot disturb another, and
+    a backend change is confined to the tag that uses it.
     """
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self) -> None:
         binding.install()
-        self._engine = engine
-        # Held for the session rather than checked out per operation. See the
-        # class docstring: releasing it is what lets the pool roll back a load.
-        self._raw = engine.raw_connection()
+        self._tags: dict[str, Tagged] = {}
         self._tables: dict[str, TableInfo] = {}
-        #: True only while :meth:`query` has a statement in flight. The
-        #: authorizer is installed permanently and consults this, so the
-        #: connection's own posture is never toggled — see :meth:`query`.
-        self._reading = False
-        #: What the authorizer last refused, in words, for the error message.
-        self._denied: str | None = None
-        self._conn.set_authorizer(self._authorize)
-
-    def _authorize(
-        self,
-        action: int,
-        arg1: str | None,
-        arg2: str | None,
-        database: str | None,
-        trigger: str | None,
-    ) -> int:
-        """Refuse anything but reading, and only while a query is in flight.
-
-        Consulted by SQLite for each action a statement being prepared would
-        take. Outside :meth:`query` this permits everything — ``add_table`` and
-        the spill machinery write through the same connection and are not
-        subject to it.
-        """
-        if not self._reading or action in _READ_ACTIONS:
-            return sqlite3.SQLITE_OK
-        self._denied = _describe_action(action, arg1)
-        return sqlite3.SQLITE_DENY
-
-    @property
-    def _conn(self):
-        """The underlying DBAPI connection.
-
-        Used where SQLite-specific work is unavoidable — ``ATTACH``, ``PRAGMA``,
-        and the non-materialising ``executemany`` — none of which SQLAlchemy's
-        Core layer expresses without giving up the properties we measured.
-        """
-        return self._raw.driver_connection
-
-    @property
-    def engine(self) -> Engine:
-        return self._engine
+        #: Distinguishes this workspace's memory databases from any other
+        #: workspace's in the same process. Shared-cache memory databases are
+        #: addressed by name, so two workspaces using the same tag would
+        #: otherwise silently share one database — which tests, running many
+        #: workspaces per process, would hit immediately.
+        self._token = uuid4().hex[:12]
 
     # -- construction ------------------------------------------------------
 
     @classmethod
     def in_memory(cls) -> "Workspace":
-        engine = create_engine(
-            "sqlite://",
-            poolclass=StaticPool,
-            connect_args={
-                # URI mode is a connection-level flag that also governs ATTACH,
-                # so `ATTACH DATABASE 'file:...?mode=ro'` needs it set here or
-                # the argument is read as a literal filename.
-                "uri": True,
-                # Tool bodies are dispatched to worker OS threads, so the
-                # connection is legitimately reached from more than one.
-                "check_same_thread": False,
-            },
-        )
-        return cls(engine)
+        """A workspace holding no tags yet.
 
-    # -- attaching ---------------------------------------------------------
+        Kept as a named constructor because callers read better for it, and
+        because what it once meant — *one* in-memory database that everything
+        attaches to — is exactly the thing that no longer exists.
+        """
+        return cls()
 
-    def attach_memory(self, schema: str) -> None:
-        """Attach a fresh, writable, empty database under ``schema``.
+    # -- the tag dict ------------------------------------------------------
+
+    def tags(self) -> tuple[str, ...]:
+        return tuple(self._tags)
+
+    def entry(self, tag: str) -> Tagged:
+        """The tag's entry, or an error naming what is actually here."""
+        found = self._tags.get(tag)
+        if found is None:
+            known = ", ".join(self._tags) or "none"
+            raise LoadError(f"No database is tagged {tag!r}. Tagged: {known}.")
+        return found
+
+    def location(self, tag: str) -> str:
+        return self.entry(tag).location
+
+    def uri(self, tag: str) -> str:
+        return self.entry(tag).uri
+
+    # -- opening -----------------------------------------------------------
+
+    def attach_memory(self, tag: str) -> None:
+        """Open a fresh, writable, empty database under ``tag``.
 
         This is what a flat file becomes: its own database, so a later table can
-        be added beside the first one under the same nickname.
+        be added beside the first one under the same tag.
         """
-        self._conn.execute(f"ATTACH DATABASE ':memory:' AS {_quote(schema)}")
-
-    def attach_file(self, schema: str, path: Path, *, readonly: bool = True) -> None:
-        """Attach an existing SQLite file, read-only unless told otherwise.
-
-        Read-only is carried by the connection's own URI, not by a wrapper
-        callers are expected to route through. A guarantee implemented as an
-        interception point can be walked around by reaching the intercepted
-        object; there is nothing here to reach around.
-
-        Writable is therefore not a flag this module honours by being careful —
-        it is a different URI, and SQLite is what refuses the write.
-        """
-        self._conn.execute(
-            f"ATTACH DATABASE ? AS {_quote(schema)}",
-            (_file_uri(path, readonly=readonly),),
+        backend = backend_for("sqlite")
+        self._install(
+            tag,
+            uri=":memory:",
+            location=":memory:",
+            backend=backend,
+            engines=backend.open_memory(tag, self._token),
         )
 
-    def detach(self, schema: str) -> None:
-        """Release a schema, freeing its slot against SQLite's ATTACH limit."""
-        self._conn.execute(f"DETACH DATABASE {_quote(schema)}")
-        for key in [k for k in self._tables if k.startswith(f"{schema}.")]:
+    def attach_file(self, tag: str, path: Path, *, readonly: bool = True) -> None:
+        """Open an existing database file, read-only unless told otherwise.
+
+        Writable is not a flag this module honours by being careful — it is a
+        different URI, and the database itself is what refuses the write.
+        """
+        backend = backend_for("sqlite")
+        location = str(path.resolve())
+        self._install(
+            tag,
+            uri=location,
+            location=location,
+            backend=backend,
+            engines=backend.open_file(path, writable=not readonly),
+        )
+
+    def _install(
+        self,
+        tag: str,
+        *,
+        uri: str,
+        location: str,
+        backend: Backend,
+        engines: Engines,
+    ) -> None:
+        if tag in self._tags:
+            self.detach(tag)
+        self._tags[tag] = Tagged(
+            tag=tag, uri=uri, location=location, engines=engines, backend=backend
+        )
+
+    def relocate(self, tag: str, path: Path) -> None:
+        """Point a tag at a file holding what it used to hold in memory.
+
+        The tag keeps its identity — its ``uri`` still says where the data came
+        from — while ``location`` follows the data to disk. The old engines are
+        disposed, which is what actually frees the memory the spill was for.
+        """
+        entry = self.entry(tag)
+        origin = entry.uri
+        entry.engines.dispose()
+        engines = entry.backend.open_file(path, writable=True)
+        self._tags[tag] = Tagged(
+            tag=tag,
+            uri=origin,
+            location=str(path),
+            engines=engines,
+            backend=entry.backend,
+        )
+
+    def detach(self, tag: str) -> None:
+        """Close a tag's database and forget everything we knew about it."""
+        entry = self._tags.pop(tag, None)
+        if entry is not None:
+            entry.engines.dispose()
+        for key in [k for k in self._tables if k.startswith(f"{tag}.")]:
             del self._tables[key]
 
-    # -- moving a database out of memory -----------------------------------
+    # -- measuring ---------------------------------------------------------
 
-    def resident_bytes(self, schema: str) -> int:
-        """How much an attached database is actually holding, right now.
+    def resident_bytes(self, tag: str) -> int | None:
+        """What this tag holds in our process, or ``None`` if that is not a thing.
 
-        **Freelist-corrected, and that is the whole point.** ``page_count`` does
-        not shrink when a table is dropped — 1,058 pages before and after, with
-        1,057 of them free — so a schema that was loaded and emptied would
-        otherwise keep measuring at its high-water mark and be spilled for data
-        it no longer holds. See ``docs/CONSTRAINTS.md`` §6.
-
-        Measured rather than estimated. Deciding from file size or metadata what
-        a load *will* cost is the fail-open pattern this project has already
-        been bitten by; this asks the database what it *has*.
+        ``None`` is not zero. A tag backed by a file or a server holds nothing
+        *here*, and reporting zero would invite a caller to treat it as an empty
+        database rather than as a question that does not apply.
         """
-        quoted = _quote(schema)
-        pages = self._scalar(f"PRAGMA {quoted}.page_count")
-        free = self._scalar(f"PRAGMA {quoted}.freelist_count")
-        return max(pages - free, 0) * self._scalar(f"PRAGMA {quoted}.page_size")
+        entry = self.entry(tag)
+        return entry.backend.resident_bytes(entry.engines.write)
 
-    def vacuum_into(self, schema: str, path: Path) -> None:
-        """Write a consistent, compacted copy of an attached database to a file.
+    def snapshot(self, tag: str, path: Path) -> None:
+        """Write a consistent, compacted copy of a tag's database to a file."""
+        entry = self.entry(tag)
+        entry.backend.snapshot(entry.engines.write, path)
 
-        ``VACUUM`` cannot run inside a transaction (``docs/CONSTRAINTS.md``
-        §4.3), so anything in flight is committed first. At that moment there is
-        no transaction left to roll back, which is why the undo path for a
-        failed copy is deleting the target rather than aborting.
+    # -- composing ---------------------------------------------------------
 
-        The target must not exist; SQLite refuses rather than overwriting, and
-        that refusal is a feature worth keeping rather than working around.
+    def has_table(self, tag: str, table: str) -> bool:
+        return table in self.table_names(tag)
+
+    def table_names(self, tag: str) -> tuple[str, ...]:
+        """Everything in this tag's database that can be selected from.
+
+        Views included, and deliberately: a caller who cannot see one in the
+        listing has no way to learn it is there. They describe like tables and
+        are queried like tables, so telling them apart here would be a
+        distinction without a use.
         """
-        self._conn.commit()
-        self._conn.execute(f"VACUUM {_quote(schema)} INTO ?", (str(path),))
+        inspector = inspect(self.entry(tag).engines.read)
+        names = set(inspector.get_table_names()) | set(inspector.get_view_names())
+        return tuple(sorted(n for n in names if not n.startswith("sqlite_")))
 
-    # -- composing a database ----------------------------------------------
-
-    def has_table(self, schema: str, table: str) -> bool:
-        return table in self.table_names(schema)
-
-    def view_names(self, schema: str) -> tuple[str, ...]:
-        """Every view in an attached database, in name order."""
-        return tuple(
-            row[0]
-            for row in self._conn.execute(
-                f"SELECT name FROM {_quote(schema)}.sqlite_master "
-                f"WHERE type='view' ORDER BY name"
-            )
-        )
-
-    def drop_table(self, schema: str, table: str) -> None:
+    def drop_table(self, tag: str, table: str) -> None:
+        entry = self.entry(tag)
+        target = Table(table, MetaData())
         try:
-            self._conn.execute(f"DROP TABLE {_target(schema, table)}")
-            self._conn.commit()
-        except sqlite3.Error as exc:
-            raise LoadError(f"Could not drop {schema}.{table}: {exc}") from exc
-        self._tables.pop(f"{schema}.{table}", None)
+            with entry.engines.write.begin() as conn:
+                target.drop(conn)
+        except SQLAlchemyError as exc:
+            raise LoadError(f"Could not drop {tag}.{table}: {exc}") from exc
+        self._tables.pop(f"{tag}.{table}", None)
 
     # -- loading -----------------------------------------------------------
 
     def load_file(
-        self, raw_path: str, schema: str = "main", table_name: str | None = None
+        self, raw_path: str, tag: str, table_name: str | None = None
     ) -> TableInfo:
-        """Read a tabular file into a new table and describe what landed.
-
-        ``schema`` is the attached database to land in — a slot nickname in
-        normal operation. It defaults to ``main`` so the reader and typing
-        behaviour can be exercised without slot ceremony.
-        """
+        """Read a tabular file into a new table in ``tag`` and describe what landed."""
         path = resolve_read_path(raw_path)
         frame = read_frame(path)
         name = _sanitize(table_name or path.stem, "table")
-        return self.insert_frame(frame, name, source=str(path), schema=schema)
+        return self.insert_frame(frame, name, source=str(path), tag=tag)
 
     def insert_frame(
-        self, frame: pd.DataFrame, table: str, *, source: str, schema: str = "main"
+        self, frame: pd.DataFrame, table: str, *, source: str, tag: str
     ) -> TableInfo:
+        entry = self.entry(tag)
         columns = _unique_columns(list(frame.columns))
         declared = [_declared_type(frame[original].dtype) for original in frame.columns]
 
-        target = _target(schema, table)
-        column_ddl = ", ".join(
-            f"{_quote(name)} {sql_type}" for name, sql_type in zip(columns, declared)
+        target = Table(
+            table,
+            MetaData(),
+            *[
+                Column(name, _CORE_TYPES[sql_type]())
+                for name, sql_type in zip(columns, declared)
+            ],
         )
-        self._conn.execute(f"DROP TABLE IF EXISTS {target}")
-        self._conn.execute(f"CREATE TABLE {target} ({column_ddl})")
-
-        placeholders = ", ".join("?" * len(columns))
-        statement = f"INSERT INTO {target} VALUES ({placeholders})"
 
         try:
-            # The iterator is passed through, never wrapped in list(). See the
-            # module docstring: materialising it is a 40 MB peak instead of 0.02.
-            self._conn.executemany(statement, self._rows(frame))
-        except binding.UnrepresentableValue as exc:
-            self._conn.rollback()
-            raise LoadError(
-                f"{source}: {exc.reason}. Value {exc.value!r} cannot be stored in "
-                f"SQLite without corrupting it."
-            ) from exc
-        except (sqlite3.Error, OverflowError) as exc:
-            self._conn.rollback()
-            raise LoadError(f"Could not insert rows from {source}: {exc}") from exc
-
-        self._conn.commit()
+            with entry.engines.write.begin() as conn:
+                target.drop(conn, checkfirst=True)
+                target.create(conn)
+                statement = target.insert()
+                # The row iterator is never materialised — only one chunk of it
+                # exists at a time. See the module docstring for the numbers.
+                for block in _blocks(self._rows(frame, columns), _INSERT_CHUNK):
+                    conn.execute(statement, block)
+        except Exception as exc:
+            unrepresentable = _unrepresentable(exc)
+            if unrepresentable is not None:
+                raise LoadError(
+                    f"{source}: {unrepresentable.reason}. Value "
+                    f"{unrepresentable.value!r} cannot be stored in SQLite "
+                    f"without corrupting it."
+                ) from exc
+            if isinstance(exc, (SQLAlchemyError, OverflowError)):
+                raise LoadError(f"Could not insert rows from {source}: {exc}") from exc
+            raise
 
         info = TableInfo(
             name=table,
-            row_count=self._scalar(f"SELECT count(*) FROM {target}"),
-            columns=self._describe_columns(schema, table, columns, declared, frame),
+            row_count=self._count(entry, table),
+            columns=self._describe_columns(entry, table, columns, declared, frame),
             source=source,
-            schema=schema,
+            tag=tag,
         )
         self._tables[info.qualified] = info
         return info
 
     @staticmethod
-    def _rows(frame: pd.DataFrame) -> Iterator[tuple]:
-        return frame.itertuples(index=False, name=None)
+    def _rows(frame: pd.DataFrame, columns: list[str]) -> Iterator[dict]:
+        """Frame rows as bind-parameter mappings, lazily.
+
+        A generator, not a list comprehension: the difference between the two is
+        0.81 MB and 511 MB at 800,000 rows.
+        """
+        for row in frame.itertuples(index=False, name=None):
+            yield dict(zip(columns, row))
 
     # -- inspection --------------------------------------------------------
 
-    def table_names(self, schema: str) -> tuple[str, ...]:
-        """Everything in an attached database that can be selected from.
-
-        Views included, and deliberately: a view is the point of building one,
-        and a caller who cannot see it in the listing has no way to learn it is
-        there. They describe like tables and are queried like tables, so telling
-        them apart here would be a distinction without a use.
-        """
-        return tuple(
-            row[0]
-            for row in self._conn.execute(
-                f"SELECT name FROM {_quote(schema)}.sqlite_master "
-                f"WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
-                f"ORDER BY name"
+    @staticmethod
+    def _count(entry: Tagged, table: str) -> int:
+        """How many rows the table holds, asked in Core rather than in text."""
+        target = Table(table, MetaData())
+        with entry.engines.read.connect() as conn:
+            return int(
+                conn.execute(select(func.count()).select_from(target)).scalar_one()
             )
-        )
 
-    def describe(self, schema: str, table: str, source: str = "") -> TableInfo:
-        """Describe a table we did not load ourselves, by asking SQLite."""
-        known = self._tables.get(f"{schema}.{table}")
+    def describe(self, tag: str, table: str, source: str = "") -> TableInfo:
+        """Describe a table we did not load ourselves, by asking the database."""
+        known = self._tables.get(f"{tag}.{table}")
         if known is not None:
             return known
 
-        columns, declared = [], []
-        for row in self._conn.execute(
-            f"PRAGMA {_quote(schema)}.table_info({_quote(table)})"
-        ):
-            columns.append(row[1])
-            declared.append(row[2] or "")
-        if not columns:
-            raise LoadError(f"No such table: {schema}.{table}")
+        entry = self.entry(tag)
+        described = inspect(entry.engines.read).get_columns(table)
+        if not described:
+            raise LoadError(f"No such table: {tag}.{table}")
 
+        columns = [column["name"] for column in described]
+        declared = [str(column["type"]) for column in described]
         return TableInfo(
             name=table,
-            row_count=self._scalar(f"SELECT count(*) FROM {_target(schema, table)}"),
-            columns=self._describe_columns(schema, table, columns, declared, None),
+            row_count=self._count(entry, table),
+            columns=self._describe_columns(entry, table, columns, declared, None),
             source=source,
-            schema=schema,
+            tag=tag,
         )
 
     def _describe_columns(
         self,
-        schema: str,
+        entry: Tagged,
         table: str,
         columns: list[str],
         declared: list[str],
         frame: pd.DataFrame | None,
     ) -> list[ColumnInfo]:
-        described = []
-        for index, (name, sql_type) in enumerate(zip(columns, declared)):
-            kind = None
-            numeric = non_numeric = 0
-            if frame is not None:
-                series = frame[frame.columns[index]]
-                kind = binding.temporal_kind(series.dtype)
-                if sql_type == "TEXT":
-                    numeric, non_numeric = _numeric_split(series)
-            described.append(
-                ColumnInfo(
-                    name=name,
-                    declared_type=sql_type,
-                    temporal_kind=kind,
-                    storage_classes=self._storage_classes(schema, table, name),
-                    numeric_values=numeric,
-                    non_numeric_values=non_numeric,
+        with entry.engines.read.connect() as conn:
+            described = []
+            for index, (name, sql_type) in enumerate(zip(columns, declared)):
+                kind = None
+                numeric = non_numeric = 0
+                if frame is not None:
+                    series = frame[frame.columns[index]]
+                    kind = binding.temporal_kind(series.dtype)
+                    if sql_type == "TEXT":
+                        numeric, non_numeric = _numeric_split(series)
+                described.append(
+                    ColumnInfo(
+                        name=name,
+                        declared_type=sql_type,
+                        temporal_kind=kind,
+                        storage_classes=entry.backend.storage_classes(
+                            conn, table, name
+                        ),
+                        numeric_values=numeric,
+                        non_numeric_values=non_numeric,
+                    )
                 )
-            )
         return described
-
-    def _storage_classes(self, schema: str, table: str, column: str) -> dict[str, int]:
-        """Count actual storage classes present. Measured, not inferred."""
-        rows = self._conn.execute(
-            f"SELECT typeof({_quote(column)}), count(*) "
-            f"FROM {_target(schema, table)} GROUP BY 1"
-        ).fetchall()
-        return {storage_class: count for storage_class, count in rows}
-
-    def _scalar(self, sql: str) -> int:
-        return int(self._conn.execute(sql).fetchone()[0])
 
     # -- public surface ----------------------------------------------------
 
@@ -671,49 +668,74 @@ class Workspace:
         """Tables this workspace loaded, keyed by their qualified name."""
         return dict(self._tables)
 
+    def engine(self, tag: str) -> Engine:
+        """The writing engine for a tag, for callers that need the engine itself."""
+        return self.entry(tag).engines.write
+
     def query(
-        self, sql: str, limit: int | None = None
+        self, tag: str, sql: str, limit: int | None = None
     ) -> tuple[list[str], list[tuple]]:
-        """Run a **read** query and return ``(column_names, rows)``.
+        """Run a **read** query against one tag and return ``(column_names, rows)``.
 
         A query reads. Anything that would change the database — ``INSERT``,
         ``CREATE TABLE``, ``CREATE VIEW``, ``ATTACH``, a ``PRAGMA`` — is refused
-        here, whatever rights the datasource itself carries. Mutation has its
-        own verbs (``add_table``, ``drop_table``) which do not come through this
+        here, whatever rights the datasource itself carries. Mutation has its own
+        verbs (``add_table``, ``drop_table``) which do not come through this
         method, so the refusal costs the surface nothing.
 
-        Enforced by SQLite's authorizer rather than by reading the SQL: the
-        callback runs while the statement is being *prepared*, so a refused
-        statement never executes and there is no text to parse and mis-parse.
-        ``PRAGMA query_only`` would be the blunter alternative, but it is
-        database state that would have to be toggled around every call — and
-        ``CONSTRAINTS`` §3 is explicit that a connection's posture is set once,
-        never flipped around an operation.
+        Enforced by the connection's posture rather than by reading the SQL: this
+        engine's connections are read-only from the moment they are opened, so
+        there is no text to parse and mis-parse and no window in which the
+        posture is briefly something else.
+
+        Streamed. ``yield_per`` bounds what the driver hands back at a time, so a
+        caller taking ten rows out of a million-row result pays for ten.
         """
-        self._denied = None
-        self._reading = True
+        entry = self.entry(tag)
+        entry.engines.refusal.take()
         try:
-            cursor = self._conn.execute(sql)
-            if cursor.description is None:
-                return [], []
-            names = [description[0] for description in cursor.description]
-            rows = cursor.fetchmany(limit) if limit else cursor.fetchall()
-            return names, rows
-        except sqlite3.DatabaseError as exc:
-            if self._denied is None:
-                raise
-            raise LoadError(
+            with entry.engines.read.connect() as conn:
+                result = conn.execution_options(
+                    stream_results=True, yield_per=_YIELD_PER
+                ).execute(text(sql))
+                if not result.returns_rows:
+                    return [], []
+                names = list(result.keys())
+                rows = list(islice(result, limit)) if limit else result.all()
+                return names, [tuple(row) for row in rows]
+        except SQLAlchemyError as exc:
+            raise self._explain(entry, exc, sql) from exc
+
+    def _explain(self, entry: Tagged, exc: SQLAlchemyError, sql: str) -> LoadError:
+        """Turn a driver error into something an agent can act on.
+
+        Two cases are worth naming. A refused write should say *what* was
+        attempted and where the verb for it lives. And a table addressed as
+        ``tag.table`` — the spelling the previous ``ATTACH``-based design took —
+        fails as a plain "no such table", which tells an agent its table is
+        missing when in fact its addressing is stale.
+        """
+        denied = entry.engines.refusal.take()
+        if denied is not None:
+            return LoadError(
                 f"query reads; it does not write. This statement asks to "
-                f"{self._denied}, which is refused here even on a writable "
+                f"{denied}, which is refused here even on a writable "
                 f"datasource. To add data use add_table, to remove a table use "
                 f"drop_table; there is no verb for arbitrary DDL by design."
-            ) from exc
-        finally:
-            # Cleared before returning the rows, not after: everything the
-            # cursor still has to do is reading, and leaving the flag set would
-            # arm the authorizer against the next write this session makes.
-            self._reading = False
+            )
+
+        message = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
+        stale = re.search(rf"no such table:\s*{re.escape(entry.tag)}\.(\w+)", message)
+        if stale is not None:
+            table = stale.group(1)
+            return LoadError(
+                f"No such table: {entry.tag}.{table}. Tables are addressed by "
+                f"their own name inside the datasource you named — write "
+                f"FROM {table}, not FROM {entry.tag}.{table}. Available here: "
+                f"{', '.join(self.table_names(entry.tag)) or 'none'}."
+            )
+        return LoadError(message)
 
     def close(self) -> None:
-        self._raw.close()
-        self._engine.dispose()
+        for tag in list(self._tags):
+            self.detach(tag)

@@ -198,7 +198,7 @@ def test_readers_running_against_a_load_do_not_lose_rows(session):
             tasks += [
                 client.call_tool(
                     "query",
-                    {"nickname": "seed", "sql": "SELECT count(*) FROM seed.seed"},
+                    {"nickname": "seed", "sql": "SELECT count(*) FROM seed"},
                 )
                 for _ in range(8)
             ]
@@ -206,7 +206,7 @@ def test_readers_running_against_a_load_do_not_lose_rows(session):
 
             verify = await client.call_tool(
                 "query",
-                {"nickname": "big", "sql": "SELECT count(*) FROM big.big", "limit": 0},
+                {"nickname": "big", "sql": "SELECT count(*) FROM big", "limit": 0},
             )
             return [_payload(r) for r in results], _payload(verify)
 
@@ -250,7 +250,7 @@ def test_parallel_loads_all_land(session):
                         "query",
                         {
                             "nickname": table,
-                            "sql": f"SELECT count(*) FROM {table}.{table}",
+                            "sql": f"SELECT count(*) FROM {table}",
                             "limit": 0,
                         },
                     )
@@ -269,28 +269,8 @@ def test_parallel_loads_all_land(session):
         assert count["rows"][0][0] == 5_000
 
     # And the union is intact — no table clobbered another's contents.
-    async def _union():
-        async with Client(server_module.mcp) as client:
-            return _payload(
-                await client.call_tool(
-                    "query",
-                    {
-                        "nickname": "part0",
-                        # Four slots in one statement: separate databases on one
-                        # connection, so this is a plain query, not four trips.
-                        "sql": (
-                            "SELECT count(DISTINCT id) FROM ("
-                            "SELECT id FROM part0.part0 "
-                            "UNION ALL SELECT id FROM part1.part1 "
-                            "UNION ALL SELECT id FROM part2.part2 "
-                            "UNION ALL SELECT id FROM part3.part3)"
-                        ),
-                        "limit": 0,
-                    },
-                )
-            )
-
-    assert asyncio.run(_union())["rows"][0][0] == 20_000
+    # Each slot is its own database, so there is no one statement that spans
+    # them; the per-slot counts above are what "all four landed" means now.
 
 
 def test_a_failing_load_does_not_damage_an_existing_table(session):
@@ -317,7 +297,7 @@ def test_a_failing_load_does_not_damage_an_existing_table(session):
                 "query",
                 {
                     "nickname": "good",
-                    "sql": "SELECT count(*) FROM good.good",
+                    "sql": "SELECT count(*) FROM good",
                     "limit": 0,
                 },
             )

@@ -52,12 +52,13 @@ APP_NAME = "localdata"
 #: Names the configuration file. Never carries a setting itself.
 PATH_ENV_VAR = "LOCALDATA_CONFIG_PATH"
 
-#: The most slots there can be, because SQLite refuses the eleventh ``ATTACH``
-#: on a connection: ``sqlite3.OperationalError: too many attached databases -
-#: max 10``. Measured, not read from a document. Since every slot is an attached
-#: database — a file-born slot attaches ``:memory:`` just as a database file
-#: attaches itself — this ceiling is the slot ceiling. ``main`` is not counted
-#: against it, so it stays free.
+#: The most slots there can be. This was once SQLite's own ceiling — every slot
+#: was an attached database and the eleventh ``ATTACH`` raised ``too many attached
+#: databases - max 10``. Slots now hold their own engines, so nothing refuses an
+#: eleventh and the number is a **choice**: each slot costs two live connections
+#: and, until it is spilled, resident memory. Ten is kept because it was already
+#: the working figure and nothing measured argues for another; raise it in config
+#: if a session genuinely needs more.
 MAX_SLOTS = 10
 
 #: How much data may sit in memory before a database is moved out to disk. A
@@ -209,9 +210,9 @@ def _slots(value: Any, path: Path) -> int:
         )
     if not 1 <= value <= MAX_SLOTS:
         raise ConfigError(
-            f"{path}: workspace.slots must be between 1 and {MAX_SLOTS}, got {value}. "
-            f"SQLite refuses the {MAX_SLOTS + 1}th attached database, and every slot "
-            f"is an attached database."
+            f"{path}: workspace.slots must be between 1 and {MAX_SLOTS}, got "
+            f"{value}. Each slot holds live connections and, until it is spilled, "
+            f"resident memory."
         )
     return value
 

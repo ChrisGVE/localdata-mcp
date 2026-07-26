@@ -10,27 +10,28 @@ one, and none of them is a special case:
   has;
 * a **URL naming a service** becomes its own engine.
 
-Because every slot is a database, addressing is uniformly ``nickname.table`` and
-nothing above this module needs to know which kind it is holding.
+Because every slot is a database, nothing above this module needs to know which
+kind it is holding. Each slot is reached on its own engines, and a statement
+addresses the tables inside one slot by their own names.
 
-**Ten slots, and the number is measured rather than chosen.** Every slot is an
-attached database — a file-born slot attaches ``:memory:`` exactly as a database
-file attaches itself — and SQLite raises ``too many attached databases - max 10``
-on the eleventh. Slots are evicted oldest-first, and the eviction is *reported*,
-because a caller told only ``no such table`` a minute later has to re-plan blind.
+**A statement reaches one slot.** Slots do not share a connection, so there is no
+join across them; putting two datasources together means copying one into the
+other with ``add_table``, which says so in the call rather than depending on how
+the databases happen to be wired underneath.
 
-**One engine per slot; SQL joins within an engine, never across it.** ``ATTACH``
-puts another SQLite database into the *same* connection, so all the SQLite-backed
-slots are mutually joinable in one statement. A service reached over a URL cannot
-be attached to a SQLite connection, so its slot is a separate engine. Crossing
-that line needs the rows copied, which is a named act and not a side effect of
-querying.
+**Ten slots, and the number is now chosen rather than forced.** It used to be
+SQLite's own ceiling — every slot was an attached database and the eleventh
+``ATTACH`` raised ``too many attached databases - max 10``. Per-slot engines
+remove that limit entirely, so the number survives on its own merits: each slot
+costs live connections and, while it is in memory, memory. Slots are evicted
+oldest-first, and the eviction is *reported*, because a caller told only ``no
+such table`` a minute later has to re-plan blind.
 
-Both failures above are handled by **enriching an error that already happened**
-rather than by inspecting SQL in advance. A substring check over a statement
-would eventually refuse a legitimate query whose column happened to be named
-like a slot; the same check applied only after the engine has already refused
-cannot cause a false positive.
+A slot that cannot be reached is explained by **enriching an error that already
+happened** rather than by inspecting SQL in advance. A substring check over a
+statement would eventually refuse a legitimate query whose column happened to be
+named like a slot; the same check applied only after the engine has already
+refused cannot cause a false positive.
 """
 
 from __future__ import annotations
@@ -38,7 +39,6 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import sqlite3
 import tempfile
 from collections import deque
 from dataclasses import dataclass, replace
@@ -176,7 +176,7 @@ class JoinReport:
     """
 
     key: str
-    #: Qualified names, so a caller can quote them back without rebuilding them.
+    #: Bare table names, as a statement against this slot would write them.
     existing_table: str
     added_table: str
     matched_keys: int
@@ -391,7 +391,7 @@ class Registry:
         table = _sanitize(path.stem, "table")
         try:
             info = self._workspace.insert_frame(
-                frame, table, source=str(path), schema=nickname
+                frame, table, source=str(path), tag=nickname
             )
         except LoadError as exc:
             self._workspace.detach(nickname)
@@ -409,25 +409,37 @@ class Registry:
     def _attach_database(self, path: Path, nickname: str, *, writable: bool) -> Slot:
         try:
             self._workspace.attach_file(nickname, path, readonly=not writable)
+            # Listing forces the schema to be read, which is where a file with an
+            # unusable view fails. Opening alone would succeed and leave the slot
+            # to fail later, on somebody else's query.
+            tables = self._workspace.table_names(nickname)
         except Exception as exc:
-            if "cannot reference objects in database" in str(exc):
+            # Nothing half-open is left behind: the tag either works or is absent.
+            self._workspace.detach(nickname)
+            complaint = str(exc)
+            if (
+                "cannot reference objects in database" in complaint
+                or "malformed database schema" in complaint
+            ):
                 # One bad view takes the whole database down, and SQLite's own
                 # wording ("malformed database schema") points at corruption
                 # rather than at the recoverable thing that actually happened.
                 raise AttachRefused(
                     f"Could not attach {path}: it holds a view that names its "
-                    f"tables with the nickname of whatever database it was built "
-                    f"in, and that name is not in use here — so SQLite rejects the "
-                    f"whole file rather than just that view. Original complaint: "
-                    f"{exc}. Attach it under the nickname it was built under, or "
-                    f"rebuild the view naming its tables unqualified."
+                    f"tables with the name of the database it was built in, and "
+                    f"no such name exists here — so SQLite rejects the whole file "
+                    f"rather than just that view. Original complaint: {complaint}. "
+                    f"Every datasource is opened as a database in its own right, "
+                    f"so there is no name to attach it under that would resolve "
+                    f"the view; it has to be rebuilt naming its tables "
+                    f"unqualified (FROM sales, not FROM shop.sales)."
                 ) from exc
-            raise AttachRefused(f"Could not attach {path}: {exc}") from exc
+            raise AttachRefused(f"Could not attach {path}: {complaint}") from exc
         return Slot(
             nickname=nickname,
             kind="database",
             source=str(path),
-            tables=self._workspace.table_names(nickname),
+            tables=tables,
             writable=writable,
         )
 
@@ -564,7 +576,7 @@ class Registry:
         try:
             frame = read_frame(path)
             return self._workspace.insert_frame(
-                frame, table, source=str(path), schema=slot.nickname
+                frame, table, source=str(path), tag=slot.nickname
             )
         except LoadError as exc:
             raise SlotError(str(exc)) from exc
@@ -646,61 +658,16 @@ class Registry:
             raise SlotError(str(exc)) from exc
 
         try:
-            self._workspace.vacuum_into(nickname, target)
+            self._workspace.snapshot(nickname, target)
         except Exception as exc:
             # A partial file looks like a complete save, which is worse than none.
             target.unlink(missing_ok=True)
             raise SlotError(f"Could not save {nickname} to {target}: {exc}") from exc
 
-        complaint = self._unopenable_elsewhere(target)
-        if complaint is not None:
-            target.unlink(missing_ok=True)
-            raise SlotError(
-                f"{nickname!r} cannot be saved as it stands: the file was written "
-                f"and then would not open under any other name — {complaint} A view "
-                f"in it names tables as {nickname}.table, which bakes the nickname "
-                f"into the file. Rebuild it unqualified (FROM sales, not "
-                f"FROM {nickname}.sales) and save again. Views here: "
-                f"{', '.join(self._workspace.view_names(nickname))}."
-            )
-
         # SQLite creates the file 0o644 — world-readable, holding the user's
         # actual data. Narrowed immediately; the window is small and known.
         os.chmod(target, 0o600)
         return target
-
-    @staticmethod
-    def _unopenable_elsewhere(target: Path) -> str | None:
-        """Open the saved file the way a future session will: under another name.
-
-        Measured rather than predicted. Scanning each view's SQL for the slot's
-        nickname would guess, and would guess wrong on a table *aliased* to the
-        same word. Actually attaching the file under a different name is exactly
-        the thing that has to work, costs one open of a file just written, and
-        cannot produce a false positive.
-        """
-        probe = sqlite3.connect(":memory:", uri=True)
-        try:
-            probe.execute(
-                "ATTACH DATABASE ? AS probe_under_another_name",
-                (f"file:{target}?mode=ro",),
-            )
-            # ATTACH alone may not parse the schema, so make something read it.
-            probe.execute(
-                "SELECT count(*) FROM probe_under_another_name.sqlite_master"
-            ).fetchone()
-            for view in probe.execute(
-                "SELECT name FROM probe_under_another_name.sqlite_master "
-                "WHERE type='view'"
-            ).fetchall():
-                probe.execute(
-                    f'SELECT * FROM probe_under_another_name."{view[0]}" LIMIT 0'
-                )
-            return None
-        except sqlite3.Error as exc:
-            return f"{exc}."
-        finally:
-            probe.close()
 
     # -- does the join actually line up? ------------------------------------
 
@@ -724,8 +691,8 @@ class Registry:
         )
         return JoinReport(
             key=column,
-            existing_table=f"{nickname}.{existing}",
-            added_table=f"{nickname}.{added}",
+            existing_table=existing,
+            added_table=added,
             matched_keys=self._matched(nickname, existing, added, column),
             missing_from_added=missing_from_added,
             missing_from_added_total=added_total,
@@ -778,23 +745,25 @@ class Registry:
         so is noise rather than a finding.
         """
         absent = (
-            f'FROM "{nickname}"."{left}" l WHERE l."{key}" IS NOT NULL '
-            f'AND NOT EXISTS (SELECT 1 FROM "{nickname}"."{right}" r '
+            f'FROM "{left}" l WHERE l."{key}" IS NOT NULL '
+            f'AND NOT EXISTS (SELECT 1 FROM "{right}" r '
             f'WHERE r."{key}" = l."{key}")'
         )
         _, counted = self._workspace.query(
-            f'SELECT count(*) FROM (SELECT DISTINCT l."{key}" {absent})'
+            nickname, f'SELECT count(*) FROM (SELECT DISTINCT l."{key}" {absent})'
         )
         _, sampled = self._workspace.query(
-            f'SELECT DISTINCT l."{key}" {absent} ORDER BY 1 LIMIT {_UNMATCHED_SAMPLE}'
+            nickname,
+            f'SELECT DISTINCT l."{key}" {absent} ORDER BY 1 LIMIT {_UNMATCHED_SAMPLE}',
         )
         return tuple(row[0] for row in sampled), int(counted[0][0])
 
     def _matched(self, nickname: str, left: str, right: str, key: str) -> int:
         _, rows = self._workspace.query(
+            nickname,
             f'SELECT count(*) FROM (SELECT DISTINCT l."{key}" '
-            f'FROM "{nickname}"."{left}" l WHERE EXISTS '
-            f'(SELECT 1 FROM "{nickname}"."{right}" r WHERE r."{key}" = l."{key}"))'
+            f'FROM "{left}" l WHERE EXISTS '
+            f'(SELECT 1 FROM "{right}" r WHERE r."{key}" = l."{key}"))',
         )
         return int(rows[0][0])
 
@@ -834,10 +803,17 @@ class Registry:
         slot answers afterwards under the same nickname with the same rights.
         """
         budget = config.active().memory_budget_mb * 1024 * 1024
-        resident = {
+        # ``resident_bytes`` answers ``None`` for a database whose data is not in
+        # this process. Those are dropped rather than counted as zero: a tag that
+        # cannot be measured is not a tag that is holding nothing, and spilling
+        # it would move data that is already on disk.
+        measured = {
             slot.nickname: self._workspace.resident_bytes(slot.nickname)
             for slot in self._slots.values()
             if self._in_memory(slot)
+        }
+        resident = {
+            nickname: held for nickname, held in measured.items() if held is not None
         }
 
         total = sum(resident.values())
@@ -874,11 +850,12 @@ class Registry:
         target = self._scratch() / f"{slot.nickname}.sqlite"
         target.unlink(missing_ok=True)
 
-        self._workspace.vacuum_into(slot.nickname, target)
-        self._workspace.detach(slot.nickname)
+        self._workspace.snapshot(slot.nickname, target)
         # Writable, because this database is still one we made: moving it must
-        # not quietly take away rights the caller already had.
-        self._workspace.attach_file(slot.nickname, target, readonly=False)
+        # not quietly take away rights the caller already had. Relocating rather
+        # than detach-and-reattach keeps the tag's identity — it still reports
+        # the source it came from, while its data now lives in the temp file.
+        self._workspace.relocate(slot.nickname, target)
 
         moved = replace(slot, spill_path=target)
         self._slots[slot.nickname] = moved
@@ -956,7 +933,7 @@ class Registry:
         slot = self.slot(nickname)
         try:
             if slot.engine is None:
-                return self._workspace.query(sql, limit=limit)
+                return self._workspace.query(nickname, sql, limit=limit)
             return self._query_engine(slot.engine, sql, limit)
         except Exception as exc:
             self._explain(exc, sql, slot)
