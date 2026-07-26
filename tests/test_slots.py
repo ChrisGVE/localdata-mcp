@@ -385,7 +385,7 @@ def test_a_database_we_built_from_a_file_is_writable(registry, root):
     # The grant is what add_table and drop_table consult. query never writes,
     # whatever the grant says, so it is no longer the way to observe this.
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.add_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"))
     assert "prices" in registry.tables("shop")
     registry.drop_table("shop", "prices")
     assert "prices" not in registry.tables("shop")
@@ -398,7 +398,7 @@ def test_an_outside_database_arrives_read_only(registry, root):
     assert slot.writable is False
     csv_at(root / "prices.csv", "sku,price\na,10\n")
     with pytest.raises(NotWritable, match="writable=true"):
-        registry.add_table("wh", source=str(root / "prices.csv"))
+        registry.create_table("wh", source=str(root / "prices.csv"))
 
 
 def test_the_write_grant_is_honoured_when_it_is_asked_for(registry, root):
@@ -407,8 +407,8 @@ def test_the_write_grant_is_honoured_when_it_is_asked_for(registry, root):
 
     assert slot.writable is True
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    added = registry.add_table("wh", source=str(root / "prices.csv"))
-    assert added.info.row_count == 1
+    added = registry.create_table("wh", source=str(root / "prices.csv"))
+    assert added.row_count == 1
     assert "prices" in registry.tables("wh")
 
 
@@ -604,10 +604,10 @@ def test_a_url_slot_composes_like_any_other(registry, root):
     csv_at(root / "stock.csv")
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
 
-    added = registry.add_table("remote", source=str(root / "stock.csv"))
+    added = registry.create_table("remote", source=str(root / "stock.csv"))
 
-    assert added.info.name == "stock"
-    assert added.info.row_count == 2
+    assert added.name == "stock"
+    assert added.row_count == 2
 
 
 def test_a_url_slot_lists_what_was_added_to_it(registry, root):
@@ -615,7 +615,7 @@ def test_a_url_slot_lists_what_was_added_to_it(registry, root):
     build_database(root / "remote.db")
     csv_at(root / "stock.csv")
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
-    registry.add_table("remote", source=str(root / "stock.csv"))
+    registry.create_table("remote", source=str(root / "stock.csv"))
 
     assert registry.tables("remote") == ("products", "stock")
 
@@ -624,7 +624,7 @@ def test_a_url_slot_joins_the_table_that_was_added_to_it(registry, root):
     build_database(root / "remote.db")
     csv_at(root / "stock.csv")
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
-    registry.add_table("remote", source=str(root / "stock.csv"))
+    registry.create_table("remote", source=str(root / "stock.csv"))
 
     _, rows = registry.query(
         "remote",
@@ -638,7 +638,7 @@ def test_a_url_slot_describes_a_table_it_was_given(registry, root):
     build_database(root / "remote.db")
     csv_at(root / "stock.csv")
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
-    registry.add_table("remote", source=str(root / "stock.csv"))
+    registry.create_table("remote", source=str(root / "stock.csv"))
 
     info = registry.describe("remote", "stock")
     assert [column.name for column in info.columns] == ["sku", "qty"]
@@ -652,7 +652,7 @@ def test_a_read_only_url_slot_still_refuses_composition(registry, root):
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=False)
 
     with pytest.raises(NotWritable):
-        registry.add_table("remote", source=str(root / "stock.csv"))
+        registry.create_table("remote", source=str(root / "stock.csv"))
 
 
 def test_a_url_slot_backed_by_a_real_file_can_be_saved(registry, root):
@@ -742,11 +742,11 @@ def test_a_second_file_joins_the_first_inside_one_database(registry, root):
     csv_at(root / "prices.csv", "sku,price\na,10\nb,20\n")
     registry.attach(str(root / "sales.csv"), "shop")
 
-    added = registry.add_table("shop", source=str(root / "prices.csv"))
+    added = registry.create_table("shop", source=str(root / "prices.csv"))
 
     # `qualified` identifies the table; it is not how a statement addresses it.
-    assert added.info.qualified == "shop.prices"
-    assert added.info.row_count == 2
+    assert added.qualified == "shop.prices"
+    assert added.row_count == 2
     _, rows = registry.query(
         "shop",
         "SELECT s.sku, s.qty * p.price FROM sales s "
@@ -760,12 +760,12 @@ def test_the_added_table_is_named_from_its_file_unless_told_otherwise(registry, 
     csv_at(root / "2025 prices.csv", "sku,price\na,10\n")
     registry.attach(str(root / "sales.csv"), "shop")
 
-    derived = registry.add_table("shop", source=str(root / "2025 prices.csv"))
-    assert derived.info.name == "table_2025_prices"
+    derived = registry.create_table("shop", source=str(root / "2025 prices.csv"))
+    assert derived.name == "table_2025_prices"
 
     csv_at(root / "more.csv", "sku,x\na,1\n")
-    named = registry.add_table("shop", table="extra", source=str(root / "more.csv"))
-    assert named.info.name == "extra"
+    named = registry.create_table("shop", table="extra", source=str(root / "more.csv"))
+    assert named.name == "extra"
 
 
 def test_adding_over_an_existing_table_is_refused(registry, root):
@@ -774,7 +774,7 @@ def test_adding_over_an_existing_table_is_refused(registry, root):
     registry.attach(str(root / "sales.csv"), "shop")
 
     with pytest.raises(SlotError, match="already exists"):
-        registry.add_table("shop", table="sales", source=str(root / "sales.csv"))
+        registry.create_table("shop", table="sales", source=str(root / "sales.csv"))
 
     _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
@@ -786,7 +786,7 @@ def test_a_read_only_slot_refuses_composition_and_says_how_to_allow_it(registry,
     csv_at(root / "extra.csv", "sku,x\na,1\n")
 
     with pytest.raises(NotWritable, match="writable=true"):
-        registry.add_table("wh", source=str(root / "extra.csv"))
+        registry.create_table("wh", source=str(root / "extra.csv"))
     with pytest.raises(NotWritable):
         registry.drop_table("wh", "products")
 
@@ -796,7 +796,7 @@ def test_composition_is_allowed_once_write_is_granted(registry, root):
     registry.attach(str(root / "warehouse.db"), "wh", writable=True)
     csv_at(root / "extra.csv", "sku,x\na,1\n")
 
-    registry.add_table("wh", source=str(root / "extra.csv"))
+    registry.create_table("wh", source=str(root / "extra.csv"))
     _, rows = registry.query(
         "wh", "SELECT p.name FROM products p JOIN extra e ON p.sku = e.sku"
     )
@@ -807,7 +807,7 @@ def test_dropping_a_table_leaves_the_rest_of_the_slot_answering(registry, root):
     csv_at(root / "sales.csv")
     csv_at(root / "prices.csv", "sku,price\na,10\n")
     registry.attach(str(root / "sales.csv"), "shop")
-    registry.add_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"))
 
     registry.drop_table("shop", "prices")
 
@@ -824,113 +824,138 @@ def test_dropping_a_table_that_is_not_there_lists_the_ones_that_are(registry, ro
 
 
 # ---------------------------------------------------------------------------
-# Does the join actually line up?
+# Indexes: asked for, never inferred
 # ---------------------------------------------------------------------------
 
 
-def test_a_complete_join_reports_nothing_missing(registry, root):
+def test_an_index_is_created_on_the_columns_asked_for_and_names_itself(registry, root):
     csv_at(root / "sales.csv", "sku,qty\na,3\nb,4\n")
-    csv_at(root / "prices.csv", "sku,price\na,10\nb,20\n")
     registry.attach(str(root / "sales.csv"), "shop")
 
-    report = registry.add_table(
-        "shop", source=str(root / "prices.csv"), join_on="sku"
-    ).join
+    made = registry.create_index("shop", table="sales", columns=["sku"])
 
-    assert report is not None
-    assert report.complete is True
-    assert report.matched_keys == 2
-    assert report.missing_from_added == ()
-    assert report.missing_from_existing == ()
+    assert made.name == "ix_sales_sku"
+    assert made.table == "sales"
+    assert made.columns == ("sku",)
+    assert [index.name for index in registry.indexes("shop")] == ["ix_sales_sku"]
 
 
-def test_an_incomplete_join_names_the_values_on_the_correct_side(registry, root):
-    """Both directions, because which one matters is not ours to guess."""
+def test_a_composite_index_keeps_the_column_order_it_was_given(registry, root):
+    """Order is not cosmetic — an index on (a, b) does not serve a lookup on b."""
+    csv_at(root / "sales.csv", "sku,qty\na,3\n")
+    registry.attach(str(root / "sales.csv"), "shop")
+
+    made = registry.create_index("shop", table="sales", columns=["qty", "sku"])
+
+    assert made.columns == ("qty", "sku")
+    assert made.name == "ix_sales_qty_sku"
+
+
+def test_asking_twice_for_the_same_index_is_refused_by_name(registry, root):
+    csv_at(root / "sales.csv", "sku,qty\na,3\n")
+    registry.attach(str(root / "sales.csv"), "shop")
+    registry.create_index("shop", table="sales", columns=["sku"])
+
+    with pytest.raises(SlotError, match="already indexed on sku, by ix_sales_sku"):
+        registry.create_index("shop", table="sales", columns=["sku"])
+
+
+def test_an_index_on_a_column_that_is_not_there_lists_the_ones_that_are(registry, root):
+    csv_at(root / "sales.csv", "sku,qty\na,3\n")
+    registry.attach(str(root / "sales.csv"), "shop")
+
+    with pytest.raises(SlotError, match="sku, qty"):
+        registry.create_index("shop", table="sales", columns=["price"])
+
+
+def test_an_index_needs_at_least_one_column(registry, root):
+    csv_at(root / "sales.csv")
+    registry.attach(str(root / "sales.csv"), "shop")
+
+    with pytest.raises(SlotError, match="at least one column"):
+        registry.create_index("shop", table="sales", columns=[])
+
+
+def test_an_index_is_dropped_by_the_name_creation_returned(registry, root):
+    csv_at(root / "sales.csv", "sku,qty\na,3\n")
+    registry.attach(str(root / "sales.csv"), "shop")
+    made = registry.create_index("shop", table="sales", columns=["sku"])
+
+    gone = registry.drop_index("shop", made.name)
+
+    assert gone.name == made.name
+    assert gone.table == "sales"
+    assert registry.indexes("shop") == ()
+
+
+def test_dropping_an_index_that_is_not_there_lists_the_ones_that_are(registry, root):
+    csv_at(root / "sales.csv", "sku,qty\na,3\n")
+    registry.attach(str(root / "sales.csv"), "shop")
+    registry.create_index("shop", table="sales", columns=["sku"])
+
+    with pytest.raises(SlotError, match="No such index.*ix_sales_sku"):
+        registry.drop_index("shop", "ix_sales_price")
+
+
+def test_a_read_only_slot_refuses_indexes_in_both_directions(registry, root):
+    """The write grant governs indexes exactly as it governs tables."""
+    build_database(root / "warehouse.db")
+    registry.attach(str(root / "warehouse.db"), "wh")
+
+    with pytest.raises(NotWritable, match="writable=true"):
+        registry.create_index("wh", table="products", columns=["sku"])
+    with pytest.raises(NotWritable):
+        registry.drop_index("wh", "anything")
+
+
+def test_indexes_a_datasource_arrived_with_are_reported(registry, root):
+    """Reported whoever made them — an attached database is not a blank slate."""
+    build_database(root / "warehouse.db")
+    connection = sqlite3.connect(root / "warehouse.db")
+    connection.execute("CREATE INDEX ix_products_sku ON products (sku)")
+    connection.commit()
+    connection.close()
+    registry.attach(str(root / "warehouse.db"), "wh")
+
+    assert [index.name for index in registry.indexes("wh")] == ["ix_products_sku"]
+
+
+def test_an_index_survives_the_save_that_carries_its_table(registry, root):
+    csv_at(root / "sales.csv", "sku,qty\na,3\n")
+    registry.attach(str(root / "sales.csv"), "shop")
+    registry.create_index("shop", table="sales", columns=["sku"])
+
+    saved = registry.save("shop", str(root / "keep.db"))
+    registry.detach("shop")
+    registry.attach(str(saved), "kept")
+
+    assert [index.name for index in registry.indexes("kept")] == ["ix_sales_sku"]
+
+
+def test_whether_a_join_lines_up_is_answerable_in_plain_sql(registry, root):
+    """The completeness check moved to the caller; it did not disappear.
+
+    This is the anti-join the old ``join_on`` parameter ran internally, written
+    the way a caller writes it. Both directions, because which one matters is
+    the caller's question rather than ours: ``b`` and ``c`` sold with no price,
+    and ``z`` priced with nothing sold.
+    """
     csv_at(root / "sales.csv", "sku,qty\na,3\nb,4\nc,5\n")
     csv_at(root / "prices.csv", "sku,price\na,10\nz,99\n")
     registry.attach(str(root / "sales.csv"), "shop")
+    registry.create_table("shop", source=str(root / "prices.csv"))
 
-    report = registry.add_table(
-        "shop", source=str(root / "prices.csv"), join_on="sku"
-    ).join
+    _, unpriced = registry.query(
+        "shop",
+        "SELECT sku FROM sales WHERE sku NOT IN (SELECT sku FROM prices) ORDER BY sku",
+    )
+    _, unsold = registry.query(
+        "shop",
+        "SELECT sku FROM prices WHERE sku NOT IN (SELECT sku FROM sales) ORDER BY sku",
+    )
 
-    assert report is not None
-    assert report.complete is False
-    assert report.key == "sku"
-    assert report.existing_table == "sales"
-    assert report.added_table == "prices"
-    assert report.matched_keys == 1
-    # b and c are in sales with no price.
-    assert report.missing_from_added == ("b", "c")
-    assert report.missing_from_added_total == 2
-    # z has a price nothing was sold under.
-    assert report.missing_from_existing == ("z",)
-    assert report.missing_from_existing_total == 1
-
-
-def test_the_unmatched_sample_is_bounded_but_the_count_is_not(registry, root):
-    rows = "\n".join(f"k{index},1" for index in range(50))
-    csv_at(root / "sales.csv", f"sku,qty\n{rows}\n")
-    csv_at(root / "prices.csv", "sku,price\nk0,10\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-
-    report = registry.add_table(
-        "shop", source=str(root / "prices.csv"), join_on="sku"
-    ).join
-
-    assert report is not None
-    assert report.missing_from_added_total == 49
-    assert len(report.missing_from_added) == 10
-
-
-def test_a_null_key_is_not_reported_as_an_unmatched_value(registry, root):
-    """A null key has no partner anywhere; saying so is noise, not a finding."""
-    csv_at(root / "sales.csv", "sku,qty\na,3\n,4\n")
-    csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-
-    report = registry.add_table(
-        "shop", source=str(root / "prices.csv"), join_on="sku"
-    ).join
-
-    assert report is not None
-    assert report.complete is True
-
-
-def test_the_partner_table_must_be_said_when_the_slot_holds_several(registry, root):
-    csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    csv_at(root / "prices.csv", "sku,price\na,10\n")
-    csv_at(root / "stock.csv", "sku,on_hand\na,7\nz,1\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.add_table("shop", source=str(root / "prices.csv"))
-
-    with pytest.raises(SlotError, match="explicitly"):
-        registry.add_table("shop", source=str(root / "stock.csv"), join_on="sku")
-
-
-def test_the_partner_table_is_honoured_when_it_is_named(registry, root):
-    csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    csv_at(root / "prices.csv", "sku,price\na,10\n")
-    csv_at(root / "stock.csv", "sku,on_hand\na,7\nz,1\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.add_table("shop", source=str(root / "prices.csv"))
-
-    report = registry.add_table(
-        "shop", source=str(root / "stock.csv"), join_on="sku", join_table="prices"
-    ).join
-
-    assert report is not None
-    assert report.existing_table == "prices"
-    assert report.missing_from_existing == ("z",)
-
-
-def test_a_key_missing_from_either_side_lists_the_columns_that_exist(registry, root):
-    csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    csv_at(root / "prices.csv", "code,price\na,10\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-
-    with pytest.raises(SlotError, match="code"):
-        registry.add_table("shop", source=str(root / "prices.csv"), join_on="sku")
+    assert unpriced == [("b",), ("c",)]
+    assert unsold == [("z",)]
 
 
 # ---------------------------------------------------------------------------
@@ -942,7 +967,7 @@ def test_a_saved_database_can_be_attached_again_with_its_rows(registry, root):
     csv_at(root / "sales.csv")
     csv_at(root / "prices.csv", "sku,price\na,10\nb,20\n")
     registry.attach(str(root / "sales.csv"), "shop")
-    registry.add_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"))
 
     saved = registry.save("shop", str(root / "keep.db"))
     registry.detach("shop")
@@ -978,7 +1003,7 @@ def test_saving_keeps_the_slot_answering_and_writable(registry, root):
     registry.save("shop", str(root / "keep.db"))
 
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.add_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"))
     assert "prices" in registry.tables("shop")
     _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
@@ -996,7 +1021,7 @@ def test_saving_refuses_an_existing_file_then_replaces_it_when_forced(registry, 
     kept = saved.read_bytes()
 
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.add_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"))
 
     with pytest.raises(SlotError, match="Ask the user"):
         registry.save("shop", str(root / "keep.db"))
@@ -1174,9 +1199,9 @@ def test_a_spilled_database_is_still_writable_and_composable(root):
         registry.relieve_memory()
 
         csv_at(root / "labels.csv", "id,note\n1,first\n")
-        registry.add_table("big", source=str(root / "labels.csv"))
+        registry.create_table("big", source=str(root / "labels.csv"))
         csv_at(root / "more.csv", "id,note\n2,second\n")
-        registry.add_table("big", source=str(root / "more.csv"), table="more")
+        registry.create_table("big", source=str(root / "more.csv"), table="more")
 
         _, rows = registry.query(
             "big",
@@ -1333,7 +1358,7 @@ def test_a_view_naming_tables_unqualified_survives_being_saved_and_renamed(
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
     csv_at(root / "prices.csv", "sku,price\na,10\n")
     registry.attach(str(root / "sales.csv"), "shop")
-    registry.add_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"))
     view_from_outside(
         registry,
         "shop",

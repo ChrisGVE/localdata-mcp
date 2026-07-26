@@ -206,7 +206,7 @@ def test_readers_running_against_a_load_do_not_lose_rows(session):
 
             verify = await client.call_tool(
                 "query",
-                {"nickname": "big", "sql": "SELECT count(*) FROM big", "limit": 0},
+                {"nickname": "big", "sql": "SELECT count(*) FROM big"},
             )
             return [_payload(r) for r in results], _payload(verify)
 
@@ -251,7 +251,6 @@ def test_parallel_loads_all_land(session):
                         {
                             "nickname": table,
                             "sql": f"SELECT count(*) FROM {table}",
-                            "limit": 0,
                         },
                     )
                     for _, table in files
@@ -298,7 +297,6 @@ def test_a_failing_load_does_not_damage_an_existing_table(session):
                 {
                     "nickname": "good",
                     "sql": "SELECT count(*) FROM good",
-                    "limit": 0,
                 },
             )
             return [_payload(f) for f in failures], _payload(survivor)

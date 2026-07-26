@@ -197,7 +197,7 @@ long after the mistake was made.
 
 > **No longer reachable (2026-07-26).** A statement reaches one datasource, so there is no
 > cross-database join to store as a view. Retained because it records why the cross-database
-> `CREATE VIEW` refusal was once cited as a justification for `add_table` — a feature that
+> `CREATE VIEW` refusal was once cited as a justification for `add_table` (now `create`) — a feature that
 > did not exist justifying a design decision, which is the error this file exists to prevent.
 
 Querying across two attached databases works in one ordinary statement (§2.2). Storing that same
@@ -221,8 +221,8 @@ table in another. The behaviour follows from that in one step and needed no expe
 recorded here because the exact error text is worth quoting, not because it was a surprise.
 
 **Consequence for the design.** Little, as it turns out. Views are not part of this package, so
-this refusal is not what justifies `add_table` — an earlier draft of this section claimed it did.
-`add_table` exists for a simpler reason that holds whether or not views are in play: `save` writes
+this refusal is not what justifies `create` — an earlier draft of this section claimed it did.
+`create` exists for a simpler reason that holds whether or not views are in play: `save` writes
 one database, not a join. A lookup meant to outlive the session needs both sides *inside* the slot
 being saved. Guidance that says "attach both files and join them" offers an answer to a question,
 not something the user can keep.
@@ -655,7 +655,7 @@ nickname collision, a join incomplete in **both** directions, and an occupied `s
   docstrings.
 - **Nobody tried to write through `query`.** No `INSERT`, no `CREATE TABLE`, in any run.
 - **Nobody attached the second file as a second slot.** Every arc-2 and arc-3 agent reached for
-  `add_table`, which is the single choice this design most wanted to make obvious — and the bare
+  `create`, which is the single choice this design most wanted to make obvious — and the bare
   runs made it as reliably as the skill-loaded ones.
 - **The collision protocol held.** The agent that hit `q1_sales_2` read the returned nickname and
   used it, and quoted `collided_with` back.

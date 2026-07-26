@@ -12,8 +12,8 @@ nickname. A CSV becomes a fresh in-memory database holding one table named after
 file; a SQLite file arrives with the tables it already has; a service URL becomes its
 own engine. Because all three are databases, the same seven verbs work on any of them.
 Each call names one datasource and the SQL addresses tables inside it by their own
-names; putting two datasources together is `add_table`, which copies one into the
-other and says whether the keys line up.
+names; putting two datasources together is `create`, which copies one into the
+other so the join is an ordinary statement.
 
 That premise was already true of the registry. What level 0 changes is the *verbs*:
 they were file verbs wearing database names. Attach made a database, and after that you
@@ -44,8 +44,26 @@ exactly like that, and it means three things:
 
 1. **Add a table to the database already open** — not a second slot.
 2. Join the two tables in ordinary SQL through `query`, which reads and only reads.
+   Index the key first with `create` if the join drags; nothing is indexed unless asked.
 3. **Check whether the join is complete**, and say so in the user's terms: *"X, Y and Z
    have no match in that file."*
+
+> **Amended (2026-07-26).** Step 3 used to be the server's work: `add_table` took a
+> `join_on` parameter and returned unmatched counts and sample values in both
+> directions. It is now the caller's, and step 2's indexing note is the other half of
+> the same decision.
+>
+> Two things were wrong with it. The parameter was **an authority grant for a judgement
+> the caller was already making** — which column is the key is something only the party
+> that read the user's question knows, so asking for it in a parameter and then also
+> deciding what to do with it split one act across two. And having been handed the key,
+> the code used it for five correlated `NOT EXISTS` subqueries against an unindexed
+> column and *not* for the one thing that would have justified asking: an index.
+>
+> An anti-join is ordinary SQL over two tables in one database. A caller that can write
+> the join can write the check, and it can ask for the index that makes both fast. What
+> it gets from the server is the primitives and the facts; what it owes the user is the
+> sentence.
 
 Adding to the existing database rather than attaching a second one is not only the
 friendlier mental model — it is **what makes the result keepable**. `save` writes one
@@ -54,11 +72,11 @@ the slot being saved.
 
 So the two halves behave differently and are easy to conflate. Joining across slots
 works and is worth doing for a one-off answer. Keeping that relationship — coming back
-to it next session — requires both tables in one database, which is what `add_table` is
+to it next session — requires both tables in one database, which is what `create` is
 for.
 
 > **Superseded (2026-07-26).** An earlier draft made step 2 *"build a view over the
-> join"* and justified `add_table` by SQLite's refusal of a cross-database `CREATE VIEW`
+> join"* and justified `create` by SQLite's refusal of a cross-database `CREATE VIEW`
 > (CONSTRAINTS §2.3). Creating views was never part of this product; that justification
 > rested on a feature that does not exist, and the reason above holds without it.
 
@@ -90,10 +108,10 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 |---|---|---|
 | `attach` | `database`, `nickname?`, `writable?` | Multipurpose — flat file, SQLite file, later an endpoint. Returns the nickname **actually used**. |
 | `detach` | `nickname` | Drop a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if spilled. |
-| `query` | `nickname`, `sql`, `path?` | **Reads only** — every write is refused by SQLite's authorizer, whatever the slot allows. The optional path is where results are written, which **absorbs `export_query`**. |
-| `info` | — \| `nickname` \| `nickname`+`table` | Polymorphic: bare → every slot; nickname → its tables; nickname+table → schema and row count. **Absorbs `list_tables` + `describe_table`.** |
-| `add_table` | `nickname`, `source`, `table?` | Reads a datasource in beside the tables already there. This is what makes arc 2 possible. |
-| `drop_table` | `nickname`, `table` | Composition needs both directions. |
+| `query` | `nickname`, `sql`, `path?` | **Reads only** — every write is refused by SQLite's authorizer, whatever the slot allows. Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. |
+| `info` | — \| `nickname` \| `nickname`+`table` | Polymorphic: bare → every slot; nickname → its tables; nickname+table → schema, row count and indexes. **Absorbs `list_tables` + `describe_table`.** |
+| `create` | `nickname`, `type`, `table?`, `source?`, `columns?` | `type="table"` reads a datasource in beside the tables already there, which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
+| `drop` | `nickname`, `type`, `name` | Composition needs both directions, for both types. The index name is the one `create` returned and `info` lists. |
 | `save` | `nickname`, `path` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. |
 
 ### Write is not the default
@@ -103,7 +121,7 @@ database, so it is writable by construction. Everything attached from outside is
 **read-only**. The caller can grant write on an external database at attach time
 (`writable=true`), and that grant is per-attach.
 
-The grant governs `add_table` and `drop_table` — and only those, because **`query` never
+The grant governs `create` and `drop` — and only those, because **`query` never
 writes to anything**. A query reads: `INSERT`, `CREATE TABLE`, `CREATE VIEW`, `PRAGMA`
 and the rest are refused there even on a database the caller owns outright. So there is
 exactly one way to change a slot, and it is a named verb rather than a clause buried in
@@ -153,9 +171,10 @@ when to pull the user in — on a collision: *"you already have a `sales` from `
 this one's `sales_2`, want to call it something that'll mean more later?"*
 
 Concretely, the server returns structured facts and the skill carries the idiom. Join
-completeness is the clearest case: `add_table` returns unmatched key counts and sample
-values in both directions, and the skill turns that into the user's own words rather
-than into the phrase "anti-join".
+completeness is the clearest case: the *server* offers only the primitives — a second
+table in the same database, an index when one is asked for, and SQL that reads — while
+the skill writes the anti-join, decides which direction the user cared about, and says
+*"Acme, Globex and Initech have no match"* rather than the phrase "anti-join".
 
 The skill ships in this repo and is versioned with the server, because the two are only
 correct against each other.

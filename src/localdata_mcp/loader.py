@@ -52,7 +52,7 @@ import re
 from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 from uuid import uuid4
 
 import pandas as pd
@@ -62,6 +62,7 @@ from sqlalchemy import (
     TEXT,
     Column,
     Engine,
+    Index,
     MetaData,
     Table,
     func,
@@ -76,7 +77,14 @@ from . import binding
 from .dialects import Backend, Engines, backend_for
 from .paths import resolve_read_path
 
-__all__ = ["ColumnInfo", "TableInfo", "Tagged", "Workspace", "LoadError"]
+__all__ = [
+    "ColumnInfo",
+    "IndexInfo",
+    "TableInfo",
+    "Tagged",
+    "Workspace",
+    "LoadError",
+]
 
 
 class LoadError(RuntimeError):
@@ -183,6 +191,24 @@ class TableInfo:
         return [c.name for c in self.columns if c.is_mixed]
 
 
+@dataclass(frozen=True)
+class IndexInfo:
+    """An index that exists on a table, as the database reports it.
+
+    Read back by inspection rather than remembered from creation, because a
+    datasource can arrive with indexes this server never made — an attached
+    SQLite file usually has at least one.
+    """
+
+    name: str
+    table: str
+    #: The indexed columns, in index order. A component that is an *expression*
+    #: rather than a plain column reflects as ``None``; it is kept in place so
+    #: the position of the columns around it stays honest.
+    columns: tuple[str | None, ...]
+    unique: bool = False
+
+
 @dataclass
 class Tagged:
     """One tag's database: where it came from, where it is now, how to reach it.
@@ -213,6 +239,16 @@ def _sanitize(name: str, fallback: str) -> str:
     if not cleaned or cleaned[0].isdigit():
         cleaned = f"{fallback}_{cleaned}" if cleaned else fallback
     return cleaned.lower()
+
+
+def _index_name(table: str, columns: Sequence[str]) -> str:
+    """What an index on these columns is called.
+
+    Derived rather than chosen so that asking for the same index twice produces
+    the same name, and so the collision is what tells a caller it is already
+    there. Sanitised because the columns it is built from already were.
+    """
+    return _sanitize(f"ix_{table}_{'_'.join(columns)}", "ix")
 
 
 def _unique_columns(raw_names: list[Any]) -> list[str]:
@@ -595,6 +631,99 @@ class Workspace:
             raise LoadError(f"Could not drop {tag}.{table}: {exc}") from exc
         self._tables.pop(f"{tag}.{table}", None)
 
+    # -- indexes -----------------------------------------------------------
+
+    def indexes(self, tag: str, table: str | None = None) -> tuple[IndexInfo, ...]:
+        """Every index in this tag's database, or only those on one table.
+
+        Inspected over the *write* engine for the reason :meth:`describe` gives:
+        the inspector is PRAGMA underneath, and the read engine's authorizer
+        refuses PRAGMA so that a caller's SQL cannot reach one.
+        """
+        entry = self.entry(tag)
+        inspector = inspect(entry.engines.write)
+        tables = (table,) if table is not None else self.table_names(tag)
+
+        found: list[IndexInfo] = []
+        for name in tables:
+            try:
+                reported = inspector.get_indexes(name)
+            except SQLAlchemyError:
+                # A view has no indexes and some dialects say so by raising.
+                continue
+            found.extend(
+                IndexInfo(
+                    name=str(index["name"]),
+                    table=name,
+                    columns=tuple(index.get("column_names") or ()),
+                    unique=bool(index.get("unique")),
+                )
+                for index in reported
+                if index.get("name")
+            )
+        return tuple(found)
+
+    def create_index(self, tag: str, table: str, columns: Sequence[str]) -> IndexInfo:
+        """Index ``columns`` on ``table``, under a name derived from both.
+
+        The name is ours to generate rather than the caller's to choose: it is
+        bookkeeping, and one less thing for a caller to have to invent, remember
+        and get wrong. It comes back in the result and appears in ``indexes``,
+        so it is always in hand before anything needs to drop it.
+        """
+        entry = self.entry(tag)
+        target = self._reflect(entry, tag, table)
+
+        missing = [column for column in columns if column not in target.c]
+        if missing:
+            known = ", ".join(target.c.keys())
+            raise LoadError(
+                f"{tag}.{table} has no column "
+                f"{', '.join(repr(m) for m in missing)}. Its columns are: {known}."
+            )
+
+        name = _index_name(table, columns)
+        index = Index(name, *[target.c[column] for column in columns])
+        try:
+            with entry.engines.write.begin() as conn:
+                index.create(conn)
+        except SQLAlchemyError as exc:
+            raise LoadError(f"Could not create {name} on {tag}.{table}: {exc}") from exc
+        return IndexInfo(name=name, table=table, columns=tuple(columns))
+
+    def drop_index(self, tag: str, name: str) -> IndexInfo:
+        """Remove an index by name, and say what went.
+
+        The table is looked up rather than asked for, because ``DROP INDEX`` is
+        one of the places dialects disagree — MySQL wants the table named, SQLite
+        and PostgreSQL refuse it. Reflecting the index off its table and letting
+        SQLAlchemy emit the statement means that difference is not ours to know.
+        """
+        entry = self.entry(tag)
+        existing = next((i for i in self.indexes(tag) if i.name == name), None)
+        if existing is None:
+            known = ", ".join(sorted(i.name for i in self.indexes(tag))) or "none"
+            raise LoadError(f"No such index: {tag}.{name}. In {tag}: {known}.")
+
+        target = self._reflect(entry, tag, existing.table)
+        index = next((i for i in target.indexes if i.name == name), None)
+        if index is None:  # pragma: no cover - reflection disagreeing with itself
+            raise LoadError(f"No such index: {tag}.{name}.")
+        try:
+            with entry.engines.write.begin() as conn:
+                index.drop(conn)
+        except SQLAlchemyError as exc:
+            raise LoadError(f"Could not drop {tag}.{name}: {exc}") from exc
+        return existing
+
+    @staticmethod
+    def _reflect(entry: Tagged, tag: str, table: str) -> Table:
+        """The live schema of one table, columns and indexes both."""
+        try:
+            return Table(table, MetaData(), autoload_with=entry.engines.write)
+        except SQLAlchemyError as exc:
+            raise LoadError(f"No such table: {tag}.{table}") from exc
+
     # -- loading -----------------------------------------------------------
 
     def load_file(
@@ -748,24 +877,29 @@ class Workspace:
         """The writing engine for a tag, for callers that need the engine itself."""
         return self.entry(tag).engines.write
 
-    def query(
-        self, tag: str, sql: str, limit: int | None = None
-    ) -> tuple[list[str], list[tuple]]:
+    def query(self, tag: str, sql: str) -> tuple[list[str], list[tuple]]:
         """Run a **read** query against one tag and return ``(column_names, rows)``.
 
         A query reads. Anything that would change the database — ``INSERT``,
         ``CREATE TABLE``, ``CREATE VIEW``, ``ATTACH``, a ``PRAGMA`` — is refused
         here, whatever rights the datasource itself carries. Mutation has its own
-        verbs (``add_table``, ``drop_table``) which do not come through this
-        method, so the refusal costs the surface nothing.
+        verbs (``create``, ``drop``) which do not come through this method, so
+        the refusal costs the surface nothing.
 
         Enforced by the connection's posture rather than by reading the SQL: this
         engine's connections are read-only from the moment they are opened, so
         there is no text to parse and mis-parse and no window in which the
         posture is briefly something else.
 
-        Streamed. ``yield_per`` bounds what the driver hands back at a time, so a
-        caller taking ten rows out of a million-row result pays for ten.
+        **The whole result comes back.** Bounding it here was tried and removed:
+        a row cap measures the wrong dimension, since a hundred rows of a
+        two-hundred-column table is the flood it was meant to prevent. The SQL
+        already has ``LIMIT`` for a caller who wants fewer rows, and ``path``
+        writes an oversized result to a file instead of into the answer.
+
+        Streamed nonetheless. ``yield_per`` bounds what the driver hands back at
+        a time, which is what keeps the *server's* memory flat while the rows
+        accumulate.
         """
         entry = self.entry(tag)
         entry.engines.refusal.take()
@@ -777,8 +911,7 @@ class Workspace:
                 if not result.returns_rows:
                     return [], []
                 names = list(result.keys())
-                rows = list(islice(result, limit)) if limit else result.all()
-                return names, [tuple(row) for row in rows]
+                return names, [tuple(row) for row in result]
         except SQLAlchemyError as exc:
             raise self._explain(entry, exc, sql) from exc
 
@@ -796,8 +929,8 @@ class Workspace:
             return LoadError(
                 f"query reads; it does not write. This statement asks to "
                 f"{denied}, which is refused here even on a writable "
-                f"datasource. To add data use add_table, to remove a table use "
-                f"drop_table; there is no verb for arbitrary DDL by design."
+                f"datasource. To add a table or an index use create, to remove "
+                f"one use drop; there is no verb for arbitrary DDL by design."
             )
 
         message = str(exc.orig) if getattr(exc, "orig", None) else str(exc)

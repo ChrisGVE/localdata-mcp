@@ -4,7 +4,7 @@
 one, and none of them is a special case:
 
 * a **flat file** becomes a brand-new in-memory database holding one table named
-  after the file — so a later ``add_table`` can put a second table beside it
+  after the file — so a later ``create`` can put a second table beside it
   under the same nickname;
 * a **SQLite file** is attached read-only, arriving with the tables it already
   has;
@@ -23,7 +23,7 @@ all seven, with nothing in the type system to notice.
 
 **A statement reaches one slot.** Slots do not share a connection, so there is no
 join across them; putting two datasources together means copying one into the
-other with ``add_table``, which says so in the call rather than depending on how
+other with ``create``, which says so in the call rather than depending on how
 the databases happen to be wired underneath.
 
 **Ten slots, and the number is now chosen rather than forced.** It used to be
@@ -50,7 +50,7 @@ import tempfile
 from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from sqlalchemy.engine import make_url
 
@@ -58,6 +58,7 @@ from . import config
 from .dialects import UnsupportedOperation
 from .loader import (
     READERS,
+    IndexInfo,
     LoadError,
     TableInfo,
     Workspace,
@@ -67,12 +68,10 @@ from .loader import (
 from .paths import PathNotAllowed, resolve_read_path, resolve_write_path
 
 __all__ = [
-    "AddedTable",
     "AttachRefused",
     "Attachment",
     "Collision",
     "Eviction",
-    "JoinReport",
     "NotWritable",
     "Registry",
     "Slot",
@@ -164,46 +163,6 @@ class Collision:
 
     nickname: str
     source: str
-
-
-#: How many unmatched key values a join report carries. Enough to name them in
-#: a sentence; the counts beside them say how many more there are.
-_UNMATCHED_SAMPLE = 10
-
-
-@dataclass(frozen=True)
-class JoinReport:
-    """Whether two tables in one database actually line up on a shared key.
-
-    Stated as facts rather than as prose: which values on each side have no
-    partner on the other, and how many. Turning that into *"Acme, Globex and
-    Initech have no match in suppliers.csv"* is the skill's job — it knows what
-    the user called these things, and this module does not.
-    """
-
-    key: str
-    #: Bare table names, as a statement against this slot would write them.
-    existing_table: str
-    added_table: str
-    matched_keys: int
-    #: Key values present in the existing table with no partner in the new one.
-    missing_from_added: tuple[Any, ...]
-    missing_from_added_total: int
-    #: And the other direction, which is just as often the interesting one.
-    missing_from_existing: tuple[Any, ...]
-    missing_from_existing_total: int
-
-    @property
-    def complete(self) -> bool:
-        return self.missing_from_added_total == self.missing_from_existing_total == 0
-
-
-@dataclass(frozen=True)
-class AddedTable:
-    """A table that landed in an existing slot, and how it lines up."""
-
-    info: TableInfo
-    join: JoinReport | None = None
 
 
 @dataclass(frozen=True)
@@ -536,15 +495,9 @@ class Registry:
         self.slot(nickname)  # Explains an evicted or unknown nickname.
         return self._release(nickname)
 
-    def add_table(
-        self,
-        nickname: str,
-        *,
-        source: str,
-        table: str | None = None,
-        join_on: str | None = None,
-        join_table: str | None = None,
-    ) -> AddedTable:
+    def create_table(
+        self, nickname: str, *, source: str, table: str | None = None
+    ) -> TableInfo:
         """Land another table inside a database that is already open.
 
         This is what makes the lookup arc work. Adding beside the existing
@@ -552,6 +505,12 @@ class Registry:
         mental model — it is what makes the result *keepable*, because ``save``
         writes one database rather than a join, so both sides have to live in
         the slot being saved.
+
+        Whether the join between them lines up is not answered here. An
+        anti-join is ordinary SQL over two tables in one database, so a caller
+        that can write the join can write the check, and phrasing the answer —
+        *"Acme, Globex and Initech have no match"* — needs the words the user
+        used, which this module does not have.
         """
         slot = self._writable(nickname, "add a table to")
         name = self._table_name(table, source)
@@ -561,13 +520,51 @@ class Registry:
                 f"{self._workspace.describe(nickname, name).row_count} rows. Drop "
                 f"it first if you meant to replace it."
             )
+        return self._read_into(slot, name, source)
 
-        info = self._read_into(slot, name, source)
+    def create_index(
+        self, nickname: str, *, table: str, columns: Sequence[str]
+    ) -> IndexInfo:
+        """Index columns of a table, so a join over them stops scanning.
 
-        report = None
-        if join_on is not None:
-            report = self._join_report(nickname, name, join_on, join_table)
-        return AddedTable(info=info, join=report)
+        Asked for, never inferred. Which join is coming is the caller's
+        knowledge, not something to guess from the shape of the data — and an
+        index built on a guess costs write time and space for a query nobody
+        runs.
+        """
+        self._writable(nickname, "create an index in")
+        if not columns:
+            raise SlotError(
+                f"An index on {nickname}.{table} needs at least one column."
+            )
+
+        wanted = tuple(columns)
+        for index in self._workspace.indexes(nickname, table):
+            if index.columns == wanted:
+                raise SlotError(
+                    f"{nickname}.{table} is already indexed on "
+                    f"{', '.join(wanted)}, by {index.name}."
+                )
+        try:
+            return self._workspace.create_index(nickname, table, columns)
+        except LoadError as exc:
+            raise SlotError(str(exc)) from exc
+
+    def indexes(self, nickname: str, table: str | None = None) -> tuple[IndexInfo, ...]:
+        """Every index in a slot, or only those on one table."""
+        self.slot(nickname)
+        try:
+            return self._workspace.indexes(nickname, table)
+        except LoadError as exc:
+            raise SlotError(str(exc)) from exc
+
+    def drop_index(self, nickname: str, name: str) -> IndexInfo:
+        """Remove an index by the name ``create`` gave it."""
+        self._writable(nickname, "drop an index from")
+        try:
+            return self._workspace.drop_index(nickname, name)
+        except LoadError as exc:
+            raise SlotError(str(exc)) from exc
 
     def _read_into(self, slot: Slot, table: str, source: str) -> TableInfo:
         """Read a datasource into an existing slot as one more table."""
@@ -668,104 +665,6 @@ class Registry:
         # actual data. Narrowed immediately; the window is small and known.
         os.chmod(target, 0o600)
         return target
-
-    # -- does the join actually line up? ------------------------------------
-
-    def _join_report(
-        self, nickname: str, added: str, key: str, join_table: str | None
-    ) -> JoinReport:
-        """Anti-join both ways, and say what has no partner on the other side.
-
-        Both directions, because which one matters is not ours to guess: rows in
-        the original file with nothing to look up are the usual worry, and rows
-        in the new file that nothing refers to are the usual surprise.
-        """
-        existing = self._join_partner(nickname, added, join_table)
-        column = self._shared_column(nickname, existing, added, key)
-
-        missing_from_added, added_total = self._unmatched(
-            nickname, existing, added, column
-        )
-        missing_from_existing, existing_total = self._unmatched(
-            nickname, added, existing, column
-        )
-        return JoinReport(
-            key=column,
-            existing_table=existing,
-            added_table=added,
-            matched_keys=self._matched(nickname, existing, added, column),
-            missing_from_added=missing_from_added,
-            missing_from_added_total=added_total,
-            missing_from_existing=missing_from_existing,
-            missing_from_existing_total=existing_total,
-        )
-
-    def _join_partner(self, nickname: str, added: str, requested: str | None) -> str:
-        """Which table the new one is being checked against."""
-        others = [t for t in self._workspace.table_names(nickname) if t != added]
-        if requested is not None:
-            if requested not in others:
-                known = ", ".join(others) or "no other table"
-                raise SlotNotAvailable(
-                    f"No such table to join against: {nickname}.{requested}. "
-                    f"In {nickname}: {known}."
-                )
-            return requested
-        if len(others) == 1:
-            return others[0]
-        if not others:
-            raise SlotError(
-                f"{nickname}.{added} is the only table in {nickname!r}, so there "
-                f"is nothing to check the join against."
-            )
-        raise SlotError(
-            f"{nickname!r} holds {', '.join(others)}, so which one "
-            f"{nickname}.{added} should line up with has to be said explicitly."
-        )
-
-    def _shared_column(self, nickname: str, existing: str, added: str, key: str) -> str:
-        """The key column, present on both sides or the check means nothing."""
-        for table in (existing, added):
-            names = [c.name for c in self._workspace.describe(nickname, table).columns]
-            if key not in names:
-                raise SlotError(
-                    f"{nickname}.{table} has no column {key!r}. Its columns are: "
-                    f"{', '.join(names)}."
-                )
-        return key
-
-    def _unmatched(
-        self, nickname: str, left: str, right: str, key: str
-    ) -> tuple[tuple[Any, ...], int]:
-        """Distinct key values in ``left`` with no partner in ``right``.
-
-        ``NOT EXISTS`` rather than a ``LEFT JOIN ... IS NULL``, because it says
-        what it means and stays right when the key column itself holds nulls —
-        which are excluded, since a null key has no partner anywhere and saying
-        so is noise rather than a finding.
-        """
-        absent = (
-            f'FROM "{left}" l WHERE l."{key}" IS NOT NULL '
-            f'AND NOT EXISTS (SELECT 1 FROM "{right}" r '
-            f'WHERE r."{key}" = l."{key}")'
-        )
-        _, counted = self._workspace.query(
-            nickname, f'SELECT count(*) FROM (SELECT DISTINCT l."{key}" {absent})'
-        )
-        _, sampled = self._workspace.query(
-            nickname,
-            f'SELECT DISTINCT l."{key}" {absent} ORDER BY 1 LIMIT {_UNMATCHED_SAMPLE}',
-        )
-        return tuple(row[0] for row in sampled), int(counted[0][0])
-
-    def _matched(self, nickname: str, left: str, right: str, key: str) -> int:
-        _, rows = self._workspace.query(
-            nickname,
-            f'SELECT count(*) FROM (SELECT DISTINCT l."{key}" '
-            f'FROM "{left}" l WHERE EXISTS '
-            f'(SELECT 1 FROM "{right}" r WHERE r."{key}" = l."{key}"))',
-        )
-        return int(rows[0][0])
 
     def _writable(self, nickname: str, action: str) -> Slot:
         """The slot for a nickname, refusing if it may not be changed."""
@@ -918,13 +817,11 @@ class Registry:
 
     # -- using --------------------------------------------------------------
 
-    def query(
-        self, nickname: str, sql: str, limit: int | None = None
-    ) -> tuple[list[str], list[tuple]]:
+    def query(self, nickname: str, sql: str) -> tuple[list[str], list[tuple]]:
         """Run a statement against the database the nickname names."""
         slot = self.slot(nickname)
         try:
-            return self._workspace.query(nickname, sql, limit=limit)
+            return self._workspace.query(nickname, sql)
         except Exception as exc:
             self._explain(exc, sql, slot)
             raise
@@ -942,7 +839,7 @@ class Registry:
 
         Asked of the database every time rather than read from the ``Slot``,
         whose ``tables`` is the snapshot taken at attach time. A slot that has
-        since been composed with ``add_table`` would otherwise answer with what
+        since been composed with ``create`` would otherwise answer with what
         it held when it arrived.
         """
         self.slot(nickname)
@@ -976,7 +873,7 @@ class Registry:
             raise SlotError(
                 f"{routed.nickname!r} and {', '.join(sorted(elsewhere))} are separate "
                 f"databases, and one statement cannot span two of them. Copy the "
-                f"tables you need into one slot with add_table, then join there."
+                f"tables you need into one slot with create, then join there."
             ) from exc
 
     @staticmethod

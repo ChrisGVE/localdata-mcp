@@ -9,15 +9,20 @@ names:
     query(nickname="shop", sql="SELECT * FROM sales WHERE qty > 10")
 
 One statement reaches one datasource. Looking two of them up against each other is
-``add_table``, which copies the second *into* the first and reports whether the
-keys line up — a named act, rather than something that falls out of how the
-databases happen to be connected.
+``create``, which copies the second *into* the first — a named act, rather than
+something that falls out of how the databases happen to be connected.
 
 Because a slot is a database rather than a view over a file, it has the verbs a
 database has: lifecycle (``attach``, ``detach``, ``save``), composition
-(``add_table``, ``drop_table``), and introspection (``info``). Seven in total,
-several of them multi-faceted — **few and multi-faceted beats many and narrow**,
-because the model has less to choose between and each choice is obvious.
+(``create``, ``drop``), and introspection (``info``). Seven in total, several of
+them multi-faceted — **few and multi-faceted beats many and narrow**, because the
+model has less to choose between and each choice is obvious.
+
+**These are raw capabilities, not a workflow.** Nothing here infers a join key,
+decides that an index would help, or turns an anti-join into a sentence. Those
+are acts of judgement that need to know what the user asked and what they called
+things, and the caller is the only party holding either. What this module owes
+them is primitives that compose and refusals that say what to do instead.
 
 **A query reads.** Every write — ``INSERT``, ``CREATE TABLE``, ``CREATE VIEW``,
 ``PRAGMA`` — is refused by ``query`` whatever the datasource itself permits, so
@@ -47,9 +52,9 @@ from fastmcp import FastMCP
 
 from . import config
 from .export import export_csv
-from .loader import TableInfo
+from .loader import IndexInfo, TableInfo
 from .paths import PathNotAllowed, allowed_paths
-from .slots import AddedTable, Attachment, JoinReport, Registry, Slot, SlotError
+from .slots import Attachment, Registry, Slot, SlotError
 
 mcp = FastMCP(
     "localdata",
@@ -63,14 +68,18 @@ mcp = FastMCP(
         "**Each call names one datasource, and the SQL addresses tables inside it "
         "by their own names**: query(nickname='shop', sql='SELECT * FROM sales'), "
         "not FROM shop.sales. One statement reaches one datasource. To look a "
-        "second file up against one already open, use add_table(nickname, "
-        "source=...) to land it *inside* that database, then join the two tables "
-        "there in an ordinary statement. Pass join_on to be told which key values "
-        "have no match on the other side.\n\n"
-        "**query only reads.** INSERT, UPDATE, CREATE TABLE, CREATE VIEW and every "
-        "other write are refused there whatever the datasource allows — composition "
-        "has its own verbs, add_table and drop_table, and those are the ones the "
-        "writable grant governs.\n\n"
+        "second file up against one already open, use create(nickname, "
+        "type='table', source=...) to land it *inside* that database, then join "
+        "the two tables there in an ordinary statement. Whether the join is "
+        "complete is an anti-join you write yourself; if it is slow, "
+        "create(nickname, type='index', table=..., columns=[...]) first, and "
+        "info(nickname, table) says which indexes are already there.\n\n"
+        "**query only reads.** INSERT, UPDATE, CREATE TABLE and every other write "
+        "are refused there whatever the datasource allows — composition has its "
+        "own verbs, create and drop, and those are the ones the writable grant "
+        "governs. The whole result comes back, so ask for what you want: use SQL "
+        "LIMIT, name your columns instead of SELECT *, or pass path= to write a "
+        "large result to a file rather than into the answer.\n\n"
         "Files you attach are read-only unless you pass writable=true; a database "
         "built from a flat file is yours and is always writable. Slots are limited "
         "and the oldest is evicted when the limit is reached, so check the "
@@ -208,22 +217,13 @@ def _slot_payload(slot: Slot, registry: Registry) -> dict[str, Any]:
     }
 
 
-def _join_payload(report: JoinReport) -> dict[str, Any]:
-    """The facts about a join, for the skill to say out loud in the user's words."""
+def _index_payload(index: IndexInfo) -> dict[str, Any]:
+    """One index, named so that ``drop`` can be handed the name verbatim."""
     return {
-        "key": report.key,
-        "existing_table": report.existing_table,
-        "added_table": report.added_table,
-        "complete": report.complete,
-        "matched_keys": report.matched_keys,
-        "missing_from_added": {
-            "values": list(report.missing_from_added),
-            "total": report.missing_from_added_total,
-        },
-        "missing_from_existing": {
-            "values": list(report.missing_from_existing),
-            "total": report.missing_from_existing_total,
-        },
+        "index": index.name,
+        "table": index.table,
+        "columns": list(index.columns),
+        "unique": index.unique,
     }
 
 
@@ -348,8 +348,13 @@ def info(nickname: str | None = None, table: str | None = None) -> dict[str, Any
     Three forms, and the arguments choose between them:
 
     * neither — every attached datasource, and the path posture in force;
-    * ``nickname`` — that datasource and the tables inside it;
-    * ``nickname`` and ``table`` — that table's columns, types and row count.
+    * ``nickname`` — that datasource, the tables inside it, and its indexes;
+    * ``nickname`` and ``table`` — that table's columns, types, row count and
+      indexes.
+
+    The indexes are what to consult before asking ``create`` for one: they are
+    reported whoever made them, so an attached database arrives describing the
+    indexes it already had.
 
     Args:
         nickname: Restrict to one datasource.
@@ -370,6 +375,9 @@ def info(nickname: str | None = None, table: str | None = None) -> dict[str, Any
 def _table_detail(registry: Registry, nickname: str, table: str) -> dict[str, Any]:
     described = registry.describe(nickname, table)
     payload = {"ok": True, **_table_payload(described)}
+    payload["indexes"] = [
+        _index_payload(index) for index in registry.indexes(nickname, table)
+    ]
     if described.mixed_columns:
         payload["warnings"] = [_mixed_column_warning(described)]
     return payload
@@ -385,6 +393,7 @@ def _slot_detail(registry: Registry, nickname: str) -> dict[str, Any]:
         "contents": [
             {"table": info.name, "rows": info.row_count} for info in described
         ],
+        "indexes": [_index_payload(index) for index in registry.indexes(nickname)],
     }
     if warnings:
         payload["warnings"] = warnings
@@ -407,7 +416,6 @@ def _session_detail(registry: Registry) -> dict[str, Any]:
 def query(
     nickname: str,
     sql: str,
-    limit: int = 100,
     path: str | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
@@ -415,20 +423,25 @@ def query(
 
     ``nickname`` chooses the datasource; the SQL then names tables inside it
     directly — ``SELECT * FROM sales``, not ``FROM shop.sales``. One statement
-    reaches one datasource. To query two of them together, ``add_table`` copies
-    one into the other first, and the join is then ordinary SQL over two tables
-    in the same database.
+    reaches one datasource. To query two of them together, ``create`` copies one
+    into the other first, and the join is then ordinary SQL over two tables in
+    the same database.
 
     **A query reads.** INSERT, UPDATE, CREATE TABLE, CREATE VIEW and PRAGMA are
     refused here whatever the datasource permits — the connection this runs on
-    is read-only from the moment it opens. To add a table use ``add_table``, to
-    remove one ``drop_table``; those are what ``writable=true`` governs.
+    is read-only from the moment it opens. To change a datasource use ``create``
+    and ``drop``; those are what ``writable=true`` governs.
+
+    **The whole result comes back.** There is no row cap, because a row cap
+    measures the wrong thing — a hundred rows of a two-hundred-column table is
+    the flood it would be meant to prevent. Ask for what you want instead: SQL
+    ``LIMIT`` for fewer rows, named columns rather than ``SELECT *`` for fewer
+    of those, and ``path`` when the whole result is genuinely wanted but does
+    not belong in an answer.
 
     Args:
         nickname: Which datasource executes the statement.
         sql: The SQL statement.
-        limit: Maximum rows to return. Use 0 for no limit. Ignored when writing
-            to a file, which always receives the whole result.
         path: Write the full result to this CSV file instead of returning rows.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the path is theirs, so the refusal you get
@@ -438,9 +451,7 @@ def query(
     with _lock:
         registry = _session()
         try:
-            columns, rows = registry.query(
-                nickname, sql, limit=None if path else (limit or None)
-            )
+            columns, rows = registry.query(nickname, sql)
         except SlotError as exc:
             return _failed(exc)
         except Exception as exc:
@@ -452,7 +463,6 @@ def query(
                 "columns": columns,
                 "rows": [list(row) for row in rows],
                 "row_count": len(rows),
-                "truncated": bool(limit) and len(rows) == limit,
             }
 
         try:
@@ -473,81 +483,110 @@ def query(
 
 
 @mcp.tool
-def add_table(
+def create(
     nickname: str,
-    source: str,
+    type: str,
     table: str | None = None,
-    join_on: str | None = None,
-    join_table: str | None = None,
+    source: str | None = None,
+    columns: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Add another table inside a datasource that is already open.
+    """Create a table or an index inside a datasource that is already open.
 
-    Use this — rather than attaching a second slot — when a new file is meant to
-    be looked up against one already loaded. ``save`` writes one database rather
-    than a join, so landing both sides in the same slot is what makes the lookup
-    outlive the session.
+    ``type="table"`` reads a file in beside the tables already there. Use this —
+    rather than attaching a second slot — when a new file is meant to be looked
+    up against one already loaded: ``save`` writes one database rather than a
+    join, so landing both sides in the same slot is what makes the lookup
+    outlive the session. The answer describes the table it read, so ``info``
+    straight afterwards tells you nothing new.
 
-    The answer describes the table it read in, so ``info`` straight afterwards
-    tells you nothing new.
+    ``type="index"`` indexes columns of a table already there. Ask for one when
+    you are about to join or filter on those columns and the table is large;
+    nothing here guesses that for you, because which query is coming is yours to
+    know. The index is named for you and the name comes back — that is the name
+    ``drop`` wants. ``info(nickname, table)`` lists the indexes that already
+    exist, which is the cheaper way to find out than asking twice.
+
+    Whether a join actually lines up is not reported here. It is an anti-join
+    over two tables in one database — ordinary SQL you can write, and better
+    said in the user's own words than in a payload field.
 
     Args:
-        nickname: The datasource to add to. Must be writable.
-        source: A file to read in.
-        table: Name for the new table. Derived from the filename when omitted.
-        join_on: A column shared with a table already in this datasource. Given
-            one, the result reports which key values have no match on the other
-            side, in both directions. Each side is named after the table the
-            values are *missing from*, so ``missing_from_added`` holds keys that
-            are in the table already here and absent from the one just read in —
-            for a price lookup, those are the ones nothing can be priced from.
-        join_table: Which existing table ``join_on`` refers to. Only needed when
-            the datasource holds more than one.
+        nickname: The datasource to create in. Must be writable.
+        type: ``"table"`` or ``"index"``.
+        table: For a table, its name — derived from the filename when omitted.
+            For an index, the existing table to index; required.
+        source: For a table, the file to read in. Required for ``type="table"``.
+        columns: For an index, the columns to index, in order. Required for
+            ``type="index"``.
     """
     with _lock:
         registry = _session()
         try:
-            added = registry.add_table(
-                nickname,
-                source=source,
-                table=table,
-                join_on=join_on,
-                join_table=join_table,
-            )
+            if type == "table":
+                if source is None:
+                    raise SlotError(
+                        "create(type='table') reads a file in, so it needs "
+                        "source=. To index an existing table, use type='index'."
+                    )
+                return _table_created(
+                    registry.create_table(nickname, source=source, table=table)
+                )
+            if type == "index":
+                if table is None or not columns:
+                    raise SlotError(
+                        "create(type='index') needs table= and columns= — which "
+                        "table, and which of its columns to index."
+                    )
+                made = registry.create_index(nickname, table=table, columns=columns)
+                return {"ok": True, "nickname": nickname, **_index_payload(made)}
         except (SlotError, PathNotAllowed) as exc:
             return _failed(exc)
-        return _added_payload(added)
+        return _failed(
+            SlotError(f"create has no type {type!r}. It is 'table' or 'index'.")
+        )
 
 
-def _added_payload(added: AddedTable) -> dict[str, Any]:
-    payload: dict[str, Any] = {"ok": True, **_table_payload(added.info)}
-    if added.info.mixed_columns:
-        payload["warnings"] = [_mixed_column_warning(added.info)]
-    if added.join is not None:
-        payload["join"] = _join_payload(added.join)
+def _table_created(info: TableInfo) -> dict[str, Any]:
+    payload: dict[str, Any] = {"ok": True, **_table_payload(info)}
+    if info.mixed_columns:
+        payload["warnings"] = [_mixed_column_warning(info)]
     return payload
 
 
 @mcp.tool
-def drop_table(nickname: str, table: str) -> dict[str, Any]:
-    """Remove a table from a datasource.
+def drop(nickname: str, type: str, name: str) -> dict[str, Any]:
+    """Remove a table or an index from a datasource.
 
     Args:
         nickname: The datasource holding it. Must be writable.
-        table: The table name inside that datasource, unqualified.
+        type: ``"table"`` or ``"index"``.
+        name: The table name, unqualified — or the index name, as ``create``
+            returned it and as ``info`` lists it.
     """
     with _lock:
         registry = _session()
         try:
-            registry.drop_table(nickname, table)
-            remaining = registry.tables(nickname)
+            if type == "table":
+                registry.drop_table(nickname, name)
+                return {
+                    "ok": True,
+                    "nickname": nickname,
+                    "dropped": name,
+                    "tables": list(registry.tables(nickname)),
+                }
+            if type == "index":
+                gone = registry.drop_index(nickname, name)
+                return {
+                    "ok": True,
+                    "nickname": nickname,
+                    "dropped": gone.name,
+                    "table": gone.table,
+                }
         except SlotError as exc:
             return _failed(exc)
-        return {
-            "ok": True,
-            "nickname": nickname,
-            "dropped": table,
-            "tables": list(remaining),
-        }
+        return _failed(
+            SlotError(f"drop has no type {type!r}. It is 'table' or 'index'.")
+        )
 
 
 @mcp.tool

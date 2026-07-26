@@ -116,7 +116,7 @@ def test_a_generic_datasource_says_why_it_cannot_be_saved(tmp_path):
     try:
         with pytest.raises(UnsupportedOperation) as raised:
             Backend().snapshot(engines.write, tmp_path / "copy.db")
-        assert "add_table" in str(raised.value)
+        assert "with create" in str(raised.value)
     finally:
         engines.dispose()
 

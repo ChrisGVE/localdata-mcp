@@ -74,7 +74,7 @@ def _insert_peak(path: Path, table: str) -> tuple[float, int, float]:
 
         # A write that does nothing is very fast and allocates nothing, which is
         # the same shape as the result we want. Prove the rows are really there.
-        _, rows = workspace.query("bulk", f"SELECT count(*) FROM {table}", limit=None)
+        _, rows = workspace.query("bulk", f"SELECT count(*) FROM {table}")
         assert rows[0][0] == info.row_count
         return peak / 1_048_576, info.row_count, elapsed
     finally:
@@ -115,15 +115,13 @@ def test_large_file_answers_correctly(root):
         info = workspace.load_file(str(path), "bulk")
         assert info.row_count == LARGE_ROWS
 
-        _, rows = workspace.query("bulk", "SELECT sum(id) FROM big", limit=None)
+        _, rows = workspace.query("bulk", "SELECT sum(id) FROM big")
         assert rows[0][0] == LARGE_ROWS * (LARGE_ROWS - 1) // 2
 
-        _, rows = workspace.query(
-            "bulk", "SELECT count(*) FROM big WHERE flag = 1", limit=None
-        )
+        _, rows = workspace.query("bulk", "SELECT count(*) FROM big WHERE flag = 1")
         assert rows[0][0] == LARGE_ROWS // 2
 
-        _, rows = workspace.query("bulk", "SELECT max(score) FROM big", limit=None)
+        _, rows = workspace.query("bulk", "SELECT max(score) FROM big")
         assert rows[0][0] == pytest.approx((LARGE_ROWS - 1) * 1.5)
     finally:
         workspace.close()
@@ -140,7 +138,7 @@ def test_export_of_a_large_result_is_complete(root):
     workspace.attach_memory("bulk")
     try:
         workspace.load_file(str(path), "bulk")
-        columns, rows = workspace.query("bulk", "SELECT id, score FROM big", limit=None)
+        columns, rows = workspace.query("bulk", "SELECT id, score FROM big")
         target = root / "exported.csv"
         result = export_csv(columns, rows, str(target))
 

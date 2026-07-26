@@ -23,9 +23,12 @@ they are the same verbs whatever filled it.
 
 Tables are addressed by their own names inside the datasource you named —
 `query(nickname="shop", sql="SELECT * FROM sales")`. To look one file up against
-another, `add_table` copies the second into the first and reports whether their
-keys line up; the join is then an ordinary statement over two tables in one
-database.
+another, `create` copies the second into the first; the join is then an ordinary
+statement over two tables in one database.
+
+These are raw capabilities, not a workflow. Nothing here guesses a join key,
+decides an index would help, or turns a mismatch into a sentence — those need to
+know what was actually asked, and the caller is the one holding that.
 
 > **Rebuild in progress.** This branch is a ground-up rewrite. It currently
 > supports flat files (`.csv`, `.tsv`, `.txt`) and SQLite, done properly — see
@@ -67,43 +70,47 @@ collided with. Always read it back rather than assuming.
 | --- | --- |
 | `attach(database, nickname?, writable?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. |
 | `detach(nickname)` | Close it and free the slot. |
-| `query(nickname, sql, limit?, path?, force?)` | Run SQL. **Reads only.** With `path`, the whole result is written to CSV instead of returned. |
-| `info(nickname?, table?)` | Three altitudes: the whole session, one datasource, or one table's columns and row count. |
-| `add_table(nickname, source, table?, join_on?)` | Land another table *inside* an open database. With `join_on`, reports which keys have no match. |
-| `drop_table(nickname, table)` | Remove a table. |
+| `query(nickname, sql, path?, force?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to CSV instead. |
+| `info(nickname?, table?)` | Three altitudes: the whole session, one datasource, or one table's columns, row count and indexes. |
+| `create(nickname, type, table?, source?, columns?)` | `type="table"` lands a file *inside* an open database; `type="index"` indexes columns of a table already there. |
+| `drop(nickname, type, name)` | Remove a table or an index. |
 | `save(nickname, path, force?)` | Write the database out to a file you keep. |
 
 ### Looking one file up against another
 
 The common request — *"can you cross-reference this with that other file?"* —
-uses `add_table`, not a second `attach`:
+uses `create`, not a second `attach`:
 
 ```python
 attach("./sales.csv")                                              # → "sales"
-add_table("sales", source="./prices.csv", join_on="sku")
+create("sales", type="table", source="./prices.csv")
 query("sales", "SELECT s.sku, s.qty * p.price AS total "
                "FROM sales s JOIN prices p ON s.sku = p.sku")
 ```
 
 `query` reads and only reads — `INSERT`, `CREATE TABLE`, `CREATE VIEW` and the
 rest are refused there however writable the datasource is. Changing a slot goes
-through `add_table` and `drop_table`, which is what `writable=true` governs.
+through `create` and `drop`, which is what `writable=true` governs.
 
 Landing the second file inside the first database is not just tidier. **`save`
 writes one database, not a join** — so attaching the two files separately gives
 you an answer now and nothing to come back to, while this gives you a lookup you
 can keep.
 
-`join_on` makes the tool report whether the match is actually complete, in both
-directions:
+Whether the match is actually complete is an anti-join you write, in whichever
+direction you care about:
 
-```json
-"join": {
-  "complete": false,
-  "matched_keys": 1,
-  "missing_from_added":    {"values": ["b", "c"], "total": 2},
-  "missing_from_existing": {"values": ["z"],      "total": 1}
-}
+```python
+query("sales", "SELECT sku FROM sales WHERE sku NOT IN (SELECT sku FROM prices)")
+query("sales", "SELECT sku FROM prices WHERE sku NOT IN (SELECT sku FROM sales)")
+```
+
+If either drags, index the key first and ask again. Nothing is indexed unless
+you say so, and `info` tells you what already is:
+
+```python
+create("sales", type="index", table="prices", columns=["sku"])     # → "ix_prices_sku"
+drop("sales", type="index", name="ix_prices_sku")
 ```
 
 ### Nothing survives unless you save it

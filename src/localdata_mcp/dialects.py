@@ -167,13 +167,12 @@ class Backend:
         Refused generically, and the refusal is the truthful answer rather than
         a gap: a database this server merely *reaches* is not one it holds, and
         there is no local file to write out. Copying its rows into a slot of
-        our own — ``add_table`` — is the route, and that slot saves.
+        our own — ``create`` — is the route, and that slot saves.
         """
         raise UnsupportedOperation(
             f"A {self.name} datasource is reached over its own connection, not "
             f"held here, so there is no local database to write out. Copy the "
-            f"rows you want into a slot of your own with add_table, and save "
-            f"that."
+            f"rows you want into a slot of your own with create, and save that."
         )
 
     def storage_classes(
