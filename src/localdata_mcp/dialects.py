@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Connection, Engine, create_engine, event, text
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.pool import StaticPool
 
 __all__ = [
@@ -44,9 +45,13 @@ __all__ = [
     "Engines",
     "Refusal",
     "SQLiteBackend",
-    "UnsupportedBackend",
+    "UnsupportedOperation",
     "backend_for",
 ]
+
+
+class UnsupportedOperation(RuntimeError):
+    """Something this kind of datasource cannot be asked to do."""
 
 
 # ---------------------------------------------------------------------------
@@ -99,16 +104,53 @@ class Engines:
 
 
 class Backend:
-    """The per-dialect answers. Subclassed once per database family."""
+    """The per-dialect answers — and the generic ones are the whole answer.
 
-    #: SQLAlchemy's name for the dialect, for error messages and dispatch.
+    **This class is not an interface every database must implement in order to
+    be reachable.** Reaching a database is ``create_engine``'s job, and it
+    already works for everything SQLAlchemy speaks; :meth:`open` below is that
+    call and nothing more. A dialect subclasses this only when it can say
+    something the generic answer cannot — how much memory it is holding, how to
+    write itself to a file — and a dialect nobody has subclassed still opens,
+    still queries, still composes.
+
+    That is the direction the default implementations lean: an unknown backend
+    answers *honestly and usefully*, never "unsupported".
+    """
+
+    #: SQLAlchemy's own backend name for the dialect. Descriptive, so an error
+    #: can say which database declined; never used to decide reachability.
     name = "generic"
 
-    def open_memory(self, tag: str, token: str) -> Engines:
-        raise NotImplementedError
+    def open(self, url: str | URL, *, writable: bool) -> Engines:
+        """Two engines onto one datasource — one reading, one writing.
 
-    def open_file(self, path: Path, *, writable: bool) -> Engines:
-        raise NotImplementedError
+        Generic because ``create_engine`` is generic: SQLAlchemy resolves the
+        driver, the dialect and the connection arguments from the URL, and
+        nothing here needs to know which database answered. ``writable`` is not
+        consulted in the generic case because there is nothing portable to do
+        with it — the read engine refuses writes by never committing them (see
+        :meth:`read_posture`), and what the *write* engine may do is the
+        datasource's own business, enforced by its own grants.
+        """
+        refusal = Refusal()
+        engines = Engines(
+            write=create_engine(url), read=create_engine(url), refusal=refusal
+        )
+        self.read_posture(engines.read, refusal)
+        return engines
+
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        """Make this engine's connections refuse to *persist* a write.
+
+        The generic guarantee is transactional, and it needs no per-dialect
+        code: :meth:`loader.Workspace.query` opens a connection, never commits,
+        and closes it — so anything a statement changed is rolled back and no
+        trace of it survives. That is the floor. A dialect may raise it, and
+        SQLite does, refusing at statement preparation instead so that the
+        statement never runs at all and the refusal can name what was attempted.
+        """
+        return None
 
     def resident_bytes(self, engine: Engine) -> int | None:
         """Bytes this database is holding in *our* process, or ``None``.
@@ -120,7 +162,19 @@ class Backend:
         return None
 
     def snapshot(self, engine: Engine, target: Path) -> None:
-        raise NotImplementedError
+        """Write a consistent copy of this database to a local file.
+
+        Refused generically, and the refusal is the truthful answer rather than
+        a gap: a database this server merely *reaches* is not one it holds, and
+        there is no local file to write out. Copying its rows into a slot of
+        our own — ``add_table`` — is the route, and that slot saves.
+        """
+        raise UnsupportedOperation(
+            f"A {self.name} datasource is reached over its own connection, not "
+            f"held here, so there is no local database to write out. Copy the "
+            f"rows you want into a slot of your own with add_table, and save "
+            f"that."
+        )
 
     def storage_classes(
         self, conn: Connection, table: str, column: str
@@ -229,6 +283,21 @@ class SQLiteBackend(Backend):
 
     # -- opening -----------------------------------------------------------
 
+    def open(self, url: str | URL, *, writable: bool) -> Engines:
+        """A ``sqlite:`` URL names a local file, so open it as one.
+
+        The generic :meth:`Backend.open` would work, but it would lose what
+        SQLite can do better: ``mode=ro`` in the URI, which the database itself
+        enforces rather than this code remembering to.
+        """
+        database = make_url(url).database or ""
+        if not database or database == ":memory:":
+            raise UnsupportedOperation(
+                "An anonymous SQLite memory database cannot be shared between "
+                "connections. Use open_memory, which names one."
+            )
+        return self.open_file(Path(database), writable=writable)
+
     def open_memory(self, tag: str, token: str) -> Engines:
         url = f"sqlite:///file:{tag}_{token}?mode=memory&cache=shared&uri=true"
         return self._pair(url, url)
@@ -250,7 +319,7 @@ class SQLiteBackend(Backend):
         refusal = Refusal()
         write = self._engine(write_url)
         read = self._engine(read_url)
-        self._make_read_only(read, refusal)
+        self.read_posture(read, refusal)
         return Engines(write=write, read=read, refusal=refusal)
 
     def _engine(self, url: str) -> Engine:
@@ -263,9 +332,11 @@ class SQLiteBackend(Backend):
 
     # -- read-only posture -------------------------------------------------
 
-    @staticmethod
-    def _make_read_only(engine: Engine, refusal: Refusal) -> None:
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
         """Refuse every write on this engine's connections, from birth.
+
+        Stronger than the generic rollback floor, and that is why it overrides:
+        a refused statement never runs, and the refusal can name what it was.
 
         Two mechanisms, doing two different jobs. ``query_only`` is the posture —
         it is what SQLAlchemy would set for any backend asked for a read-only
@@ -367,29 +438,27 @@ class SQLiteBackend(Backend):
 
 
 _SQLITE = SQLiteBackend()
+_GENERIC = Backend()
 
-#: Dialect name to backend. One entry today; a new database family is a new
-#: subclass and a line here, which is both the point of the seam and the measure
-#: of whether it has been drawn in the right place.
+#: Dialect name to the backend that has something *extra* to say about it. An
+#: absence here is not a gap: it means SQLAlchemy's own answers are the whole
+#: answer for that database, which is the ordinary case rather than the
+#: exceptional one.
 BACKENDS: dict[str, Backend] = {"sqlite": _SQLITE}
 
 
-class UnsupportedBackend(RuntimeError):
-    """A database family this server has no answers for yet."""
-
-
 def backend_for(dialect: str) -> Backend:
-    """The backend that answers for a dialect, or a refusal naming it.
+    """The backend that answers for a dialect. Never a refusal.
 
-    Refusing is deliberate. Returning SQLite's answers for a dialect nobody has
-    implemented would produce a workspace that looks like it works and is wrong
-    about residency, read-only posture and snapshotting — the fail-open shape
-    this project has already been bitten by. An unknown backend says so.
+    An unknown dialect gets :data:`_GENERIC`, and that is the point: this server
+    reaches whatever SQLAlchemy reaches, and no database has to be enumerated
+    here to be usable. What an unregistered dialect loses is only the extras —
+    residency reads ``None`` (not zero: unknown, not empty), ``save`` says
+    plainly that there is no local database to write, and the storage-class
+    histogram is empty because a real type system makes it meaningless.
+
+    That is the honest kind of degradation. The fail-open shape this project has
+    been bitten by is a *guess* presented as a measurement; ``None`` and an
+    explicit refusal are neither.
     """
-    try:
-        return BACKENDS[dialect]
-    except KeyError:
-        supported = ", ".join(sorted(BACKENDS))
-        raise UnsupportedBackend(
-            f"No backend for {dialect!r}. This server knows: {supported}."
-        ) from None
+    return BACKENDS.get(dialect, _GENERIC)

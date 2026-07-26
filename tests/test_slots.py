@@ -588,6 +588,89 @@ def test_an_engine_slot_reports_a_source_without_its_password(registry, root):
 
 
 # ---------------------------------------------------------------------------
+# A URL-addressed datasource is a slot like any other
+#
+# These are the tests the two-code-path design could not pass. A slot reached
+# over a URL used to live outside the workspace, with its own implementations of
+# query, describe and tables — and *no* implementation of the rest, so add_table
+# and save were refused by kind rather than by capability. One path means the
+# verbs are the same verbs, and these say so.
+# ---------------------------------------------------------------------------
+
+
+def test_a_url_slot_composes_like_any_other(registry, root):
+    """add_table lands a file inside a URL-addressed database."""
+    build_database(root / "remote.db")
+    csv_at(root / "stock.csv")
+    registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
+
+    added = registry.add_table("remote", source=str(root / "stock.csv"))
+
+    assert added.info.name == "stock"
+    assert added.info.row_count == 2
+
+
+def test_a_url_slot_lists_what_was_added_to_it(registry, root):
+    """``tables`` asks the database, so composition is visible afterwards."""
+    build_database(root / "remote.db")
+    csv_at(root / "stock.csv")
+    registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
+    registry.add_table("remote", source=str(root / "stock.csv"))
+
+    assert registry.tables("remote") == ("products", "stock")
+
+
+def test_a_url_slot_joins_the_table_that_was_added_to_it(registry, root):
+    build_database(root / "remote.db")
+    csv_at(root / "stock.csv")
+    registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
+    registry.add_table("remote", source=str(root / "stock.csv"))
+
+    _, rows = registry.query(
+        "remote",
+        "SELECT p.name, s.qty FROM products p JOIN stock s ON s.sku = p.sku "
+        "ORDER BY p.sku",
+    )
+    assert rows == [("Widget", 3), ("Gadget", 4)]
+
+
+def test_a_url_slot_describes_a_table_it_was_given(registry, root):
+    build_database(root / "remote.db")
+    csv_at(root / "stock.csv")
+    registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
+    registry.add_table("remote", source=str(root / "stock.csv"))
+
+    info = registry.describe("remote", "stock")
+    assert [column.name for column in info.columns] == ["sku", "qty"]
+    assert info.row_count == 2
+
+
+def test_a_read_only_url_slot_still_refuses_composition(registry, root):
+    """Unified does not mean permissive: the grant still governs."""
+    build_database(root / "remote.db")
+    csv_at(root / "stock.csv")
+    registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=False)
+
+    with pytest.raises(NotWritable):
+        registry.add_table("remote", source=str(root / "stock.csv"))
+
+
+def test_a_url_slot_backed_by_a_real_file_can_be_saved(registry, root):
+    """``save`` is refused by capability now, not by how the slot was opened."""
+    build_database(root / "remote.db")
+    registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=False)
+
+    saved = registry.save("remote", str(root / "kept.db"))
+
+    assert saved.exists()
+    connection = sqlite3.connect(saved)
+    try:
+        assert connection.execute("SELECT count(*) FROM products").fetchone()[0] == 2
+    finally:
+        connection.close()
+
+
+# ---------------------------------------------------------------------------
 # Listing
 # ---------------------------------------------------------------------------
 

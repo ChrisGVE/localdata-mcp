@@ -4,15 +4,22 @@
 one, and none of them is a special case:
 
 * a **flat file** becomes a brand-new in-memory database holding one table named
-  after the file — so a later ``create_table`` can add a second table beside it
+  after the file — so a later ``add_table`` can put a second table beside it
   under the same nickname;
 * a **SQLite file** is attached read-only, arriving with the tables it already
   has;
-* a **URL naming a service** becomes its own engine.
+* a **URL** becomes an engine SQLAlchemy resolved from the URL itself.
 
 Because every slot is a database, nothing above this module needs to know which
 kind it is holding. Each slot is reached on its own engines, and a statement
 addresses the tables inside one slot by their own names.
+
+**"Not a special case" is meant literally, and is the property most worth
+defending here.** All three live in the same :class:`~.loader.Workspace`, under
+the same kind of tag, and every verb has exactly one implementation. There is no
+second code path for a datasource reached over a URL — which is how one of them
+previously came to support three of the seven verbs while the other supported
+all seven, with nothing in the type system to notice.
 
 **A statement reaches one slot.** Slots do not share a connection, so there is no
 join across them; putting two datasources together means copying one into the
@@ -45,13 +52,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.engine import make_url
 
 from . import config
+from .dialects import UnsupportedOperation
 from .loader import (
     READERS,
-    ColumnInfo,
     LoadError,
     TableInfo,
     Workspace,
@@ -117,14 +123,15 @@ class Slot:
     """One attached database, and how to reach it."""
 
     nickname: str
-    #: ``"file"`` (a flat file, now its own in-memory database), ``"database"``
-    #: (a SQLite file attached read-only), or ``"engine"`` (its own connection).
+    #: How this slot was opened: ``"file"`` (a flat file, now its own in-memory
+    #: database), ``"database"`` (a local database file), or ``"engine"`` (a URL
+    #: SQLAlchemy resolved). **Descriptive only** — every kind is one tag in the
+    #: workspace, reached the same way, and nothing branches on this to decide
+    #: how to do its job.
     kind: str
     #: Where it came from, with any password removed.
     source: str
     tables: tuple[str, ...]
-    #: Set only for ``"engine"`` slots; the others live on the host connection.
-    engine: Engine | None = None
     #: Whether this database may be written to. Only databases the server
     #: created are writable by default; anything attached from outside arrives
     #: read-only unless the caller granted write at attach time.
@@ -463,18 +470,23 @@ class Registry:
         return Attachment(slot=slot, evicted=evicted, collided_with=collision)
 
     def _attach_engine(self, database: str, nickname: str, *, writable: bool) -> Slot:
-        """Create a slot backed by its own engine.
+        """Create a slot for a datasource addressed by URL.
 
-        Separate from :meth:`_attach_url` so the engine machinery can be
-        exercised without a server: the only driver present without one is
-        SQLite, and a ``sqlite:`` URL routes to ``ATTACH`` at the surface.
+        It goes into the same workspace, under the same kind of tag, as a flat
+        file and a local database do. That is the whole of what makes the seven
+        verbs work on it: there is one implementation of each, so a URL-addressed
+        database cannot quietly support fewer of them than a file does.
         """
         url = make_url(database)
         safe = url.render_as_string(hide_password=True)
         try:
-            engine = create_engine(url)
-            tables = tuple(sorted(inspect(engine).get_table_names()))
+            self._workspace.attach(url, nickname, writable=writable)
+            # Listing forces the schema to be read, so a datasource that opens
+            # but cannot be inspected fails here rather than on someone's query.
+            tables = self._workspace.table_names(nickname)
         except Exception as exc:
+            # Nothing half-open is left behind: the tag either works or is absent.
+            self._workspace.detach(nickname)
             # The message may carry the URL, so report the class and the
             # redacted form rather than the driver's own text.
             raise AttachRefused(
@@ -487,7 +499,6 @@ class Registry:
             kind="engine",
             source=safe,
             tables=tables,
-            engine=engine,
             writable=writable,
         )
         # Registered here rather than by the caller: this is the only path that
@@ -635,14 +646,7 @@ class Registry:
         decision to lose it. It does not extend to a file some live slot is
         sitting on, including this one's own source — that stays refused.
         """
-        slot = self.slot(nickname)
-        if slot.engine is not None:
-            raise SlotError(
-                f"{nickname!r} is a service reached over its own connection, not a "
-                f"database this server holds, so there is nothing local to save. "
-                f"Copy the rows you want into a slot first."
-            )
-
+        self.slot(nickname)
         try:
             target = resolve_write_path(path, force=force, claimed=self.claimed_paths())
         except PathNotAllowed as exc:
@@ -650,6 +654,11 @@ class Registry:
 
         try:
             self._workspace.snapshot(nickname, target)
+        except UnsupportedOperation as exc:
+            # Not a failure to save — a datasource that is not ours to save.
+            # Nothing was written, so there is nothing to clean up, and the
+            # backend's own words say what to do instead.
+            raise SlotError(str(exc)) from exc
         except Exception as exc:
             # A partial file looks like a complete save, which is worse than none.
             target.unlink(missing_ok=True)
@@ -761,11 +770,6 @@ class Registry:
     def _writable(self, nickname: str, action: str) -> Slot:
         """The slot for a nickname, refusing if it may not be changed."""
         slot = self.slot(nickname)
-        if slot.engine is not None:
-            raise NotWritable(
-                f"{nickname!r} is reached over its own connection and is not "
-                f"composed here. Attach a local slot and copy into that instead."
-            )
         if not slot.writable:
             raise NotWritable(
                 f"{nickname!r} was attached read-only, so this server will not "
@@ -829,7 +833,7 @@ class Registry:
         nothing, and how much of it SQLite is holding in its page cache cannot
         be observed from Python anyway (``docs/CONSTRAINTS.md`` §6).
         """
-        return slot.engine is None and slot.kind == "file" and slot.spill_path is None
+        return slot.kind == "file" and slot.spill_path is None
 
     def _spill(self, slot: Slot) -> Slot:
         """Write one database to a temp file and re-attach it in the same slot.
@@ -893,10 +897,7 @@ class Registry:
 
     def _release(self, nickname: str) -> Slot:
         slot = self._slots.pop(nickname)
-        if slot.engine is not None:
-            slot.engine.dispose()
-        else:
-            self._workspace.detach(nickname)
+        self._workspace.detach(nickname)
         self._discard_spill(slot)
         return slot
 
@@ -920,62 +921,31 @@ class Registry:
     def query(
         self, nickname: str, sql: str, limit: int | None = None
     ) -> tuple[list[str], list[tuple]]:
-        """Run a statement against the engine the nickname names."""
+        """Run a statement against the database the nickname names."""
         slot = self.slot(nickname)
         try:
-            if slot.engine is None:
-                return self._workspace.query(nickname, sql, limit=limit)
-            return self._query_engine(slot.engine, sql, limit)
+            return self._workspace.query(nickname, sql, limit=limit)
         except Exception as exc:
             self._explain(exc, sql, slot)
             raise
 
-    @staticmethod
-    def _query_engine(
-        engine: Engine, sql: str, limit: int | None
-    ) -> tuple[list[str], list[tuple]]:
-        with engine.connect() as connection:
-            result = connection.execute(text(sql))
-            if result.returns_rows is False:
-                return [], []
-            names = list(result.keys())
-            rows = result.fetchmany(limit) if limit else result.fetchall()
-            return names, [tuple(row) for row in rows]
-
     def describe(self, nickname: str, table: str) -> TableInfo:
         """Describe one table inside a slot."""
         slot = self.slot(nickname)
-        if slot.engine is not None:
-            return self._describe_engine_table(slot, table)
         try:
             return self._workspace.describe(nickname, table, source=slot.source)
         except LoadError as exc:
             raise SlotNotAvailable(str(exc)) from exc
 
-    def _describe_engine_table(self, slot: Slot, table: str) -> TableInfo:
-        assert slot.engine is not None
-        if table not in slot.tables:
-            raise SlotNotAvailable(f"No such table: {slot.nickname}.{table}")
-        inspector = inspect(slot.engine)
-        columns = [
-            ColumnInfo(name=column["name"], declared_type=str(column["type"]))
-            for column in inspector.get_columns(table)
-        ]
-        with slot.engine.connect() as connection:
-            rows = connection.execute(text(f'SELECT count(*) FROM "{table}"')).scalar()
-        return TableInfo(
-            name=table,
-            row_count=int(rows or 0),
-            columns=columns,
-            source=slot.source,
-            tag=slot.nickname,
-        )
-
     def tables(self, nickname: str) -> tuple[str, ...]:
-        """Refresh and return the table names inside a slot."""
-        slot = self.slot(nickname)
-        if slot.engine is not None:
-            return slot.tables
+        """Refresh and return the table names inside a slot.
+
+        Asked of the database every time rather than read from the ``Slot``,
+        whose ``tables`` is the snapshot taken at attach time. A slot that has
+        since been composed with ``add_table`` would otherwise answer with what
+        it held when it arrived.
+        """
+        self.slot(nickname)
         return self._workspace.table_names(nickname)
 
     # -- explaining a failure -----------------------------------------------
@@ -1000,15 +970,13 @@ class Registry:
         elsewhere = [
             slot.nickname
             for slot in self._slots.values()
-            if slot.nickname in referenced
-            and slot.nickname != routed.nickname
-            and (slot.engine is None) != (routed.engine is None)
+            if slot.nickname in referenced and slot.nickname != routed.nickname
         ]
         if elsewhere:
             raise SlotError(
-                f"{routed.nickname!r} and {', '.join(sorted(elsewhere))} are held by "
-                f"different engines, and one statement cannot span two engines. "
-                f"Copy the tables you need into one slot first, then join there."
+                f"{routed.nickname!r} and {', '.join(sorted(elsewhere))} are separate "
+                f"databases, and one statement cannot span two of them. Copy the "
+                f"tables you need into one slot with add_table, then join there."
             ) from exc
 
     @staticmethod
@@ -1018,9 +986,6 @@ class Registry:
     # -- teardown -----------------------------------------------------------
 
     def close(self) -> None:
-        for slot in list(self._slots.values()):
-            if slot.engine is not None:
-                slot.engine.dispose()
         self._slots.clear()
         self._workspace.close()
 

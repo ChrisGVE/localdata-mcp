@@ -69,6 +69,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 from . import binding
@@ -468,6 +469,10 @@ class Workspace:
 
         Writable is not a flag this module honours by being careful — it is a
         different URI, and the database itself is what refuses the write.
+
+        ``sqlite`` is named here rather than derived, and that is not a dispatch:
+        the caller has already established that this path *is* a SQLite database
+        by reading its header. Naming a fact is not the same as guessing a type.
         """
         backend = backend_for("sqlite")
         location = str(path.resolve())
@@ -477,6 +482,31 @@ class Workspace:
             location=location,
             backend=backend,
             engines=backend.open_file(path, writable=not readonly),
+        )
+
+    def attach(self, url: str | URL, tag: str, *, writable: bool = False) -> None:
+        """Open any datasource SQLAlchemy can reach, under ``tag``.
+
+        **The URL is the abstraction.** It carries which database this is,
+        SQLAlchemy parses it, and :func:`dialects.backend_for` looks up whatever
+        that dialect adds — finding nothing, most of the time, which is the
+        ordinary case and not a failure. Nothing in this method knows or asks
+        what is on the other end.
+
+        A tag opened this way is a tag like any other: the same ``query``, the
+        same ``describe``, the same ``insert_frame``. There is deliberately no
+        second code path for "remote" datasources, because a second path is how
+        one of them silently stops supporting a verb the other has.
+        """
+        parsed = make_url(url)
+        safe = parsed.render_as_string(hide_password=True)
+        backend = backend_for(parsed.get_backend_name())
+        self._install(
+            tag,
+            uri=safe,
+            location=safe,
+            backend=backend,
+            engines=backend.open(parsed, writable=writable),
         )
 
     def _install(
