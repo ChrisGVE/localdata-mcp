@@ -138,6 +138,9 @@ def _column_payload(column: Any) -> dict[str, Any]:
                 "storage_classes": column.storage_classes,
                 "numeric_values": column.numeric_values,
                 "non_numeric_values": column.non_numeric_values,
+                # The values, not only their count: the count says a filter is
+                # needed, these say what it must exclude.
+                "non_numeric_examples": list(column.non_numeric_examples),
             }
             if column.is_mixed
             else {}
@@ -158,12 +161,38 @@ def _table_payload(info: TableInfo) -> dict[str, Any]:
 
 
 def _mixed_column_warning(info: TableInfo) -> str:
+    """Say which columns are mixed, and how to work around each one.
+
+    The remedy differs by *why* the column is mixed, and getting that wrong is
+    worse than saying nothing, because the instruction is followed. This warning
+    used to prescribe ``typeof(col)='integer'`` for both kinds; on the kind a CSV
+    always produces, every value is stored as text and that filter separates
+    nothing. Four of six agents in live validation ran it, got the whole column
+    back, and had to go and find the sentinel value themselves — so this now
+    names the values instead.
+    """
+    lines = []
+    for column in (c for c in info.columns if c.is_mixed):
+        if column.mixed_kind == "storage":
+            remedy = (
+                "values are stored under different types here, so filter with "
+                f"typeof({column.name})='integer' or CAST explicitly"
+            )
+        else:
+            listed = ", ".join(repr(value) for value in column.non_numeric_examples)
+            remedy = (
+                f"{column.non_numeric_values} of its values do not read as "
+                f"numbers ({listed}) while the rest do, and every one of them is "
+                f"stored as text — so typeof() cannot tell them apart. Exclude "
+                f"them by value, as in WHERE {column.name} NOT IN ({listed}), "
+                f"and CAST the rest"
+            )
+        lines.append(f"{column.name}: {remedy}.")
+
     return (
-        f"In {info.tag}, table {info.name}: columns "
-        f"{', '.join(info.mixed_columns)} hold more "
-        f"than one storage class. Aggregates over such a column silently coerce "
-        f"text to 0 and keep it in the denominator, so avg() and sum() will be "
-        f"wrong. Filter with typeof(col)='integer' or CAST explicitly."
+        f"In {info.tag}, table {info.name}: aggregates over a mixed column "
+        f"silently coerce text to 0 and keep it in the denominator, so avg() and "
+        f"sum() will be wrong. " + " ".join(lines)
     )
 
 
@@ -258,6 +287,10 @@ def attach(
 
     A flat file becomes a new database holding one table named after the file; a
     SQLite database arrives with the tables it already has.
+
+    For a file, the answer already carries what it loaded — columns, types, row
+    count and any warning — so calling ``info`` straight afterwards returns the
+    same thing again. Go and ask the question instead.
 
     Args:
         database: A tabular file (.csv, .tsv, .txt), a SQLite database file, or a
@@ -386,8 +419,10 @@ def query(
     one into the other first, and the join is then ordinary SQL over two tables
     in the same database.
 
-    Writes (INSERT, UPDATE, CREATE TABLE) go through here too, and succeed only
-    where the datasource is writable.
+    **A query reads.** INSERT, UPDATE, CREATE TABLE, CREATE VIEW and PRAGMA are
+    refused here whatever the datasource permits — the connection this runs on
+    is read-only from the moment it opens. To add a table use ``add_table``, to
+    remove one ``drop_table``; those are what ``writable=true`` governs.
 
     Args:
         nickname: Which datasource executes the statement.
@@ -452,13 +487,19 @@ def add_table(
     than a join, so landing both sides in the same slot is what makes the lookup
     outlive the session.
 
+    The answer describes the table it read in, so ``info`` straight afterwards
+    tells you nothing new.
+
     Args:
         nickname: The datasource to add to. Must be writable.
         source: A file to read in.
         table: Name for the new table. Derived from the filename when omitted.
         join_on: A column shared with a table already in this datasource. Given
             one, the result reports which key values have no match on the other
-            side, in both directions.
+            side, in both directions. Each side is named after the table the
+            values are *missing from*, so ``missing_from_added`` holds keys that
+            are in the table already here and absent from the one just read in —
+            for a price lookup, those are the ones nothing can be priced from.
         join_table: Which existing table ``join_on`` refers to. Only needed when
             the datasource holds more than one.
     """

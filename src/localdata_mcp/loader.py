@@ -113,17 +113,23 @@ class ColumnInfo:
     #: many do not. Both zero for a column that is already numerically typed.
     numeric_values: int = 0
     non_numeric_values: int = 0
+    #: A few distinct values from ``non_numeric_values``, so a caller can write
+    #: the filter without first going to look. See :func:`_numeric_split`.
+    non_numeric_examples: tuple[str, ...] = ()
 
     @property
-    def is_mixed(self) -> bool:
-        """True when the column holds values of more than one kind.
+    def mixed_kind(self) -> str | None:
+        """Which signal made this column mixed, or ``None`` if it is not.
 
-        Worth surfacing, because **aggregates over a mixed column silently
-        coerce text to 0 and keep it in the denominator** — the average of
-        1..5 plus two text rows returns 2.14, not 3.0. No choice of column
-        affinity fixes that; it is a property of the aggregate. A caller told
-        about it can work around it with ``WHERE typeof(col)='integer'`` or an
-        explicit ``CAST``.
+        The two are not interchangeable, and the difference decides the remedy:
+
+        * ``"storage"`` — the values are stored under genuinely different
+          classes, so ``typeof(col)`` tells them apart and can filter them.
+        * ``"text"`` — every value is stored as text and only some of them
+          *read* as numbers. ``typeof(col)`` answers ``'text'`` for all of them,
+          so that filter separates nothing; the values themselves are what a
+          filter has to name, which is why they are carried in
+          ``non_numeric_examples``.
 
         Two signals, because one of them alone misses the common case. The
         storage-class count catches genuinely heterogeneous storage. But a CSV
@@ -134,8 +140,21 @@ class ColumnInfo:
         """
         distinct_classes = [c for c in self.storage_classes if c != "null"]
         if len(distinct_classes) > 1:
-            return True
-        return self.numeric_values > 0 and self.non_numeric_values > 0
+            return "storage"
+        if self.numeric_values > 0 and self.non_numeric_values > 0:
+            return "text"
+        return None
+
+    @property
+    def is_mixed(self) -> bool:
+        """True when the column holds values of more than one kind.
+
+        Worth surfacing, because **aggregates over a mixed column silently
+        coerce text to 0 and keep it in the denominator** — the average of
+        1..5 plus two text rows returns 2.14, not 3.0. No choice of column
+        affinity fixes that; it is a property of the aggregate.
+        """
+        return self.mixed_kind is not None
 
 
 @dataclass(frozen=True)
@@ -252,14 +271,25 @@ def _declared_type(dtype: Any) -> str:
 #: peak allocation without changing its result — see :func:`_numeric_split`.
 _SCAN_BLOCK = 50_000
 
+#: How many distinct non-numeric values to carry out of the scan. Enough to
+#: write a filter from — real files use one or two sentinels — and bounded so a
+#: column of unique junk cannot return a copy of itself.
+MAX_NON_NUMERIC_EXAMPLES = 5
 
-def _numeric_split(series: pd.Series) -> tuple[int, int]:
+
+def _numeric_split(series: pd.Series) -> tuple[int, int, tuple[str, ...]]:
     """Count how many non-null values in a text column parse as numbers.
 
     A column where both counts are non-zero is the ordinary "mostly numbers,
     some junk" CSV column — the one whose ``avg()`` is silently wrong and whose
     storage-class histogram shows nothing, because every value was stored as
     text.
+
+    Also returns the first few distinct values that did *not* parse. The counts
+    alone say a filter is needed without saying what it must exclude, and the
+    caller's next move is always to go and look — measured on live agents, every
+    one of them spent a round trip on a ``GROUP BY`` to learn what this scan had
+    already seen.
 
     Scanned in blocks. ``pd.to_numeric`` over a whole column allocates a second
     array the length of the column, which made loading a 200,000-row file peak
@@ -269,6 +299,7 @@ def _numeric_split(series: pd.Series) -> tuple[int, int]:
     is the entire point of the check.
     """
     numeric = non_numeric = 0
+    examples: dict[str, None] = {}  # insertion-ordered, and deduplicating
     for start in range(0, len(series), _SCAN_BLOCK):
         block = series.iloc[start : start + _SCAN_BLOCK].dropna()
         if block.empty:
@@ -277,7 +308,12 @@ def _numeric_split(series: pd.Series) -> tuple[int, int]:
         block_numeric = int(parsed.notna().sum())
         numeric += block_numeric
         non_numeric += len(block) - block_numeric
-    return numeric, non_numeric
+        if len(examples) < MAX_NON_NUMERIC_EXAMPLES:
+            for value in block[parsed.isna()]:
+                examples.setdefault(str(value))
+                if len(examples) == MAX_NON_NUMERIC_EXAMPLES:
+                    break
+    return numeric, non_numeric, tuple(examples)
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
@@ -615,7 +651,15 @@ class Workspace:
             return known
 
         entry = self.entry(tag)
-        described = inspect(entry.engines.read).get_columns(table)
+        # Inspected over the *write* engine, as residency is, and for the same
+        # reason: this is the server asking about the schema, not the caller's
+        # SQL running. The read engine's authorizer refuses PRAGMA — rightly, it
+        # is what stops ``query`` reaching one — and SQLAlchemy's inspector is
+        # PRAGMA underneath, so inspecting there refuses every table the server
+        # did not load itself. No write ability is implied: a read-only
+        # datasource carries ``mode=ro`` on both engines and SQLite refuses the
+        # write whichever one asks.
+        described = inspect(entry.engines.write).get_columns(table)
         if not described:
             raise LoadError(f"No such table: {tag}.{table}")
 
@@ -642,11 +686,12 @@ class Workspace:
             for index, (name, sql_type) in enumerate(zip(columns, declared)):
                 kind = None
                 numeric = non_numeric = 0
+                examples: tuple[str, ...] = ()
                 if frame is not None:
                     series = frame[frame.columns[index]]
                     kind = binding.temporal_kind(series.dtype)
                     if sql_type == "TEXT":
-                        numeric, non_numeric = _numeric_split(series)
+                        numeric, non_numeric, examples = _numeric_split(series)
                 described.append(
                     ColumnInfo(
                         name=name,
@@ -657,6 +702,7 @@ class Workspace:
                         ),
                         numeric_values=numeric,
                         non_numeric_values=non_numeric,
+                        non_numeric_examples=examples,
                     )
                 )
         return described

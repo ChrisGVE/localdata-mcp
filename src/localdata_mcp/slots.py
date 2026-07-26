@@ -968,7 +968,7 @@ class Registry:
             row_count=int(rows or 0),
             columns=columns,
             source=slot.source,
-            schema=slot.nickname,
+            tag=slot.nickname,
         )
 
     def tables(self, nickname: str) -> tuple[str, ...]:

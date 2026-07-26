@@ -87,7 +87,9 @@ Two reasons, and the second is the one that bites later:
   first is what makes the lookup survivable.
 
 `join_on` names the column the two files share. Pass it, and the response tells
-you whether the match is actually complete.
+you whether the match is actually complete. That response also describes the
+table it read in, so — as with `attach` — there is nothing for an `info` call
+straight afterwards to add.
 
 **`query` will not write.** Not a permission you can ask for — a property of the
 verb. If you find yourself reaching for `INSERT` or `CREATE TABLE`, the answer is
@@ -144,7 +146,25 @@ result is genuinely ambiguous.
 **Mixed columns.** `attach` warns when a column holds both numbers and text.
 This is not pedantry: `avg()` over such a column silently counts the text rows
 as zero and keeps them in the denominator, so the average is wrong and nothing
-says so. Tell the user, and filter with `WHERE typeof(col)='integer'` or `CAST`.
+says so. Tell the user, and read the remedy out of the warning rather than
+reaching for a familiar one.
+
+There are two shapes, and only the warning knows which you have. When the
+values are stored under genuinely different types, `WHERE typeof(col)='integer'`
+separates them. When they came from a spreadsheet — the usual case — every value
+is stored as text and only some of them *read* as numbers, so `typeof()` answers
+`'text'` for all of them and that filter returns the whole column. There the
+warning names the offending values, and you exclude them by name:
+
+```
+"41 of its values do not read as numbers ('pending') …"
+  → WHERE unit_discount NOT IN ('pending')
+```
+
+Say what those rows are in the user's terms too — *"41 orders haven't had their
+discount set yet, so I left them out of the average"* — because whether to
+exclude them, treat them as zero, or go and fill them in is their call, not
+yours.
 
 **Ten datasources, and the oldest is dropped.** Check `evicted` in every
 `attach` response. `detach` what you have finished with rather than letting the

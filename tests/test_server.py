@@ -718,3 +718,140 @@ def test_every_tool_the_readme_names_actually_exists():
 
     # And the surface it documents is the whole surface, not a flattering slice.
     assert real <= claimed, f"README omits: {sorted(real - claimed)}"
+
+
+def test_mixed_column_warning_prescribes_a_filter_that_works(session):
+    """The remedy has to fit the column that triggered it.
+
+    Live-agent validation found this the hard way: four of six agents were told
+    to ``filter with typeof(col)='integer'``, tried exactly that, and got every
+    row back — a CSV column is declared TEXT, so every value's storage class is
+    text whatever it contains. An instruction that cannot work on the case that
+    produced it is worse than none, because it is followed.
+    """
+    (session / "sentinels.csv").write_text("v\n1\n2\n3\npending\n")
+    attached = call("attach", database=str(session / "sentinels.csv"))
+
+    warning = attached["warnings"][0]
+    # Not prescribed — and said not to work, because an agent reaches for it
+    # unprompted and needs telling why the whole column comes back.
+    assert "typeof(v)='integer'" not in warning
+    assert "typeof() cannot tell them apart" in warning
+    # It names the values, so the caller can write the filter without a round trip.
+    assert "pending" in warning
+
+    column = attached["loaded"][0]["columns"][0]
+    assert column["non_numeric_examples"] == ["pending"]
+
+    # And the filter the warning does prescribe returns the numbers, nothing else.
+    result = call(
+        "query",
+        nickname=attached["nickname"],
+        sql="SELECT avg(CAST(v AS REAL)) FROM sentinels WHERE v NOT IN ('pending')",
+    )
+    assert result["rows"][0][0] == pytest.approx(2.0)
+
+
+def test_storage_class_mixture_still_gets_the_typeof_remedy(session):
+    """Where ``typeof`` does discriminate, it is still the right answer."""
+    external = session / "heterogeneous.sqlite"
+    with sqlite3.connect(external) as conn:
+        conn.execute("CREATE TABLE t (v)")
+        conn.executemany("INSERT INTO t VALUES (?)", [(1,), (2,), ("pending",)])
+
+    call("attach", database=str(external), nickname="ext")
+    warning = call("info", nickname="ext", table="t")["warnings"][0]
+    assert "typeof" in warning
+
+
+def test_query_does_not_advertise_writes_it_refuses(session):
+    """The docstring is what an agent without the skill reads, and it lied.
+
+    It said writes 'go through here too, and succeed only where the datasource is
+    writable', while the tool refuses every one of them on any datasource. An
+    agent found the contradiction against the server instructions unprompted.
+    """
+    documented = {tool.name: tool.description for tool in listed_tools()}["query"]
+    assert "reads" in documented
+    assert not re.search(r"[Ww]rites.*(go through|succeed)", documented)
+
+    attached = call("attach", database=str(session / "simple.csv"))
+    refused = call(
+        "query",
+        nickname=attached["nickname"],
+        sql="INSERT INTO simple (id) VALUES (1)",
+    )
+    assert refused["ok"] is False
+    assert "does not write" in refused["error"]
+
+
+def test_attach_and_add_table_say_their_answer_needs_no_info_call(session):
+    """Three of three skill-less agents called ``info`` straight after ``attach``.
+
+    Every one of them reported the call as waste: the payload was identical to
+    what they already held. The skill says not to; the docstrings — all a bare
+    agent gets — did not.
+    """
+    documented = {tool.name: tool.description for tool in listed_tools()}
+    for name in ("attach", "add_table"):
+        assert "info" in documented[name], f"{name} never mentions the redundant call"
+
+
+def test_readme_never_teaches_a_qualified_table_name(session):
+    """The addressing that ``ATTACH`` made possible, outliving ``ATTACH``.
+
+    This is the fourth time the project has written an implementation
+    side-effect up as a specification, and the second time this particular one
+    survived its own removal — in the README's two worked examples, hours after
+    every other document had been corrected. A grep is cheaper than a fifth time.
+    """
+    readme = (Path(__file__).parent.parent / "README.md").read_text()
+    # `FROM shop.sales`, `JOIN sales.prices s` — a dotted name in shipped SQL.
+    taught = re.findall(r"(?:FROM|JOIN)\s+([a-z_]+\.[a-z_]+)", readme)
+    assert not taught, f"README still teaches qualified table names: {taught}"
+
+
+def test_info_describes_a_table_inside_an_attached_database(session):
+    """The whole "attach a SQLite file" datasource class had no describe at all.
+
+    Found by driving the surface as an agent rather than by a test: every table
+    the server loaded itself is described from what it remembered loading, so the
+    suite never reached the other branch — the one that asks the database. That
+    branch inspected over the read engine, whose authorizer refuses PRAGMA, and
+    SQLAlchemy's inspector speaks PRAGMA. It did not fail politely either: the
+    driver error escaped as a protocol error rather than as a refusal an agent
+    could read.
+    """
+    external = session / "kept.sqlite"
+    with sqlite3.connect(external) as conn:
+        conn.execute("CREATE TABLE notes (id INTEGER, note TEXT)")
+        conn.executemany("INSERT INTO notes VALUES (?, ?)", [(1, "a"), (2, "b")])
+
+    call("attach", database=str(external), nickname="kept")
+
+    detail = call("info", nickname="kept", table="notes")
+    assert detail["ok"] is True
+    assert [column["name"] for column in detail["columns"]] == ["id", "note"]
+    assert detail["rows"] == 2
+
+    # And at the altitude above it, which describes every table in the slot.
+    slot = call("info", nickname="kept")
+    assert slot["ok"] is True
+    assert slot["contents"] == [{"table": "notes", "rows": 2}]
+
+
+def test_a_saved_database_can_be_described_when_it_comes_back(session):
+    """Arc 2's return journey: keep it this week, open it next week.
+
+    ``save`` then ``attach`` is the sequence the whole "keep this" promise rests
+    on, and the first thing anyone does with a database they have just reopened
+    is ask what is in it.
+    """
+    attached = call("attach", database=str(session / "simple.csv"))
+    call("save", nickname=attached["nickname"], path=str(session / "kept.db"))
+    call("detach", nickname=attached["nickname"])
+
+    reopened = call("attach", database=str(session / "kept.db"), nickname="lastweek")
+    described = call("info", nickname="lastweek", table=reopened["tables"][0])
+    assert described["ok"] is True
+    assert described["columns"]

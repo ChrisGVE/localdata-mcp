@@ -19,6 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from localdata_mcp import config as config_module
 from localdata_mcp import export as export_module
 from localdata_mcp.config import Config
+from localdata_mcp import loader as loader_module
 from localdata_mcp.loader import LoadError, Workspace
 from localdata_mcp.paths import PathNotAllowed
 
@@ -473,3 +474,56 @@ def test_export_round_trips_back_into_the_workspace(workspace, root):
 
     reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
     assert reloaded.row_count == len(rows)
+
+
+def test_mixed_text_column_names_the_values_that_do_not_parse(workspace, root):
+    """The counts alone cost a caller a round trip to learn what the junk *is*.
+
+    Live-agent validation: every agent shown ``non_numeric_values: 41`` spent its
+    next call running a GROUP BY to find out which value that was, because the
+    answer decides the filter it has to write. The loader already sees those
+    values while it counts them; carrying a bounded sample out is what turns the
+    warning into something actionable.
+    """
+    target = root / "sentinels.csv"
+    target.write_text("v\n1\n2\n3\npending\npending\nvoid\n")
+    column = workspace.load_file(str(target), "main").columns[0]
+
+    assert column.numeric_values == 3
+    assert column.non_numeric_values == 3
+    # Distinct and bounded, not one entry per offending row.
+    assert column.non_numeric_examples == ("pending", "void")
+
+
+def test_non_numeric_examples_are_capped(workspace, root):
+    """A column of unique junk must not return a copy of itself."""
+    values = "\n".join(f"junk_{n}" for n in range(50))
+    target = root / "many_sentinels.csv"
+    target.write_text(f"v\n1\n2\n{values}\n")
+    column = workspace.load_file(str(target), "main").columns[0]
+
+    assert column.non_numeric_values == 50
+    assert len(column.non_numeric_examples) == loader_module.MAX_NON_NUMERIC_EXAMPLES
+
+
+def test_mixed_kind_says_which_signal_fired(workspace, root):
+    """Two signals, two different remedies — so the caller must be told which.
+
+    ``typeof(col)='integer'`` separates the values only when the storage classes
+    genuinely differ. On a TEXT-affinity column every value is stored as text,
+    that filter matches nothing useful, and prescribing it sends the caller down
+    a road with no end.
+    """
+    target = root / "affinity.csv"
+    target.write_text("v\n1\n2\npending\n")
+    assert workspace.load_file(str(target), "main").columns[0].mixed_kind == "text"
+
+    external = root / "heterogeneous.sqlite"
+    with sqlite3.connect(external) as conn:
+        conn.execute("CREATE TABLE t (v)")  # no declared type: dynamic storage
+        conn.executemany("INSERT INTO t VALUES (?)", [(1,), (2,), ("pending",)])
+
+    workspace.attach_file("ext", external, readonly=True)
+    described = workspace.describe("ext", "t").columns[0]
+    assert described.storage_classes == {"integer": 2, "text": 1}
+    assert described.mixed_kind == "storage"

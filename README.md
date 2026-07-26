@@ -53,8 +53,8 @@ Add it to your MCP client configuration:
 Then point it at a file and ask:
 
 ```python
-attach("./sales.csv")                     # → {"nickname": "sales", "tables": ["sales.sales"], ...}
-query("sales", "SELECT sku, sum(qty) FROM sales.sales GROUP BY sku")
+attach("./sales.csv")                     # → {"nickname": "sales", "tables": ["sales"], ...}
+query("sales", "SELECT sku, sum(qty) FROM sales GROUP BY sku")
 ```
 
 `attach` derives the nickname from the filename and **returns the one it
@@ -82,7 +82,7 @@ uses `add_table`, not a second `attach`:
 attach("./sales.csv")                                              # → "sales"
 add_table("sales", source="./prices.csv", join_on="sku")
 query("sales", "SELECT s.sku, s.qty * p.price AS total "
-               "FROM sales.sales s JOIN sales.prices p ON s.sku = p.sku")
+               "FROM sales s JOIN prices p ON s.sku = p.sku")
 ```
 
 `query` reads and only reads — `INSERT`, `CREATE TABLE`, `CREATE VIEW` and the
