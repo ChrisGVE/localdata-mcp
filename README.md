@@ -16,9 +16,16 @@
 SQL over your local data files, for LLM agents.
 
 **Every datasource becomes a database.** A CSV, a TSV, a SQLite file — each is
-attached under a nickname and addressed as `nickname.table`. That one idea is why
-a spreadsheet and a database join in a single ordinary statement, and why there
-are seven tools here rather than seventy.
+attached under a nickname, and each call names the nickname it is for. That one
+idea is why a spreadsheet and a SQLite file are the same kind of thing here, and
+why there are seven tools rather than seventy: a database already has verbs, and
+they are the same verbs whatever filled it.
+
+Tables are addressed by their own names inside the datasource you named —
+`query(nickname="shop", sql="SELECT * FROM sales")`. To look one file up against
+another, `add_table` copies the second into the first and reports whether their
+keys line up; the join is then an ordinary statement over two tables in one
+database.
 
 > **Rebuild in progress.** This branch is a ground-up rewrite. It currently
 > supports flat files (`.csv`, `.tsv`, `.txt`) and SQLite, done properly — see
@@ -120,10 +127,10 @@ on is refused either way, forced or not.
 
 These are deliberate, and each one is measured rather than assumed.
 
-- **Ten datasources at once.** SQLite refuses the eleventh `ATTACH`, and every
-  slot is an attached database — so the ceiling is not a policy choice. The
-  oldest is evicted when the limit is reached, and the eviction is *reported*
-  with everything needed to rebuild it.
+- **Ten datasources at once.** A chosen number, not a forced one: each slot
+  holds live connections and, until it is spilled, memory. The oldest is evicted
+  when the limit is reached, and the eviction is *reported* with everything
+  needed to rebuild it.
 - **Write is not the default.** Anything attached from outside is read-only; the
   grant is per-attach and is carried by the connection's own URI, so SQLite
   enforces it rather than a check that could be reached around. A database built

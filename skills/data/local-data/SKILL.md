@@ -13,14 +13,20 @@ people actually talk about their data — that lives here.
 ## The one thing to understand first
 
 **Every datasource becomes a database, and a database holds tables.** Even one
-lonely CSV. So a question about `sales.csv` becomes SQL naming a table inside a
-database:
+lonely CSV. The call names the database; the SQL names the table inside it:
 
-```sql
-SELECT sum(qty) FROM shop.sales
+```
+query(nickname="shop", sql="SELECT sum(qty) FROM sales")
 ```
 
 `shop` is the nickname of the database; `sales` is the table the file became.
+Write the table's own name — `FROM sales`, never `FROM shop.sales`, which reads
+as a table called `sales` in a database called `shop` that this statement was
+never pointed at.
+
+**One statement reaches one datasource.** There is no join across nicknames; to
+put two files together, land one inside the other with `add_table` first.
+
 Users will not talk this way — they say *"the sales file"* — and the translation
 is yours to do silently. Never make someone say "table".
 
@@ -73,7 +79,8 @@ add_table(nickname="shop", source="/path/prices.csv", join_on="sku")
 
 Two reasons, and the second is the one that bites later:
 
-- One database, so `shop.sales` and `shop.prices` join in plain SQL.
+- One database, so `sales` and `prices` join in plain SQL — which is the
+  only way to query them together, since a statement reaches one nickname.
 - **`save` writes one database, not a join.** Attach the two files separately
   and you get an answer now and nothing to keep — the moment the session ends,
   the relationship between them is gone. Landing the second file inside the

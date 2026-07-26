@@ -10,8 +10,10 @@ kinds of source, so a block that is wrong here is wrong everywhere later.
 **A slot is a database.** Not a table, not a file — a database, addressed by a
 nickname. A CSV becomes a fresh in-memory database holding one table named after the
 file; a SQLite file arrives with the tables it already has; a service URL becomes its
-own engine. Because all three are databases, addressing is uniformly `nickname.table`
-and a join across two datasources is ordinary SQL.
+own engine. Because all three are databases, the same seven verbs work on any of them.
+Each call names one datasource and the SQL addresses tables inside it by their own
+names; putting two datasources together is `add_table`, which copies one into the
+other and says whether the keys line up.
 
 That premise was already true of the registry. What level 0 changes is the *verbs*:
 they were file verbs wearing database names. Attach made a database, and after that you
