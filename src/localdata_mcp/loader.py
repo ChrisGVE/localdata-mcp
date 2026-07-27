@@ -458,14 +458,60 @@ def _numeric_split(series: pd.Series) -> tuple[int, int, tuple[str, ...]]:
     return numeric, non_numeric, tuple(examples)
 
 
-def _read_csv(path: Path) -> ReadResult:
-    # `keep_default_na` is left on: pandas' blank/NA handling is what turns an
-    # empty cell into NULL rather than the string "".
-    return _one(pd.read_csv(path))
+#: Delimiters worth naming in a warning. The character that separated the file
+#: is never among the candidates, because a column name cannot contain it.
+_COMMON_DELIMITERS = {";": "';'", "\t": "a tab", "|": "'|'", ",": "','"}
 
 
-def _read_tsv(path: Path) -> ReadResult:
-    return _one(pd.read_csv(path, sep="\t"))
+def _delimited(separator: str) -> Reader:
+    """A reader for character-separated text, at a given separator.
+
+    The default separator comes from the extension — comma for ``.csv`` and
+    ``.txt``, tab for ``.tsv`` — and an explicit ``delimiter`` replaces the
+    reader rather than being threaded through every other format's signature.
+    """
+
+    def read(path: Path) -> ReadResult:
+        # `keep_default_na` is left on: pandas' blank/NA handling is what turns
+        # an empty cell into NULL rather than the string "".
+        frame = pd.read_csv(path, sep=separator)
+        return _one(frame, _fat_column_note(frame, separator, path.name))
+
+    return read
+
+
+def _fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str, ...]:
+    """Say when a file has plainly been read at the wrong separator.
+
+    The parameter alone does not fix the silent failure: a caller who does not
+    know the file is semicolon-separated gets one column holding every field and
+    no signal at all — the whole header becomes the column's name. One column
+    whose *name* still contains a common delimiter is that, and nothing else, so
+    it is worth saying and worth naming the parameter that fixes it.
+
+    This states what it found; it does not re-read the file at the guessed
+    separator. Sniffing is the fail-open shape this project keeps being bitten
+    by, and a guess that is usually right is the worst kind.
+    """
+    if len(frame.columns) != 1:
+        return ()
+
+    column = str(frame.columns[0])
+    found = [
+        spelling
+        for character, spelling in _COMMON_DELIMITERS.items()
+        if character != separator and character in column
+    ]
+    if not found:
+        return ()
+
+    return (
+        f"{name} loaded as a single column whose name contains "
+        f"{' and '.join(found)}, which is what a file separated by something "
+        f"other than {_COMMON_DELIMITERS[separator]} looks like when read at "
+        f"{_COMMON_DELIMITERS[separator]}. If that is the case, attach it again "
+        f"with delimiter set to the right character. Nothing here guesses it.",
+    )
 
 
 def _read_json(path: Path) -> ReadResult:
@@ -976,9 +1022,9 @@ def _json_kind(value: object) -> str:
 #: Extension to reader. The seam through which new formats arrive — a new entry
 #: is the whole change, because everything downstream works from the DataFrame.
 READERS: dict[str, Reader] = {
-    ".csv": _read_csv,
-    ".tsv": _read_tsv,
-    ".txt": _read_csv,
+    ".csv": _delimited(","),
+    ".tsv": _delimited("\t"),
+    ".txt": _delimited(","),
     ".json": _read_json,
     ".jsonl": _read_jsonl,
     ".ndjson": _read_jsonl,
@@ -998,18 +1044,39 @@ READERS: dict[str, Reader] = {
     ".htm": _read_html,
 }
 
+#: The formats a delimiter means anything for. Everything else carries its own
+#: structure, so being handed a separator for one is a caller's mistake.
+DELIMITED = {".csv", ".tsv", ".txt"}
 
-def read_file(path: Path) -> ReadResult:
-    """Read a tabular file into a frame, touching no database state.
+
+def read_file(path: Path, *, delimiter: str | None = None) -> ReadResult:
+    """Read a tabular file into frames, touching no database state.
 
     Separate from the insert so a caller can find out whether a file is readable
     *before* committing to it. That ordering matters once slots are limited: a
     file that cannot be parsed must not cost a live datasource its place.
+
+    ``delimiter`` replaces the separator the extension implied, and applies only
+    to the delimited formats. Passing it for a format that has no separator is
+    refused rather than ignored: a caller who set it believes it did something.
     """
-    reader = READERS.get(path.suffix.lower())
+    suffix = path.suffix.lower()
+    reader = READERS.get(suffix)
     if reader is None:
         supported = ", ".join(sorted(READERS))
         raise LoadError(f"No reader for {path.suffix!r}. Supported: {supported}")
+
+    if delimiter is not None:
+        if suffix not in DELIMITED:
+            listed = ", ".join(sorted(DELIMITED))
+            raise LoadError(
+                f"delimiter does not apply to {suffix} — only to character-"
+                f"separated text ({listed}). {path.name} has its own structure "
+                f"and nothing here needs to be told how to split it."
+            )
+        if len(delimiter) != 1:
+            raise LoadError(f"delimiter must be a single character, not {delimiter!r}.")
+        reader = _delimited(delimiter)
 
     try:
         result = reader(path)
@@ -1355,7 +1422,11 @@ class Workspace:
     # -- loading -----------------------------------------------------------
 
     def load_file(
-        self, raw_path: str, tag: str, table_name: str | None = None
+        self,
+        raw_path: str,
+        tag: str,
+        table_name: str | None = None,
+        delimiter: str | None = None,
     ) -> list[TableInfo]:
         """Read a tabular file into ``tag`` and describe every table that landed.
 
@@ -1364,7 +1435,7 @@ class Workspace:
         in the file and unreachable through the server.
         """
         path = resolve_read_path(raw_path)
-        read = read_file(path)
+        read = read_file(path, delimiter=delimiter)
 
         if len(read.tables) > 1 and table_name is not None:
             named = ", ".join(str(table.name) for table in read.tables)

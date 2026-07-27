@@ -1054,3 +1054,56 @@ def test_apple_numbers_is_read_without_its_empty_grid(workspace, root):
 
     _, rows = workspace.query("main", "SELECT sum(salary) FROM staff")
     assert rows[0][0] == 255000
+
+
+# ---------------------------------------------------------------------------
+# The delimiter: a fact about the source the caller often knows
+# ---------------------------------------------------------------------------
+
+
+def test_a_semicolon_file_loads_as_one_fat_column_and_says_so(workspace, root):
+    """The silent failure the parameter exists for. Without the warning it is invisible."""
+    (info,) = workspace.load_file(str(root / "semicolons.csv"), "main")
+
+    assert len(info.columns) == 1
+    assert len(info.notes) == 1
+    assert "delimiter" in info.notes[0]
+    assert "';'" in info.notes[0]  # names the one it found, not a list to guess from
+
+
+def test_the_delimiter_parameter_reads_the_same_file_properly(workspace, root):
+    (info,) = workspace.load_file(str(root / "semicolons.csv"), "main", delimiter=";")
+
+    assert [c.name for c in info.columns] == ["name", "role", "salary"]
+    assert info.row_count == 2
+    assert info.notes == ()
+
+    _, rows = workspace.query("main", "SELECT sum(salary) FROM semicolons")
+    assert rows[0][0] == 255000
+
+
+def test_a_tsv_still_defaults_to_tab(workspace, root):
+    """The default is per extension. A flat comma default would regress this."""
+    (info,) = workspace.load_file(str(root / "mixed_tabs.tsv"), "main")
+    assert len(info.columns) > 1
+
+
+def test_an_explicit_delimiter_overrides_what_the_extension_implied(workspace, root):
+    (info,) = workspace.load_file(str(root / "pipes.txt"), "main", delimiter="|")
+    assert [c.name for c in info.columns] == ["name", "role"]
+
+
+def test_a_delimiter_on_a_format_that_has_none_is_refused(workspace, root):
+    """Silently ignoring it would leave the caller believing it did something."""
+    with pytest.raises(LoadError, match="delimiter"):
+        workspace.load_file(str(root / "records.json"), "main", delimiter=";")
+
+
+def test_nothing_sniffs_the_delimiter(workspace, root):
+    """A sniffer that is right most of the time is the fail-open shape, not a fix.
+
+    The semicolon file above must still load as one column by default — if some
+    later change starts guessing, this fails.
+    """
+    (info,) = workspace.load_file(str(root / "semicolons.csv"), "main")
+    assert len(info.columns) == 1

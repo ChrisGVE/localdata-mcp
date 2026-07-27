@@ -350,12 +350,17 @@ def _failed(exc: Exception) -> dict[str, Any]:
 
 @mcp.tool
 def attach(
-    database: str, nickname: str | None = None, writable: bool = False
+    database: str,
+    nickname: str | None = None,
+    writable: bool = False,
+    delimiter: str | None = None,
 ) -> dict[str, Any]:
     """Attach a datasource as a database, and return the nickname it got.
 
     A flat file becomes a new database holding one table named after the file; a
-    SQLite database arrives with the tables it already has.
+    SQLite database arrives with the tables it already has. A file that holds
+    several tables — a workbook's sheets, a page's tables — becomes a database
+    holding all of them, under the names the file gives them.
 
     For a file, the answer already carries what it loaded — columns, types, row
     count and any warning — so calling ``info`` straight afterwards returns the
@@ -372,6 +377,12 @@ def attach(
             nickname that comes back rather than the one you asked for.
         writable: Allow writes to a datasource that came from outside. Ignored
             for a flat file, whose database is built here and always writable.
+        delimiter: The character separating fields, for .csv/.tsv/.txt only.
+            Defaults to what the extension implies — comma for .csv and .txt,
+            tab for .tsv. Set it when you know the file uses something else;
+            nothing here sniffs for it, so a semicolon-separated file read
+            without this loads as one column holding every field. The warning
+            says so when it happens.
 
     Refuses a datasource that is already attached, naming the slot holding it.
     ``collided_with`` says which live slot forced a suffix, and ``evicted``
@@ -380,7 +391,9 @@ def attach(
     with _lock:
         registry = _session()
         try:
-            attachment = registry.attach(database, nickname, writable=writable)
+            attachment = registry.attach(
+                database, nickname, writable=writable, delimiter=delimiter
+            )
         except (SlotError, PathNotAllowed) as exc:
             return _failed(exc)
         return _attachment_payload(attachment, registry)
@@ -565,6 +578,7 @@ def create(
     table: str | None = None,
     source: str | None = None,
     columns: list[str] | None = None,
+    delimiter: str | None = None,
 ) -> dict[str, Any]:
     """Create a table or an index inside a datasource that is already open.
 
@@ -594,6 +608,9 @@ def create(
         source: For a table, the file to read in. Required for ``type="table"``.
         columns: For an index, the columns to index, in order. Required for
             ``type="index"``.
+        delimiter: For a table read from .csv/.tsv/.txt, the character
+            separating fields. Means the same here as on ``attach``, including
+            that nothing sniffs for it.
     """
     with _lock:
         registry = _session()
@@ -605,7 +622,9 @@ def create(
                         "source=. To index an existing table, use type='index'."
                     )
                 return _table_created(
-                    registry.create_table(nickname, source=source, table=table)
+                    registry.create_table(
+                        nickname, source=source, table=table, delimiter=delimiter
+                    )
                 )
             if type == "index":
                 if table is None or not columns:

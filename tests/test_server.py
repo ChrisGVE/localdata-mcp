@@ -1088,3 +1088,83 @@ def test_a_json_file_with_two_tables_is_refused_over_the_wire(session):
     assert refused["ok"] is False
     assert "employees" in refused["error"] and "departments" in refused["error"]
     assert call("info")["slots_used"] == 0
+
+
+def test_the_delimiter_reaches_attach_over_the_wire(session):
+    proper = call(
+        "attach",
+        database=str(session / "semicolons.csv"),
+        nickname="staff",
+        delimiter=";",
+    )
+
+    assert proper["ok"] is True
+    assert [c["name"] for c in proper["loaded"][0]["columns"]] == [
+        "name",
+        "role",
+        "salary",
+    ]
+    assert "warnings" not in proper
+
+
+def test_without_it_the_same_file_warns_and_names_the_parameter(session):
+    """The warning is what makes the parameter discoverable at all."""
+    loaded = call("attach", database=str(session / "semicolons.csv"), nickname="staff")
+
+    assert loaded["ok"] is True
+    assert len(loaded["loaded"][0]["columns"]) == 1
+    assert any("delimiter" in warning for warning in loaded["warnings"])
+
+
+def test_a_delimiter_is_refused_on_a_datasource_that_has_none(session):
+    target = session / "shop.db"
+    _build_database(target)
+
+    refused = call("attach", database=str(target), nickname="shop", delimiter=";")
+
+    assert refused["ok"] is False
+    assert "delimiter" in refused["error"]
+
+
+def test_the_delimiter_is_on_create_too(session):
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+
+    added = call(
+        "create",
+        nickname="staff",
+        type="table",
+        source=str(session / "semicolons.csv"),
+        table="extra",
+        delimiter=";",
+    )
+
+    assert added["ok"] is True
+    assert [c["name"] for c in added["columns"]] == ["name", "role", "salary"]
+
+
+def test_a_workbook_attaches_as_a_database_of_sheets(session):
+    attached = call("attach", database=str(session / "workbook.xlsx"), nickname="book")
+
+    assert attached["ok"] is True
+    # `tables` is what the database holds, listed as the database lists it;
+    # `loaded` is what was read, in the order the sheets appear.
+    assert sorted(attached["tables"]) == ["departments", "staff"]
+    assert [one["table"] for one in attached["loaded"]] == ["staff", "departments"]
+
+    answer = call("query", nickname="book", sql="SELECT sum(salary) AS t FROM staff")
+    assert answer["rows"][0][0] == 353000
+
+
+def test_create_refuses_a_multi_table_source_and_points_at_attach(session):
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+
+    refused = call(
+        "create",
+        nickname="staff",
+        type="table",
+        source=str(session / "workbook.xlsx"),
+        table="everything",
+    )
+
+    assert refused["ok"] is False
+    assert "ttach the file" in refused["error"]

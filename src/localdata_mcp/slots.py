@@ -221,7 +221,12 @@ class Registry:
     # -- attaching ----------------------------------------------------------
 
     def attach(
-        self, database: str, nickname: str | None = None, *, writable: bool = False
+        self,
+        database: str,
+        nickname: str | None = None,
+        *,
+        writable: bool = False,
+        delimiter: str | None = None,
     ) -> Attachment:
         """Open a datasource as a slot, evicting the oldest if the shelf is full.
 
@@ -233,6 +238,9 @@ class Registry:
         """
         scheme = url_scheme(database)
         if scheme is not None and not scheme.startswith("sqlite"):
+            # Refused rather than ignored, here and below: a caller who set it
+            # believes it did something, and a database has no delimiter.
+            self._refuse_pointless_delimiter(delimiter, "a database URL")
             return self._attach_url(database, nickname, writable=writable)
 
         path = self._resolve(database, scheme)
@@ -244,12 +252,13 @@ class Registry:
             # cost a live datasource its place — every refusal above and here
             # happens while the shelf is still untouched.
             try:
-                read = read_file(path)
+                read = read_file(path, delimiter=delimiter)
             except LoadError as exc:
                 raise AttachRefused(str(exc)) from exc
             evicted = self._make_room()
             slot = self._attach_frame(read, path, chosen)
         elif self._is_sqlite(path):
+            self._refuse_pointless_delimiter(delimiter, "a SQLite database")
             evicted = self._make_room()
             # An outside database is read-only unless the caller granted write.
             slot = self._attach_database(path, chosen, writable=writable)
@@ -262,6 +271,14 @@ class Registry:
 
         self._slots[chosen] = slot
         return Attachment(slot=slot, evicted=evicted, collided_with=collision)
+
+    @staticmethod
+    def _refuse_pointless_delimiter(delimiter: str | None, kind: str) -> None:
+        if delimiter is not None:
+            raise AttachRefused(
+                f"delimiter says how to split character-separated text, and "
+                f"this is {kind} — there is nothing for it to do here. Drop it."
+            )
 
     # -- naming a slot ------------------------------------------------------
 
@@ -512,7 +529,12 @@ class Registry:
         return self._release(nickname)
 
     def create_table(
-        self, nickname: str, *, source: str, table: str | None = None
+        self,
+        nickname: str,
+        *,
+        source: str,
+        table: str | None = None,
+        delimiter: str | None = None,
     ) -> TableInfo:
         """Land another table inside a database that is already open.
 
@@ -536,7 +558,7 @@ class Registry:
                 f"{self._workspace.describe(nickname, name).row_count} rows. Drop "
                 f"it first if you meant to replace it."
             )
-        return self._read_into(slot, name, source)
+        return self._read_into(slot, name, source, delimiter=delimiter)
 
     def create_index(
         self, nickname: str, *, table: str, columns: Sequence[str]
@@ -582,14 +604,16 @@ class Registry:
         except LoadError as exc:
             raise SlotError(str(exc)) from exc
 
-    def _read_into(self, slot: Slot, table: str, source: str) -> TableInfo:
+    def _read_into(
+        self, slot: Slot, table: str, source: str, *, delimiter: str | None = None
+    ) -> TableInfo:
         """Read a datasource into an existing slot as one more table."""
         try:
             path = resolve_read_path(source)
         except PathNotAllowed as exc:
             raise SlotError(str(exc)) from exc
         try:
-            read = read_file(path)
+            read = read_file(path, delimiter=delimiter)
             if len(read.tables) > 1:
                 named = ", ".join(str(one.name) for one in read.tables)
                 raise SlotError(
