@@ -394,6 +394,41 @@ def test_a_table_can_be_dropped(live):
 # ---------------------------------------------------------------------------
 
 
+def test_query_refuses_a_write_even_where_the_datasource_permits_it(live):
+    """``writable=true`` governs ``create`` and ``drop``, never ``query``.
+
+    The tool says so plainly, so an agent believes it: a statement that came
+    back ``ok`` is a statement that happened. On a server-side database the
+    write reaches a connection that never commits and is rolled back — which
+    from outside looks exactly like a statement that succeeded and returned no
+    rows. Reporting that as success is the lie this refuses.
+    """
+    attach_writable(live)
+    table = land_people(live)
+
+    written = call(
+        "query", nickname="endpoint", sql=f"INSERT INTO {table} VALUES ('x', 'y', 1)"
+    )
+
+    assert written["ok"] is False, written
+    # The refusal has to name where mutation lives, or the same statement is
+    # simply sent again.
+    assert "create" in written["error"]
+    assert call("query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}")[
+        "rows"
+    ] == [[5]]
+
+
+def test_query_refuses_ddl(live):
+    attach_writable(live)
+
+    made = call(
+        "query", nickname="endpoint", sql=f"CREATE TABLE {live.table('nope')} (a INT)"
+    )
+
+    assert made["ok"] is False, made
+
+
 def test_a_read_only_attach_refuses_create_and_drop(live):
     """The grant is the server's, not the credentials'."""
     attach_writable(live, nickname="writable")

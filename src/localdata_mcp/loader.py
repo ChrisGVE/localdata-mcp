@@ -104,6 +104,16 @@ _INSERT_CHUNK = 1_000
 #: the rest.
 _YIELD_PER = 1_000
 
+#: What a caller is told when the statement they sent was not a query. Written
+#: out here because it has to name the verb to use instead: an agent that is only
+#: told "no" retries the same statement.
+_NOT_A_READ = (
+    "That statement returns no rows, so it is not a read, and query only reads — "
+    "whatever the datasource itself permits. Composition has its own verbs: "
+    "create adds a table or an index, update renames a table, drop removes "
+    "either. A statement that does read returns rows even when it matches none."
+)
+
 
 # ---------------------------------------------------------------------------
 # What we record about what we loaded
@@ -328,6 +338,27 @@ _NO_SUCH_TABLE = re.compile(
     """,
     re.IGNORECASE,
 )
+
+
+def _objected_to_the_leading_verb(message: str, sql: str) -> bool:
+    """Whether the database refused the *kind* of statement, not its wording.
+
+    A streamed read is sent as a server-side cursor declaration, and PostgreSQL
+    will not declare a cursor over anything but a query — so ``INSERT`` arrives
+    as ``syntax error at or near "INSERT"``, which sends an agent hunting for a
+    typo it does not have. The refusal is real and correct; only the diagnosis is
+    wrong, and this is what corrects it.
+
+    Narrow on purpose. It fires only when the word the database objected to is
+    the statement's *own first word*, which is a complaint about what kind of
+    statement it is. A malformed query objects at whichever token is actually
+    wrong — never at its leading ``SELECT`` — so it falls through to the
+    driver's message, exactly as an unrecognised phrasing does.
+    """
+    words = sql.strip().split(None, 1)
+    if not words or "cursor for" not in message.lower():
+        return False
+    return f'"{words[0].lower()}"' in message.lower()
 
 
 def _missing_table(message: str) -> str | None:
@@ -1697,6 +1728,16 @@ class Workspace:
         Streamed nonetheless. ``yield_per`` bounds what the driver hands back at
         a time, which is what keeps the *server's* memory flat while the rows
         accumulate.
+
+        **A statement that returns no rows is not a read**, and is refused on
+        that ground alone — no SQL is parsed to decide it. A ``SELECT`` returns
+        rows even when it matches none, so the distinction is exact rather than
+        heuristic. This is the floor under every dialect: where the database
+        itself refuses a write on a read-only connection (SQLite's authorizer,
+        DuckDB's ``access_mode``, a read-only session on the servers that have
+        one) the refusal arrives before this, and where it does not, a write that
+        was quietly rolled back would otherwise be reported as a statement that
+        succeeded and returned nothing.
         """
         entry = self.entry(tag)
         entry.engines.refusal.take()
@@ -1706,7 +1747,7 @@ class Workspace:
                     stream_results=True, yield_per=_YIELD_PER
                 ).execute(text(sql))
                 if not result.returns_rows:
-                    return [], []
+                    raise LoadError(_NOT_A_READ)
                 names = list(result.keys())
                 return names, [tuple(row) for row in result]
         except SQLAlchemyError as exc:
@@ -1731,6 +1772,9 @@ class Workspace:
             )
 
         message = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
+        if _objected_to_the_leading_verb(message, sql):
+            return LoadError(_NOT_A_READ)
+
         stale = re.search(rf"no such table:\s*{re.escape(entry.tag)}\.(\w+)", message)
         if stale is not None:
             table = stale.group(1)
