@@ -1173,19 +1173,6 @@ def read_file(path: Path, *, delimiter: str | None = None) -> ReadResult:
 # ---------------------------------------------------------------------------
 
 
-#: How a file-based engine is told to open read-only, where it has a way to be
-#: told. Absent means the generic transactional floor is the guarantee — a read
-#: connection that never commits — which is what ``Backend.read_posture``
-#: documents as the baseline every dialect gets for nothing.
-_READ_ONLY_QUERY = {"duckdb": "access_mode=read_only"}
-
-
-def _file_url(dialect: str, location: str, *, readonly: bool) -> str:
-    url = f"{dialect}:///{location}"
-    query = _READ_ONLY_QUERY.get(dialect)
-    return f"{url}?{query}" if readonly and query else url
-
-
 def _unrepresentable(exc: BaseException) -> binding.UnrepresentableValue | None:
     """Find an unrepresentable-value error anywhere in a raised chain.
 
@@ -1285,20 +1272,13 @@ class Workspace:
         reading its header (``slots.FILE_SIGNATURES``). Naming a fact is not the
         same as guessing a type.
 
-        Only SQLite has an ``open_file``; every other file-based engine goes
-        through the ordinary URL path, because a URL is all SQLAlchemy needs and
-        a second bespoke opener per engine is exactly what the URL abstraction
-        exists to avoid.
+        **How a file becomes a URL is the backend's answer, not this method's.**
+        Every dialect has an ``open_file``, generic unless it has earned an
+        override, so nothing here asks which database it is holding.
         """
         backend = backend_for(dialect)
         location = str(path.resolve())
-
-        if dialect == "sqlite":
-            engines = backend.open_file(path, writable=not readonly)
-        else:
-            engines = backend.open(
-                _file_url(dialect, location, readonly=readonly), writable=not readonly
-            )
+        engines = backend.open_file(path, writable=not readonly)
 
         self._install(
             tag,

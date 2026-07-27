@@ -36,7 +36,7 @@ import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import (
     INTEGER,
@@ -62,6 +62,7 @@ from sqlalchemy.pool import StaticPool
 __all__ = [
     "BACKENDS",
     "Backend",
+    "DuckDBBackend",
     "Engines",
     "MySQLBackend",
     "Refusal",
@@ -131,6 +132,7 @@ class Engines:
         self.write.dispose()
 
 
+@dataclass(frozen=True)
 class Backend:
     """The per-dialect answers — and the generic ones are the whole answer.
 
@@ -148,7 +150,19 @@ class Backend:
 
     #: SQLAlchemy's own backend name for the dialect. Descriptive, so an error
     #: can say which database declined; never used to decide reachability.
-    name = "generic"
+    #:
+    #: Carried as a field rather than fixed per class so that an *unregistered*
+    #: dialect still knows its own name (:func:`backend_for` builds one). A
+    #: refusal that says "a generic datasource" names our fallback rather than
+    #: the database the caller opened, which is the same defect MariaDB being
+    #: registered in its own right exists to avoid.
+    name: str = "generic"
+
+    #: How this dialect is told, **in the URL**, to open a file read-only.
+    #: ``None`` means it has no way of being told, and the generic transactional
+    #: floor is the whole guarantee (see :meth:`read_posture`). A ``ClassVar``
+    #: because it is a property of the dialect, not of an instance.
+    read_only_query: ClassVar[str | None] = None
 
     def open(self, url: str | URL, *, writable: bool) -> Engines:
         """Two engines onto one datasource — one reading, one writing.
@@ -167,6 +181,27 @@ class Backend:
         )
         self.read_posture(engines.read, refusal)
         return engines
+
+    def open_file(self, path: Path, *, writable: bool) -> Engines:
+        """Open a database that lives in a file.
+
+        Generic because a file is reached by a URL like anything else:
+        ``dialect:///absolute/path``, which is all SQLAlchemy needs. This exists
+        as a method rather than as a branch in :mod:`loader` because the two
+        things a file open can differ in — how the path becomes a URL, and how
+        this dialect is told to open read-only — are both per-dialect facts, and
+        a per-dialect fact stated in shared code is a dispatch on dialect name
+        however it is spelled.
+
+        ``writable=False`` appends :attr:`read_only_query` where the dialect has
+        one. Where it has none, nothing is appended and nothing is lost: the
+        read engine still never commits, which is the floor :meth:`read_posture`
+        documents.
+        """
+        url = f"{self.name}:///{path.resolve()}"
+        if not writable and self.read_only_query:
+            url = f"{url}?{self.read_only_query}"
+        return self.open(url, writable=writable)
 
     def read_posture(self, engine: Engine, refusal: Refusal) -> None:
         """Make this engine's connections refuse to *persist* a write.
@@ -545,9 +580,16 @@ class SQLiteBackend(Backend):
 
         The target must not exist; SQLite refuses rather than overwriting, and
         that refusal is worth keeping rather than working around.
+
+        ``VACUUM INTO`` takes an *expression*, so the destination binds like any
+        other value — through ``text()`` and Core's own parameter style, rather
+        than through the driver's ``?``. Reaching for the driver's paramstyle
+        where Core has one is the kind of small bypass this module's docstring
+        warns about; it also ties this statement to pysqlite specifically for no
+        gain.
         """
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            conn.exec_driver_sql("VACUUM INTO ?", (str(target),))
+            conn.execute(text("VACUUM INTO :target"), {"target": str(target)})
 
     # -- storage classes ---------------------------------------------------
 
@@ -568,6 +610,30 @@ class SQLiteBackend(Backend):
             )
         ).all()
         return {storage_class: count for storage_class, count in rows}
+
+
+# ---------------------------------------------------------------------------
+# DuckDB
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DuckDBBackend(Backend):
+    """DuckDB, which can be *told* to open a file read-only.
+
+    The one thing it adds, and the reason it is registered at all: a read-only
+    posture carried by the URL. ``access_mode=read_only`` is refused by DuckDB
+    itself at open time, so a read connection cannot write however it is reached
+    — the same shape as SQLite's ``mode=ro``, and stronger than the generic
+    transactional floor, which allows the write and then discards it.
+
+    Everything else here is still the generic answer. This class deliberately
+    holds one fact; it used to live in :mod:`loader` as a dictionary keyed by
+    dialect name, which is a dispatch on dialect name wearing a different hat.
+    """
+
+    name: str = "duckdb"
+    read_only_query: ClassVar[str | None] = "access_mode=read_only"
 
 
 # ---------------------------------------------------------------------------
@@ -772,7 +838,6 @@ class MSSQLBackend(Backend):
 
 
 _SQLITE = SQLiteBackend()
-_GENERIC = Backend()
 
 #: Dialect name to the backend that has something *extra* to say about it. An
 #: absence here is not a gap: it means SQLAlchemy's own answers are the whole
@@ -783,6 +848,7 @@ _GENERIC = Backend()
 #: refusal names the database the caller actually opened.
 BACKENDS: dict[str, Backend] = {
     "sqlite": _SQLITE,
+    "duckdb": DuckDBBackend(),
     "mysql": MySQLBackend(),
     "mariadb": MySQLBackend(name="mariadb"),
     "oracle": OracleBackend(),
@@ -793,15 +859,22 @@ BACKENDS: dict[str, Backend] = {
 def backend_for(dialect: str) -> Backend:
     """The backend that answers for a dialect. Never a refusal.
 
-    An unknown dialect gets :data:`_GENERIC`, and that is the point: this server
-    reaches whatever SQLAlchemy reaches, and no database has to be enumerated
-    here to be usable. What an unregistered dialect loses is only the extras —
-    residency reads ``None`` (not zero: unknown, not empty), ``save`` says
-    plainly that there is no local database to write, and the storage-class
-    histogram is empty because a real type system makes it meaningless.
+    An unknown dialect gets a plain :class:`Backend` **carrying its own name**,
+    and that is the point: this server reaches whatever SQLAlchemy reaches, and
+    no database has to be enumerated here to be usable. What an unregistered
+    dialect loses is only the extras — residency reads ``None`` (not zero:
+    unknown, not empty), ``save`` says plainly that there is no local database to
+    write, and the storage-class histogram is empty because a real type system
+    makes it meaningless.
 
     That is the honest kind of degradation. The fail-open shape this project has
     been bitten by is a *guess* presented as a measurement; ``None`` and an
     explicit refusal are neither.
+
+    **The name is carried rather than defaulted to "generic"** because these
+    refusals are read by the caller: telling someone who opened PostgreSQL that
+    "a generic datasource" cannot be saved names our fallback instead of their
+    database. Same reason MariaDB is registered separately.
     """
-    return BACKENDS.get(dialect, _GENERIC)
+    known = BACKENDS.get(dialect)
+    return known if known is not None else Backend(name=dialect)
