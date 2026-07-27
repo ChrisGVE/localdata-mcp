@@ -761,6 +761,8 @@ def _read_html(path: Path) -> ReadResult:
     exist for, and loading only the first would be the workbook mistake again.
     """
     _require("lxml", "html", "Reading HTML")
+    from lxml import etree
+
     try:
         # `flavor` pinned: left unset, pandas falls through to html5lib when lxml
         # finds no table, and the caller is told to install html5lib rather than
@@ -769,6 +771,25 @@ def _read_html(path: Path) -> ReadResult:
     except ValueError as exc:
         # pandas says "No tables found", which does not name the file.
         raise LoadError(f"Could not read {path.name}: no table on the page.") from exc
+    except etree.XPathEvalError as exc:
+        # libxml2 says, in full, "unknown error". Measured cause: pandas locates
+        # tables with `//table`, and libxml2 abandons an XPath evaluation that
+        # traverses more than XPATH_MAX_NODES — 10,000,000, exactly. A row costs
+        # about `2 * columns + 2` nodes, so the ceiling is ~1,230,000 rows at
+        # three columns and ~400,000 at eleven. Above it every HTML file fails
+        # this way, whatever its size in bytes.
+        #
+        # Worth naming rather than passing through, because the failure is at
+        # the far end of a round trip this server will happily make: it *writes*
+        # an HTML table of any size, and cannot read that one back.
+        raise LoadError(
+            f"Could not read {path.name}: it holds more than the 10,000,000 "
+            f"document nodes lxml will search for a table (roughly "
+            f"2 x columns + 2 per row). The file is not damaged and nothing is "
+            f"wrong with the table — HTML is a presentation format and this one "
+            f"is too large to parse back. Ask for the same result as .parquet, "
+            f".csv or .jsonl, none of which have this limit."
+        ) from exc
     except Exception as exc:
         raise LoadError(f"Could not read {path.name}: {exc}") from exc
 

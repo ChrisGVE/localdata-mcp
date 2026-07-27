@@ -1043,6 +1043,45 @@ def test_a_page_with_no_table_is_refused(workspace, root):
         workspace.load_file(str(target), "main")
 
 
+@pytest.mark.slow
+def test_an_html_table_too_large_to_parse_says_so_instead_of_unknown_error(
+    workspace, root
+):
+    """lxml's own words for this are, in full, "unknown error".
+
+    Measured: pandas locates tables with ``//table``, and libxml2 abandons an
+    XPath evaluation past ``XPATH_MAX_NODES`` — 10,000,000, exactly. 1,230,000
+    three-column rows parse; 1,250,000 do not. A row costs about
+    ``2 * columns + 2`` nodes, which is why the wide benchmark corpus (1M x 11)
+    fails at a quarter of that row count.
+
+    Marked slow because the file has to be genuinely over the limit — there is
+    no smaller input that produces this failure, and a mocked one would test the
+    mock. The refusal is what matters: this server will *write* an HTML table of
+    any size and cannot read that one back, so the far end of a round trip it
+    offers has to say what happened and name a format that works.
+    """
+    target = root / "enormous.html"
+    cells = "".join(f"<td>v{column}</td>" for column in range(3))
+    with target.open("w") as handle:
+        handle.write(
+            "<table>\n<thead><tr><th>a</th><th>b</th><th>c</th></tr></thead>\n"
+        )
+        handle.write("<tbody>\n")
+        for _ in range(1_300_000):
+            handle.write(f"<tr>{cells}</tr>\n")
+        handle.write("</tbody>\n</table>\n")
+
+    with pytest.raises(LoadError) as raised:
+        workspace.load_file(str(target), "main")
+
+    message = str(raised.value)
+    assert "10,000,000" in message
+    assert "unknown error" not in message
+    # It names a way out, rather than only refusing.
+    assert ".parquet" in message
+
+
 def test_apple_numbers_is_read_without_its_empty_grid(workspace, root):
     """A Numbers table is a fixed canvas, so the cells past the data come back null."""
     (info,) = workspace.load_file(str(root / "payroll.numbers"), "main")
