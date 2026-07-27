@@ -719,6 +719,58 @@ class OracleBackend(Backend):
         return True
 
 
+# ---------------------------------------------------------------------------
+# SQL Server
+# ---------------------------------------------------------------------------
+
+
+#: The widest ``VARCHAR`` SQL Server will take before ``VARCHAR(max)``, which is
+#: a large object and cannot be part of an index key.
+_VARCHAR_MAX = 8000
+
+
+@dataclass(frozen=True)
+class MSSQLBackend(Backend):
+    """SQL Server, which renames tables by procedure and has no usable ``TEXT``.
+
+    Two things it cannot be asked in the portable way, and both are the kind
+    this module exists for — a statement that means something else here, rather
+    than one that is merely awkward.
+    """
+
+    name: str = "mssql"
+
+    def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:
+        """``VARCHAR`` sized from the data, because ``TEXT`` is a dead end here.
+
+        SQLAlchemy's portable ``Text`` renders ``TEXT``, which SQL Server has
+        deprecated and will not let into an index key at all — so a loaded file's
+        text columns could be neither indexed nor, on the way out, relied on. A
+        sized ``VARCHAR`` is the modern spelling and is indexable while it stays
+        inside the 900-byte key limit, which is the caller's to stay inside.
+        """
+        if declared != "TEXT":
+            return super().column_type(declared, longest=longest)
+        width = max(1, longest or 1)
+        # Past 8000 the only spelling is VARCHAR(max), which is a large object
+        # again — the same trade Oracle makes at 4000, and for the same reason.
+        return String(width) if width <= _VARCHAR_MAX else String()
+
+    def rename_table(self, conn: Connection, table: str, to: str) -> None:
+        """``sp_rename``, because SQL Server has no ``ALTER TABLE … RENAME``.
+
+        The generic ``ALTER TABLE … RENAME TO`` is a syntax error here, and the
+        transaction it fails in is then doomed — so the caller saw not "no such
+        syntax" but a rollback complaining about a transaction that no longer
+        existed. Both names are bound as parameters rather than interpolated:
+        ``sp_rename`` takes them as strings, so there is nothing to quote and
+        nothing that could become syntax.
+        """
+        conn.execute(
+            text("EXEC sp_rename :existing, :wanted"), {"existing": table, "wanted": to}
+        )
+
+
 _SQLITE = SQLiteBackend()
 _GENERIC = Backend()
 
@@ -734,6 +786,7 @@ BACKENDS: dict[str, Backend] = {
     "mysql": MySQLBackend(),
     "mariadb": MySQLBackend(name="mariadb"),
     "oracle": OracleBackend(),
+    "mssql": MSSQLBackend(),
 }
 
 

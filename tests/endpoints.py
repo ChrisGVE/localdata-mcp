@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.parse import quote
 
 COMPOSE = Path(__file__).resolve().parent.parent / "docker-compose.test.yml"
 
@@ -76,21 +77,39 @@ class Endpoint:
     precondition: Callable[[], None] | None = None
 
 
+#: Driver libraries to fall back on when the driver manager has nothing
+#: registered. FreeTDS is the one that comes from Homebrew and apt, and it
+#: speaks TDS to SQL Server perfectly well. Named by path on purpose: putting it
+#: in ``odbcinst.ini`` would be a change to the machine, and a test harness has
+#: no business making one.
+_DRIVER_LIBRARIES = (
+    "/usr/local/lib/libtdsodbc.so",
+    "/opt/homebrew/lib/libtdsodbc.so",
+    "/usr/lib/x86_64-linux-gnu/odbc/libtdsodbc.so",
+    "/usr/lib/aarch64-linux-gnu/odbc/libtdsodbc.so",
+)
+
+
 def _odbc_driver() -> str:
-    """The installed ODBC driver for SQL Server, or a reason there is none.
+    """An ODBC driver that can reach SQL Server, named the way pyodbc wants it.
 
     pyodbc imports perfectly well with no drivers registered at all, so the
     import check says nothing about whether a connection can be made. This asks
-    the driver manager what it actually has.
+    the driver manager what it has, and where it has nothing, looks for a driver
+    library on disk — pyodbc takes a path in place of a name.
     """
     import pyodbc
 
     for candidate in pyodbc.drivers():
         if "SQL Server" in candidate:
             return candidate
+    for library in _DRIVER_LIBRARIES:
+        if Path(library).exists():
+            return library
     raise Unavailable(
-        "pyodbc is installed but no ODBC driver for SQL Server is registered. "
-        "On macOS: brew tap microsoft/mssql-release && brew install msodbcsql18."
+        "pyodbc is installed but there is no ODBC driver for SQL Server — none "
+        "registered with the driver manager, and no FreeTDS library where one is "
+        "usually found. On macOS: brew install freetds."
     )
 
 
@@ -128,13 +147,14 @@ def _mssql(env: dict[str, str], port: int) -> str:
     ``master`` because the image creates no other database and there is no
     environment variable that would ask it to; the tests name their tables
     uniquely and drop what they made, so a shared database costs nothing. The
-    certificate is self-signed, hence ``TrustServerCertificate`` — driver 18
-    encrypts by default and would otherwise refuse the container outright.
+    certificate is self-signed, hence ``TrustServerCertificate`` — Microsoft's
+    driver 18 encrypts by default and would otherwise refuse the container
+    outright. FreeTDS ignores the setting, which is harmless.
     """
-    driver = _odbc_driver().replace(" ", "+")
     return (
-        f"mssql+pyodbc://sa:{env['MSSQL_SA_PASSWORD']}@{HOST}:{port}/master"
-        f"?driver={driver}&TrustServerCertificate=yes"
+        f"mssql+pyodbc://sa:{quote(env['MSSQL_SA_PASSWORD'], safe='')}"
+        f"@{HOST}:{port}/master"
+        f"?driver={quote(_odbc_driver(), safe='')}&TrustServerCertificate=yes"
     )
 
 

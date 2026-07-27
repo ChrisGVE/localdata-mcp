@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 from fastmcp import Client
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import make_url
 
 from localdata_mcp import config as config_module
 from localdata_mcp import server as server_module
@@ -136,10 +137,14 @@ def _drop_everything_named(url: str, prefix: str) -> None:
                 for name in inspect(conn).get_table_names()
                 if name.lower().startswith(prefix)
             ]
+        if not names:
+            # Deliberately not "open a transaction and commit nothing": FreeTDS
+            # answers a commit with no transaction behind it by raising.
+            return
+        with engine.begin() as conn:
             preparer = conn.dialect.identifier_preparer
             for name in names:
                 conn.execute(text(f"DROP TABLE {preparer.quote(name)}"))
-            conn.commit()
     finally:
         engine.dispose()
 
@@ -183,17 +188,15 @@ def test_an_endpoint_attaches_as_an_engine_and_keeps_its_password(live):
 
 def test_a_failed_open_does_not_echo_the_password(live):
     """The driver's own complaint frequently quotes the whole URL back."""
-    wrong = live.url.replace(_password(live), "definitely-not-the-password")
+    wrong = make_url(live.url).set(password="definitely-not-the-password")
 
-    refused = call("attach", database=wrong, nickname="endpoint")
+    refused = call("attach", database=wrong.render_as_string(hide_password=False))
 
-    assert refused["ok"] is False
+    assert refused["ok"] is False, refused
     assert "definitely-not-the-password" not in refused["error"]
 
 
 def _password(live: Live) -> str:
-    from sqlalchemy.engine import make_url
-
     return str(make_url(live.url).password)
 
 
