@@ -83,6 +83,21 @@ __all__ = [
 #: The first sixteen bytes of every SQLite database, header magic included.
 SQLITE_MAGIC = b"SQLite format 3\x00"
 
+#: How to recognise a file-based database from its first bytes: the SQLAlchemy
+#: dialect it opens as, where the magic sits, and what it says. DuckDB puts a
+#: checksum in front of its ``DUCK`` magic, which is why an offset is part of
+#: the entry rather than every signature being assumed to start at zero.
+#:
+#: The extension cannot do this job — a DuckDB database and a SQLite one are
+#: both routinely called ``.db`` — so the file is asked instead.
+FILE_SIGNATURES: tuple[tuple[str, int, bytes], ...] = (
+    ("sqlite", 0, SQLITE_MAGIC),
+    ("duckdb", 8, b"DUCK"),
+)
+
+#: Enough of the head to cover every signature above.
+_SIGNATURE_BYTES = max(offset + len(magic) for _, offset, magic in FILE_SIGNATURES)
+
 #: A scheme must be at least two characters, so a Windows drive letter is never
 #: mistaken for one, and the ``://`` must be present so a bare path never is.
 _URL = re.compile(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]+)://")
@@ -257,16 +272,19 @@ class Registry:
                 raise AttachRefused(str(exc)) from exc
             evicted = self._make_room()
             slot = self._attach_frame(read, path, chosen)
-        elif self._is_sqlite(path):
-            self._refuse_pointless_delimiter(delimiter, "a SQLite database")
+        elif (dialect := self._database_dialect(path)) is not None:
+            self._refuse_pointless_delimiter(delimiter, f"a {dialect} database")
             evicted = self._make_room()
             # An outside database is read-only unless the caller granted write.
-            slot = self._attach_database(path, chosen, writable=writable)
+            slot = self._attach_database(
+                path, chosen, dialect=dialect, writable=writable
+            )
         else:
             supported = ", ".join(sorted(READERS))
+            known = ", ".join(name for name, _, _ in FILE_SIGNATURES)
             raise AttachRefused(
-                f"{path} is neither a SQLite database nor a supported file "
-                f"({supported}). Its first bytes are not the SQLite header."
+                f"{path} is neither a database file ({known}) nor a supported "
+                f"file ({supported}). Its first bytes match no database header."
             )
 
         self._slots[chosen] = slot
@@ -355,17 +373,32 @@ class Registry:
             raise AttachRefused(str(exc)) from exc
 
     @staticmethod
-    def _is_sqlite(path: Path) -> bool:
-        """Ask the file, rather than believing its extension.
+    def _database_dialect(path: Path) -> str | None:
+        """Which database this file *is*, or ``None`` if it is not one.
 
-        ``.db``, ``.sqlite``, ``.sqlite3``, ``.db3`` and no extension at all are
-        all real in the wild, and ``.db`` is used by unrelated formats too.
+        Asks the file rather than believing its extension. ``.db``, ``.sqlite``,
+        ``.sqlite3``, ``.db3`` and no extension at all are all real in the wild,
+        ``.db`` is used by unrelated formats too, and a DuckDB file is commonly
+        called ``.db`` as well — so the extension cannot even tell the two
+        database formats apart, let alone tell a database from something else.
+
+        The header read stays here rather than moving behind SQLAlchemy because
+        SQLAlchemy has no "what is this file" facility to move it behind: it
+        answers questions about a database you have already named, and naming it
+        is precisely the question. What generalising this *does* remove is the
+        assumption that "a local database" means SQLite — the signature table is
+        the whole change when the next file-based engine arrives.
         """
         try:
             with path.open("rb") as handle:
-                return handle.read(16) == SQLITE_MAGIC
+                head = handle.read(_SIGNATURE_BYTES)
         except OSError:
-            return False
+            return None
+
+        for dialect, offset, magic in FILE_SIGNATURES:
+            if head[offset : offset + len(magic)] == magic:
+                return dialect
+        return None
 
     def _attach_frame(self, read: ReadResult, path: Path, nickname: str) -> Slot:
         """Give the tables read out of a file their own database.
@@ -399,9 +432,13 @@ class Registry:
             writable=True,
         )
 
-    def _attach_database(self, path: Path, nickname: str, *, writable: bool) -> Slot:
+    def _attach_database(
+        self, path: Path, nickname: str, *, dialect: str, writable: bool
+    ) -> Slot:
         try:
-            self._workspace.attach_file(nickname, path, readonly=not writable)
+            self._workspace.attach_file(
+                nickname, path, dialect=dialect, readonly=not writable
+            )
             # Listing forces the schema to be read, which is where a file with an
             # unusable view fails. Opening alone would succeed and leave the slot
             # to fail later, on somebody else's query.
@@ -446,7 +483,18 @@ class Registry:
             raise AttachRefused(f"Not a usable datasource URL: {exc}") from exc
 
         safe = url.render_as_string(hide_password=True)
-        if not config.active().network_enabled:
+
+        # A URL with no host names something on this machine — `duckdb:///x.db`
+        # is a local file, exactly as `sqlite:///x.db` is. The gate is about
+        # reaching the *network*, so it does not apply, but the path gate does:
+        # otherwise spelling a file as a URL would walk around the containment
+        # every other local file is subject to.
+        if url.host is None and url.database:
+            try:
+                resolve_read_path(url.database)
+            except PathNotAllowed as exc:
+                raise AttachRefused(str(exc)) from exc
+        elif not config.active().network_enabled:
             raise AttachRefused(
                 f"Opening {safe} would reach a network service, and network access "
                 f"is off. Set network.enabled = true in the configuration file to "

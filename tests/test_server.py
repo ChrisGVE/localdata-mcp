@@ -1168,3 +1168,108 @@ def test_create_refuses_a_multi_table_source_and_points_at_attach(session):
 
     assert refused["ok"] is False
     assert "ttach the file" in refused["error"]
+
+
+# ---------------------------------------------------------------------------
+# DuckDB — a second file-based engine, reached the same way as the first
+# ---------------------------------------------------------------------------
+
+
+def _build_duckdb(path: Path) -> None:
+    import duckdb
+
+    connection = duckdb.connect(str(path))
+    connection.execute("CREATE TABLE sales (region VARCHAR, amount INTEGER)")
+    connection.execute("INSERT INTO sales VALUES ('north', 100), ('south', 250)")
+    connection.close()
+
+
+def test_a_duckdb_file_attaches_as_a_database(session):
+    """Recognised by its header, not its name — it is called .db as often as not."""
+    target = session / "warehouse.db"
+    _build_duckdb(target)
+
+    attached = call("attach", database=str(target), nickname="wh")
+
+    assert attached["ok"] is True
+    assert attached["kind"] == "database"
+    assert attached["tables"] == ["sales"]
+
+    answer = call("query", nickname="wh", sql="SELECT sum(amount) AS t FROM sales")
+    assert answer["rows"][0][0] == 350
+
+
+def test_duckdb_and_sqlite_are_told_apart_by_their_headers(session):
+    """Both are commonly .db, so the extension decides nothing."""
+    duck = session / "duck.db"
+    lite = session / "lite.db"
+    _build_duckdb(duck)
+    _build_database(lite)
+
+    assert call("attach", database=str(duck), nickname="d")["tables"] == ["sales"]
+    assert call("attach", database=str(lite), nickname="s")["tables"] == ["departments"]
+
+
+def test_an_attached_duckdb_file_is_read_only_unless_granted(session):
+    target = session / "warehouse.db"
+    _build_duckdb(target)
+    call("attach", database=str(target), nickname="wh")
+
+    refused = call(
+        "create", nickname="wh", type="table", source=str(session / "simple.csv")
+    )
+    assert refused["ok"] is False
+
+    written = call("query", nickname="wh", sql="CREATE TABLE nope (a INTEGER)")
+    assert written["ok"] is False
+
+
+def test_a_duckdb_url_is_reached_like_any_other_url(session):
+    target = session / "warehouse.db"
+    _build_duckdb(target)
+
+    attached = call("attach", database=f"duckdb:///{target}", nickname="wh")
+
+    assert attached["ok"] is True
+    assert attached["kind"] == "engine"
+    answer = call("query", nickname="wh", sql="SELECT count(*) AS n FROM sales")
+    assert answer["rows"][0][0] == 2
+
+
+def test_rows_can_be_copied_out_of_duckdb_into_a_slot_that_saves(session):
+    """The generic route for a datasource this server reaches but does not hold."""
+    target = session / "warehouse.db"
+    _build_duckdb(target)
+    call("attach", database=str(target), nickname="wh")
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+
+    exported = call(
+        "query", nickname="wh", sql="SELECT * FROM sales", path=str(session / "s.csv")
+    )
+    assert exported["ok"] is True
+
+    added = call(
+        "create",
+        nickname="staff",
+        type="table",
+        source=str(session / "s.csv"),
+        table="sales",
+    )
+    assert added["ok"] is True
+    assert call("save", nickname="staff", path=str(session / "kept.db"))["ok"] is True
+
+
+def test_a_local_file_url_is_still_subject_to_the_path_gate(session, tmp_path):
+    """Spelling a file as a URL must not walk around containment.
+
+    The network gate does not apply to a host-less URL, because nothing on the
+    network is being reached — so the path gate has to, or `duckdb:///` would be
+    a way to open any file on the machine.
+    """
+    outside = tmp_path / "elsewhere.db"
+    _build_duckdb(outside)
+
+    refused = call("attach", database=f"duckdb:///{outside}", nickname="wh")
+
+    assert refused["ok"] is False
+    assert "outside the allowed paths" in refused["error"]
