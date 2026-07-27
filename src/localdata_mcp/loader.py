@@ -51,7 +51,7 @@ from __future__ import annotations
 import importlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
 from uuid import uuid4
@@ -1343,6 +1343,26 @@ class Workspace:
         inspector = inspect(self.entry(tag).engines.read)
         names = set(inspector.get_table_names()) | set(inspector.get_view_names())
         return tuple(sorted(n for n in names if not n.startswith("sqlite_")))
+
+    def rename_table(self, tag: str, table: str, to: str) -> None:
+        """Rename a table, moving its cached description with it.
+
+        The bookkeeping matters as much as the DDL: ``_tables`` is keyed on
+        ``tag.table`` and a stale entry would leave the old name describable
+        after it stopped existing — the same class of defect as the slot listing
+        that reported a table it no longer had.
+        """
+        entry = self.entry(tag)
+        try:
+            with entry.engines.write.begin() as conn:
+                entry.backend.rename_table(conn, table, to)
+        except SQLAlchemyError as exc:
+            raise LoadError(f"Could not rename {tag}.{table}: {exc}") from exc
+
+        known = self._tables.pop(f"{tag}.{table}", None)
+        if known is not None:
+            moved = replace(known, name=to)
+            self._tables[moved.qualified] = moved
 
     def drop_table(self, tag: str, table: str) -> None:
         entry = self.entry(tag)

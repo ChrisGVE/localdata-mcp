@@ -175,6 +175,25 @@ class Backend:
             f"rows you want into a slot of your own with create, and save that."
         )
 
+    def rename_table(self, conn: Connection, table: str, to: str) -> None:
+        """Rename a table in place, keeping its rows, types and indexes.
+
+        ``ALTER TABLE … RENAME TO …`` is the generic answer because it is the
+        one every dialect this server targets accepts — SQLite, DuckDB,
+        PostgreSQL, MySQL 8 and Oracle all take it verbatim. SQL Server is the
+        known exception (``sp_rename``) and is exactly what an override of this
+        method is for.
+
+        Core has no rename construct — renaming is schema migration, Alembic's
+        remit rather than Core's — so this is one of the few places that must
+        state SQL. Both identifiers go through the dialect's own preparer rather
+        than into an f-string, so a name needing quoting is quoted the way
+        *this* database quotes it, and a name arriving from outside cannot
+        become syntax.
+        """
+        prepare = conn.dialect.identifier_preparer.quote
+        conn.execute(text(f"ALTER TABLE {prepare(table)} RENAME TO {prepare(to)}"))
+
     def storage_classes(
         self, conn: Connection, table: str, column: str
     ) -> dict[str, int]:

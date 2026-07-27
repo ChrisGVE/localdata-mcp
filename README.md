@@ -64,15 +64,16 @@ query("sales", "SELECT sku, sum(qty) FROM sales GROUP BY sku")
 actually used** — if that name was taken, you get `sales_2` and are told what it
 collided with. Always read it back rather than assuming.
 
-## The seven verbs
+## The eight verbs
 
 | Verb | What it does |
 | --- | --- |
-| `attach(database, nickname?, writable?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. |
+| `attach(database, nickname?, writable?, delimiter?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. A file holding several tables (a workbook's sheets, a page's tables) becomes a database holding all of them. |
 | `detach(nickname)` | Close it and free the slot. |
-| `query(nickname, sql, path?, force?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to CSV instead. |
+| `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format. |
 | `info(nickname?, table?)` | Three altitudes: the whole session, one datasource, or one table's columns, row count and indexes. |
-| `create(nickname, type, table?, source?, columns?)` | `type="table"` lands a file *inside* an open database; `type="index"` indexes columns of a table already there. |
+| `create(nickname, type, table?, source?, columns?, delimiter?)` | `type="table"` lands a file *inside* an open database; `type="index"` indexes columns of a table already there. |
+| `update(nickname, type, name, to)` | Rename a table, keeping its rows, types and indexes. For when the file chose the name — a workbook's `Sheet1`. |
 | `drop(nickname, type, name)` | Remove a table or an index. |
 | `save(nickname, path, force?)` | Write the database out to a file you keep. |
 
@@ -207,7 +208,7 @@ The full specification is in [docs/architecture/LEVEL0.md](docs/architecture/LEV
 
 ## Documentation
 
-- [Level 0 specification](docs/architecture/LEVEL0.md) — the premise, the three user journeys, the seven verbs
+- [Level 0 specification](docs/architecture/LEVEL0.md) — the premise, the three user journeys, the eight verbs
 - [Measured constraints](docs/CONSTRAINTS.md) — the behaviour that shapes the design, with the numbers behind it
 
 Those two are the whole of it. Everything else that used to live under `docs/` described

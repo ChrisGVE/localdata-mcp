@@ -31,7 +31,7 @@ ASSETS = Path(__file__).parent / "assets"
 
 #: The whole surface. Named here so a tool added or removed without thinking
 #: about the shape of the surface fails a test rather than passing quietly.
-TOOLS = {"attach", "detach", "info", "query", "create", "drop", "save"}
+TOOLS = {"attach", "detach", "info", "query", "create", "update", "drop", "save"}
 
 
 @pytest.fixture(autouse=True)
@@ -89,7 +89,7 @@ def write_csv(path: Path, text: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_the_surface_is_seven_verbs_each_with_a_description():
+def test_the_surface_is_eight_verbs_each_with_a_description():
     tools = listed_tools()
     assert {tool.name for tool in tools} == TOOLS
 
@@ -1306,3 +1306,105 @@ def test_an_output_delimiter_is_ignored_where_it_has_no_meaning(session):
 
     assert result["ok"] is True
     assert result["rows_written"] == 5
+
+
+# ---------------------------------------------------------------------------
+# update: the third of create / update / drop
+# ---------------------------------------------------------------------------
+
+
+def test_a_sheet_can_be_renamed_after_it_lands(session):
+    """The case a workbook creates: the file chose the names, and you may not want them."""
+    call("attach", database=str(session / "workbook.xlsx"), nickname="book")
+
+    renamed = call("update", nickname="book", type="table", name="staff", to="people")
+
+    assert renamed["ok"] is True
+    assert renamed["table"] == "people"
+    assert sorted(call("info", nickname="book")["tables"]) == ["departments", "people"]
+
+    answer = call("query", nickname="book", sql="SELECT sum(salary) AS t FROM people")
+    assert answer["rows"][0][0] == 353000
+
+
+def test_the_rows_survive_the_rename(session):
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    before = call("query", nickname="staff", sql="SELECT * FROM simple ORDER BY name")
+
+    call("update", nickname="staff", type="table", name="simple", to="people")
+
+    after = call("query", nickname="staff", sql="SELECT * FROM people ORDER BY name")
+    assert after["rows"] == before["rows"]
+    assert after["columns"] == before["columns"]
+
+
+def test_renaming_onto_a_name_already_taken_is_refused(session):
+    """Silently replacing the other table would lose it entirely."""
+    call("attach", database=str(session / "workbook.xlsx"), nickname="book")
+
+    refused = call(
+        "update", nickname="book", type="table", name="staff", to="departments"
+    )
+
+    assert refused["ok"] is False
+    assert "departments" in refused["error"]
+    assert sorted(call("info", nickname="book")["tables"]) == ["departments", "staff"]
+
+
+def test_renaming_a_table_that_is_not_there_names_what_is(session):
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+
+    refused = call("update", nickname="staff", type="table", name="nope", to="x")
+
+    assert refused["ok"] is False
+    assert "simple" in refused["error"]
+
+
+def test_a_read_only_datasource_will_not_be_renamed(session):
+    target = session / "shop.db"
+    _build_database(target)
+    call("attach", database=str(target), nickname="shop")
+
+    refused = call(
+        "update", nickname="shop", type="table", name="departments", to="teams"
+    )
+
+    assert refused["ok"] is False
+    assert "writable" in refused["error"]
+
+
+def test_a_rename_target_must_be_a_legal_identifier(session):
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+
+    refused = call(
+        "update", nickname="staff", type="table", name="simple", to="not a name"
+    )
+
+    assert refused["ok"] is False
+
+
+def test_update_names_what_it_can_update(session):
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+
+    refused = call("update", nickname="staff", type="index", name="i", to="j")
+
+    assert refused["ok"] is False
+    assert "table" in refused["error"]
+
+
+def test_a_renamed_table_is_saved_under_its_new_name(session):
+    """The rename has to reach the database, not only our bookkeeping."""
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call("update", nickname="staff", type="table", name="simple", to="people")
+    kept = session / "kept.db"
+
+    call("save", nickname="staff", path=str(kept))
+    call("detach", nickname="staff")
+    reattached = call("attach", database=str(kept), nickname="again")
+
+    assert reattached["tables"] == ["people"]
+
+
+def test_the_surface_is_eight_verbs_now(session):
+    assert {tool.name for tool in listed_tools()} == TOOLS
+    assert "update" in TOOLS

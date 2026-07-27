@@ -15,7 +15,7 @@ remains.
 nickname. A CSV becomes a fresh in-memory database holding one table named after the
 file; a workbook becomes one holding a table per sheet; a SQLite or DuckDB file arrives
 with the tables it already has; a service URL becomes its own engine. Because all of
-them are databases, the same seven verbs work on any of them. Each call names one
+them are databases, the same eight verbs work on any of them. Each call names one
 datasource and the SQL addresses tables inside it by their own names; putting two
 datasources together is `create`, which copies one into the other so the join is an
 ordinary statement.
@@ -113,7 +113,7 @@ not inferred, and freelist-corrected because `page_count` does not shrink after 
 Temp-file lifecycle: deleted on **eviction**, on **detach**, and on **termination with
 connections live**. Nothing more. Richer heuristics are possible and not worth the time.
 
-## The seven verbs
+## The eight verbs
 
 | Verb | Shape | Notes |
 |---|---|---|
@@ -122,6 +122,7 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 | `query` | `nickname`, `sql`, `path?`, `force?` | The `path` suffix chooses the output format and one with no writer is refused by name. **Reads only** — every write is refused by SQLite's authorizer, whatever the slot allows. Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. `force` is the same overwrite consent `save` takes, for the same reason. |
 | `info` | — \| `nickname` \| `nickname`+`table` | Polymorphic: bare → every slot; nickname → its tables; nickname+table → schema, row count and indexes. **Absorbs `list_tables` + `describe_table`.** |
 | `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a datasource in beside the tables already there, which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
+| `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes. The third of create/update/drop, and the answer to a file that names its own tables — a workbook's sheets arrive as the spreadsheet named them. Renaming onto a taken name is refused, not allowed to replace. |
 | `drop` | `nickname`, `type`, `name` | Composition needs both directions, for both types. The index name is the one `create` returned and `info` lists. |
 | `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. An occupied path is refused until `force` carries the user's consent, and a path a live slot sits on is refused regardless. |
 

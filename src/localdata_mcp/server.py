@@ -14,9 +14,13 @@ something that falls out of how the databases happen to be connected.
 
 Because a slot is a database rather than a view over a file, it has the verbs a
 database has: lifecycle (``attach``, ``detach``, ``save``), composition
-(``create``, ``drop``), and introspection (``info``). Seven in total, several of
-them multi-faceted — **few and multi-faceted beats many and narrow**, because the
-model has less to choose between and each choice is obvious.
+(``create``, ``update``, ``drop``), and introspection (``info``). Eight in total,
+several of them multi-faceted — **few and multi-faceted beats many and narrow**,
+because the model has less to choose between and each choice is obvious.
+
+``update`` completes the composition triad and arrived with the formats that name
+their own tables: a workbook's sheets land under the names the spreadsheet chose,
+and renaming one beats re-reading the file to get a different name.
 
 **These are raw capabilities, not a workflow.** Nothing here infers a join key,
 decides that an index would help, or turns an anti-join into a sentence. Those
@@ -77,8 +81,11 @@ mcp = FastMCP(
         "info(nickname, table) says which indexes are already there.\n\n"
         "**query only reads.** INSERT, UPDATE, CREATE TABLE and every other write "
         "are refused there whatever the datasource allows — composition has its "
-        "own verbs, create and drop, and those are the ones the writable grant "
-        "governs. The whole result comes back, so ask for what you want: use SQL "
+        "own verbs, create, update and drop, and those are the ones the writable "
+        "grant governs. A table keeps the name its file gave it until you "
+        "update(nickname, type='table', name=..., to=...), which matters for a "
+        "workbook whose sheets are named Sheet1. The whole result comes back, so "
+        "ask for what you want: use SQL "
         "LIMIT, name your columns instead of SELECT *, or pass path= to write a "
         "large result to a file rather than into the answer.\n\n"
         "Files you attach are read-only unless you pass writable=true; a database "
@@ -691,6 +698,54 @@ def drop(nickname: str, type: str, name: str) -> dict[str, Any]:
             return _failed(exc)
         return _failed(
             SlotError(f"drop has no type {type!r}. It is 'table' or 'index'.")
+        )
+
+
+@mcp.tool
+def update(nickname: str, type: str, name: str, to: str) -> dict[str, Any]:
+    """Rename something inside a datasource, keeping what it holds.
+
+    The third of create/update/drop, and the first verb here that changes a
+    table without rebuilding it: the rows, the types and the indexes all stay
+    where they are.
+
+    What asked for it is a file that names its own tables. A workbook's sheets
+    arrive under the names the *spreadsheet* chose — ``Sheet1``, or a label with
+    a year in it — and those are frequently not the names you want to write SQL
+    against for the rest of the session. Renaming beats re-reading the file
+    under a different name, which would cost the load again and lose any index
+    already built.
+
+    Renaming onto a name that is taken is refused rather than allowed to replace
+    it, and the refusal says how many rows the other table holds.
+
+    Args:
+        nickname: The datasource holding it. Must be writable.
+        type: ``"table"``. Indexes are named by ``create`` and dropped by name,
+            so there is nothing to rename there.
+        name: What it is called now.
+        to: What to call it. Same rule as any table name — a letter or
+            underscore, then letters, digits or underscores.
+    """
+    with _lock:
+        registry = _session()
+        try:
+            if type == "table":
+                info = registry.rename_table(nickname, name, to)
+                return {
+                    "ok": True,
+                    "nickname": nickname,
+                    "renamed": name,
+                    **_table_payload(info),
+                    "tables": list(registry.tables(nickname)),
+                }
+        except SlotError as exc:
+            return _failed(exc)
+        return _failed(
+            SlotError(
+                f"update has no type {type!r}. It is 'table' — an index is named "
+                f"by create and removed by drop, so there is nothing to rename."
+            )
         )
 
 

@@ -691,6 +691,50 @@ class Registry:
             return table
         return _sanitize(Path(source).stem, "table")
 
+    def rename_table(self, nickname: str, table: str, to: str) -> TableInfo:
+        """Rename a table inside a slot, and describe it under its new name.
+
+        The case that asked for this is a workbook: its sheets land under the
+        names the *file* chose, and those are frequently not the names the
+        caller wants to write SQL against. Renaming is the third of
+        create/update/drop and the first thing here that changes a table without
+        rebuilding it — the rows, types and indexes all stay put.
+        """
+        slot = self._writable(nickname, "rename a table in")
+        if not self._workspace.has_table(nickname, table):
+            known = ", ".join(self._workspace.table_names(nickname)) or "none"
+            raise SlotNotAvailable(
+                f"No such table: {nickname}.{table}. In {nickname}: {known}."
+            )
+        if to == table:
+            raise SlotError(f"{nickname}.{table} is already called {table!r}.")
+        if not _NICKNAME.match(to):
+            raise SlotError(
+                f"{to!r} cannot be a table name. Use a letter or underscore "
+                f"followed by letters, digits or underscores."
+            )
+        if self._workspace.has_table(nickname, to):
+            # Refused rather than replaced: the database would let the rename
+            # fail, but on a dialect that allowed it the other table would be
+            # gone with nothing said.
+            raise SlotError(
+                f"{nickname}.{to} already exists, holding "
+                f"{self._workspace.describe(nickname, to).row_count} rows. Drop "
+                f"it first, or rename to a name that is free."
+            )
+
+        try:
+            self._workspace.rename_table(nickname, table, to)
+        except LoadError as exc:
+            raise SlotError(str(exc)) from exc
+
+        # The slot's own table list is a fact about the database, and a stale
+        # one is the defect the live-client pass already caught once.
+        self._slots[nickname] = replace(
+            slot, tables=tuple(to if one == table else one for one in slot.tables)
+        )
+        return self._workspace.describe(nickname, to)
+
     def drop_table(self, nickname: str, table: str) -> None:
         """Remove a table from a slot. Composition needs both directions."""
         self._writable(nickname, "drop a table from")
