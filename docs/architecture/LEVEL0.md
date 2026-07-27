@@ -1,19 +1,30 @@
 # Level 0 — SQLite and flat files, done well
 
 Level 0 is the gate. Until the surface below is built and behaving, nothing else is
-started: not more input formats, not more backends, not endpoint datasources. The
-reason is that everything above level 0 is the *same* building blocks pointed at more
-kinds of source, so a block that is wrong here is wrong everywhere later.
+started. The reason is that everything above level 0 is the *same* building blocks
+pointed at more kinds of source, so a block that is wrong here is wrong everywhere later.
+
+The surface is built, and the gate has since opened onto its own breadth: more formats
+and more backends are **still level 0**, because they are nothing new — the same verbs
+pointed at more kinds of source. Formats are done; the endpoint databases are what
+remains.
 
 ## The premise
 
 **A slot is a database.** Not a table, not a file — a database, addressed by a
 nickname. A CSV becomes a fresh in-memory database holding one table named after the
-file; a SQLite file arrives with the tables it already has; a service URL becomes its
-own engine. Because all three are databases, the same seven verbs work on any of them.
-Each call names one datasource and the SQL addresses tables inside it by their own
-names; putting two datasources together is `create`, which copies one into the
-other so the join is an ordinary statement.
+file; a workbook becomes one holding a table per sheet; a SQLite or DuckDB file arrives
+with the tables it already has; a service URL becomes its own engine. Because all of
+them are databases, the same seven verbs work on any of them. Each call names one
+datasource and the SQL addresses tables inside it by their own names; putting two
+datasources together is `create`, which copies one into the other so the join is an
+ordinary statement.
+
+**A file may hold more than one table, and all of them land.** Sheets in a workbook and
+tables on an HTML page are the cases that force it. Reading the first and ignoring the
+rest would leave data that is present in the file unreachable through the server — the
+same silent loss as dropping a value — so the datasource, being a database, holds every
+table the file had, under the names the file gave them.
 
 That premise was already true of the registry. What level 0 changes is the *verbs*:
 they were file verbs wearing database names. Attach made a database, and after that you
@@ -106,11 +117,11 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 
 | Verb | Shape | Notes |
 |---|---|---|
-| `attach` | `database`, `nickname?`, `writable?` | Multipurpose — flat file, SQLite file, later an endpoint. Returns the nickname **actually used**. |
+| `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Multipurpose — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. A file holding several tables becomes a database holding all of them. `delimiter` applies to character-separated text only. |
 | `detach` | `nickname` | Drop a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if spilled. |
-| `query` | `nickname`, `sql`, `path?`, `force?` | **Reads only** — every write is refused by SQLite's authorizer, whatever the slot allows. Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. `force` is the same overwrite consent `save` takes, for the same reason. |
+| `query` | `nickname`, `sql`, `path?`, `force?` | The `path` suffix chooses the output format and one with no writer is refused by name. **Reads only** — every write is refused by SQLite's authorizer, whatever the slot allows. Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. `force` is the same overwrite consent `save` takes, for the same reason. |
 | `info` | — \| `nickname` \| `nickname`+`table` | Polymorphic: bare → every slot; nickname → its tables; nickname+table → schema, row count and indexes. **Absorbs `list_tables` + `describe_table`.** |
-| `create` | `nickname`, `type`, `table?`, `source?`, `columns?` | `type="table"` reads a datasource in beside the tables already there, which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
+| `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a datasource in beside the tables already there, which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
 | `drop` | `nickname`, `type`, `name` | Composition needs both directions, for both types. The index name is the one `create` returned and `info` lists. |
 | `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. An occupied path is refused until `force` carries the user's consent, and a path a live slot sits on is refused regardless. |
 
@@ -133,6 +144,55 @@ rather than in a check that could be reached around.
 
 A database that was `save`d and is attached again later is, like any other external
 database, **read-only by default** until the caller says otherwise.
+
+## Sources and targets
+
+Reading and writing are two registries keyed on the file suffix — `loader.READERS` and
+`export.WRITERS` — and a format is one entry in each. Adding one touches nothing else,
+because everything downstream of a reader works from a DataFrame and everything upstream
+of a writer works from columns and rows.
+
+| Group | Read | Write |
+|---|---|---|
+| Flat | `.csv` `.tsv` `.txt` `.fwf` | `.csv` `.tsv` `.txt` `.md` |
+| Structured | `.json` `.jsonl` `.ndjson` `.yaml` `.yml` `.xml` | same, less `.fwf` |
+| Spreadsheet | `.xlsx` `.xlsm` `.xls` `.ods` `.numbers` | `.xlsx` `.ods` |
+| Columnar | `.parquet` `.feather` `.orc` | same |
+| Web | `.html` `.htm` | same |
+
+**The suffix chooses the format, and one with no writer is refused by name.** Writing CSV
+under a `.parquet` name was the defect this replaced: the file's name lied about its
+contents and nothing reported it. Refusal happens before the destination is touched, so a
+request that could never succeed does not cost the user a file on its way to failing.
+
+**Every format is known whether or not its library is installed**, and the refusal names
+the extra to install (`pip install 'localdata-mcp[parquet]'`). Listing only what happens
+to be present would make the tool's own description vary by environment, so an agent could
+not learn what this server does without discovering what it has.
+
+Four decisions recur across the readers, and they are the same decision each time — *take
+what is unambiguous, say what was assumed, refuse an actual choice*:
+
+- **One candidate is not a choice.** A JSON or YAML object with exactly one array of
+  objects under it loads from that key, with a note naming it. Two candidates are two
+  tables and are refused, naming both.
+- **What SQL cannot hold is encoded, not dropped.** A nested JSON value becomes its JSON
+  text and a nested XML element its XML text — lossless and reversible — and a note names
+  the columns. `pandas.read_xml` drops the subtree and reports nothing, which is why that
+  reader is written directly on ElementTree.
+- **An inference is stated.** Fixed-width column boundaries are inferred from alignment,
+  because nothing in the file declares them, and the note says so.
+- **Nothing sniffs.** A file separated by something other than what its extension implies
+  loads as one fat column; `delimiter` is how the caller says otherwise. The parameter
+  alone would not have been enough — a caller who does not know would never reach for it —
+  so a single column whose *name* still contains a common delimiter says exactly that and
+  names the parameter. It reports what it sees; it does not re-read at a guessed
+  separator, because a guess that is usually right is the worst kind.
+
+`delimiter` earns its place on the same test `join_on` failed: it declares a **fact about
+the source** the server cannot know and the caller often does, rather than a judgement the
+caller was already making. It applies to character-separated text only, and is refused —
+not ignored — anywhere else.
 
 ## Dates, and the two spellings that carry their own meaning
 
@@ -226,9 +286,15 @@ correct against each other.
 
 ## What comes after
 
-Level 0 first, and only then: more input and output formats, then more backends —
-file-based and endpoint-based, anything SQLAlchemy speaks — and after that, whether
-SQLAlchemy needs extending for the formats it does not cover.
+Still level 0, and in this order: the format catalogue above (**done**), then more
+backends. DuckDB is in, reached as a file or a URL and told apart from SQLite by its
+header. The endpoint databases — PostgreSQL, MySQL/MariaDB, SQL Server, Oracle — come
+next, each with a container so no dialect is tested blind; every one of them is available
+as an official image. `Backend` already opens, queries and composes any dialect
+SQLAlchemy speaks without being subclassed, so what each one needs is a test harness
+rather than a code path.
+
+After that: whether SQLAlchemy needs extending for anything left over.
 
 Building blocks first: **simple, composable, multi-faceted, and where possible
 transparent even to the LLM.**
