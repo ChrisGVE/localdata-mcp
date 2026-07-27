@@ -1066,3 +1066,25 @@ def test_the_tool_descriptions_name_exactly_the_formats_that_exist():
     assert listed(r"suffix chooses the format \(([^)]*)\)", described["query"]) == set(
         WRITERS
     )
+
+
+def test_a_readers_note_reaches_the_caller_as_a_warning(session):
+    """The channel is worthless if it stops at TableInfo.
+
+    A JSON object with one array under it loads from a key the caller never
+    named, and the loaded table looks exactly like any other — so this is the
+    only place that fact can be seen.
+    """
+    attached = call("attach", database=str(session / "wrapped.json"), nickname="staff")
+
+    assert attached["ok"] is True
+    assert attached["loaded"][0]["rows"] == 2
+    assert any("employees" in warning for warning in attached["warnings"])
+
+
+def test_a_json_file_with_two_tables_is_refused_over_the_wire(session):
+    refused = call("attach", database=str(session / "two_tables.json"), nickname="x")
+
+    assert refused["ok"] is False
+    assert "employees" in refused["error"] and "departments" in refused["error"]
+    assert call("info")["slots_used"] == 0

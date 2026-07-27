@@ -1,0 +1,5 @@
+[
+  {"name": "Ada", "role": "Engineering", "salary": 120000, "started": "2021-03-01"},
+  {"name": "Grace", "role": "Engineering", "salary": 135000, "started": "2019-11-15"},
+  {"name": "Alan", "role": "Research", "salary": 98000, "started": "2022-07-04"}
+]

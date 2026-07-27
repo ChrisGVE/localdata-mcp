@@ -48,6 +48,7 @@ it is paid once per load, not per query.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -441,12 +442,160 @@ def _read_tsv(path: Path) -> ReadResult:
     return ReadResult(pd.read_csv(path, sep="\t"))
 
 
+def _read_json(path: Path) -> ReadResult:
+    """Read a JSON document that holds one table.
+
+    A JSON file is only *sometimes* tabular, so this reader says which shapes it
+    takes rather than reshaping whatever it finds:
+
+    * **An array of objects** is the table, and nothing is assumed.
+    * **An object with exactly one non-empty array of objects under it** — the
+      shape an API dump takes, ``{"count": 2, "employees": [...]}`` — is that
+      array, and the note says which key it came from. There is no choice to
+      make when there is one candidate, and refusing would be a dead end: an
+      agent holding this file has no way to lift the array out of it, so a
+      refusal it cannot act on is worse than a load it is told about.
+    * **Anything else is refused**, naming what was found. Two candidate arrays
+      is a genuine choice between tables, and choosing is the caller's.
+    """
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+    records, notes = _table_within(document, path.name)
+    return _frame_of_records(records, notes)
+
+
+def _read_jsonl(path: Path) -> ReadResult:
+    """Read JSON Lines: one object per line, blank lines ignored.
+
+    No shape ambiguity exists here — the format *is* a sequence of records — so
+    unlike ``.json`` this reader never has anything to report.
+    """
+    records = []
+    with path.open(encoding="utf-8") as handle:
+        for number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                value = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise LoadError(
+                    f"Could not read {path.name}: line {number} is not JSON ({exc})"
+                ) from exc
+            if not isinstance(value, dict):
+                raise LoadError(
+                    f"Could not read {path.name}: line {number} is "
+                    f"{_json_kind(value)}, and JSON Lines is one object per line."
+                )
+            records.append(value)
+    return _frame_of_records(records, ())
+
+
+def _table_within(document: object, name: str) -> tuple[list[dict], tuple[str, ...]]:
+    """Find the one table in a parsed JSON document, or refuse and say why."""
+    if isinstance(document, list):
+        offender = next(
+            (v for v in document if not isinstance(v, dict)),
+            None,
+        )
+        if offender is not None:
+            raise LoadError(
+                f"Could not read {name}: it is an array of "
+                f"{_json_kind(offender)}, and a table needs an array of objects "
+                f"— each one a row, its keys the columns."
+            )
+        return document, ()
+
+    if isinstance(document, dict):
+        # Empty arrays are not candidates, which is what makes the common
+        # `{"data": [...], "errors": []}` unambiguous rather than a refusal.
+        candidates = [
+            key
+            for key, value in document.items()
+            if isinstance(value, list)
+            and value
+            and all(isinstance(item, dict) for item in value)
+        ]
+        if len(candidates) == 1:
+            key = candidates[0]
+            return document[key], (
+                f"{name} is an object rather than an array, and the array under "
+                f"{key!r} was the only table in it — that is what was loaded. "
+                f"The other keys ({', '.join(k for k in document if k != key)}) "
+                f"are not part of this table.",
+            )
+        if candidates:
+            raise LoadError(
+                f"Could not read {name}: it holds more than one table "
+                f"({', '.join(repr(k) for k in candidates)}), and which one you "
+                f"want is not something this server should decide. Split the "
+                f"file, or attach it as one table per file."
+            )
+
+    raise LoadError(
+        f"Could not read {name}: it holds no table. This reader takes an array "
+        f"of objects, or an object with exactly one array of objects under it."
+    )
+
+
+def _frame_of_records(records: list[dict], notes: tuple[str, ...]) -> ReadResult:
+    """Build a frame from JSON records, encoding anything SQL cannot hold.
+
+    A nested value has no SQL type, so it is written as its JSON text. That is
+    lossless and reversible, and unlike dropping or flattening it invents
+    nothing — but the resulting column looks like ordinary text, so the note
+    names the columns and the function that reads back into them.
+    """
+    frame = pd.DataFrame(records)
+
+    encoded = []
+    for name in frame.columns:
+        series = frame[name]
+        if not series.map(lambda value: isinstance(value, (dict, list))).any():
+            continue
+        frame[name] = series.map(
+            lambda value: json.dumps(value)
+            if isinstance(value, (dict, list))
+            else value
+        )
+        encoded.append(str(name))
+
+    if encoded:
+        notes = notes + (
+            f"Nested values in {', '.join(encoded)} were stored as JSON text, "
+            f"because SQL has no nested type. Read into them with "
+            f"json_extract(column, '$.key'); the text is exactly what was in the "
+            f"file, so nothing was lost.",
+        )
+    return ReadResult(frame, notes)
+
+
+def _json_kind(value: object) -> str:
+    """What a JSON value is, in JSON's own words rather than Python's."""
+    if value is None:
+        return "null"
+    return {
+        bool: "a boolean",
+        int: "a number",
+        float: "a number",
+        str: "a string",
+        list: "an array",
+        dict: "an object",
+    }.get(type(value), f"a {type(value).__name__}")
+
+
 #: Extension to reader. The seam through which new formats arrive — a new entry
 #: is the whole change, because everything downstream works from the DataFrame.
 READERS: dict[str, Reader] = {
     ".csv": _read_csv,
     ".tsv": _read_tsv,
     ".txt": _read_csv,
+    ".json": _read_json,
+    ".jsonl": _read_jsonl,
+    ".ndjson": _read_jsonl,
 }
 
 

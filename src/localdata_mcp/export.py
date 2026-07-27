@@ -26,6 +26,7 @@ choice, expressed in SQL, rather than a transformation applied silently here.
 from __future__ import annotations
 
 import csv
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,6 +86,56 @@ def _write_tsv(
     return _write_delimited(columns, rows, path, delimiter="\t")
 
 
+def _write_json(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    """An array of row objects, one per line.
+
+    One object per line rather than indented: this is the format a large result
+    is written in, and indentation costs bytes per value on a file whose whole
+    reason for existing is that it was too big to return. It stays the shape
+    ``_read_json`` takes back, which is what makes the round trip exact.
+    """
+    written = 0
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("[\n")
+        for row in rows:
+            if written:
+                handle.write(",\n")
+            handle.write("  " + _as_json(columns, row))
+            written += 1
+        handle.write("\n]\n" if written else "]\n")
+    return written
+
+
+def _write_jsonl(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    written = 0
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(_as_json(columns, row) + "\n")
+            written += 1
+    return written
+
+
+def _as_json(columns: Sequence[str], row: Sequence[object]) -> str:
+    return json.dumps(dict(zip(columns, row)), default=_unserializable)
+
+
+def _unserializable(value: object) -> str:
+    """Refuse rather than invent a spelling for a value JSON has no type for.
+
+    Reached for ``bytes`` out of a BLOB column, which has no JSON form that
+    round-trips — base64 would come back a string and the loss would be silent.
+    The partial file is removed by ``export_rows``, so the refusal costs nothing.
+    """
+    raise ExportError(
+        f"JSON has no type for {type(value).__name__} ({value!r}). Convert the "
+        f"column in SQL — hex() for binary, or a CAST — or export to CSV."
+    )
+
+
 #: Extension to writer, the counterpart of ``loader.READERS``. A new output
 #: format is one entry here; nothing upstream of it needs to know.
 WRITERS: dict[str, Writer] = {
@@ -93,6 +144,9 @@ WRITERS: dict[str, Writer] = {
     # As on the read side, `.txt` is treated as comma-separated. The two
     # registries agree, so a file this server writes is a file it can read back.
     ".txt": _write_csv,
+    ".json": _write_json,
+    ".jsonl": _write_jsonl,
+    ".ndjson": _write_jsonl,
 }
 
 

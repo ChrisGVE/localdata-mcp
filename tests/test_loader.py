@@ -580,3 +580,147 @@ def test_mixed_kind_says_which_signal_fired(workspace, root):
     described = workspace.describe("ext", "t").columns[0]
     assert described.storage_classes == {"integer": 2, "text": 1}
     assert described.mixed_kind == "storage"
+
+
+# ---------------------------------------------------------------------------
+# JSON and JSON Lines
+# ---------------------------------------------------------------------------
+
+
+def test_a_json_array_of_objects_is_a_table(workspace, root):
+    info = workspace.load_file(str(root / "records.json"), "main")
+
+    assert info.row_count == 3
+    assert [c.name for c in info.columns] == ["name", "role", "salary", "started"]
+    assert info.notes == ()  # nothing was assumed, so nothing is said
+
+
+def test_a_json_date_is_recognised_like_any_other(workspace, root):
+    """The temporal pass runs on the frame, so it does not care which reader made it."""
+    info = workspace.load_file(str(root / "records.json"), "main")
+    started = {c.name: c for c in info.columns}["started"]
+
+    assert started.temporal_standard == "iso8601_utc"
+    assert started.unparsed_temporal_examples == ()
+
+
+def test_the_only_array_in_a_wrapped_object_is_the_table_and_it_says_so(
+    workspace, root
+):
+    """The common API-dump shape. One candidate means nothing was chosen between.
+
+    Refusing this would be a dead end: the agent has no way to lift the array out
+    of the file, so a refusal it cannot act on is worse than a load it is told
+    about.
+    """
+    info = workspace.load_file(str(root / "wrapped.json"), "main")
+
+    assert info.row_count == 2
+    assert [c.name for c in info.columns] == ["name", "salary"]
+    assert len(info.notes) == 1
+    assert "employees" in info.notes[0]
+
+
+def test_two_candidate_arrays_are_refused_and_both_are_named(workspace, root):
+    """Now there IS a choice, so the server does not make it."""
+    with pytest.raises(LoadError) as raised:
+        workspace.load_file(str(root / "two_tables.json"), "main")
+
+    assert "employees" in str(raised.value)
+    assert "departments" in str(raised.value)
+
+
+def test_a_nested_value_becomes_json_text_and_the_columns_are_named(workspace, root):
+    """SQL has no nested type. Encoding is lossless; silence about it is not."""
+    info = workspace.load_file(str(root / "nested.json"), "main")
+
+    assert info.row_count == 2
+    columns, rows = workspace.query(
+        "main", "SELECT address, tags FROM nested ORDER BY name"
+    )
+    assert rows[0][0] == '{"city": "London", "postcode": "NW1"}'
+    assert rows[0][1] == '["math", "engines"]'
+
+    note = " ".join(info.notes)
+    assert "address" in note and "tags" in note
+    assert "json_extract" in note  # the remedy, not just the diagnosis
+
+
+def test_json_lines_is_one_object_per_line(workspace, root):
+    info = workspace.load_file(str(root / "records.jsonl"), "main")
+
+    assert info.row_count == 3
+    assert [c.name for c in info.columns] == ["name", "salary"]
+    assert info.notes == ()
+
+
+def test_a_json_scalar_array_is_refused_because_it_names_no_column(workspace, root):
+    target = root / "scalars.json"
+    target.write_text("[1, 2, 3]")
+
+    with pytest.raises(LoadError, match="objects"):
+        workspace.load_file(str(target), "main")
+
+
+def test_a_json_object_with_no_array_at_all_is_refused(workspace, root):
+    target = root / "single.json"
+    target.write_text('{"name": "Ada", "salary": 120000}')
+
+    with pytest.raises(LoadError) as raised:
+        workspace.load_file(str(target), "main")
+    assert "array of objects" in str(raised.value)
+
+
+def test_malformed_json_names_the_file(workspace, root):
+    target = root / "broken.json"
+    target.write_text('[{"name": "Ada",}]')
+
+    with pytest.raises(LoadError, match="broken.json"):
+        workspace.load_file(str(target), "main")
+
+
+def test_json_round_trips_through_the_export(workspace, root):
+    """The strongest check that the writer and the reader agree."""
+    workspace.load_file(str(root / "records.json"), "main")
+    columns, rows = workspace.query("main", "SELECT * FROM records ORDER BY name")
+    target = root / "again.json"
+
+    export_module.export_rows(columns, rows, str(target))
+    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
+
+    assert reloaded.row_count == len(rows)
+    _, back = workspace.query("main", "SELECT * FROM reloaded ORDER BY name")
+    assert back == rows
+
+
+def test_jsonl_round_trips_through_the_export(workspace, root):
+    workspace.load_file(str(root / "records.jsonl"), "main")
+    columns, rows = workspace.query("main", "SELECT * FROM records ORDER BY name")
+    target = root / "again.jsonl"
+
+    export_module.export_rows(columns, rows, str(target))
+    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
+
+    assert reloaded.row_count == 3
+    _, back = workspace.query("main", "SELECT * FROM reloaded ORDER BY name")
+    assert back == rows
+
+
+def test_a_jsonl_export_is_one_object_per_line_with_no_wrapper(workspace, root):
+    target = root / "lines.jsonl"
+
+    export_module.export_rows(["a", "b"], [(1, "x"), (2, "y")], str(target))
+
+    written = target.read_text().splitlines()
+    assert written == ['{"a": 1, "b": "x"}', '{"a": 2, "b": "y"}']
+
+
+def test_a_null_survives_the_json_round_trip_as_a_null(workspace, root):
+    """It is the value most likely to come back as the string 'None'."""
+    target = root / "nulls.json"
+    export_module.export_rows(["a", "b"], [(1, None)], str(target))
+
+    assert '"b": null' in target.read_text()
+    workspace.load_file(str(target), "main", table_name="nulls")
+    _, rows = workspace.query("main", "SELECT b FROM nulls")
+    assert rows[0][0] is None
