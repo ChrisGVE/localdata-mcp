@@ -57,7 +57,7 @@ def workspace():
 
 
 def test_simple_csv_loads_and_answers_correctly(workspace, root):
-    info = workspace.load_file(str(root / "simple.csv"), "main")
+    (info,) = workspace.load_file(str(root / "simple.csv"), "main")
 
     assert info.row_count == 5
     assert [c.name for c in info.columns] == [
@@ -79,7 +79,7 @@ def test_simple_csv_loads_and_answers_correctly(workspace, root):
 
 
 def test_numeric_column_is_declared_numeric(workspace, root):
-    info = workspace.load_file(str(root / "simple.csv"), "main")
+    (info,) = workspace.load_file(str(root / "simple.csv"), "main")
     by_name = {c.name: c for c in info.columns}
     assert by_name["age"].declared_type == "INTEGER"
     assert by_name["salary"].declared_type == "INTEGER"
@@ -88,7 +88,7 @@ def test_numeric_column_is_declared_numeric(workspace, root):
 
 def test_messy_csv_loads_without_losing_rows(workspace, root):
     """Quoted newlines, embedded commas, emoji and a blank row all survive."""
-    info = workspace.load_file(str(root / "messy_mixed_types.csv"), "main")
+    (info,) = workspace.load_file(str(root / "messy_mixed_types.csv"), "main")
     assert info.row_count > 0
 
     _, rows = workspace.query(
@@ -115,7 +115,7 @@ def test_mostly_numeric_text_column_is_flagged_as_mixed(workspace, root):
     # 'unknown' is not, so it survives as text. Both behaviours are asserted
     # here because the difference decides what the counts below mean.
     target.write_text("v\n1\n2\n3\n4\n5\nn/a\nunknown\n")
-    info = workspace.load_file(str(target), "main")
+    (info,) = workspace.load_file(str(target), "main")
 
     column = info.columns[0]
     assert column.declared_type == "TEXT"
@@ -142,7 +142,7 @@ def test_uniformly_numeric_text_column_is_not_flagged(workspace, root):
     """No false positive: a column that is entirely non-numeric is not mixed."""
     target = root / "all_text.csv"
     target.write_text("v\nalpha\nbeta\ngamma\n")
-    info = workspace.load_file(str(target), "main")
+    (info,) = workspace.load_file(str(target), "main")
     assert info.columns[0].is_mixed is False
     assert info.mixed_columns == []
 
@@ -157,7 +157,7 @@ def test_unicode_survives_the_round_trip(workspace, root):
 
 def test_truncated_file_loads(workspace, root):
     """A missing trailing value is a NULL, not a failure."""
-    info = workspace.load_file(str(root / "truncated.csv"), "main")
+    (info,) = workspace.load_file(str(root / "truncated.csv"), "main")
     assert info.row_count == 2
     _, rows = workspace.query(
         "main", "SELECT count(*) FROM truncated WHERE value IS NULL"
@@ -173,7 +173,7 @@ def test_empty_file_is_refused_clearly(workspace, root):
 def test_duplicate_and_blank_headers_become_usable_columns(workspace, root, tmp_path):
     target = root / "dupes.csv"
     target.write_text("a,a,,1x\n1,2,3,4\n")
-    info = workspace.load_file(str(target), "main")
+    (info,) = workspace.load_file(str(target), "main")
     names = [c.name for c in info.columns]
     assert len(set(names)) == len(names), names
     assert all(names), names
@@ -187,7 +187,7 @@ def test_unsupported_extension_names_what_is_supported(workspace, root):
 
 
 def test_table_name_can_be_overridden(workspace, root):
-    info = workspace.load_file(str(root / "simple.csv"), "main", table_name="staff")
+    (info,) = workspace.load_file(str(root / "simple.csv"), "main", table_name="staff")
     assert info.name == "staff"
     _, rows = workspace.query("main", "SELECT count(*) FROM staff")
     assert rows[0][0] == 5
@@ -472,7 +472,7 @@ def test_export_round_trips_back_into_the_workspace(workspace, root):
     target = root / "exported.csv"
     export_module.export_rows(columns, rows, str(target))
 
-    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
+    (reloaded,) = workspace.load_file(str(target), "main", table_name="reloaded")
     assert reloaded.row_count == len(rows)
 
 
@@ -540,7 +540,8 @@ def test_mixed_text_column_names_the_values_that_do_not_parse(workspace, root):
     """
     target = root / "sentinels.csv"
     target.write_text("v\n1\n2\n3\npending\npending\nvoid\n")
-    column = workspace.load_file(str(target), "main").columns[0]
+    (loaded,) = workspace.load_file(str(target), "main")
+    column = loaded.columns[0]
 
     assert column.numeric_values == 3
     assert column.non_numeric_values == 3
@@ -553,7 +554,8 @@ def test_non_numeric_examples_are_capped(workspace, root):
     values = "\n".join(f"junk_{n}" for n in range(50))
     target = root / "many_sentinels.csv"
     target.write_text(f"v\n1\n2\n{values}\n")
-    column = workspace.load_file(str(target), "main").columns[0]
+    (loaded,) = workspace.load_file(str(target), "main")
+    column = loaded.columns[0]
 
     assert column.non_numeric_values == 50
     assert len(column.non_numeric_examples) == loader_module.MAX_NON_NUMERIC_EXAMPLES
@@ -569,7 +571,8 @@ def test_mixed_kind_says_which_signal_fired(workspace, root):
     """
     target = root / "affinity.csv"
     target.write_text("v\n1\n2\npending\n")
-    assert workspace.load_file(str(target), "main").columns[0].mixed_kind == "text"
+    (loaded,) = workspace.load_file(str(target), "main")
+    assert loaded.columns[0].mixed_kind == "text"
 
     external = root / "heterogeneous.sqlite"
     with sqlite3.connect(external) as conn:
@@ -588,7 +591,7 @@ def test_mixed_kind_says_which_signal_fired(workspace, root):
 
 
 def test_a_json_array_of_objects_is_a_table(workspace, root):
-    info = workspace.load_file(str(root / "records.json"), "main")
+    (info,) = workspace.load_file(str(root / "records.json"), "main")
 
     assert info.row_count == 3
     assert [c.name for c in info.columns] == ["name", "role", "salary", "started"]
@@ -597,7 +600,7 @@ def test_a_json_array_of_objects_is_a_table(workspace, root):
 
 def test_a_json_date_is_recognised_like_any_other(workspace, root):
     """The temporal pass runs on the frame, so it does not care which reader made it."""
-    info = workspace.load_file(str(root / "records.json"), "main")
+    (info,) = workspace.load_file(str(root / "records.json"), "main")
     started = {c.name: c for c in info.columns}["started"]
 
     assert started.temporal_standard == "iso8601_utc"
@@ -613,7 +616,7 @@ def test_the_only_array_in_a_wrapped_object_is_the_table_and_it_says_so(
     of the file, so a refusal it cannot act on is worse than a load it is told
     about.
     """
-    info = workspace.load_file(str(root / "wrapped.json"), "main")
+    (info,) = workspace.load_file(str(root / "wrapped.json"), "main")
 
     assert info.row_count == 2
     assert [c.name for c in info.columns] == ["name", "salary"]
@@ -632,7 +635,7 @@ def test_two_candidate_arrays_are_refused_and_both_are_named(workspace, root):
 
 def test_a_nested_value_becomes_json_text_and_the_columns_are_named(workspace, root):
     """SQL has no nested type. Encoding is lossless; silence about it is not."""
-    info = workspace.load_file(str(root / "nested.json"), "main")
+    (info,) = workspace.load_file(str(root / "nested.json"), "main")
 
     assert info.row_count == 2
     columns, rows = workspace.query(
@@ -647,7 +650,7 @@ def test_a_nested_value_becomes_json_text_and_the_columns_are_named(workspace, r
 
 
 def test_json_lines_is_one_object_per_line(workspace, root):
-    info = workspace.load_file(str(root / "records.jsonl"), "main")
+    (info,) = workspace.load_file(str(root / "records.jsonl"), "main")
 
     assert info.row_count == 3
     assert [c.name for c in info.columns] == ["name", "salary"]
@@ -686,7 +689,7 @@ def test_json_round_trips_through_the_export(workspace, root):
     target = root / "again.json"
 
     export_module.export_rows(columns, rows, str(target))
-    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
+    (reloaded,) = workspace.load_file(str(target), "main", table_name="reloaded")
 
     assert reloaded.row_count == len(rows)
     _, back = workspace.query("main", "SELECT * FROM reloaded ORDER BY name")
@@ -699,7 +702,7 @@ def test_jsonl_round_trips_through_the_export(workspace, root):
     target = root / "again.jsonl"
 
     export_module.export_rows(columns, rows, str(target))
-    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
+    (reloaded,) = workspace.load_file(str(target), "main", table_name="reloaded")
 
     assert reloaded.row_count == 3
     _, back = workspace.query("main", "SELECT * FROM reloaded ORDER BY name")
@@ -732,7 +735,7 @@ def test_a_null_survives_the_json_round_trip_as_a_null(workspace, root):
 
 
 def test_repeated_elements_under_the_root_are_the_rows(workspace, root):
-    info = workspace.load_file(str(root / "employees.xml"), "main")
+    (info,) = workspace.load_file(str(root / "employees.xml"), "main")
 
     assert info.row_count == 3
     assert [c.name for c in info.columns] == ["name", "role", "salary", "started"]
@@ -744,7 +747,7 @@ def test_repeated_elements_under_the_root_are_the_rows(workspace, root):
 
 def test_an_xml_number_is_a_number_and_a_date_is_recognised(workspace, root):
     """Element text is all strings until something types it."""
-    info = workspace.load_file(str(root / "employees.xml"), "main")
+    (info,) = workspace.load_file(str(root / "employees.xml"), "main")
     by_name = {c.name: c for c in info.columns}
 
     assert by_name["salary"].declared_type == "INTEGER"
@@ -752,7 +755,7 @@ def test_an_xml_number_is_a_number_and_a_date_is_recognised(workspace, root):
 
 
 def test_attributes_are_columns_too(workspace, root):
-    info = workspace.load_file(str(root / "attributes.xml"), "main")
+    (info,) = workspace.load_file(str(root / "attributes.xml"), "main")
 
     assert info.row_count == 2
     assert [c.name for c in info.columns] == ["id", "name"]
@@ -762,7 +765,7 @@ def test_the_one_repeated_element_is_the_table_and_the_singletons_are_named(
     workspace, root
 ):
     """A metadata element beside the rows is the XML spelling of a wrapped JSON object."""
-    info = workspace.load_file(str(root / "wrapped.xml"), "main")
+    (info,) = workspace.load_file(str(root / "wrapped.xml"), "main")
 
     assert info.row_count == 2
     assert [c.name for c in info.columns] == ["name", "salary"]
@@ -779,7 +782,7 @@ def test_two_repeated_elements_are_two_tables_and_are_refused(workspace, root):
 
 def test_a_nested_element_is_kept_as_xml_text_rather_than_dropped(workspace, root):
     """pandas.read_xml drops the subtree and leaves NaN. That is data loss with no signal."""
-    info = workspace.load_file(str(root / "nested.xml"), "main")
+    (info,) = workspace.load_file(str(root / "nested.xml"), "main")
 
     _, rows = workspace.query("main", "SELECT address FROM nested ORDER BY name")
     assert "<city>London</city>" in rows[0][0]
@@ -818,7 +821,7 @@ def test_xml_round_trips_through_the_export(workspace, root):
     target = root / "again.xml"
 
     export_module.export_rows(columns, rows, str(target))
-    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
+    (reloaded,) = workspace.load_file(str(target), "main", table_name="reloaded")
 
     assert reloaded.row_count == len(rows)
     _, back = workspace.query("main", "SELECT * FROM reloaded ORDER BY name")
@@ -864,7 +867,7 @@ def test_a_column_name_xml_cannot_spell_is_refused_not_mangled(workspace, root):
 
 def test_yaml_is_read_on_the_same_rules_as_json(workspace, root):
     """It parses to the same structures, so it gets the same reader logic."""
-    info = workspace.load_file(str(root / "config_rows.yaml"), "main")
+    (info,) = workspace.load_file(str(root / "config_rows.yaml"), "main")
 
     assert info.row_count == 2
     assert [c.name for c in info.columns] == ["name", "role", "salary"]
@@ -872,7 +875,7 @@ def test_yaml_is_read_on_the_same_rules_as_json(workspace, root):
 
 
 def test_a_wrapped_yaml_document_names_the_key_it_loaded(workspace, root):
-    info = workspace.load_file(str(root / "wrapped.yaml"), "main")
+    (info,) = workspace.load_file(str(root / "wrapped.yaml"), "main")
 
     assert info.row_count == 2
     assert len(info.notes) == 1
@@ -885,7 +888,7 @@ def test_yaml_round_trips_through_the_export(workspace, root):
     target = root / "again.yaml"
 
     export_module.export_rows(columns, rows, str(target))
-    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
+    (reloaded,) = workspace.load_file(str(target), "main", table_name="reloaded")
 
     _, back = workspace.query("main", "SELECT * FROM reloaded ORDER BY name")
     assert reloaded.row_count == 2
@@ -905,7 +908,7 @@ def test_markdown_is_written_as_a_table_and_is_write_only(workspace, root):
 
 def test_fixed_width_is_read_and_says_the_boundaries_were_inferred(workspace, root):
     """Nothing in the file states the columns, so the caller is told they were guessed."""
-    info = workspace.load_file(str(root / "payroll.fwf"), "main")
+    (info,) = workspace.load_file(str(root / "payroll.fwf"), "main")
 
     assert info.row_count == 3
     assert [c.name for c in info.columns] == ["name", "salary"]
@@ -925,7 +928,7 @@ def test_a_columnar_format_round_trips_every_type_exactly(workspace, root, suffi
     result = export_module.export_rows(columns, rows, str(target))
     assert result.row_count == 5
 
-    reloaded = workspace.load_file(str(target), "main", table_name="back")
+    (reloaded,) = workspace.load_file(str(target), "main", table_name="back")
     assert reloaded.row_count == 5
     by_name = {c.name: c for c in reloaded.columns}
     assert by_name["age"].declared_type == "INTEGER"
@@ -942,3 +945,112 @@ def test_a_columnar_file_that_is_not_one_is_refused_by_name(workspace, root):
 
     with pytest.raises(LoadError, match="lying.parquet"):
         workspace.load_file(str(target), "main")
+
+
+# ---------------------------------------------------------------------------
+# Spreadsheets and HTML — the formats that hold more than one table
+# ---------------------------------------------------------------------------
+
+
+def test_a_workbook_becomes_one_table_per_sheet(workspace, root):
+    """Reading only the first sheet would leave the rest unreachable."""
+    landed = workspace.load_file(str(root / "workbook.xlsx"), "main")
+
+    assert [info.name for info in landed] == ["staff", "departments"]
+    assert [info.row_count for info in landed] == [3, 2]
+
+    _, rows = workspace.query("main", "SELECT sum(salary) FROM staff")
+    assert rows[0][0] == 353000
+    _, rows = workspace.query("main", "SELECT floor FROM departments ORDER BY floor")
+    assert [r[0] for r in rows] == [1, 3]
+
+
+def test_a_sheet_keeps_its_own_name_not_the_filename(workspace, root):
+    (info,) = workspace.load_file(str(root / "one_sheet.xlsx"), "main")
+    assert info.name == "people"
+
+
+def test_a_table_name_cannot_cover_several_sheets_and_says_so(workspace, root):
+    with pytest.raises(LoadError, match="table_name"):
+        workspace.load_file(str(root / "workbook.xlsx"), "main", table_name="all")
+
+
+def test_spreadsheet_types_survive(workspace, root):
+    (info,) = workspace.load_file(str(root / "one_sheet.xlsx"), "main")
+    by_name = {c.name: c for c in info.columns}
+
+    assert by_name["salary"].declared_type == "INTEGER"
+    assert by_name["started"].temporal_standard == "iso8601_utc"
+
+
+def test_a_legacy_xls_is_read(workspace, root):
+    """xlrd reads it; nothing writes it, which is why .xls is read-only here."""
+    (info,) = workspace.load_file(str(root / "legacy.xls"), "main")
+
+    assert info.name == "staff"
+    assert info.row_count == 3
+    assert ".xls" not in export_module.WRITERS
+
+
+def test_an_ods_workbook_reads_like_any_other(workspace, root):
+    landed = workspace.load_file(str(root / "book.ods"), "main")
+    assert [info.name for info in landed] == ["staff", "departments"]
+
+
+def test_every_table_on_an_html_page_is_loaded(workspace, root):
+    """A page's tables are numbered, because HTML gives them no names."""
+    landed = workspace.load_file(str(root / "tables.html"), "main")
+
+    assert len(landed) == 2
+    assert [info.row_count for info in landed] == [3, 2]
+
+
+def test_a_page_with_one_table_needs_no_number(workspace, root):
+    (info,) = workspace.load_file(str(root / "one_table.html"), "main")
+    assert info.name == "one_table"
+    assert info.row_count == 3
+
+
+def test_html_round_trips_through_the_export(workspace, root):
+    workspace.load_file(str(root / "one_table.html"), "main")
+    columns, rows = workspace.query("main", "SELECT * FROM one_table ORDER BY name")
+    target = root / "again.html"
+
+    export_module.export_rows(columns, rows, str(target))
+    (reloaded,) = workspace.load_file(str(target), "main", table_name="reloaded")
+
+    assert reloaded.row_count == 3
+
+
+def test_xlsx_round_trips_through_the_export(workspace, root):
+    workspace.load_file(str(root / "one_sheet.xlsx"), "main")
+    columns, rows = workspace.query(
+        "main", "SELECT name, salary FROM people ORDER BY name"
+    )
+    target = root / "again.xlsx"
+
+    export_module.export_rows(columns, rows, str(target))
+    (reloaded,) = workspace.load_file(str(target), "main", table_name="reloaded")
+
+    _, back = workspace.query("main", "SELECT name, salary FROM reloaded ORDER BY name")
+    assert back == rows
+
+
+def test_a_page_with_no_table_is_refused(workspace, root):
+    target = root / "prose.html"
+    target.write_text("<html><body><p>No tables here at all.</p></body></html>")
+
+    with pytest.raises(LoadError, match="no table"):
+        workspace.load_file(str(target), "main")
+
+
+def test_apple_numbers_is_read_without_its_empty_grid(workspace, root):
+    """A Numbers table is a fixed canvas, so the cells past the data come back null."""
+    (info,) = workspace.load_file(str(root / "payroll.numbers"), "main")
+
+    assert info.name == "staff"
+    assert info.row_count == 2
+    assert [c.name for c in info.columns] == ["name", "role", "salary"]
+
+    _, rows = workspace.query("main", "SELECT sum(salary) FROM staff")
+    assert rows[0][0] == 255000

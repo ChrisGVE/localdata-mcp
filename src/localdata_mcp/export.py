@@ -257,9 +257,64 @@ def _write_columnar(
     return len(frame)
 
 
+def _write_workbook(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    """One sheet, named for the file.
+
+    A result is one table, so it is one sheet — writing a workbook of several
+    would need several results, which is not what this verb is handed. ``.xls``
+    is absent from the writers on purpose: xlrd dropped writing and nothing
+    maintained replaces it, so it is read-only here.
+    """
+    suffix = path.suffix.lower()
+    module, package, extra = (
+        ("odf", "odfpy", "ods")
+        if suffix == ".ods"
+        else ("openpyxl", "openpyxl", "excel")
+    )
+    _require(module, extra, f"Writing {suffix}")
+    import pandas as pd
+
+    frame = pd.DataFrame(list(rows), columns=list(columns))
+    frame.to_excel(path, sheet_name=path.stem[:31] or "Sheet1", index=False)
+    return len(frame)
+
+
+def _write_html(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    """A single table, escaped, with no styling opinion.
+
+    Needs no library to write — only reading HTML needs lxml — so this is
+    written directly rather than through pandas, which would pull the whole
+    frame machinery in to produce the same markup.
+    """
+    written = 0
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("<table>\n<thead>\n<tr>")
+        for column in columns:
+            handle.write(f"<th>{escape(str(column))}</th>")
+        handle.write("</tr>\n</thead>\n<tbody>\n")
+        for row in rows:
+            handle.write("<tr>")
+            for value in row:
+                handle.write(
+                    "<td></td>" if value is None else f"<td>{escape(str(value))}</td>"
+                )
+            handle.write("</tr>\n")
+            written += 1
+        handle.write("</tbody>\n</table>\n")
+    return written
+
+
 #: Extension to writer, the counterpart of ``loader.READERS``. A new output
 #: format is one entry here; nothing upstream of it needs to know.
 WRITERS: dict[str, Writer] = {
+    ".xlsx": _write_workbook,
+    ".ods": _write_workbook,
+    ".html": _write_html,
+    ".htm": _write_html,
     ".csv": _write_csv,
     ".tsv": _write_tsv,
     ".xml": _write_xml,

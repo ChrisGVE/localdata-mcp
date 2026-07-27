@@ -111,23 +111,47 @@ _YIELD_PER = 1_000
 
 
 @dataclass(frozen=True)
-class ReadResult:
-    """A frame, and anything about the reading of it the frame cannot show.
+class NamedFrame:
+    """One table out of a file, with the name the file gave it if it had one.
 
-    Most formats need no second field: a CSV's rows are the whole story. Some
-    cannot say everything in the data. A JSON file whose tables hang under a key
-    was read from *one* of those keys; a file loaded under an assumed delimiter
-    was read under an assumption. Each is a fact about the source that the
-    caller can act on and would otherwise have to infer from a shape that looks
-    perfectly ordinary — so it is carried out rather than dropped here.
+    ``name`` is ``None`` for a format that holds a single unnamed table — a CSV
+    is just rows, and what to call them is the caller's or the filename's. A
+    spreadsheet sheet names itself, and that name is the one to use.
+    """
+
+    frame: pd.DataFrame
+    name: str | None = None
+
+
+@dataclass(frozen=True)
+class ReadResult:
+    """The tables in a file, and anything about the reading the data cannot show.
+
+    **A file may hold more than one table**, and a workbook is the obvious case:
+    three sheets are three tables. Reading only the first and ignoring the rest
+    would leave data that is present in the file unreachable through the server,
+    which is the same silent loss as dropping a nested value — so the reader
+    returns all of them and the datasource, being a database, holds all of them.
+
+    Most formats need no second field either: a CSV's rows are the whole story.
+    Some cannot say everything in the data. A JSON file whose tables hang under
+    a key was read from *one* of those keys; a fixed-width file was read under
+    inferred boundaries. Each is a fact about the source that the caller can act
+    on and would otherwise have to infer from a shape that looks perfectly
+    ordinary — so it is carried out rather than dropped here.
 
     A note is a sentence, and the contract is the same as the warnings the load
     path already produces: state what happened and what to do about it. It is
     not a place to guess.
     """
 
-    frame: pd.DataFrame
+    tables: tuple[NamedFrame, ...]
     notes: tuple[str, ...] = ()
+
+
+def _one(frame: pd.DataFrame, notes: tuple[str, ...] = ()) -> ReadResult:
+    """A result for the common case: a format holding a single unnamed table."""
+    return ReadResult((NamedFrame(frame),), notes)
 
 
 #: A reader turns a path into a frame plus whatever it had to assume or choose.
@@ -437,11 +461,11 @@ def _numeric_split(series: pd.Series) -> tuple[int, int, tuple[str, ...]]:
 def _read_csv(path: Path) -> ReadResult:
     # `keep_default_na` is left on: pandas' blank/NA handling is what turns an
     # empty cell into NULL rather than the string "".
-    return ReadResult(pd.read_csv(path))
+    return _one(pd.read_csv(path))
 
 
 def _read_tsv(path: Path) -> ReadResult:
-    return ReadResult(pd.read_csv(path, sep="\t"))
+    return _one(pd.read_csv(path, sep="\t"))
 
 
 def _read_json(path: Path) -> ReadResult:
@@ -538,7 +562,7 @@ def _read_fwf(path: Path) -> ReadResult:
     read the format without a declared layout — and it is still a guess, so the
     note says so rather than letting an inferred split pass as a fact.
     """
-    return ReadResult(
+    return _one(
         pd.read_fwf(path),
         (
             f"{path.name} is fixed-width, so its column boundaries were inferred "
@@ -572,7 +596,151 @@ def _read_columnar(path: Path) -> ReadResult:
         raise
     except Exception as exc:
         raise LoadError(f"Could not read {path.name}: {exc}") from exc
-    return ReadResult(frame)
+    return _one(frame)
+
+
+#: Which library reads which workbook, and which extra installs it. Every one of
+#: them is reached through ``pandas.read_excel``, which dispatches on the engine.
+_WORKBOOKS = {
+    ".xlsx": ("openpyxl", "openpyxl", "excel"),
+    ".xlsm": ("openpyxl", "openpyxl", "excel"),
+    ".xls": ("xlrd", "xlrd", "xls"),
+    ".ods": ("odf", "odfpy", "ods"),
+}
+
+
+def _read_workbook(path: Path) -> ReadResult:
+    """Every sheet of a workbook, each as a table under its own sheet name.
+
+    ``sheet_name=None`` rather than the default ``0``: the default reads the
+    first sheet and says nothing about the others, which leaves data that is
+    present in the file unreachable through the server. A workbook is a database
+    and its sheets are its tables, so all of them land.
+    """
+    suffix = path.suffix.lower()
+    module, package, extra = _WORKBOOKS[suffix]
+    _require(module, extra, f"Reading {suffix}")
+
+    try:
+        sheets = pd.read_excel(path, sheet_name=None)
+    except LoadError:
+        raise
+    except Exception as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+    # A workbook may carry a sheet that is entirely empty; it is a sheet with no
+    # table in it, and dropping it is not loss. Refusing the whole file over one
+    # would be, so only a workbook with nothing in any sheet is refused.
+    tables = tuple(
+        NamedFrame(frame, name)
+        for name, frame in sheets.items()
+        if not frame.empty or len(frame.columns)
+    )
+    if not tables:
+        raise LoadError(f"Could not read {path.name}: every sheet in it is empty.")
+    return ReadResult(tables)
+
+
+def _read_html(path: Path) -> ReadResult:
+    """Every table on the page.
+
+    HTML gives its tables no names, so they are numbered — ``page``,
+    ``page_2``, ``page_3`` — after the file. A page usually holds one table and
+    then the bare name is enough; a page holding several is the case the numbers
+    exist for, and loading only the first would be the workbook mistake again.
+    """
+    _require("lxml", "html", "Reading HTML")
+    try:
+        # `flavor` pinned: left unset, pandas falls through to html5lib when lxml
+        # finds no table, and the caller is told to install html5lib rather than
+        # that the page has no table on it.
+        found = pd.read_html(path, flavor="lxml")
+    except ValueError as exc:
+        # pandas says "No tables found", which does not name the file.
+        raise LoadError(f"Could not read {path.name}: no table on the page.") from exc
+    except Exception as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+    stem = path.stem
+    return ReadResult(
+        tuple(
+            NamedFrame(frame, stem if index == 0 else f"{stem}_{index + 1}")
+            for index, frame in enumerate(found)
+        )
+    )
+
+
+def _read_numbers(path: Path) -> ReadResult:
+    """Apple Numbers, whose sheets each hold their own named tables.
+
+    Two levels rather than one: a Numbers sheet is a canvas that may carry
+    several tables, so the name here is the table's, qualified by its sheet only
+    when the same table name appears on more than one.
+    """
+    parser = _require("numbers_parser", "numbers", "Reading Apple Numbers")
+    try:
+        document = parser.Document(str(path))
+        found = [
+            (sheet.name, table.name, table.rows(values_only=True))
+            for sheet in document.sheets
+            for table in sheet.tables
+        ]
+    except LoadError:
+        raise
+    except Exception as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+    counts: dict[str, int] = {}
+    for _, table_name, _ in found:
+        counts[table_name] = counts.get(table_name, 0) + 1
+
+    tables = []
+    for sheet_name, table_name, rows in found:
+        trimmed = _without_grid_padding(rows)
+        if trimmed is None:
+            continue
+        header, body = trimmed
+        frame = pd.DataFrame(body, columns=header)
+        name = table_name if counts[table_name] == 1 else f"{sheet_name}_{table_name}"
+        tables.append(NamedFrame(_inferred_types(frame), name))
+
+    if not tables:
+        raise LoadError(f"Could not read {path.name}: it holds no table with rows.")
+    return ReadResult(tuple(tables))
+
+
+def _without_grid_padding(rows: Sequence[Sequence[Any]]):
+    """Strip a Numbers table's empty grid, and nothing that holds a value.
+
+    A Numbers table is a fixed canvas — a new one is 8 columns by 12 rows —
+    so the cells beyond the data come back as ``None`` and would otherwise
+    become columns named ``None`` and a tail of all-null rows.
+
+    Emptiness is tested on the *whole* column, not on its header: a column with
+    values but no header is real data that happens to be unlabelled, and
+    dropping it on the strength of a blank header would be exactly the silent
+    loss this reader is meant to avoid. Returns ``None`` for a table that is
+    entirely empty.
+    """
+    if not rows:
+        return None
+
+    header, *body = rows
+    keep = [
+        index
+        for index in range(len(header))
+        if header[index] is not None
+        or any(index < len(row) and row[index] is not None for row in body)
+    ]
+    if not keep:
+        return None
+
+    kept_body = [[row[index] for index in keep] for row in body]
+    kept_body = [row for row in kept_body if any(cell is not None for cell in row)]
+    if not kept_body:
+        return None
+
+    return [header[index] for index in keep], kept_body
 
 
 def _read_xml(path: Path) -> ReadResult:
@@ -612,7 +780,8 @@ def _read_xml(path: Path) -> ReadResult:
         )
 
     result = _frame_of_records(records, notes)
-    return ReadResult(_inferred_types(result.frame), result.notes)
+    frame = result.tables[0].frame
+    return _one(_inferred_types(frame), result.notes)
 
 
 def _inferred_types(frame: pd.DataFrame) -> pd.DataFrame:
@@ -787,7 +956,7 @@ def _frame_of_records(records: list[dict], notes: tuple[str, ...]) -> ReadResult
             f"json_extract(column, '$.key'); the text is exactly what was in the "
             f"file, so nothing was lost.",
         )
-    return ReadResult(frame, notes)
+    return _one(frame, notes)
 
 
 def _json_kind(value: object) -> str:
@@ -820,6 +989,13 @@ READERS: dict[str, Reader] = {
     ".parquet": _read_columnar,
     ".feather": _read_columnar,
     ".orc": _read_columnar,
+    ".xlsx": _read_workbook,
+    ".xlsm": _read_workbook,
+    ".xls": _read_workbook,
+    ".ods": _read_workbook,
+    ".numbers": _read_numbers,
+    ".html": _read_html,
+    ".htm": _read_html,
 }
 
 
@@ -849,11 +1025,15 @@ def read_file(path: Path) -> ReadResult:
     # `read_csv` infers numbers and leaves everything else as text, so without
     # this a date is compared as text and `ORDER BY` runs backwards on any
     # spelling whose lexical order is not its chronological one.
-    frame = temporal.standardize(result.frame)
+    standardized = []
+    for table in result.tables:
+        frame = temporal.standardize(table.frame)
+        if frame.empty and len(frame.columns) == 0:
+            named = f" ({table.name})" if table.name else ""
+            raise LoadError(f"{path.name}{named} contains no columns.")
+        standardized.append(NamedFrame(frame, table.name))
 
-    if frame.empty and len(frame.columns) == 0:
-        raise LoadError(f"{path.name} contains no columns.")
-    return ReadResult(frame, result.notes)
+    return ReadResult(tuple(standardized), result.notes)
 
 
 # ---------------------------------------------------------------------------
@@ -1176,14 +1356,36 @@ class Workspace:
 
     def load_file(
         self, raw_path: str, tag: str, table_name: str | None = None
-    ) -> TableInfo:
-        """Read a tabular file into a new table in ``tag`` and describe what landed."""
+    ) -> list[TableInfo]:
+        """Read a tabular file into ``tag`` and describe every table that landed.
+
+        A list, because a file is not always one table: a workbook's sheets are
+        each a table, and returning only the first would leave the rest present
+        in the file and unreachable through the server.
+        """
         path = resolve_read_path(raw_path)
         read = read_file(path)
-        name = _sanitize(table_name or path.stem, "table")
-        return self.insert_frame(
-            read.frame, name, source=str(path), tag=tag, notes=read.notes
-        )
+
+        if len(read.tables) > 1 and table_name is not None:
+            named = ", ".join(str(table.name) for table in read.tables)
+            raise LoadError(
+                f"{path.name} holds {len(read.tables)} tables ({named}), so one "
+                f"name cannot cover them — they keep the names the file gives "
+                f"them. Drop table_name, or point at a file holding one table."
+            )
+
+        return [
+            self.insert_frame(
+                table.frame,
+                _sanitize(table_name or table.name or path.stem, "table"),
+                source=str(path),
+                tag=tag,
+                # The notes describe reading the file, so they belong to every
+                # table that came out of it.
+                notes=read.notes,
+            )
+            for table in read.tables
+        ]
 
     def insert_frame(
         self,

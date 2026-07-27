@@ -363,7 +363,8 @@ def attach(
 
     Args:
         database: A tabular file (.csv, .tsv, .txt, .json, .jsonl,
-            .ndjson, .xml, .yaml, .yml, .fwf, .parquet, .feather, .orc), a
+            .ndjson, .xml, .yaml, .yml, .fwf, .parquet, .feather, .orc,
+            .xlsx, .xlsm, .xls, .ods, .numbers, .html, .htm), a
             SQLite database file, or a database URL.
         nickname: The name this datasource answers to — pass it to every later
             call. Derived from the filename when omitted. If it collides with a
@@ -513,8 +514,9 @@ def query(
         nickname: Which datasource executes the statement.
         sql: The SQL statement.
         path: Write the full result to this file instead of returning rows. The
-            suffix chooses the format (.csv, .tsv, .txt, .json, .jsonl,
-            .ndjson, .xml, .yaml, .yml, .md, .parquet, .feather, .orc);
+            suffix chooses the format (.csv, .tsv, .txt, .json,
+            .jsonl, .ndjson, .xml, .yaml, .yml, .md, .parquet, .feather, .orc,
+            .xlsx, .ods, .html, .htm);
             one this server cannot
             write is refused by name rather than written as something else.
         force: Replace the file if it is already there. Set this only after the

@@ -351,13 +351,24 @@ class Registry:
             return False
 
     def _attach_frame(self, read: ReadResult, path: Path, nickname: str) -> Slot:
-        """Give an already-read frame its own database, named after the file."""
+        """Give the tables read out of a file their own database.
+
+        Every table in the file lands here, not just the first: a workbook's
+        sheets are each a table, and the datasource is a database, so it holds
+        all of them exactly as an attached SQLite file would.
+        """
         self._workspace.attach_memory(nickname)
-        table = _sanitize(path.stem, "table")
         try:
-            info = self._workspace.insert_frame(
-                read.frame, table, source=str(path), tag=nickname, notes=read.notes
-            )
+            landed = [
+                self._workspace.insert_frame(
+                    table.frame,
+                    _sanitize(table.name or path.stem, "table"),
+                    source=str(path),
+                    tag=nickname,
+                    notes=read.notes,
+                )
+                for table in read.tables
+            ]
         except LoadError as exc:
             self._workspace.detach(nickname)
             raise AttachRefused(str(exc)) from exc
@@ -365,7 +376,7 @@ class Registry:
             nickname=nickname,
             kind="file",
             source=str(path),
-            tables=(info.name,),
+            tables=tuple(info.name for info in landed),
             # This database is one we built. Nothing outside it is at risk from
             # a write, so composition needs no grant.
             writable=True,
@@ -579,8 +590,20 @@ class Registry:
             raise SlotError(str(exc)) from exc
         try:
             read = read_file(path)
+            if len(read.tables) > 1:
+                named = ", ".join(str(one.name) for one in read.tables)
+                raise SlotError(
+                    f"{Path(source).name} holds {len(read.tables)} tables "
+                    f"({named}), and create makes one. Attach the file as its "
+                    f"own datasource instead — it becomes a database with all "
+                    f"{len(read.tables)} in it."
+                )
             return self._workspace.insert_frame(
-                read.frame, table, source=str(path), tag=slot.nickname, notes=read.notes
+                read.tables[0].frame,
+                table,
+                source=str(path),
+                tag=slot.nickname,
+                notes=read.notes,
             )
         except LoadError as exc:
             raise SlotError(str(exc)) from exc

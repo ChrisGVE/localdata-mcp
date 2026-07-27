@@ -112,7 +112,7 @@ def test_large_file_answers_correctly(root):
     workspace = Workspace.in_memory()
     workspace.attach_memory("bulk")
     try:
-        info = workspace.load_file(str(path), "bulk")
+        (info,) = workspace.load_file(str(path), "bulk")
         assert info.row_count == LARGE_ROWS
 
         _, rows = workspace.query("bulk", "SELECT sum(id) FROM big")
