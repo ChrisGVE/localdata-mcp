@@ -24,6 +24,8 @@ import asyncio
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import date, datetime, time
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -222,17 +224,100 @@ def test_a_file_lands_in_the_endpoint_and_reads_back(live):
     answer = call(
         "query",
         nickname="endpoint",
-        sql=f"SELECT department, count(*) AS n FROM {table} "
+        sql=f"SELECT department, sum(salary) AS total FROM {table} "
         f"GROUP BY department ORDER BY department",
     )
 
     assert answer["ok"] is True, answer
+    # Numbers, as numbers. MySQL answers a SUM over an integer column with a
+    # DECIMAL, and a Decimal left alone reaches the wire as the string
+    # "155000" — which an agent then compares and adds as text.
     assert answer["rows"] == [
-        ["engineering", 2],
-        ["hr", 1],
-        ["marketing", 1],
-        ["sales", 1],
+        ["engineering", 155000],
+        ["hr", 55000],
+        ["marketing", 70000],
+        ["sales", 65000],
     ]
+
+
+def _build_typed_table(live: Live) -> str:
+    """A table of types SQLite does not have, built the way the user's would be.
+
+    Through SQLAlchemy's *generic* types, so each dialect renders its own: this
+    is standing in for a database somebody else made, which is the only kind an
+    endpoint ever is. The three storage classes a loaded file produces would
+    never reach ``Decimal`` or ``bytes``, so a fixture that went through
+    ``create`` could not exercise this at all.
+    """
+    from sqlalchemy import (
+        Boolean,
+        Column,
+        Date,
+        DateTime,
+        LargeBinary,
+        MetaData,
+        Numeric,
+        Table,
+        Time,
+    )
+
+    table = live.table("typed")
+    metadata = MetaData()
+    defined = Table(
+        table,
+        metadata,
+        Column("amount", Numeric(12, 4)),
+        Column("day", Date),
+        Column("moment", DateTime),
+        Column("clock", Time),
+        Column("blob", LargeBinary),
+        Column("flag", Boolean),
+    )
+    engine = create_engine(live.url)
+    try:
+        with engine.begin() as conn:
+            metadata.create_all(conn)
+            conn.execute(
+                defined.insert(),
+                {
+                    "amount": Decimal("12345.6789"),
+                    "day": date(2024, 3, 1),
+                    "moment": datetime(2024, 3, 1, 14, 30),
+                    "clock": time(14, 30),
+                    "blob": b"\x00\xff",
+                    "flag": True,
+                },
+            )
+    finally:
+        engine.dispose()
+    return table
+
+
+def test_every_value_reaches_the_wire_as_something_json_can_hold(live):
+    """The value space of an endpoint is much wider than SQLite's three classes.
+
+    Each of these came back from a live container as a Python object JSON has no
+    form for, and each has one spelling here rather than whatever the serialiser
+    would have reached for. The failure this prevents is quiet: a number that
+    arrives as text still looks like an answer.
+    """
+    table = _build_typed_table(live)
+    call("attach", database=live.url, nickname="endpoint")
+
+    answer = call("query", nickname="endpoint", sql=f"SELECT * FROM {table}")
+
+    assert answer["ok"] is True, answer
+    row = dict(zip(answer["columns"], answer["rows"][0]))
+    assert row["amount"] == pytest.approx(12345.6789)
+    assert row["day"] == "2024-03-01"
+    assert row["moment"] == "2024-03-01T14:30:00"
+    assert row["blob"] == "0x00ff"
+    # Booleans are the one case a dialect may answer with an integer, and both
+    # spellings are JSON numbers or literals, so both are usable as they stand.
+    assert row["flag"] in (True, 1)
+    # A time of day is a *duration* on MySQL, which is the dialect's own reading
+    # of the column and not something to paper over. Either spelling is ISO 8601.
+    assert row["clock"] in ("14:30:00", "PT14H30M0S")
 
 
 def test_info_describes_a_table_the_endpoint_holds(live):

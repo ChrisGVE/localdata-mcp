@@ -49,8 +49,11 @@ therefore guarded by a lock rather than assumed to be reached from one thread.
 
 from __future__ import annotations
 
+import datetime as _dt
 import threading
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from fastmcp import FastMCP
 
@@ -139,6 +142,81 @@ def _reset() -> None:
 # ---------------------------------------------------------------------------
 # Payloads
 # ---------------------------------------------------------------------------
+
+
+def _iso_duration(value: _dt.timedelta) -> str:
+    """A duration in ISO 8601, the only spelling this server recognises.
+
+    MySQL hands a ``TIME`` column back as a duration rather than a time of day,
+    and PostgreSQL does the same for ``INTERVAL``, so this is not an exotic case.
+    Rendered rather than turned into a number because a bare number needs its
+    unit said somewhere, and there is nowhere in a row to say it.
+    """
+    seconds = value.days * 86_400 + value.seconds
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    fraction = f".{value.microseconds:06d}".rstrip("0") if value.microseconds else ""
+    return f"PT{hours}H{minutes}M{seconds}{fraction}S"
+
+
+def _wire_datetime(value: _dt.datetime) -> str:
+    """An instant as canonical UTC ISO 8601 text, per ``CONSTRAINTS.md`` §8.1.
+
+    An aware instant is converted rather than reported in the offset it arrived
+    in, so the same instant written two ways compares equal. A naive one is
+    reported as it stands and gains no ``Z``: nothing in the database said which
+    zone it was in, and stamping one on would be an invention.
+    """
+    if value.tzinfo is not None:
+        return value.astimezone(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    return value.isoformat()
+
+
+#: How a value that JSON cannot hold is spelled on the way out, by exact type.
+#:
+#: **A server-side database returns far more than the three storage classes
+#: SQLite has**, and every one of these came back from a live container: a
+#: ``NUMERIC`` as ``Decimal``, a ``DATE`` as ``date``, a MySQL ``TIME`` as
+#: ``timedelta``, a ``BYTEA`` as ``bytes``, a Postgres ``UUID`` as ``UUID``.
+#: Left alone they reach the serialiser, which renders each in whatever way it
+#: happens to — a number arriving as the *string* ``"155000"`` was the defect
+#: that asked for this table, because an agent then compares and sums text.
+#:
+#: Keyed on exact type rather than ``isinstance``, as :mod:`binding` is, because
+#: ``datetime`` subclasses ``date`` and ``bool`` subclasses ``int``.
+_ON_THE_WIRE: dict[type, Any] = {
+    # As float, matching what `binding` already decided a Decimal becomes on the
+    # way *in*: lossy past float64's 53-bit mantissa, and worth it because the
+    # alternative is text, and text does not add up.
+    Decimal: float,
+    _dt.datetime: _wire_datetime,
+    _dt.date: _dt.date.isoformat,
+    _dt.time: _dt.time.isoformat,
+    _dt.timedelta: _iso_duration,
+    # Hex, prefixed as SQL writes a blob literal. Legible for the small binary
+    # values that actually turn up — a hash, a checksum, a packed identifier —
+    # and the prefix is what stops it reading as ordinary text.
+    bytes: lambda value: f"0x{value.hex()}",
+    bytearray: lambda value: f"0x{bytes(value).hex()}",
+    UUID: str,
+}
+
+
+def _wire_value(value: Any) -> Any:
+    """One value from a result row, as something JSON can carry.
+
+    Numbers, strings, booleans, ``None`` and the containers a JSON column
+    already returns pass through untouched. Everything else is spelled by
+    :data:`_ON_THE_WIRE`, and a type not named there arrives as its text form —
+    a PostGIS geometry, say. Stringifying the unknown case beats refusing the
+    whole result over one column, and beats guessing at its structure.
+    """
+    spelling = _ON_THE_WIRE.get(type(value))
+    if spelling is not None:
+        return spelling(value)
+    if value is None or isinstance(value, (bool, int, float, str, list, dict)):
+        return value
+    return str(value)
 
 
 def _column_payload(column: Any) -> dict[str, Any]:
@@ -562,7 +640,11 @@ def query(
             return {
                 "ok": True,
                 "columns": columns,
-                "rows": [list(row) for row in rows],
+                # Spelled for JSON here and not in `loader`, because the rows
+                # below go to `export_rows` instead, and a file is better served
+                # by the native value — a Parquet timestamp column wants a
+                # timestamp, not the text an answer needs.
+                "rows": [[_wire_value(value) for value in row] for row in rows],
                 "row_count": len(rows),
             }
 
