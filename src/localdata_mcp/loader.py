@@ -1771,6 +1771,11 @@ class Workspace:
                 f"one use drop; there is no verb for arbitrary DDL by design."
             )
 
+        if entry.backend.denies_write(exc):
+            # The backend refused the statement itself and said so in its own
+            # words, which name no verb the caller could use instead.
+            return LoadError(_NOT_A_READ)
+
         message = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
         if _objected_to_the_leading_verb(message, sql):
             return LoadError(_NOT_A_READ)

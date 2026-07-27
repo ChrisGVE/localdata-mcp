@@ -419,14 +419,29 @@ def test_query_refuses_a_write_even_where_the_datasource_permits_it(live):
     ] == [[5]]
 
 
-def test_query_refuses_ddl(live):
-    attach_writable(live)
+def test_ddl_through_query_never_reaches_the_database(live):
+    """Refusing after the fact is not enough where a rollback cannot undo it.
 
-    made = call(
-        "query", nickname="endpoint", sql=f"CREATE TABLE {live.table('nope')} (a INT)"
-    )
+    MySQL and MariaDB commit DDL implicitly, so a ``CREATE TABLE`` sent through
+    a read connection that never commits is *permanent* — the table was still
+    there on the next connection. The transactional floor assumes a write can be
+    left uncommitted and thereby undone, and on those two dialects it cannot be,
+    so the read posture has to refuse the statement rather than decline to keep
+    it. The second assertion is the one that would have caught it.
+    """
+    attach_writable(live)
+    orphan = live.table("nope")
+
+    made = call("query", nickname="endpoint", sql=f"CREATE TABLE {orphan} (a INT)")
 
     assert made["ok"] is False, made
+    assert "create" in made["error"]
+    engine = create_engine(live.url)
+    try:
+        with engine.connect() as conn:
+            assert orphan not in inspect(conn).get_table_names()
+    finally:
+        engine.dispose()
 
 
 def test_a_read_only_attach_refuses_create_and_drop(live):

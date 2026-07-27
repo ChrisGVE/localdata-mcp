@@ -10,8 +10,10 @@ said. The test for belonging here is not "is this SQL awkward" but **"does this
 mean something different, or nothing at all, on another backend"**:
 
 * **Read-only posture.** Every backend can refuse writes; none of them spell it
-  the same way. SQLite sets ``query_only`` on the connection, PostgreSQL starts a
-  read-only transaction. The *guarantee* is portable, the mechanism is not.
+  the same way. SQLite sets ``query_only`` on the connection, MySQL opens a
+  read-only session. The *guarantee* is portable, the mechanism is not — and on
+  MySQL the generic guarantee is not even available, because DDL there commits
+  implicitly and there is nothing left to roll back.
 * **Residency.** How much a database is holding in *this process* is a question
   that only means anything for an in-process, memory-backed database. For a file
   or a server it is either unobservable or somebody else's memory, and the honest
@@ -151,6 +153,22 @@ class Backend:
         statement never runs at all and the refusal can name what was attempted.
         """
         return None
+
+    def denies_write(self, exc: Exception) -> bool:
+        """Whether this error is this backend's own refusal of a write.
+
+        ``False`` generically, and truthfully so: the generic posture does not
+        refuse a write, it declines to keep one, so there is no refusal to
+        recognise. A dialect that *does* refuse answers here — by the driver's
+        own error code, never by its prose, because prose carries a locale and a
+        version and an error code carries neither.
+
+        What this is for: the refusal reaches the caller as whatever the driver
+        said, and a driver says "read only transaction" without saying which verb
+        to use instead. :meth:`loader.Workspace._explain` asks this so it can
+        answer with the one that does.
+        """
+        return False
 
     def resident_bytes(self, engine: Engine) -> int | None:
         """Bytes this database is holding in *our* process, or ``None``.
@@ -455,6 +473,47 @@ class SQLiteBackend(Backend):
         return {storage_class: count for storage_class, count in rows}
 
 
+# ---------------------------------------------------------------------------
+# MySQL and MariaDB
+# ---------------------------------------------------------------------------
+
+
+#: MySQL's own code for "this statement cannot run in a read-only transaction",
+#: shared by MariaDB. Matched on the code rather than the sentence: the sentence
+#: has a locale and a version, the code has neither.
+_MYSQL_READ_ONLY = 1792
+
+
+@dataclass(frozen=True)
+class MySQLBackend(Backend):
+    """MySQL and MariaDB, where the transactional floor is not a floor.
+
+    **DDL on MySQL commits implicitly.** A ``CREATE TABLE`` sent through a read
+    connection that never commits is therefore *permanent* — measured against
+    both containers, and the table was still there on the next connection. The
+    generic guarantee assumes a write can be left uncommitted and thereby undone;
+    that assumption simply does not hold here, so this raises the floor from "not
+    kept" to "not run": a read-only session refuses DML and DDL alike, before
+    either reaches the data.
+
+    Set once, at connect time, for the same reason SQLite's ``query_only`` is:
+    a posture toggled around a call has a window in which it is something else.
+    """
+
+    name: str = "mysql"
+
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        @event.listens_for(engine, "connect")
+        def _posture(dbapi_conn, _record):  # noqa: ANN001 - SQLAlchemy's signature
+            with dbapi_conn.cursor() as cursor:
+                cursor.execute("SET SESSION TRANSACTION READ ONLY")
+
+    def denies_write(self, exc: Exception) -> bool:
+        origin = getattr(exc, "orig", exc)
+        arguments = getattr(origin, "args", ())
+        return bool(arguments) and arguments[0] == _MYSQL_READ_ONLY
+
+
 _SQLITE = SQLiteBackend()
 _GENERIC = Backend()
 
@@ -462,7 +521,14 @@ _GENERIC = Backend()
 #: absence here is not a gap: it means SQLAlchemy's own answers are the whole
 #: answer for that database, which is the ordinary case rather than the
 #: exceptional one.
-BACKENDS: dict[str, Backend] = {"sqlite": _SQLITE}
+#:
+#: MariaDB is registered in its own right rather than aliased to MySQL, so a
+#: refusal names the database the caller actually opened.
+BACKENDS: dict[str, Backend] = {
+    "sqlite": _SQLITE,
+    "mysql": MySQLBackend(),
+    "mariadb": MySQLBackend(name="mariadb"),
+}
 
 
 def backend_for(dialect: str) -> Backend:
