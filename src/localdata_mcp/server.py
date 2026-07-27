@@ -279,16 +279,19 @@ def _index_payload(index: IndexInfo) -> dict[str, Any]:
 def _table_warnings(info: TableInfo) -> list[str]:
     """Everything worth saying about one table, in one place.
 
-    Both members are silent-wrong-answer classes: a value comes back, it looks
-    like an answer, and it is not one. They are gathered here so a new class
-    reaches every payload at once rather than the one whose call site was
-    remembered.
+    The two column signals are silent-wrong-answer classes: a value comes back,
+    it looks like an answer, and it is not one. The reader's notes are the same
+    problem one step earlier — a choice the reader had to make about the file
+    itself, which the loaded table then looks perfectly ordinary despite. All of
+    them are gathered here so a new class reaches every payload at once rather
+    than the one whose call site was remembered.
     """
     warnings = []
     if info.mixed_columns:
         warnings.append(_mixed_column_warning(info))
     if info.unparsed_temporal_columns:
         warnings.append(_unparsed_temporal_warning(info))
+    warnings.extend(info.notes)
     return warnings
 
 

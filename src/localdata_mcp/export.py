@@ -1,7 +1,7 @@
 """Writing query results out to a file.
 
 **The suffix chooses the format, and one it cannot write is refused by name.**
-This mirrors ``loader.read_frame``, which refuses a suffix it has no reader for,
+This mirrors ``loader.read_file``, which refuses a suffix it has no reader for,
 and it replaces an earlier arrangement where every export was CSV whatever the
 name said — ``out.parquet`` came back ``ok: true`` holding comma-separated text.
 A file whose name lies about its contents is the worst of the three possible

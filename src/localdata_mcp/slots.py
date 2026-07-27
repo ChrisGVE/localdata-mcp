@@ -60,10 +60,11 @@ from .loader import (
     READERS,
     IndexInfo,
     LoadError,
+    ReadResult,
     TableInfo,
     Workspace,
     _sanitize,
-    read_frame,
+    read_file,
 )
 from .paths import PathNotAllowed, resolve_read_path, resolve_write_path
 
@@ -243,11 +244,11 @@ class Registry:
             # cost a live datasource its place — every refusal above and here
             # happens while the shelf is still untouched.
             try:
-                frame = read_frame(path)
+                read = read_file(path)
             except LoadError as exc:
                 raise AttachRefused(str(exc)) from exc
             evicted = self._make_room()
-            slot = self._attach_frame(frame, path, chosen)
+            slot = self._attach_frame(read, path, chosen)
         elif self._is_sqlite(path):
             evicted = self._make_room()
             # An outside database is read-only unless the caller granted write.
@@ -349,13 +350,13 @@ class Registry:
         except OSError:
             return False
 
-    def _attach_frame(self, frame: Any, path: Path, nickname: str) -> Slot:
+    def _attach_frame(self, read: ReadResult, path: Path, nickname: str) -> Slot:
         """Give an already-read frame its own database, named after the file."""
         self._workspace.attach_memory(nickname)
         table = _sanitize(path.stem, "table")
         try:
             info = self._workspace.insert_frame(
-                frame, table, source=str(path), tag=nickname
+                read.frame, table, source=str(path), tag=nickname, notes=read.notes
             )
         except LoadError as exc:
             self._workspace.detach(nickname)
@@ -577,9 +578,9 @@ class Registry:
         except PathNotAllowed as exc:
             raise SlotError(str(exc)) from exc
         try:
-            frame = read_frame(path)
+            read = read_file(path)
             return self._workspace.insert_frame(
-                frame, table, source=str(path), tag=slot.nickname
+                read.frame, table, source=str(path), tag=slot.nickname, notes=read.notes
             )
         except LoadError as exc:
             raise SlotError(str(exc)) from exc

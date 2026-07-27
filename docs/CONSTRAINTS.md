@@ -1134,7 +1134,7 @@ else. There is no JSON, YAML, TOML, XML, Excel, ODS or Parquet, in either direct
 
 An agent that asks for Parquet is told it succeeded and gets a file whose name lies about its
 contents — the same silent-wrong-answer shape as §1.1 and §8.1, in the export path. A `WRITERS`
-registry keyed on suffix, refusing an unknown one by name the way `read_frame` already does, is the
+registry keyed on suffix, refusing an unknown one by name the way `read_file` already does, is the
 fix and is also the seam every new format arrives through.
 
 ### 10.2 Loading dominates; everything else is comparatively cheap
@@ -1213,7 +1213,7 @@ Two consequences worth carrying:
 
 ### 10.6 What it costs while it runs
 
-Peak RSS **~3.0 GB**, against a 1.22 GB source. The load is the peak, not the extract: `read_frame`
+Peak RSS **~3.0 GB**, against a 1.22 GB source. The load is the peak, not the extract: `read_file`
 builds the whole pandas frame before a single row is inserted, so the load peak tracks the *file*
 and no chunk size bounds it (§3.2a bounds the *insert*, which is a later step). Residency afterwards
 is far smaller — 1,305 MB for the wide file, 735 MB for the tall — because that measures SQLite

@@ -51,7 +51,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Callable, Iterator, Sequence
 from uuid import uuid4
 
 import pandas as pd
@@ -79,6 +79,7 @@ from .paths import resolve_read_path
 __all__ = [
     "ColumnInfo",
     "IndexInfo",
+    "ReadResult",
     "TableInfo",
     "Tagged",
     "Workspace",
@@ -104,6 +105,30 @@ _YIELD_PER = 1_000
 # ---------------------------------------------------------------------------
 # What we record about what we loaded
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReadResult:
+    """A frame, and anything about the reading of it the frame cannot show.
+
+    Most formats need no second field: a CSV's rows are the whole story. Some
+    cannot say everything in the data. A JSON file whose tables hang under a key
+    was read from *one* of those keys; a file loaded under an assumed delimiter
+    was read under an assumption. Each is a fact about the source that the
+    caller can act on and would otherwise have to infer from a shape that looks
+    perfectly ordinary — so it is carried out rather than dropped here.
+
+    A note is a sentence, and the contract is the same as the warnings the load
+    path already produces: state what happened and what to do about it. It is
+    not a place to guess.
+    """
+
+    frame: pd.DataFrame
+    notes: tuple[str, ...] = ()
+
+
+#: A reader turns a path into a frame plus whatever it had to assume or choose.
+Reader = Callable[[Path], ReadResult]
 
 
 @dataclass(frozen=True)
@@ -187,6 +212,10 @@ class TableInfo:
     source: str
     #: The tag whose database holds this table.
     tag: str = "main"
+    #: What the reader had to assume or choose to produce this table. Carried
+    #: from :class:`ReadResult` and surfaced beside the other load warnings, so
+    #: a choice made on the caller's behalf is one they get told about.
+    notes: tuple[str, ...] = ()
 
     @property
     def qualified(self) -> str:
@@ -402,26 +431,26 @@ def _numeric_split(series: pd.Series) -> tuple[int, int, tuple[str, ...]]:
     return numeric, non_numeric, tuple(examples)
 
 
-def _read_csv(path: Path) -> pd.DataFrame:
+def _read_csv(path: Path) -> ReadResult:
     # `keep_default_na` is left on: pandas' blank/NA handling is what turns an
     # empty cell into NULL rather than the string "".
-    return pd.read_csv(path)
+    return ReadResult(pd.read_csv(path))
 
 
-def _read_tsv(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path, sep="\t")
+def _read_tsv(path: Path) -> ReadResult:
+    return ReadResult(pd.read_csv(path, sep="\t"))
 
 
 #: Extension to reader. The seam through which new formats arrive — a new entry
 #: is the whole change, because everything downstream works from the DataFrame.
-READERS = {
+READERS: dict[str, Reader] = {
     ".csv": _read_csv,
     ".tsv": _read_tsv,
     ".txt": _read_csv,
 }
 
 
-def read_frame(path: Path) -> pd.DataFrame:
+def read_file(path: Path) -> ReadResult:
     """Read a tabular file into a frame, touching no database state.
 
     Separate from the insert so a caller can find out whether a file is readable
@@ -434,7 +463,12 @@ def read_frame(path: Path) -> pd.DataFrame:
         raise LoadError(f"No reader for {path.suffix!r}. Supported: {supported}")
 
     try:
-        frame = reader(path)
+        result = reader(path)
+    except LoadError:
+        # A reader that refused for a reason of its own has already said what it
+        # was; wrapping it again would bury the specific message under a generic
+        # one. Only an unexpected failure needs the file named.
+        raise
     except Exception as exc:
         raise LoadError(f"Could not read {path.name}: {exc}") from exc
 
@@ -442,11 +476,11 @@ def read_frame(path: Path) -> pd.DataFrame:
     # `read_csv` infers numbers and leaves everything else as text, so without
     # this a date is compared as text and `ORDER BY` runs backwards on any
     # spelling whose lexical order is not its chronological one.
-    frame = temporal.standardize(frame)
+    frame = temporal.standardize(result.frame)
 
     if frame.empty and len(frame.columns) == 0:
         raise LoadError(f"{path.name} contains no columns.")
-    return frame
+    return ReadResult(frame, result.notes)
 
 
 # ---------------------------------------------------------------------------
@@ -772,12 +806,20 @@ class Workspace:
     ) -> TableInfo:
         """Read a tabular file into a new table in ``tag`` and describe what landed."""
         path = resolve_read_path(raw_path)
-        frame = read_frame(path)
+        read = read_file(path)
         name = _sanitize(table_name or path.stem, "table")
-        return self.insert_frame(frame, name, source=str(path), tag=tag)
+        return self.insert_frame(
+            read.frame, name, source=str(path), tag=tag, notes=read.notes
+        )
 
     def insert_frame(
-        self, frame: pd.DataFrame, table: str, *, source: str, tag: str
+        self,
+        frame: pd.DataFrame,
+        table: str,
+        *,
+        source: str,
+        tag: str,
+        notes: tuple[str, ...] = (),
     ) -> TableInfo:
         entry = self.entry(tag)
         columns = _unique_columns(list(frame.columns))
@@ -819,6 +861,7 @@ class Workspace:
             columns=self._describe_columns(entry, table, columns, declared, frame),
             source=source,
             tag=tag,
+            notes=notes,
         )
         self._tables[info.qualified] = info
         return info
