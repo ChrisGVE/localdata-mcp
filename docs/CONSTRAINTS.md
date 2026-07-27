@@ -924,3 +924,186 @@ Recorded because a pass with findings should not read as a failing report.
 - **Errors teach.** `orders.customers` is met with the addressing fix, an unknown table lists the
   real ones, an unknown slot lists what is attached, and a path outside the roots names the config
   knob.
+
+---
+
+## §9 — Memory footprint, stress and performance (2026-07-27)
+
+Measured in-process against the real tool functions, at Chris's direction: *"the next step will
+have to be memory footprint (along processing), stress testing (including the memory), and
+performance measurement."* Probes live in `tmp/perf/`.
+
+**Nothing here is a pass/fail budget.** Every number is an observation. What counts as an
+acceptable footprint or latency is not a measurement's to decide, and none is asserted below.
+
+### 9.1 A returned cell costs ~53 bytes plus one byte per character
+
+The result of `query` is fully resident by the time the method returns. Its cost is **per cell, not
+per row**, and flat across both axes — 200,000 rows of 9 columns and 5,000 rows of 201 columns are
+within 6% of each other per cell:
+
+| Shape | Cells | Peak | Bytes/cell |
+|---|---|---|---|
+| 10,000 × 9 | 90,000 | 5.00 MB | 58.3 |
+| 50,000 × 9 | 450,000 | 25.68 MB | 59.8 |
+| 200,000 × 9 | 1,800,000 | 104.36 MB | 60.8 |
+| 5,000 × 21 | 105,000 | 5.79 MB | 57.8 |
+| 5,000 × 101 | 505,000 | 27.48 MB | 57.0 |
+| 5,000 × 201 | 1,005,000 | 55.04 MB | 57.4 |
+| 100 × 201 | 20,100 | 1.10 MB | 57.2 |
+
+Sweeping value width at a fixed 200,000 cells separates the constant from the content, and the fit
+is clean:
+
+```
+bytes/cell = 53.1 + 0.998 x characters        (str4 57.3 · str12 64.9 · str40 92.9 · str120 172.9)
+integer cells                = 44.3
+```
+
+So a result's cost is predictable before it is asked for: **cells × (53 + average value length)**.
+
+**This is the evidence for the design decision already taken.** The tool docstring argues a row cap
+"measures the wrong thing — a hundred rows of a two-hundred-column table is the flood it would be
+meant to prevent". That was reasoning; it is now measured. A 100 × 201 result costs 1.10 MB and a
+5,000 × 21 result of *half* as many cells costs 5.79 MB — rows do not predict cost, cells do.
+
+**`yield_per` buys nothing observable here.** It bounds what the driver hands back at a time, but
+the rows accumulate into a list regardless, and the peak tracks the finished result exactly. Do not
+read the streaming in `Workspace.query` as bounding the server's memory; it bounds the driver
+buffer.
+
+### 9.2 `path=` bounds the answer, not the peak
+
+`query(path=…)` is the documented route for a result that "does not belong in an answer". It is
+accurate about the *answer*, and an agent may not infer more than it says — because the rows are
+materialised in full by `Workspace.query` before `export_csv` ever sees them:
+
+| Shape | In the answer | With `path=` | Ratio |
+|---|---|---|---|
+| 200,000 × 9 | 104.36 MB | 104.40 MB | **1.0004** |
+| 5,000 × 201 | 55.04 MB | 55.15 MB | 1.0020 |
+| 50,000 × 9 | 25.68 MB | 25.84 MB | 1.0059 |
+
+What `path=` does save is everything *downstream* of the materialisation: the tool body's
+`[list(row) for row in rows]`, a second full copy costing a further **1.14–1.28×**, and the JSON
+text (20.79 MB for the 200,000-row result). Real, and not the dominant term.
+
+`export_csv` already takes an `Iterable` and writes row by row, so the streaming half exists; what
+does not exist is a way for `Workspace.query` to hand it an unmaterialised cursor. Closing that is a
+change to the read path, not a fix to the export — **open, and Chris's call**.
+
+### 9.3 Two memory dimensions, and the budget is on only one of them
+
+`relieve_memory` reads `resident_bytes`, which is SQLite's `(page_count − freelist_count) ×
+page_size` — **page storage**. A result set is Python objects. Both are memory this process holds;
+they differ by most of an order of magnitude on the *same table*:
+
+| Table | Resident (budget sees) | Payload (budget does not) | Ratio |
+|---|---|---|---|
+| 200,000 × 3, no dates | 5.70 MB (10.0 B/cell) | 52.71 MB (92.1 B/cell) | **9.2×** |
+| 200,000 × 4, ISO dates | 9.79 MB (12.8 B/cell) | 65.86 MB (86.3 B/cell) | **6.7×** |
+
+§5.2 warns that an order-of-magnitude ratio is usually two different operations. Here it
+demonstrably *is* two different operations — which is the finding rather than a confound, and why
+both were measured on one table. **A `memory_budget_mb` of 100 does not cap the process at 100 MB**;
+a single `SELECT *` against a database sitting comfortably inside the budget can allocate several
+times it, and nothing spills in response because nothing on the budget's books moved.
+
+### 9.4 Arc 3, end to end through the tool surface — deferred, cheap, invisible
+
+§7.4 said an agent is the wrong instrument for the spill because the move is invisible by design.
+This is the in-process harness it asked for: real tool functions, an 8 MB configured budget, 400,000
+rows (120,000 was tried first and occupied only 3.13 MB of pages — the probe reported that it had
+created no pressure rather than measuring nothing, per §5.6).
+
+Every property held:
+
+| Property | Result |
+|---|---|
+| Spilled *during* the load that crossed the budget | **No** — the overshoot is tolerated once, as designed |
+| Spilled on the next operation | Yes |
+| Time to spill 10.80 MB | **0.0027 s** |
+| Python memory to spill it | **0.015 MB** — the work is inside SQLite |
+| Temp file on disk | 10.80 MB, matching residency exactly |
+| Residency afterwards | `None` — unknown, not zero |
+| Same nickname, same answer | Yes (checksum identical either side) |
+| Still writable | Yes — `create` succeeded afterwards |
+| Query cost, spilled ÷ in memory | **0.95×** |
+
+A spilled slot is not slower to query. **That figure is warm-cache**: the file was written moments
+earlier and the OS is still holding it. A genuinely cold spilled slot is not measured here.
+
+### 9.5 What an attach costs, and what the temporal path adds to it
+
+200,000 rows through `attach`, timing taken untraced (tracing inflates wall clock ~5×, §3.3):
+
+| Shape | File | Peak | Wall clock |
+|---|---|---|---|
+| No date column | 5.25 MB | 22.65 MB | 1.69 s |
+| Date already ISO 8601 | 9.25 MB | 24.15 MB | 2.60 s |
+| Date needing conversion | 10.21 MB | 32.38 MB | 3.82 s |
+
+Session 34 measured the temporal work in isolation; this is it paid inside a full attach. A column
+that genuinely needs normalising costs **+1.22 s and +8.2 MB** over one already ISO, and **+2.13 s**
+over no date column at all — against a load that is otherwise 1.69 s. Residency is identical for
+both date shapes (9.79 MB), which is the expected consequence of both landing in the same canonical
+form and a useful check that the conversion is not storing something different.
+
+### 9.6 A long session plateaus — and a short measurement of it reads as a leak
+
+**The mistake is recorded because it is the instructive part.** A 120-cycle run showed RSS climbing
+**0.82 MB per cycle, linearly**, while `tracemalloc` saw 1160× less (0.0007 MB/cycle) and the slot
+count stayed pinned at its capacity of ten. Read alone, that is a C-side leak: 818 MB projected over
+1,000 cycles.
+
+It is not. 120 cycles was inside the ramp. Run from a cold start for **800** cycles, the per-block
+slope collapses:
+
+| From cycle | 0 | 100 | 200 | 300 | 400 | 500 | 600 | 700 |
+|---|---|---|---|---|---|---|---|---|
+| MB/cycle | 1.654 | 0.404 | 0.254 | 0.311 | 0.062 | 0.026 | 0.071 | 0.028 |
+
+137.3 MB → 442.8 MB overall, with the **final 200 cycles adding 9.5 MB**. That is a working-set
+high-water mark being reached, not a leak — the shape is asymptotic, and only ten slots are ever
+live. A residual ~0.05 MB/cycle remains at cycle 800 and a much longer run would be needed to call
+it zero.
+
+**The general point, which outlives this measurement:** a growth rate sampled inside the ramp
+extrapolates to a leak that is not there. Distinguish the two by *shape over blocks*, never by a
+slope through one window — the same discipline §5.2 states for ratios.
+
+**And `tracemalloc` is the wrong instrument for footprint.** At the end of that run it reported
+1.71 MB against an RSS of 340 MB — **~200×** apart. It traces Python allocations only, and SQLite is
+a C extension with its own arena. Any question about how much memory this server uses has to be
+answered from RSS.
+
+Steady state also holds structurally: 40 attaches against a capacity of 10 ended with exactly 10
+slots and 1.48 → 1.58 MB traced (1.06×), and 150 attach/detach cycles grew 46 KB in total with the
+per-cycle increment *halving* between thirds (0.70 → 0.36 KB/cycle).
+
+### 9.7 The global lock: correct under load, and it converts concurrency into latency
+
+`server._lock` serialises every tool call. Eight threads issuing 20 `query` calls each:
+
+| Threads | Throughput | p50 | p95 | Wrong or failed answers |
+|---|---|---|---|---|
+| 1 | 318 calls/s | 2.9 ms | 4.4 ms | **0** |
+| 2 | 323 calls/s | 6.0 ms | 9.6 ms | **0** |
+| 4 | 322 calls/s | 11.7 ms | 24.1 ms | **0** |
+| 8 | 323 calls/s | 23.4 ms | 45.7 ms | **0** |
+
+**Throughput is flat and latency is linear in caller count** — the textbook signature of a global
+lock, and exactly what §3.6 predicts. Nothing is gained by adding callers and nothing is lost but
+time; no answer was ever wrong or partial, which is the property the lock is there to buy. §3.6's
+file-backed-WAL-with-separate-connections posture is what to reach for *if* this latency ever
+matters. At interactive scale it does not.
+
+### 9.8 Still unmeasured
+
+- **A cold spilled slot** — 9.4's 0.95× is warm-cache.
+- **The plateau's residual** — ~0.05 MB/cycle at cycle 800, indistinguishable from zero without a
+  much longer run.
+- **Concurrency against residency** — every 9.7 call was a read against one slot; spilling while
+  another thread queries is not covered.
+- **Non-SQLite datasources** — every figure here is SQLite. A server-backed URL reports `None`
+  residency by construction, so the budget never sees it at all.
