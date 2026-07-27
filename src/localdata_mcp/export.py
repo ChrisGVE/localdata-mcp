@@ -1,6 +1,13 @@
 """Writing query results out to a file.
 
-Two decisions worth stating, because both are refusals:
+**The suffix chooses the format, and one it cannot write is refused by name.**
+This mirrors ``loader.read_frame``, which refuses a suffix it has no reader for,
+and it replaces an earlier arrangement where every export was CSV whatever the
+name said — ``out.parquet`` came back ``ok: true`` holding comma-separated text.
+A file whose name lies about its contents is the worst of the three possible
+answers, because nothing anywhere reports it.
+
+Two further decisions worth stating, because both are refusals:
 
 * **An existing file is replaced only when ``force`` says so**, and ``force``
   means the user was asked and answered — the destination is a name they chose
@@ -22,14 +29,18 @@ import csv
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 from .paths import resolve_write_path
 
-__all__ = ["ExportResult", "export_csv"]
+__all__ = ["ExportError", "ExportResult", "WRITERS", "export_rows"]
 
 #: Owner read/write only.
 _EXPORT_MODE = 0o600
+
+
+class ExportError(ValueError):
+    """A result this server will not write in the form it was asked for."""
 
 
 @dataclass(frozen=True)
@@ -39,7 +50,53 @@ class ExportResult:
     columns: list[str]
 
 
-def export_csv(
+#: A writer receives the header, the rows and a path that exists and is empty,
+#: and returns how many rows it wrote. Opening the file is the writer's job,
+#: because a format whose library owns the handle cannot be handed one.
+Writer = Callable[[Sequence[str], Iterable[Sequence[object]], Path], int]
+
+
+def _write_delimited(
+    columns: Sequence[str],
+    rows: Iterable[Sequence[object]],
+    path: Path,
+    *,
+    delimiter: str,
+) -> int:
+    written = 0
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle, delimiter=delimiter)
+        writer.writerow(columns)
+        for row in rows:
+            writer.writerow(row)
+            written += 1
+    return written
+
+
+def _write_csv(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    return _write_delimited(columns, rows, path, delimiter=",")
+
+
+def _write_tsv(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    return _write_delimited(columns, rows, path, delimiter="\t")
+
+
+#: Extension to writer, the counterpart of ``loader.READERS``. A new output
+#: format is one entry here; nothing upstream of it needs to know.
+WRITERS: dict[str, Writer] = {
+    ".csv": _write_csv,
+    ".tsv": _write_tsv,
+    # As on the read side, `.txt` is treated as comma-separated. The two
+    # registries agree, so a file this server writes is a file it can read back.
+    ".txt": _write_csv,
+}
+
+
+def export_rows(
     columns: Sequence[str],
     rows: Iterable[Sequence[object]],
     raw_path: str,
@@ -47,39 +104,54 @@ def export_csv(
     force: bool = False,
     claimed: Mapping[Path, str] | None = None,
 ) -> ExportResult:
-    """Write ``rows`` to ``raw_path`` as CSV.
+    """Write ``rows`` to ``raw_path`` in the format its suffix names.
 
-    Refuses a path outside the allowed root, a file a live slot is sitting on,
-    and an existing file unless ``force``.
+    Refuses a suffix with no writer, a path outside the allowed root, a file a
+    live slot is sitting on, and an existing file unless ``force``.
     """
+    # Before `resolve_write_path`, deliberately: that call deletes an existing
+    # target under `force`, and a request this server was never going to be able
+    # to satisfy must not cost the user a file on its way to failing.
+    writer = _writer_for(raw_path)
+
     path = resolve_write_path(raw_path, force=force, claimed=claimed)
 
-    written = 0
-    # Open through a file descriptor so the mode is set at creation rather than
-    # after a window in which the file exists with the default mode.
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _EXPORT_MODE)
+    # Create it here, ahead of the writer, so the file is private from the moment
+    # it exists. A writer that opens the path itself — which any library-backed
+    # format will — would otherwise create it 0o644 and leave the data readable
+    # for the window before the chmod below.
+    os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _EXPORT_MODE))
+
     try:
-        with os.fdopen(descriptor, "w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(columns)
-            for row in rows:
-                writer.writerow(row)
-                written += 1
+        written = writer(columns, rows, path)
     except Exception:
         # A partial file is worse than none: it looks like a complete export.
-        # Safe to delete unconditionally — resolve_write_path returns a path
+        # Safe to delete unconditionally — resolve_write_path returned a path
         # with nothing at it, so this file is one we just created.
         _remove_quietly(path)
         raise
 
-    # O_CREAT honours the umask, so an inherited umask can widen the mode. Set it
-    # explicitly once the file exists.
+    # O_CREAT is subject to the umask, and a writer may have reopened the path.
+    # Set the mode explicitly now the file is complete.
     os.chmod(path, _EXPORT_MODE)
 
     return ExportResult(
         path=str(path),
         row_count=written,
         columns=list(columns),
+    )
+
+
+def _writer_for(raw_path: str) -> Writer:
+    suffix = Path(raw_path).suffix.lower()
+    writer = WRITERS.get(suffix)
+    if writer is not None:
+        return writer
+
+    supported = ", ".join(sorted(WRITERS))
+    named = repr(suffix) if suffix else "a name with no suffix"
+    raise ExportError(
+        f"No writer for {named}. The suffix chooses the format. Supported: {supported}"
     )
 
 

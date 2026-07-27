@@ -353,6 +353,35 @@ def test_an_export_will_not_be_forced_over_an_attached_file(session):
     assert source.read_text() == before
 
 
+def test_the_export_suffix_chooses_the_format(session):
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    target = session / "out.tsv"
+
+    result = call(
+        "query",
+        nickname="staff",
+        sql="SELECT name, salary FROM simple ORDER BY name",
+        path=str(target),
+    )
+
+    assert result["ok"] is True
+    assert target.read_text().splitlines()[0] == "name\tsalary"
+
+
+def test_an_export_to_a_format_this_server_cannot_write_is_refused(session):
+    """It used to answer ok:true with CSV inside, whatever the name said."""
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    target = session / "out.wibble"
+
+    refused = call(
+        "query", nickname="staff", sql="SELECT name FROM simple", path=str(target)
+    )
+
+    assert refused["ok"] is False
+    assert ".wibble" in refused["error"]
+    assert not target.exists()
+
+
 # ---------------------------------------------------------------------------
 # The lookup arc: land a table here, index it, join it
 # ---------------------------------------------------------------------------
@@ -1013,3 +1042,27 @@ def test_no_shipped_document_offers_a_tool_that_is_gone():
             offenders[name] = named
 
     assert not offenders, f"documents offering tools that do not exist: {offenders}"
+
+
+def test_the_tool_descriptions_name_exactly_the_formats_that_exist():
+    """A hardcoded list in a docstring is what the agent chooses from.
+
+    Both registries are meant to grow, and a format that lands without its tool
+    description learning about it is invisible to the only reader that matters.
+    Pinning each list to its registry makes adding a format without saying so a
+    test failure rather than a silent omission.
+    """
+    from localdata_mcp.export import WRITERS
+    from localdata_mcp.loader import READERS
+
+    described = {tool.name: tool.description for tool in listed_tools()}
+
+    def listed(pattern: str, text: str) -> set[str]:
+        found = re.search(pattern, text)
+        assert found, f"no format list matching {pattern!r} in:\n{text}"
+        return {item.strip() for item in found.group(1).split(",")}
+
+    assert listed(r"A tabular file \(([^)]*)\)", described["attach"]) == set(READERS)
+    assert listed(r"suffix chooses the format \(([^)]*)\)", described["query"]) == set(
+        WRITERS
+    )

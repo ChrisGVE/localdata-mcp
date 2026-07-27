@@ -129,7 +129,7 @@ def test_large_file_answers_correctly(root):
 
 def test_export_of_a_large_result_is_complete(root):
     """The export path must not truncate or hold the whole result in memory."""
-    from localdata_mcp.export import export_csv
+    from localdata_mcp.export import export_rows
 
     path = root / "big.csv"
     _write_csv(path, SMALL_ROWS)
@@ -140,7 +140,7 @@ def test_export_of_a_large_result_is_complete(root):
         workspace.load_file(str(path), "bulk")
         columns, rows = workspace.query("bulk", "SELECT id, score FROM big")
         target = root / "exported.csv"
-        result = export_csv(columns, rows, str(target))
+        result = export_rows(columns, rows, str(target))
 
         assert result.row_count == SMALL_ROWS
         # Header plus every row, counted from the file rather than the report.

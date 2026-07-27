@@ -405,7 +405,7 @@ def test_export_writes_the_rows(workspace, root):
     )
     target = root / "out.csv"
 
-    result = export_module.export_csv(columns, rows, str(target))
+    result = export_module.export_rows(columns, rows, str(target))
 
     assert result.row_count == 5
     written = target.read_text().splitlines()
@@ -417,7 +417,7 @@ def test_export_refuses_an_existing_file(workspace, root):
     target = root / "out.csv"
     target.write_text("do not lose me\n")
     with pytest.raises(PathNotAllowed, match="already exists"):
-        export_module.export_csv(["a"], [(1,)], str(target))
+        export_module.export_rows(["a"], [(1,)], str(target))
     assert target.read_text() == "do not lose me\n"
 
 
@@ -425,7 +425,7 @@ def test_export_replaces_only_when_forced(workspace, root):
     target = root / "out.csv"
     target.write_text("stale\n")
 
-    result = export_module.export_csv(["a"], [(1,), (2,)], str(target), force=True)
+    result = export_module.export_rows(["a"], [(1,), (2,)], str(target), force=True)
 
     assert result.row_count == 2
     assert target.read_text().splitlines() == ["a", "1", "2"]
@@ -438,7 +438,7 @@ def test_export_will_not_force_over_a_file_a_slot_is_sitting_on(workspace, root)
     before = source.read_text()
 
     with pytest.raises(PathNotAllowed, match="attached to"):
-        export_module.export_csv(
+        export_module.export_rows(
             ["a"],
             [(1,)],
             str(source),
@@ -451,18 +451,18 @@ def test_export_will_not_force_over_a_file_a_slot_is_sitting_on(workspace, root)
 
 def test_export_is_owner_readable_only(workspace, root):
     target = root / "out.csv"
-    export_module.export_csv(["a"], [(1,)], str(target))
+    export_module.export_rows(["a"], [(1,)], str(target))
     assert oct(os.stat(target).st_mode & 0o777) == "0o600"
 
 
 def test_export_outside_root_is_refused(root, tmp_path):
     with pytest.raises(PathNotAllowed):
-        export_module.export_csv(["a"], [(1,)], str(tmp_path / "escape.csv"))
+        export_module.export_rows(["a"], [(1,)], str(tmp_path / "escape.csv"))
 
 
 def test_export_to_a_missing_directory_is_refused(root):
     with pytest.raises(PathNotAllowed, match="Directory does not exist"):
-        export_module.export_csv(["a"], [(1,)], str(root / "nope" / "out.csv"))
+        export_module.export_rows(["a"], [(1,)], str(root / "nope" / "out.csv"))
 
 
 def test_export_round_trips_back_into_the_workspace(workspace, root):
@@ -470,10 +470,63 @@ def test_export_round_trips_back_into_the_workspace(workspace, root):
     workspace.load_file(str(root / "messy_mixed_types.csv"), "main")
     columns, rows = workspace.query("main", "SELECT * FROM messy_mixed_types")
     target = root / "exported.csv"
-    export_module.export_csv(columns, rows, str(target))
+    export_module.export_rows(columns, rows, str(target))
 
     reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
     assert reloaded.row_count == len(rows)
+
+
+def test_a_tsv_export_is_tab_separated(workspace, root):
+    """The suffix chooses the format. It used to choose nothing at all."""
+    target = root / "out.tsv"
+
+    export_module.export_rows(["a", "b"], [(1, 2)], str(target))
+
+    assert target.read_text().splitlines() == ["a\tb", "1\t2"]
+
+
+def test_an_unwritable_suffix_is_refused_by_name_and_leaves_no_file(workspace, root):
+    """Silently writing CSV under another name is the worse answer.
+
+    A caller who asks for Parquet and is told it worked has a file whose name
+    lies about its contents, and nothing anywhere says so.
+    """
+    target = root / "out.wibble"
+
+    with pytest.raises(export_module.ExportError) as raised:
+        export_module.export_rows(["a"], [(1,)], str(target))
+
+    assert ".wibble" in str(raised.value)
+    assert ".csv" in str(raised.value)  # says what it can do instead
+    assert not target.exists()
+
+
+def test_a_target_with_no_suffix_is_refused_and_says_why(workspace, root):
+    target = root / "out"
+
+    with pytest.raises(export_module.ExportError, match="no suffix"):
+        export_module.export_rows(["a"], [(1,)], str(target))
+
+    assert not target.exists()
+
+
+def test_the_suffix_is_checked_before_the_file_is_touched(workspace, root):
+    """An unwritable suffix must not destroy what is already there, forced or not."""
+    target = root / "keep.wibble"
+    target.write_text("do not lose me\n")
+
+    with pytest.raises(export_module.ExportError):
+        export_module.export_rows(["a"], [(1,)], str(target), force=True)
+
+    assert target.read_text() == "do not lose me\n"
+
+
+def test_every_writer_produces_an_owner_readable_file(workspace, root):
+    """Not just CSV: a format whose library opens the path itself would land 0o644."""
+    for suffix in sorted(export_module.WRITERS):
+        target = root / f"modes{suffix}"
+        export_module.export_rows(["a"], [(1,)], str(target))
+        assert oct(os.stat(target).st_mode & 0o777) == "0o600", suffix
 
 
 def test_mixed_text_column_names_the_values_that_do_not_parse(workspace, root):

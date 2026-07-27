@@ -51,7 +51,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from . import config
-from .export import export_csv
+from .export import ExportError, export_rows
 from .loader import IndexInfo, TableInfo
 from .paths import PathNotAllowed, allowed_paths
 from .slots import Attachment, Registry, Slot, SlotError
@@ -507,7 +507,9 @@ def query(
     Args:
         nickname: Which datasource executes the statement.
         sql: The SQL statement.
-        path: Write the full result to this CSV file instead of returning rows.
+        path: Write the full result to this file instead of returning rows. The
+            suffix chooses the format (.csv, .tsv, .txt); one this server cannot
+            write is refused by name rather than written as something else.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the path is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file
@@ -531,10 +533,10 @@ def query(
             }
 
         try:
-            result = export_csv(
+            result = export_rows(
                 columns, rows, path, force=force, claimed=registry.claimed_paths()
             )
-        except PathNotAllowed as exc:
+        except (ExportError, PathNotAllowed) as exc:
             return _failed(exc)
         except OSError as exc:
             return {"ok": False, "error": f"Could not write {path}: {exc}"}
