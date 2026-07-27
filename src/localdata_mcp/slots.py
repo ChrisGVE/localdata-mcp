@@ -274,9 +274,13 @@ class Registry:
         """
         for slot in self._slots.values():
             if slot.source == source:
+                # Live table names rather than the attach-time snapshot: this
+                # message sends the caller to an existing slot, so it has to
+                # describe that slot as it is now, composed tables included.
+                held = self._workspace.table_names(slot.nickname)
                 raise AttachRefused(
                     f"{source} is already attached as {slot.nickname!r}, holding "
-                    f"{', '.join(slot.tables) or 'no tables'}. Query it there, or "
+                    f"{', '.join(held) or 'no tables'}. Query it there, or "
                     f"detach it first if you want to re-read the file."
                 )
 
@@ -787,7 +791,12 @@ class Registry:
             nickname=slot.nickname,
             kind=slot.kind,
             source=slot.source,
-            tables=slot.tables,
+            # Asked of the database, not read from the slot: `Slot.tables` is the
+            # attach-time snapshot, and a slot composed with `create` no longer
+            # matches it. The composed table is precisely the one the source
+            # cannot rebuild, so naming the snapshot reports the recoverable half
+            # of the loss and stays silent about the rest.
+            tables=self._workspace.table_names(oldest),
             reason=f"the slot limit of {self.capacity()} was reached",
         )
         self._release(oldest)

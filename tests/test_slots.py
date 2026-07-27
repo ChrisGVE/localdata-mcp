@@ -473,6 +473,63 @@ def test_the_eviction_record_carries_what_is_needed_to_rebuild_the_slot(root):
         registry.close()
 
 
+def test_the_eviction_record_names_a_table_that_create_added(root):
+    """The composed half is the half the source cannot rebuild.
+
+    A slot's ``tables`` is the snapshot taken at attach time, and the whole
+    point of ``create`` is that the slot stops matching it. Reporting the
+    snapshot names the one table the caller could have got back anyway and
+    stays silent about the one that is actually gone.
+    """
+    config_module.use(Config(roots=(root,), slots=1))
+    registry = Registry()
+    try:
+        registry.attach(str(csv_at(root / "sales.csv")), "shop")
+        csv_at(root / "prices.csv", "sku,price\na,10\n")
+        registry.create_table("shop", source=str(root / "prices.csv"))
+
+        csv_at(root / "other.csv", "a\n1\n")
+        evicted = registry.attach(str(root / "other.csv"), "next").evicted
+
+        assert set(evicted.tables) == {"sales", "prices"}
+    finally:
+        registry.close()
+
+
+def test_reaching_for_an_evicted_slot_names_every_table_it_held(root):
+    """The advice attached to this message has to be true.
+
+    It ends "attach it again to use it", and re-attaching the source restores
+    only what the source holds. A caller reaching for the composed table needs
+    to be told that table was there, or the instruction sends it after
+    something that will not come back.
+    """
+    config_module.use(Config(roots=(root,), slots=1))
+    registry = Registry()
+    try:
+        registry.attach(str(csv_at(root / "sales.csv")), "shop")
+        csv_at(root / "prices.csv", "sku,price\na,10\n")
+        registry.create_table("shop", source=str(root / "prices.csv"))
+        csv_at(root / "other.csv", "a\n1\n")
+        registry.attach(str(root / "other.csv"), "next")
+
+        with pytest.raises(SlotNotAvailable, match="prices"):
+            registry.slot("shop")
+    finally:
+        registry.close()
+
+
+def test_refusing_a_duplicate_source_names_every_table_the_slot_holds(registry, root):
+    """Same snapshot, third reader: "query it there" has to say where there is."""
+    source = csv_at(root / "sales.csv")
+    registry.attach(str(source), "shop")
+    csv_at(root / "prices.csv", "sku,price\na,10\n")
+    registry.create_table("shop", source=str(root / "prices.csv"))
+
+    with pytest.raises(AttachRefused, match="prices"):
+        registry.attach(str(source), "shop_again")
+
+
 def test_using_an_evicted_nickname_explains_the_eviction(root):
     config_module.use(Config(roots=(root,), slots=1))
     registry = Registry()
