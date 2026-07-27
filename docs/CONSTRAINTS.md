@@ -1198,6 +1198,30 @@ fix and is also the seam every new format arrives through.
 > What this section got right and is worth keeping: **the suffix is the whole of the format
 > decision**, in both directions, so a new format is one registry entry and nothing upstream of it
 > changes.
+>
+> **Corrected 2026-07-27 (session 40): the round-trip property held for fifteen of those sixteen,
+> not sixteen.** The `out.xlsx, out.ods` row above is where the defect was hiding, and the row
+> itself shows how: both were checked only as far as `PK\x03\x04`, and **both formats are Zip
+> archives, so the magic bytes cannot tell them apart**. `.ods` had been writing XLSX. `file(1)`
+> called the output *"Microsoft Excel 2007+"*, and pandas' own ODF engine refused it —
+> `KeyError "There is no item named 'META-INF/manifest.xml' in the archive"`.
+>
+> The cause is one absent argument, and it is worth stating precisely because it is a trap any
+> `Path`-passing caller can fall into: **`pandas.DataFrame.to_excel` infers its engine from the
+> suffix of a `str` path but not of a `pathlib.Path`** — measured on pandas 3.0.2, where a `Path`
+> falls back to openpyxl silently. `_write_workbook` is handed a `Path`. The engine is now named
+> explicitly rather than inferred.
+>
+> **Why nothing caught it, which matters more than the bug.** The round-trip test *passed*: pandas
+> reads a workbook by sniffing its contents rather than trusting its suffix, so the wrong file
+> returned the right rows. A round trip through a reader that auto-detects cannot verify format
+> identity — it verifies only that *something* readable was written. The check that does work is
+> the archive membership (`mimetype` and `META-INF/manifest.xml` for ODS, `[Content_Types].xml` for
+> XLSX), and that is what the two tests added at `813920f5` assert.
+>
+> **Real ODS costs about thirteen times what the workbook did**, which is the measure of how much
+> was being skipped: 50,000 rows extracted in **156.2 s** against **11.8 s**, and read back in
+> **66.3 s** against **13.4 s**. Any ODS timing recorded before `813920f5` is a timing of XLSX.
 
 > **The timings below carry a wide environmental variance, measured 2026-07-27.** They were
 > taken in a single pass, and a later run of the same steps came out 2–3x faster, which was
