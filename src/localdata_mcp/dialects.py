@@ -33,11 +33,22 @@ to need a per-backend answer, it earns an entry here; wrapping a statement in
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, Engine, create_engine, event, text
+from sqlalchemy import (
+    Connection,
+    Engine,
+    Index,
+    LargeBinary,
+    Table,
+    Text,
+    create_engine,
+    event,
+    text,
+)
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.pool import StaticPool
 
@@ -45,6 +56,7 @@ __all__ = [
     "BACKENDS",
     "Backend",
     "Engines",
+    "MySQLBackend",
     "Refusal",
     "SQLiteBackend",
     "UnsupportedOperation",
@@ -211,6 +223,19 @@ class Backend:
         """
         prepare = conn.dialect.identifier_preparer.quote
         conn.execute(text(f"ALTER TABLE {prepare(table)} RENAME TO {prepare(to)}"))
+
+    def build_index(
+        self, name: str, table: Table, columns: Sequence[str]
+    ) -> tuple[Index, tuple[str, ...]]:
+        """The index to create, and anything the caller should be told about it.
+
+        Generic because Core's ``Index`` is generic: naming the columns is the
+        whole of it on every dialect that can index a column outright. A dialect
+        that cannot returns an index built the way it *can* be, together with the
+        words for what that cost — an index that covers less than it was asked to
+        is a fact about the answer, not an implementation detail.
+        """
+        return Index(name, *[table.c[column] for column in columns]), ()
 
     def storage_classes(
         self, conn: Connection, table: str, column: str
@@ -483,6 +508,15 @@ class SQLiteBackend(Backend):
 #: has a locale and a version, the code has neither.
 _MYSQL_READ_ONLY = 1792
 
+#: InnoDB's limit on the total size of an index key, in bytes. The published
+#: figure for the default page size, not an estimate.
+_INNODB_KEY_BYTES = 3072
+
+#: How much of an unbounded text column to index when the whole of it cannot be.
+#: The conventional MySQL prefix, and comfortably inside the key limit for a
+#: single column; several columns divide the limit between them instead.
+_TEXT_PREFIX_CHARS = 255
+
 
 @dataclass(frozen=True)
 class MySQLBackend(Backend):
@@ -512,6 +546,48 @@ class MySQLBackend(Backend):
         origin = getattr(exc, "orig", exc)
         arguments = getattr(origin, "args", ())
         return bool(arguments) and arguments[0] == _MYSQL_READ_ONLY
+
+    def build_index(
+        self, name: str, table: Table, columns: Sequence[str]
+    ) -> tuple[Index, tuple[str, ...]]:
+        """Index a prefix of any column MySQL will not index whole.
+
+        ``TEXT`` and ``BLOB`` have no length in the row, so MySQL refuses to key
+        on them at all without being told how much to key on — error 1170. Every
+        text column a loaded file produces is ``TEXT``, so without this,
+        ``create(type='index')`` simply does not work on this dialect.
+
+        The prefix is derived, not chosen: InnoDB's key limit is 3072 bytes and
+        ``utf8mb4`` costs four per character, so the columns needing a prefix
+        share that budget, capped at the 255 characters that are conventional
+        and ample. A prefix index still answers a query over the whole value —
+        MySQL narrows on the prefix and rechecks the rest — so what it costs is
+        selectivity, and that is what the note is for.
+        """
+        unbounded = [
+            column
+            for column in columns
+            if isinstance(table.c[column].type, (Text, LargeBinary))
+        ]
+        if not unbounded:
+            return super().build_index(name, table, columns)
+
+        prefix = max(
+            1, min(_TEXT_PREFIX_CHARS, _INNODB_KEY_BYTES // (4 * len(unbounded)))
+        )
+        index = Index(
+            name,
+            *[table.c[column] for column in columns],
+            **{f"{self.name}_length": dict.fromkeys(unbounded, prefix)},
+        )
+        named = ", ".join(unbounded)
+        return index, (
+            f"{self.name} cannot key on a whole TEXT or BLOB column, so {named} "
+            f"{'are' if len(unbounded) > 1 else 'is'} indexed on the first "
+            f"{prefix} characters. A lookup on the whole value still uses the "
+            f"index; two rows agreeing on that prefix simply do not narrow it "
+            f"any further.",
+        )
 
 
 _SQLITE = SQLiteBackend()

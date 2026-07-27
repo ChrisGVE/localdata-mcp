@@ -732,7 +732,13 @@ def create(
                         "table, and which of its columns to index."
                     )
                 made = registry.create_index(nickname, table=table, columns=columns)
-                return {"ok": True, "nickname": nickname, **_index_payload(made)}
+                payload = {"ok": True, "nickname": nickname, **_index_payload(made)}
+                if made.notes:
+                    # An index that covers less than it was asked to is a fact
+                    # about the answer, and it is said the same way every other
+                    # assumption here is said.
+                    payload["warnings"] = list(made.notes)
+                return payload
         except (SlotError, PathNotAllowed) as exc:
             return _failed(exc)
         return _failed(

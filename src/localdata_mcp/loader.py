@@ -64,7 +64,6 @@ from sqlalchemy import (
     TEXT,
     Column,
     Engine,
-    Index,
     MetaData,
     Table,
     func,
@@ -291,6 +290,10 @@ class IndexInfo:
     #: the position of the columns around it stays honest.
     columns: tuple[str | None, ...]
     unique: bool = False
+    #: What the database had to do differently to build this, in words. Empty
+    #: for the ordinary case, and only ever populated at creation — an index
+    #: read back by inspection says nothing about how it came to be.
+    notes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -1458,13 +1461,16 @@ class Workspace:
             )
 
         name = _index_name(table, columns)
-        index = Index(name, *[target.c[column] for column in columns])
+        # How to index a column is the backend's to answer: MySQL will not key
+        # on a whole TEXT column at all, and returns an index over a prefix of
+        # it together with the words for what that cost.
+        index, notes = entry.backend.build_index(name, target, columns)
         try:
             with entry.engines.write.begin() as conn:
                 index.create(conn)
         except SQLAlchemyError as exc:
             raise LoadError(f"Could not create {name} on {tag}.{table}: {exc}") from exc
-        return IndexInfo(name=name, table=table, columns=tuple(columns))
+        return IndexInfo(name=name, table=table, columns=tuple(columns), notes=notes)
 
     def drop_index(self, tag: str, name: str) -> IndexInfo:
         """Remove an index by name, and say what went.

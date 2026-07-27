@@ -345,6 +345,34 @@ def test_the_slot_lists_the_table_that_was_added_to_it(live):
     assert {entry["table"]: entry["rows"] for entry in listed["contents"]}[table] == 5
 
 
+def test_an_index_can_be_created_and_dropped(live):
+    """Indexing a text column is where the dialects stop agreeing.
+
+    MySQL and MariaDB will not key on a whole ``TEXT`` column — and every text
+    column a loaded file produces is ``TEXT``, so this verb did not work there at
+    all. What they can do is index a prefix, which still answers a lookup on the
+    whole value, and saying so is the difference between an index that covers
+    less than asked and one that quietly does.
+    """
+    attach_writable(live)
+    table = land_people(live)
+
+    made = call(
+        "create", nickname="endpoint", type="index", table=table, columns=["department"]
+    )
+    assert made["ok"] is True, made
+    assert made["columns"] == ["department"]
+    for warning in made.get("warnings", []):
+        assert "first" in warning and "characters" in warning
+
+    listed = call("info", nickname="endpoint", table=table)
+    assert made["index"] in [index["index"] for index in listed["indexes"]]
+
+    gone = call("drop", nickname="endpoint", type="index", name=made["index"])
+    assert gone["ok"] is True, gone
+    assert call("info", nickname="endpoint", table=table)["indexes"] == []
+
+
 def test_a_table_can_be_renamed_and_keeps_its_rows(live):
     attach_writable(live)
     table = land_people(live)
