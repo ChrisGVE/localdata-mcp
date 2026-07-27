@@ -1199,6 +1199,31 @@ fix and is also the seam every new format arrives through.
 > decision**, in both directions, so a new format is one registry entry and nothing upstream of it
 > changes.
 
+> **The timings below carry a wide environmental variance, measured 2026-07-27.** They were
+> taken in a single pass, and a later run of the same steps came out 2–3x faster, which was
+> briefly read as a code improvement. It is mostly not one. Repeating the *identical* attach
+> on *unchanged* code, in a fresh process, at the default memory budget:
+>
+> | Rep | attach | resident |
+> |---|---|---|
+> | 1 | 68.55 s | 1305.4 MB |
+> | 2 | 53.64 s | 1305.4 MB |
+> | 3 | 60.11 s | 1305.4 MB |
+> | a fourth, through the full harness | 80.44 s | 1305.4 MB |
+>
+> **Within one condition the same operation spans 1.50x** (53.64–80.44 s), while the storage
+> figure reproduces to the tenth of a megabyte every time — and matches §10.6's 1,305 MB
+> exactly. Same corpus, same code path; only the machine's timing conditions differ. So the
+> quantities this file states in *bytes* are reproducible and the ones in *seconds* are
+> reproducible only to about ±25%.
+>
+> This is §5.2's rule applied to a ratio between runs rather than between operations: a
+> difference between two conditions is a finding only if it exceeds the noise inside one
+> condition, and the control that establishes that noise is the step most easily skipped.
+> What it does **not** explain is the 149.6 s below, which sits outside the band — that gap
+> is still open, and the likeliest reading is that the original pass ran under load, since it
+> was measured while the full format sweep was in progress.
+
 ### 10.2 Loading dominates; everything else is comparatively cheap
 
 | Step | Wide (1M x 11) | Tall (10M x 5) |
