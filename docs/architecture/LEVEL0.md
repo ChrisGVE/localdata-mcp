@@ -108,11 +108,11 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 |---|---|---|
 | `attach` | `database`, `nickname?`, `writable?` | Multipurpose — flat file, SQLite file, later an endpoint. Returns the nickname **actually used**. |
 | `detach` | `nickname` | Drop a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if spilled. |
-| `query` | `nickname`, `sql`, `path?` | **Reads only** — every write is refused by SQLite's authorizer, whatever the slot allows. Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. |
+| `query` | `nickname`, `sql`, `path?`, `force?` | **Reads only** — every write is refused by SQLite's authorizer, whatever the slot allows. Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. `force` is the same overwrite consent `save` takes, for the same reason. |
 | `info` | — \| `nickname` \| `nickname`+`table` | Polymorphic: bare → every slot; nickname → its tables; nickname+table → schema, row count and indexes. **Absorbs `list_tables` + `describe_table`.** |
 | `create` | `nickname`, `type`, `table?`, `source?`, `columns?` | `type="table"` reads a datasource in beside the tables already there, which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
 | `drop` | `nickname`, `type`, `name` | Composition needs both directions, for both types. The index name is the one `create` returned and `info` lists. |
-| `save` | `nickname`, `path` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. |
+| `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. An occupied path is refused until `force` carries the user's consent, and a path a live slot sits on is refused regardless. |
 
 ### Write is not the default
 

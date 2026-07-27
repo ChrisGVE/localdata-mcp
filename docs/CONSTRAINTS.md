@@ -275,18 +275,27 @@ CREATE VIEW shop.revenue AS SELECT … FROM sales s JOIN prices p ON …   -- tr
 Inside a view an unqualified table name already resolves to the view's own database, both in place
 and after re-attaching under a new name. So dropping the qualifier costs nothing and fixes it.
 
-**Consequence for the design.** `save` writes the file, then *attaches it under a different name* to
-check, and refuses the save if that fails — deleting the file, since one that looks saved and cannot
-be opened is worse than no file at all. The check is an attach rather than a scan of each view's
-SQL for the nickname, because the scan guesses and guesses wrong on a table *aliased* to the same
-word (`SELECT shop.qty FROM sales shop`). §5.1 again: assert on what the operation returns, never on
-what the text looks like.
+**Consequence for the design — and both halves of it have moved (2026-07-27).** This section used
+to end by describing a save-time check (`save` writes the file, re-attaches it under another name,
+and deletes it if that fails) and by arguing that refusing `CREATE VIEW` outright "would need
+statement classification — more code, and fragile". Neither describes the shipped code.
 
-The check is a **net, not a feature**. Creating views is no part of this package and the tool
-surface no longer mentions them; but `query` runs arbitrary SQL against a writable slot, so a view
-can still arise, and silently handing back a file that will not open is data loss. Refusing `CREATE
-VIEW` outright would need statement classification — more code, and fragile — to forbid something a
-SQL tool has no particular reason to forbid.
+**Such a file is refused at attach, and the refusal explains itself.** There is no save-time
+re-attach check; the header note above records why it became unreachable. What `Registry` does
+instead is catch the failure where it actually surfaces — the first table listing after attaching —
+and translate SQLite's "malformed database schema" into the recoverable thing that really happened,
+including the fix (`FROM sales`, not `FROM shop.sales`). That is the §5.1 rule applied where it
+belongs: the diagnosis comes from what the operation returned, never from scanning the view's SQL
+for the nickname, which guesses wrong on a table *aliased* to the same word
+(`SELECT shop.qty FROM sales shop`).
+
+**And `query` can no longer make a view at all, at no cost in statement classification.** The
+read-only engine installs a SQLite authorizer whose whitelist admits four action codes
+(`SELECT`, `READ`, `FUNCTION`, `RECURSIVE`); `SQLITE_CREATE_VIEW` is not among them, so the
+statement is refused at preparation and never runs. No SQL text is parsed anywhere, which is why
+the refusal cannot be walked around by a comment, a leading CTE or stray whitespace — all three
+verified live, 2026-07-27, along with `ATTACH`, `ANALYZE` and `CREATE TEMP TABLE`. The argument
+against refusing views was reasoning about a mechanism the design did not end up using.
 
 ---
 
@@ -699,3 +708,116 @@ the product — a real client has those tools. Both arc-2 agents invented a `sav
 the obvious one, so the occupied-path refusal was never reached by an agent; its wording is verified
 only by direct execution. And a single run of one model is a sample, not a distribution: what six
 runs establish is that a choice is *reachable*, never that it is *reliable*.
+
+---
+
+## §8 — Driving the live server through a real client (2026-07-27)
+
+A second live pass, and a different instrument again from §7: the server connected to a real MCP
+client rather than an in-process harness, driven by an agent with the filesystem available. §7 asked
+whether the surface *reads* right. This pass asked what happens when the inputs stop being the ones
+the fixtures build — every container format, and twenty-four spellings of the same five instants.
+
+The seven verbs, the guards and the arcs came through it intact. What did not is recorded below.
+
+### 8.1 A temporal from a flat file is never converted, and four spellings report the earliest
+instant as the maximum
+
+**The headline measurement of this pass.** `binding.py` converts temporals to INTEGER ticks exactly
+as §1.4 requires, and its tests prove it. No caller can reach that code with a temporal. The reader
+table is `.csv`, `.tsv`, `.txt` → `pd.read_csv` with no `parse_dates` and no `to_datetime` anywhere
+downstream, so a date column arrives as `object`, is declared `TEXT`, and is compared as text.
+
+Twenty-four spellings of five instants spanning three years, each scored by which label `ORDER BY`
+put first and last (fixture and method: the run's own build script; the year span matters, because
+`MM/DD/YYYY` and `DD.MM.YYYY` both sort correctly *by accident* inside a single year):
+
+| Spelling | Orders correctly? | `max()` returns |
+|---|---|---|
+| `iso_date`, `iso_datetime`, `iso_t`, `iso_t_z`, `iso_micros` | yes | correct |
+| `off_utc`, `off_local`, `ampm`, `year_quarter`, `iso_week` | yes | correct |
+| `compact_ymd`, `epoch_s`, `epoch_ms`, `excel_serial` | yes (numeric) | correct |
+| **`us_mdy`** (`03/01/2025`) | **no** — earliest wrong | correct by luck |
+| **`eu_dmy_dot`** (`01.03.2025`) | **no — fully inverted** | **the earliest instant** |
+| **`eu_dmy_slash`**, **`dmy_dash`** | **no — fully inverted** | **the earliest instant** |
+| **`month_name`** (`Mar 01, 2025`), **`month_long`** | **no — fully inverted** | **the earliest instant** |
+| **`rfc2822`** | **no** | **the earliest instant** |
+
+Two further measurements on the same table, both silent:
+
+- **The same five instants, one column offset-`+00:00` and one offset-`-05:00`, join 0 rows.**
+  Joined on `epoch_s` they join 5. §1.4's tz trap, reproduced through the shipped surface.
+- **`WHERE eu_dmy_dot > '01.01.2025'` returns all 5 rows; the true answer is 2.** A range filter on
+  a European-format date column silently selects everything.
+
+Nothing warns. The mixed-column detector fires correctly for a text-in-numeric column (§1.5) and has
+no counterpart for this, which is the larger silent-wrong-answer class of the two: a date column is
+*uniformly* text, so no storage-class signal exists to trip.
+
+**The pattern, sixth instance and the sharpest yet.** `tests/test_binding.py` contains
+`test_same_instant_in_two_offsets_joins`, asserting `matched == 1`, and it passes — because it hands
+`insert_frame` two tz-aware `pd.Timestamp`s. Handed the same two instants *by a CSV*, the server
+returns 0. The test asserts the exact property the shipped surface fails, on the one input shape the
+shipped readers cannot produce. It is not a wrong test; it guards a real conversion. It is a test
+whose fixture reaches past the layer where the defect lives — §5.1's rule pointed one level up.
+
+### 8.2 A delimiter that is not a comma is misparsed into one column, silently
+
+`.csv` and `.txt` both dispatch to `pd.read_csv` with the default separator. A semicolon-delimited
+file — the Excel default across much of Europe — is accepted, and every row lands in a single TEXT
+column whose *name* is the joined header:
+
+| File | Result |
+|---|---|
+| `a;b;c` / `1;2;3` | one column `a_b_c`, values `"1;2;3"` |
+| a 25-column `;`-separated `.txt` | one column, a 250-character name |
+
+Loud failures by contrast, all correctly refused: Latin-1 and UTF-16 (raw codec error), a parquet
+wearing a `.csv` extension, and every unsupported extension (`.parquet`, `.xlsx`, `.json`, …), whose
+refusal names the three supported suffixes. UTF-8 BOM, CRLF and a headers-only file all load
+correctly.
+
+### 8.3 A slot's table list was a snapshot, and three messages reported it after it went stale
+
+Found by composing a slot with `create` and then forcing eviction. `Slot.tables` is taken at attach
+time; `Registry.tables()` exists precisely to avoid reading it, and says so. Three user-facing
+messages read the snapshot anyway, so every table added by `create` — the whole point of arc 2 —
+went unnamed:
+
+- the eviction record (`evicted.tables`): reported `["victim"]` for a slot holding `victim` and
+  `sidecar`;
+- the evicted-nickname explanation, whose advice *"attach it again to use it"* is then **actively
+  wrong**, because re-attaching the source restores only the source's own table;
+- the duplicate-attach refusal, which sends the caller to a slot it under-describes.
+
+`detach` and `info` were correct throughout — they call `Registry.tables()`. Fixed 2026-07-27 at all
+three sites, with tests that compose before they evict.
+
+**Why the suite missed it**, and it is the §7.2 shape exactly: the covering test is named
+`test_the_eviction_record_carries_what_is_needed_to_rebuild_the_slot` and its docstring reads *"Once
+a slot can hold several tables, its source alone is not enough"* — but its fixture never calls
+`create`, so the slot held one table, the snapshot equalled the live truth, and the assertion passed
+against code that was wrong for every composed slot.
+
+### 8.4 What held
+
+Recorded because a pass with findings should not read as a failing report.
+
+- **The read-only floor is not walkable.** `INSERT`, `UPDATE`, `REPLACE`, `CREATE TABLE`,
+  `CREATE VIEW`, `CREATE TEMP TABLE`, `PRAGMA`, `ANALYZE` and `ATTACH` all refused, and so were a
+  comment-prefixed write, a CTE-prefixed `INSERT` and a whitespace-prefixed `UPDATE`. Nothing landed:
+  row count, sentinel values and a target row all unchanged afterwards. The authorizer whitelist
+  parses no SQL, so there is no text to evade.
+- **The path guards are uniform across `save` and `query(path=)`** — occupied path refused with the
+  §4.2 wording, a zero-length file refused (the case `VACUUM INTO` alone would overwrite), `force`
+  overriding a spare file but **not** a file a live slot sits on, both written `0600` (§4.1).
+- **Arc 2 end to end.** `create` → join → anti-join in both directions (4 and 6 orphans, exact) →
+  index → `save` → re-attach: 300/61 rows, aggregate to the cent, index survived, read-only again.
+- **The §7.2 fixes hold.** `info` on a table inside an attached database works; the mixed-column
+  warning now names the offending value, and the remedy it prescribes was run verbatim and returned
+  the true mean (20.6407) against the naive 20.2967 it prevents.
+- **Nicknames.** Leading digit prefixed, spaces snake_cased, duplicate source refused by name,
+  colliding-but-distinct sources disambiguated to `sales`/`sales_2` with `collided_with` populated.
+- **Errors teach.** `orders.customers` is met with the addressing fix, an unknown table lists the
+  real ones, an unknown slot lists what is attached, and a path outside the roots names the config
+  knob.
