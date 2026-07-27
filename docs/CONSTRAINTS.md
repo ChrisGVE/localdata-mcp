@@ -770,8 +770,25 @@ no counterpart for this, which is the larger silent-wrong-answer class of the tw
 > move the silent wrong answer instead of removing it, since `WHERE order_date > '2025-01-01'`
 > against a tick column compares integer to text and returns **zero rows with no error**. §1.4's
 > evidence is about offset-*preserving* text and about durations; canonicalising to a single offset
-> answers the first, no reader here produces the second, and SQLite's date functions take ISO text
-> anyway. §1.4 stands for typed readers, which is where its measurements came from.
+> answers the first, and no reader here produces the second. §1.4 stands for typed readers, which is
+> where its measurements came from.
+>
+> **The deciding measurement, because the intuition runs the other way** (SQLite 3.47.1). "Store
+> epochs so the SQL date functions work" is backwards: ISO 8601 text is the *native* input to
+> SQLite's date functions, and an integer is not. Against an epoch column every one of them returns
+> **NULL — silently, not as an error** — unless each call carries the `'unixepoch'` modifier.
+>
+> | Task | From ISO text | From an epoch integer |
+> |---|---|---|
+> | `date(col)` | `2025-12-25` | **NULL** |
+> | `strftime('%Y-%m', col)` | `2025-12` | **NULL** |
+> | `col > '2025-01-01'` | true | **false** |
+> | get the epoch | `unixepoch(col)` → `1766664000` | it is already that |
+> | difference in days | `julianday(a)-julianday(b)` | `(a-b)/86400.0` |
+>
+> **Text is a strict superset**: it yields the epoch on demand in one call and everything else
+> natively, while the epoch form yields nothing text cannot and costs three silent failure modes.
+> The only operation epochs win is raw subtraction, and `julianday()` covers that.
 >
 > One consequence worth stating: **`binding.py`'s temporal conversion is still unreachable from a
 > flat file**, and that is now by design rather than by oversight. It is correct code waiting for
@@ -823,7 +840,54 @@ a slot can hold several tables, its source alone is not enough"* — but its fix
 `create`, so the slot held one table, the snapshot equalled the live truth, and the assertion passed
 against code that was wrong for every composed slot.
 
-### 8.4 What held
+### 8.4 Epochs vary, and that is an argument for touching numbers less, not more
+
+Measured 2026-07-27, from the question "if we store dates as epochs, whose epoch is it?". The
+answer turns out to settle a different question than the one asked.
+
+**There is no single epoch.** A number meaning "a date" means nothing without the epoch and unit it
+counts from, and the ones in circulation are far apart:
+
+| Epoch | Unit | Used by |
+|---|---|---|
+| 1970-01-01 | seconds | Unix/POSIX (IEEE Std 1003.1), C, Python, Java, JavaScript, Arrow/Parquet |
+| **2001-01-01** | seconds | **Apple Cocoa `NSDate` / Core Data** — 978,307,200 s ahead of Unix |
+| 1904-01-01 | days | classic Mac OS, and Excel's alternate date system |
+| 1899-12-30 | days | Microsoft Excel (default), Lotus 1-2-3 |
+| 1601-01-01 | 100 ns | Windows `FILETIME`, NTFS |
+| 0001-01-01 | 100 ns | .NET `DateTime.Ticks` |
+| 1960-01-01 | days / ms | SAS, Stata |
+| 4713 BC | days | Julian day (SQLite's `julianday()`) |
+| 1980-01-06 | weeks | GPS |
+
+A Core Data timestamp read as Unix time is **31 years early**; an Excel serial read as Unix seconds
+lands in 1970. These are not near-misses that a sanity check would catch by range.
+
+**But the readers already resolve it, and that is the finding.** A typed format *declares* its epoch,
+so the library that understands the format converts on the way in. Round-tripped through pandas, a
+date column comes back as `datetime64` from every one of them:
+
+| Format | Reads back as |
+|---|---|
+| `.xlsx`, `.ods` | `datetime64` — **including a workbook set to the 1904 system**, verified |
+| `.parquet`, `.feather`, `.orc` | `datetime64` |
+| `.dta` (Stata) | `datetime64` |
+| **`.json`** | **`int64`** — pandas writes and reads epoch-milliseconds, and does not convert back |
+| **`.csv` / `.tsv` / `.txt`** | **text, or a bare number** |
+
+So the epoch zoo is the reader's problem for every format that carries its own types, and the
+readers solve it. It reaches us in exactly two places, and both are formats that declare nothing:
+JSON, which needs `convert_dates` / `date_unit` decided when that reader is added; and the flat
+files level 0 actually reads.
+
+**Which is the argument for leaving numbers alone.** In a CSV, `978307200` is a Core Data instant,
+a Unix instant, an order number and a population count, and the file says which. Nothing does.
+Converting it would be a guess with a 31-year error mode, which is the same class as reading
+`01/03/2025` as March — so the same answer applies, and the numeric variant stays untouched
+(`LEVEL0.md`). What made this worth measuring is that it *looked* like an argument for storing
+epochs and is in fact an argument against inferring them.
+
+### 8.5 What held
 
 Recorded because a pass with findings should not read as a failing report.
 
