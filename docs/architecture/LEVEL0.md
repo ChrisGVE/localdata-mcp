@@ -134,6 +134,51 @@ rather than in a check that could be reached around.
 A database that was `save`d and is attached again later is, like any other external
 database, **read-only by default** until the caller says otherwise.
 
+## Dates, and the two spellings that carry their own meaning
+
+A file holds dates as text, and text compares as text — so `'30.11.2023'` sorts
+*after* `'01.03.2025'`, `ORDER BY` runs backwards and `max()` returns the
+earliest instant. Measured across twenty-four spellings, seven ordered wrongly
+and four reported the earliest as the maximum, silently (CONSTRAINTS §8.1).
+
+The answer is not a better parser, because most of those spellings are
+**genuinely ambiguous**: `01/03/2025` is the first of March or the third of
+January depending on who wrote the file, and the file does not say. A server
+that guesses is wrong silently, which is the failure it was meant to prevent.
+So exactly two forms are recognised, both of which mean one thing everywhere:
+
+- **ISO 8601 calendar dates and datetimes, extended format** — `2024-03-01`,
+  `2024-03-01T14:30:00`, `2024-03-01T14:30:00Z`, and `2024-03-01 14:30:00`
+  (the space separator is RFC 3339's relaxation, and is what pandas and every
+  SQL engine emit). ISO 8601 *basic* format (`20240301`) is **not** accepted —
+  it is indistinguishable from an order number.
+- **Unix time** (IEEE Std 1003.1), an integer count from
+  1970-01-01T00:00:00Z — which is left exactly as it is. Integer comparison
+  *is* chronological comparison, so it already orders, ranges and joins
+  correctly; and it could not be detected anyway, since `1766664000` is equally
+  a timestamp, an identifier or a count. The numeric form is supported by not
+  touching it.
+
+A recognised column is rewritten into **one canonical UTC spelling** and stays
+text. An offset is honoured and normalised, so the same instant written
+`+00:00` and `-05:00` compares equal — the join that used to return zero rows.
+The original offset is **not** recoverable afterwards; a file that needs it must
+keep it in a column of its own. A column of plain dates stays `YYYY-MM-DD`.
+
+> **Why not integer ticks**, which CONSTRAINTS §1.4 otherwise calls for. Ticks
+> move the silent wrong answer rather than removing it: against a tick column
+> `WHERE order_date > '2025-01-01'` compares an integer to text and returns
+> **zero rows with no error**, and that is a likelier query than a cross-file
+> instant join. §1.4's evidence is about *offset-preserving* text and about
+> durations; canonical UTC text has neither problem, and SQLite's own date
+> functions all take ISO 8601 text.
+
+**Anything else is left alone and reported.** A column that reads as dates in
+no recognised standard comes back with the offending values named, saying that
+its comparisons are alphabetical rather than chronological. That is the same
+contract as the mixed-column signal: the server states the limitation, and the
+caller decides what to do about it.
+
 ## Nicknames
 
 **snake_case, always** — derived nicknames and table names alike. `2024 Sales Report.csv`

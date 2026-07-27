@@ -72,7 +72,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import SQLAlchemyError
 
-from . import binding
+from . import binding, temporal
 from .dialects import Backend, Engines, backend_for
 from .paths import resolve_read_path
 
@@ -124,6 +124,20 @@ class ColumnInfo:
     #: A few distinct values from ``non_numeric_values``, so a caller can write
     #: the filter without first going to look. See :func:`_numeric_split`.
     non_numeric_examples: tuple[str, ...] = ()
+    #: ``"iso8601_utc"`` for a date column held in the one canonical spelling,
+    #: whose comparisons are therefore chronological. ``None`` for everything
+    #: else, including a date column in no standard — see below.
+    temporal_standard: str | None = None
+    #: Values from a column that reads as dates but is not in a standard this
+    #: server recognises, so it is compared as text. Non-empty means ``ORDER
+    #: BY``, ``min``/``max`` and range filters on this column are unreliable.
+    #: See :func:`temporal.unparsed_temporal_examples`.
+    unparsed_temporal_examples: tuple[str, ...] = ()
+
+    @property
+    def is_unparsed_temporal(self) -> bool:
+        """True when this column holds dates that will not compare correctly."""
+        return bool(self.unparsed_temporal_examples)
 
     @property
     def mixed_kind(self) -> str | None:
@@ -188,6 +202,11 @@ class TableInfo:
     @property
     def mixed_columns(self) -> list[str]:
         return [c.name for c in self.columns if c.is_mixed]
+
+    @property
+    def unparsed_temporal_columns(self) -> list[str]:
+        """Columns holding dates in no standard, so compared as text."""
+        return [c.name for c in self.columns if c.is_unparsed_temporal]
 
 
 @dataclass(frozen=True)
@@ -418,6 +437,12 @@ def read_frame(path: Path) -> pd.DataFrame:
         frame = reader(path)
     except Exception as exc:
         raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+    # Recognise the temporal columns before anything downstream sees types.
+    # `read_csv` infers numbers and leaves everything else as text, so without
+    # this a date is compared as text and `ORDER BY` runs backwards on any
+    # spelling whose lexical order is not its chronological one.
+    frame = temporal.standardize(frame)
 
     if frame.empty and len(frame.columns) == 0:
         raise LoadError(f"{path.name} contains no columns.")
@@ -872,11 +897,17 @@ class Workspace:
                 kind = None
                 numeric = non_numeric = 0
                 examples: tuple[str, ...] = ()
+                dates: tuple[str, ...] = ()
+                standard: str | None = None
                 if frame is not None:
                     series = frame[frame.columns[index]]
                     kind = binding.column_temporal_kind(series)
                     if sql_type == "TEXT":
-                        numeric, non_numeric, examples = _numeric_split(series)
+                        if temporal.is_standard(series):
+                            standard = "iso8601_utc"
+                        else:
+                            numeric, non_numeric, examples = _numeric_split(series)
+                            dates = temporal.unparsed_temporal_examples(series)
                 described.append(
                     ColumnInfo(
                         name=name,
@@ -888,6 +919,8 @@ class Workspace:
                         numeric_values=numeric,
                         non_numeric_values=non_numeric,
                         non_numeric_examples=examples,
+                        temporal_standard=standard,
+                        unparsed_temporal_examples=dates,
                     )
                 )
         return described

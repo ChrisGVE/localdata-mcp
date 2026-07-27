@@ -154,6 +154,18 @@ def _column_payload(column: Any) -> dict[str, Any]:
             if column.is_mixed
             else {}
         ),
+        # Said positively so a caller can tell "this compares
+        # chronologically" from "nothing is known about this column".
+        **(
+            {"temporal": column.temporal_standard, "normalized": "UTC"}
+            if column.temporal_standard
+            else {}
+        ),
+        **(
+            {"dates_not_a_standard": list(column.unparsed_temporal_examples)}
+            if column.is_unparsed_temporal
+            else {}
+        ),
     }
 
 
@@ -166,6 +178,11 @@ def _table_payload(info: TableInfo) -> dict[str, Any]:
         "source": info.source,
         "columns": [_column_payload(column) for column in info.columns],
         "mixed_columns": info.mixed_columns,
+        **(
+            {"unparsed_temporal_columns": info.unparsed_temporal_columns}
+            if info.unparsed_temporal_columns
+            else {}
+        ),
     }
 
 
@@ -205,6 +222,38 @@ def _mixed_column_warning(info: TableInfo) -> str:
     )
 
 
+def _unparsed_temporal_warning(info: TableInfo) -> str:
+    """Say which columns hold dates that will not compare correctly.
+
+    The counterpart to the mixed-column warning, for the other silent
+    wrong-answer class — and the larger of the two. A date column is
+    *uniformly* text, so no storage-class signal exists to trip and nothing
+    else in the payload would ever mention it.
+
+    It says which order the comparison actually is, because the failure is not
+    that the column is unusable but that it lies convincingly: ``max()``
+    returns a real value from the column, and on four of the spellings measured
+    it is the earliest instant in the table (CONSTRAINTS §8.1).
+    """
+    lines = []
+    for column in (c for c in info.columns if c.is_unparsed_temporal):
+        listed = ", ".join(repr(v) for v in column.unparsed_temporal_examples)
+        lines.append(f"{column.name} (for example {listed})")
+
+    return (
+        f"In {info.tag}, table {info.name}: {', '.join(lines)} "
+        f"read as dates but are in no standard this server recognises, so they "
+        f"are stored and compared as text — ORDER BY, min(), max() and range "
+        f"filters on them follow alphabetical order, not chronological, and "
+        f"will quietly return the wrong row. Only ISO 8601 "
+        f"(2024-03-01, 2024-03-01T14:30:00Z) and Unix timestamps are "
+        f"recognised; a spelling like 01/03/2025 cannot be, because nothing in "
+        f"the file says whether it is March or January. Sort or compare with "
+        f"an expression that reorders the parts, or have the file written in "
+        f"ISO 8601."
+    )
+
+
 def _slot_payload(slot: Slot, registry: Registry) -> dict[str, Any]:
     return {
         "nickname": slot.nickname,
@@ -227,10 +276,26 @@ def _index_payload(index: IndexInfo) -> dict[str, Any]:
     }
 
 
+def _table_warnings(info: TableInfo) -> list[str]:
+    """Everything worth saying about one table, in one place.
+
+    Both members are silent-wrong-answer classes: a value comes back, it looks
+    like an answer, and it is not one. They are gathered here so a new class
+    reaches every payload at once rather than the one whose call site was
+    remembered.
+    """
+    warnings = []
+    if info.mixed_columns:
+        warnings.append(_mixed_column_warning(info))
+    if info.unparsed_temporal_columns:
+        warnings.append(_unparsed_temporal_warning(info))
+    return warnings
+
+
 def _described(registry: Registry, nickname: str, tables: tuple[str, ...]) -> tuple:
     """Describe several tables, and collect whatever is worth warning about."""
     described = [registry.describe(nickname, table) for table in tables]
-    warnings = [_mixed_column_warning(info) for info in described if info.mixed_columns]
+    warnings = [w for info in described for w in _table_warnings(info)]
     return described, warnings
 
 
@@ -378,8 +443,8 @@ def _table_detail(registry: Registry, nickname: str, table: str) -> dict[str, An
     payload["indexes"] = [
         _index_payload(index) for index in registry.indexes(nickname, table)
     ]
-    if described.mixed_columns:
-        payload["warnings"] = [_mixed_column_warning(described)]
+    if warnings := _table_warnings(described):
+        payload["warnings"] = warnings
     return payload
 
 
@@ -548,8 +613,8 @@ def create(
 
 def _table_created(info: TableInfo) -> dict[str, Any]:
     payload: dict[str, Any] = {"ok": True, **_table_payload(info)}
-    if info.mixed_columns:
-        payload["warnings"] = [_mixed_column_warning(info)]
+    if warnings := _table_warnings(info):
+        payload["warnings"] = warnings
     return payload
 
 

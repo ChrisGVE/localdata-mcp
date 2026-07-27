@@ -750,9 +750,33 @@ Two further measurements on the same table, both silent:
 - **`WHERE eu_dmy_dot > '01.01.2025'` returns all 5 rows; the true answer is 2.** A range filter on
   a European-format date column silently selects everything.
 
-Nothing warns. The mixed-column detector fires correctly for a text-in-numeric column (§1.5) and has
+Nothing warned. The mixed-column detector fires correctly for a text-in-numeric column (§1.5) and had
 no counterpart for this, which is the larger silent-wrong-answer class of the two: a date column is
 *uniformly* text, so no storage-class signal exists to trip.
+
+> **Resolved 2026-07-27**, and the shape of the fix is the finding. Only the two spellings that
+> carry their own meaning are recognised — ISO 8601 extended calendar forms, and Unix time — and
+> everything else is *reported* rather than parsed, because `01/03/2025` is March or January
+> depending on who wrote the file and a server that guesses is silently wrong. The grammar is
+> pandas' own `to_datetime(format="ISO8601")`, which rejected every ambiguous spelling tried
+> against it; two holes were closed on top of it (it accepts basic-format `20240301`, which would
+> turn order numbers into dates, and maps `''` to `NaT`). Re-measured against the same fixture: the
+> seven correct spellings still correct, the cross-offset join **5 where it was 0**, the range
+> filter **2 where it was 5**, and all seven ambiguous spellings now named in a warning. Full
+> contract in `LEVEL0.md`.
+>
+> **Stored as canonical UTC text, not integer ticks** — a deliberate departure from §1.4, recorded
+> because §1.4 is otherwise unambiguous. Ticks were built first and measured worse *here*: they
+> move the silent wrong answer instead of removing it, since `WHERE order_date > '2025-01-01'`
+> against a tick column compares integer to text and returns **zero rows with no error**. §1.4's
+> evidence is about offset-*preserving* text and about durations; canonicalising to a single offset
+> answers the first, no reader here produces the second, and SQLite's date functions take ISO text
+> anyway. §1.4 stands for typed readers, which is where its measurements came from.
+>
+> One consequence worth stating: **`binding.py`'s temporal conversion is still unreachable from a
+> flat file**, and that is now by design rather than by oversight. It is correct code waiting for
+> the typed readers (parquet, feather, Excel) that arrive above level 0, and it is what will convert
+> a column that arrives already typed.
 
 **The pattern, sixth instance and the sharpest yet.** `tests/test_binding.py` contains
 `test_same_instant_in_two_offsets_joins`, asserting `matched == 1`, and it passes — because it hands
