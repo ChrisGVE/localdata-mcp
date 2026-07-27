@@ -502,6 +502,7 @@ def query(
     sql: str,
     path: str | None = None,
     force: bool = False,
+    delimiter: str | None = None,
 ) -> dict[str, Any]:
     """Run SQL against a datasource, returning rows or writing them to a file.
 
@@ -536,6 +537,10 @@ def query(
             user has said to — the path is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file
             an attached datasource is sitting on is refused either way.
+        delimiter: The character to separate fields with, for .csv/.tsv/.txt
+            output. Defaults to what the suffix implies — comma for .csv and
+            .txt, tab for .tsv. Ignored for a format that has no separator, so
+            one default can be carried across a mix of destinations.
     """
     with _lock:
         registry = _session()
@@ -556,7 +561,12 @@ def query(
 
         try:
             result = export_rows(
-                columns, rows, path, force=force, claimed=registry.claimed_paths()
+                columns,
+                rows,
+                path,
+                force=force,
+                claimed=registry.claimed_paths(),
+                delimiter=delimiter,
             )
         except (ExportError, PathNotAllowed) as exc:
             return _failed(exc)

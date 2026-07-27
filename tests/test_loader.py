@@ -1107,3 +1107,47 @@ def test_nothing_sniffs_the_delimiter(workspace, root):
     """
     (info,) = workspace.load_file(str(root / "semicolons.csv"), "main")
     assert len(info.columns) == 1
+
+
+def test_a_delimiter_chooses_the_separator_on_the_way_out(workspace, root):
+    target = root / "out.csv"
+
+    export_module.export_rows(["a", "b"], [(1, 2)], str(target), delimiter=";")
+
+    assert target.read_text().splitlines() == ["a;b", "1;2"]
+
+
+def test_a_delimiter_on_a_non_delimited_target_is_ignored(workspace, root):
+    """Ignored, not refused — unlike the read side.
+
+    The file the caller asked for is correct Parquet either way, so a delimiter
+    here is inert rather than misleading, and a caller carrying a default
+    delimiter through a wrapper should not be blocked by it.
+    """
+    target = root / "out.parquet"
+
+    result = export_module.export_rows(["a", "b"], [(1, 2)], str(target), delimiter=";")
+
+    assert result.row_count == 1
+    (reloaded,) = workspace.load_file(str(target), "main", table_name="back")
+    assert [c.name for c in reloaded.columns] == ["a", "b"]
+
+
+def test_the_written_delimiter_round_trips_when_read_back_with_the_same_one(
+    workspace, root
+):
+    """The two sides are the same fact about the file, so they must agree."""
+    target = root / "piped.csv"
+    export_module.export_rows(
+        ["name", "salary"], [("Ada", 120000)], str(target), delimiter="|"
+    )
+
+    (info,) = workspace.load_file(str(target), "main", delimiter="|")
+    assert [c.name for c in info.columns] == ["name", "salary"]
+
+
+def test_a_tsv_written_without_a_delimiter_is_still_tab_separated(workspace, root):
+    """The suffix keeps deciding when nothing overrides it."""
+    target = root / "plain.tsv"
+    export_module.export_rows(["a", "b"], [(1, 2)], str(target))
+    assert target.read_text().splitlines()[0] == "a\tb"

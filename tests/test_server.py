@@ -1273,3 +1273,36 @@ def test_a_local_file_url_is_still_subject_to_the_path_gate(session, tmp_path):
 
     assert refused["ok"] is False
     assert "outside the allowed paths" in refused["error"]
+
+
+def test_the_output_delimiter_reaches_query_over_the_wire(session):
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    target = session / "out.csv"
+
+    result = call(
+        "query",
+        nickname="staff",
+        sql="SELECT name, salary FROM simple ORDER BY name",
+        path=str(target),
+        delimiter=";",
+    )
+
+    assert result["ok"] is True
+    assert target.read_text().splitlines()[0] == "name;salary"
+
+
+def test_an_output_delimiter_is_ignored_where_it_has_no_meaning(session):
+    """Ignored on the way out, refused on the way in — see export.export_rows."""
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    target = session / "out.parquet"
+
+    result = call(
+        "query",
+        nickname="staff",
+        sql="SELECT name FROM simple",
+        path=str(target),
+        delimiter=";",
+    )
+
+    assert result["ok"] is True
+    assert result["rows_written"] == 5

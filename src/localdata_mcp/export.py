@@ -77,16 +77,25 @@ def _write_delimited(
     return written
 
 
-def _write_csv(
-    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
-) -> int:
-    return _write_delimited(columns, rows, path, delimiter=",")
+def _delimited_writer(delimiter: str) -> Writer:
+    """A writer for character-separated text, at a given separator.
+
+    The mirror of ``loader._delimited``: the suffix picks the default — comma
+    for ``.csv`` and ``.txt``, tab for ``.tsv`` — and an explicit delimiter
+    substitutes the writer rather than being threaded through every other
+    format's signature.
+    """
+
+    def write(
+        columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+    ) -> int:
+        return _write_delimited(columns, rows, path, delimiter=delimiter)
+
+    return write
 
 
-def _write_tsv(
-    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
-) -> int:
-    return _write_delimited(columns, rows, path, delimiter="\t")
+_write_csv = _delimited_writer(",")
+_write_tsv = _delimited_writer("\t")
 
 
 def _write_json(
@@ -332,6 +341,11 @@ WRITERS: dict[str, Writer] = {
     ".ndjson": _write_jsonl,
 }
 
+#: The output formats a delimiter means anything for. Deliberately the same set
+#: as `loader.DELIMITED`: the two sides describe one fact about a file, so a
+#: format this server writes with a separator is one it can read back with it.
+DELIMITED = {".csv", ".tsv", ".txt"}
+
 
 def export_rows(
     columns: Sequence[str],
@@ -340,16 +354,33 @@ def export_rows(
     *,
     force: bool = False,
     claimed: Mapping[Path, str] | None = None,
+    delimiter: str | None = None,
 ) -> ExportResult:
     """Write ``rows`` to ``raw_path`` in the format its suffix names.
 
     Refuses a suffix with no writer, a path outside the allowed root, a file a
     live slot is sitting on, and an existing file unless ``force``.
+
+    ``delimiter`` replaces the separator the suffix implied, and is **ignored**
+    for a format that has none. That is the opposite of the read side, and the
+    asymmetry is real rather than an oversight: reading at the wrong separator
+    changes what the data *is*, so a delimiter that cannot apply means the
+    caller has misunderstood the file and is worth stopping. Writing Parquet
+    produces correct Parquet whatever this says, so the parameter is merely
+    inert — and refusing it would block a caller carrying one default delimiter
+    across a mix of destinations.
     """
     # Before `resolve_write_path`, deliberately: that call deletes an existing
     # target under `force`, and a request this server was never going to be able
     # to satisfy must not cost the user a file on its way to failing.
     writer = _writer_for(raw_path)
+
+    if delimiter is not None and Path(raw_path).suffix.lower() in DELIMITED:
+        if len(delimiter) != 1:
+            raise ExportError(
+                f"delimiter must be a single character, not {delimiter!r}."
+            )
+        writer = _delimited_writer(delimiter)
 
     path = resolve_write_path(raw_path, force=force, claimed=claimed)
 
