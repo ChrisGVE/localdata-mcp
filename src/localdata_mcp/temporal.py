@@ -88,19 +88,35 @@ __all__ = [
 #: means a value has to *look* like a date before it is treated as one.
 _EXTENDED_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
+#: The spellings :func:`standardize` writes, and the only ones a column can be
+#: in for its comparisons to be chronological. Anchored at both ends, so a
+#: value that merely *starts* with a date does not qualify.
+_CANONICAL = re.compile(r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z)?$")
+
 #: Shapes that read as a date to a person but are not a standard this server
 #: accepts. Two families, which is all the live sweep found: numbers separated
 #: by ``.``, ``/`` or ``-`` in an order nothing declares, and anything carrying
 #: a month name.
+#: Anchored at the start, because it is tested with ``str.match``. The month
+#: name is allowed a short run-up rather than none, so that a weekday prefix
+#: (``Fri, 01 Mar 2024 …``) still reads as the date it is.
 _DATE_SHAPED = re.compile(
-    r"^\s*\d{1,4}[./-]\d{1,2}[./-]\d{1,4}"
-    r"|(?i:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,.]+\d",
+    r"\s*\d{1,4}[./-]\d{1,2}[./-]\d{1,4}"
+    r"|.{0,10}?(?i:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,.]+\d",
 )
 
 #: How many distinct offending values to carry into the warning. Enough to
 #: recognise the format from, bounded so a column of unique junk cannot return
 #: a copy of itself.
 MAX_TEMPORAL_EXAMPLES = 3
+
+
+#: How many values to test before testing all of them. Every column of every
+#: file reaches this module, and almost none of them are dates — a column of
+#: product codes should cost a few comparisons, not one per row. The full check
+#: still runs on anything that survives the sample, so this bounds the work
+#: without changing any answer.
+_SAMPLE = 64
 
 
 def _text_values(series: pd.Series) -> pd.Series | None:
@@ -110,6 +126,10 @@ def _text_values(series: pd.Series) -> pd.Series | None:
     column has nothing to recognise — and for a column with no values at all,
     which would otherwise parse vacuously and be declared temporal on the
     strength of nothing.
+
+    ``infer_dtype`` rather than a comprehension over the values: this runs on
+    every column of every file, and an ``isinstance`` loop over a few hundred
+    thousand rows costs more than everything else here put together.
     """
     if not (
         pd.api.types.is_object_dtype(series.dtype)
@@ -119,9 +139,25 @@ def _text_values(series: pd.Series) -> pd.Series | None:
     present = series.dropna()
     if present.empty:
         return None
-    if not all(isinstance(value, str) for value in present):
+    if pd.api.types.infer_dtype(present, skipna=True) != "string":
         return None
     return present.astype("string")
+
+
+def _matches_throughout(values: pd.Series, pattern: re.Pattern[str]) -> bool:
+    """Whether every value matches, deciding it on a sample where it can.
+
+    The sample is not an approximation: a *failure* in it is conclusive, and is
+    the case that needs to be cheap, because most columns are not dates. Only a
+    column that looks like dates all the way through the sample pays for a full
+    scan.
+    """
+    head = values.iloc[:_SAMPLE]
+    if not bool(head.str.match(pattern).all()):
+        return False
+    if len(values) <= _SAMPLE:
+        return True
+    return bool(values.str.match(pattern).all())
 
 
 def _parse(present: pd.Series, whole: pd.Series) -> pd.Series | None:
@@ -132,7 +168,7 @@ def _parse(present: pd.Series, whole: pd.Series) -> pd.Series | None:
     the part that parses would turn the rest into ``NaT`` — deleting exactly
     the values somebody needs to see. It stays text and gets reported instead.
     """
-    if not present.str.match(_EXTENDED_DATE).all():
+    if not _matches_throughout(present, _EXTENDED_DATE):
         return None
     try:
         parsed = pd.to_datetime(whole, format="ISO8601", utc=True)
@@ -185,6 +221,12 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
         present = _text_values(series)
         if present is None:
             continue
+        # Already in the form this would rewrite it into, which is the case for
+        # any file written the way the documentation asks for. Parsing it only
+        # to format it back is the most expensive thing in this module, and it
+        # would not change a byte.
+        if _matches_throughout(present, _CANONICAL):
+            continue
         parsed = _parse(present, series)
         if parsed is not None:
             converted[name] = _canonical(parsed)
@@ -202,11 +244,16 @@ def is_standard(series: pd.Series) -> bool:
     arrived canonical and one that was rewritten into canonical form. Either
     way the property being reported is the same one: comparisons on this
     column are chronological.
+
+    Matched against the canonical spellings rather than parsed again. Anything
+    :func:`standardize` accepted it has already rewritten into one of them, so
+    re-running ``to_datetime`` here would buy nothing and cost a second pass
+    over the column.
     """
     present = _text_values(series)
     if present is None:
         return False
-    return _parse(present, series) is not None
+    return _matches_throughout(present, _CANONICAL)
 
 
 def unparsed_temporal_examples(series: pd.Series) -> tuple[str, ...]:
@@ -225,7 +272,7 @@ def unparsed_temporal_examples(series: pd.Series) -> tuple[str, ...]:
     present = _text_values(series)
     if present is None:
         return ()
-    if not present.str.contains(_DATE_SHAPED, regex=True, na=False).all():
+    if not _matches_throughout(present, _DATE_SHAPED):
         return ()
 
     examples: dict[str, None] = {}
