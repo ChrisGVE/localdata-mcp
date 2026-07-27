@@ -1107,3 +1107,117 @@ matters. At interactive scale it does not.
   another thread queries is not covered.
 - **Non-SQLite datasources** — every figure here is SQLite. A server-backed URL reports `None`
   residency by construction, so the budget never sees it at all.
+
+---
+
+## §10 — A million rows and ten million, end to end (2026-07-27)
+
+Two generated files, driven through the real tool functions: a **wide** one (1,000,000 rows x 11
+columns, 1.22 GB — a date, a datetime, an id, text at 10/100/1000 characters, small and very large
+integers, ordinary and very large floats, and a float inside (-1, 1)) and a **tall** one
+(10,000,000 rows x 5 columns, 0.76 GB, carrying an undeclared `foreign_id` into the wide file's id
+space). Generator and harness in `tmp/perf/`. **19 steps, 0 failed.**
+
+### 10.1 The catalogue is one extraction format, and `path=` ignores the suffix
+
+Worth stating first, because it bounds everything else here. `loader.READERS` holds `.csv`, `.tsv`
+and `.txt` — all three `pandas.read_csv` variants — and `export.py` exports `export_csv` and nothing
+else. There is no JSON, YAML, TOML, XML, Excel, ODS or Parquet, in either direction.
+
+**And `query(path=…)` calls `export_csv` unconditionally**, so the suffix selects nothing:
+
+| Asked for | Reported | Written |
+|---|---|---|
+| `out.json` | `ok: true` | `a,b\r\n1,x\r\n2,y\r\n` |
+| `out.parquet` | `ok: true` | `a,b\r\n1,x\r\n2,y\r\n` |
+| `out.wibble` | `ok: true` | `a,b\r\n1,x\r\n2,y\r\n` |
+
+An agent that asks for Parquet is told it succeeded and gets a file whose name lies about its
+contents — the same silent-wrong-answer shape as §1.1 and §8.1, in the export path. A `WRITERS`
+registry keyed on suffix, refusing an unknown one by name the way `read_frame` already does, is the
+fix and is also the seam every new format arrives through.
+
+### 10.2 Loading dominates; everything else is comparatively cheap
+
+| Step | Wide (1M x 11) | Tall (10M x 5) |
+|---|---|---|
+| `attach` | **149.6 s** — 6,683 rows/s, 8.1 MB/s | **472.5 s** — 21,162 rows/s, 1.6 MB/s |
+| `SELECT count(*)` | 1.15 s | 1.54 s |
+| extract `SELECT *` to CSV | 88.5 s — 11,300 rows/s | 160.8 s — 62,173 rows/s |
+| `save` to a database file | 15.1 s — 90 MB/s | 6.7 s — 115 MB/s |
+| re-attach that saved file | **3.2 s** | **0.6 s** |
+
+Extraction runs **1.7-2.9x faster than loading** the same data. Of a ~35-minute run, ~22 minutes
+was spent in the four load steps. If anything here is ever optimised, it is the load path.
+
+Rows per second is the wrong headline for the wide file and the right one for the tall: the wide
+file moves 8.1 MB/s at 6,683 rows/s because a 1000-character column dominates each row, while the
+tall file moves 21,162 rows/s at only 1.6 MB/s. **Bytes and rows disagree by 13x across these two
+files**, so neither alone predicts a load.
+
+### 10.3 Re-opening a saved database skips the work rather than doing it faster
+
+3.2 s against 149.6 s (**46x**) for the wide file, 0.6 s against 472.5 s (**787x**) for the tall.
+
+§5.2 says an order-of-magnitude ratio is usually two different operations, and here it plainly is —
+which is the point rather than a confound. Attaching a CSV parses text and inserts every row;
+attaching a saved database opens a file. Nothing got faster; the work stopped being done. That is
+the concrete argument for `save` as a working habit rather than only an escape from ephemerality:
+**one `save` converts an eight-minute reload into six-tenths of a second.**
+
+`create(type="table")` reading the same 10M-row file cost 525.5 s against `attach`'s 472.5 s — 1.11x,
+the same operation with the same shape, which is the expected result and a useful negative.
+
+### 10.4 An index pays for itself on the first join, not the second
+
+The tall file's `foreign_id` points into the wide file's `id`, and nothing declares it. Composed the
+way the surface intends — `create` lands the second table in the first's database, then ordinary SQL:
+
+| | Time |
+|---|---|
+| Join, no index | 124.8 s |
+| Build index on `tall.foreign_id` | 47.4 s |
+| Join, indexed | **10.3 s** |
+
+47.4 + 10.3 = 57.7 s against 124.8 s, so the index wins by **2.16x even counting the build**, on a
+single join, and by **12.1x** on every join after. All 10,000,000 rows matched, which is the correct
+answer and confirms the join is doing real work rather than failing to.
+
+**Nothing in the server says any of this** — principle 3 holds, no index is inferred and no join key
+is guessed. What changes is that the numbers now exist for an agent to reason with.
+
+### 10.5 The round trip is value-exact and format-lossy
+
+CSV in, CSV out, compared cell by cell over 300,003 rows:
+
+```
+formatting-only numeric differences : 92,783
+real numeric value differences      : 0      (worst relative error 0.00e+00)
+text differences                    : 0
+```
+
+Every difference is a spelling: `2893.90` → `2893.9`, `0.698008716370` → `0.69800871637`,
+`5.605320e+17` → `5.60532e+17`. Trailing zeros and exponent normalisation, because the value goes
+through SQLite `REAL` and comes back through Python's float repr. **No value changed**, including
+`big_int` near 2^62 and floats spanning 1e12-1e18.
+
+Two consequences worth carrying:
+
+* **Both temporal columns round-tripped identically** — `2024-10-10` and `2024-10-10T03:01:26Z` came
+  back character for character, on a 1,000,000-row file. The §8/`LEVEL0.md` date contract holds at
+  volume.
+* **Text lost its unnecessary quoting.** The generator wrote `"0_propatag"`; the export writes
+  `0_propatag`, because `csv.writer` quotes only when it must. Semantically identical, not byte
+  identical — so a byte-comparison of a round trip will report differences that are not losses, and
+  any future round-trip test has to compare parsed values rather than lines.
+
+### 10.6 What it costs while it runs
+
+Peak RSS **~3.0 GB**, against a 1.22 GB source. The load is the peak, not the extract: `read_frame`
+builds the whole pandas frame before a single row is inserted, so the load peak tracks the *file*
+and no chunk size bounds it (§3.2a bounds the *insert*, which is a later step). Residency afterwards
+is far smaller — 1,305 MB for the wide file, 735 MB for the tall — because that measures SQLite
+pages, which is §9.3's point restated at volume.
+
+Storage is close to parity throughout: wide 1.22 GB CSV → 1,305 MB resident → 1.37 GB saved
+database; tall 0.76 GB → 735 MB → 0.77 GB. Nothing expands or compresses meaningfully.
