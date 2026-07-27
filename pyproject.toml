@@ -129,6 +129,10 @@ known_first_party = ["localdata_mcp"]
 testpaths = ["tests"]
 markers = [
     "slow: volume and timing tests; excluded with -m 'not slow'",
+    # Every one of these skips itself when its container is not answering, so
+    # the marker is not needed to keep a Docker-free run green. It is here to
+    # make the reverse selection possible: -m endpoint runs only the dialects.
+    "endpoint: needs a database container from docker-compose.test.yml",
 ]
 
 [tool.mypy]
