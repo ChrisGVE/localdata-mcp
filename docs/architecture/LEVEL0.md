@@ -1,4 +1,4 @@
-# Level 0 — SQLite and flat files, done well
+# Level 0 — files and databases, done well
 
 Level 0 is the gate. Until the surface below is built and behaving, nothing else is
 started. The reason is that everything above level 0 is the *same* building blocks
@@ -6,8 +6,9 @@ pointed at more kinds of source, so a block that is wrong here is wrong everywhe
 
 The surface is built, and the gate has since opened onto its own breadth: more formats
 and more backends are **still level 0**, because they are nothing new — the same verbs
-pointed at more kinds of source. Formats are done; the endpoint databases are what
-remains.
+pointed at more kinds of source. Formats are done, and so are the backends: SQLite,
+DuckDB, PostgreSQL, MySQL, MariaDB, SQL Server and Oracle each run every verb, each
+against a container of its own.
 
 ## The premise
 
@@ -119,7 +120,7 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 |---|---|---|
 | `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Multipurpose — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. A file holding several tables becomes a database holding all of them. `delimiter` applies to character-separated text only. |
 | `detach` | `nickname` | Drop a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if spilled. |
-| `query` | `nickname`, `sql`, `path?`, `force?` | The `path` suffix chooses the output format and one with no writer is refused by name. **Reads only** — every write is refused by SQLite's authorizer, whatever the slot allows. Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. `force` is the same overwrite consent `save` takes, for the same reason. |
+| `query` | `nickname`, `sql`, `path?`, `force?` | The `path` suffix chooses the output format and one with no writer is refused by name. **Reads only** — every write is refused whatever the slot allows, by the connection rather than by a check, as far as each backend can refuse (see *Write is not the default*). Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. `force` is the same overwrite consent `save` takes, for the same reason. |
 | `info` | — \| `nickname` \| `nickname`+`table` | Polymorphic: bare → every slot; nickname → its tables; nickname+table → schema, row count and indexes. **Absorbs `list_tables` + `describe_table`.** |
 | `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a datasource in beside the tables already there, which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
 | `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes. The third of create/update/drop, and the answer to a file that names its own tables — a workbook's sheets arrive as the spreadsheet named them. Renaming onto a taken name is refused, not allowed to replace. |
@@ -139,9 +140,28 @@ and the rest are refused there even on a database the caller owns outright. So t
 exactly one way to change a slot, and it is a named verb rather than a clause buried in
 a statement.
 
-That is deliberately not a permission model. The enforcement is SQLite's own: a
-read-only attach carries `mode=ro` in the connection URI, so a write fails in the engine
-rather than in a check that could be reached around.
+That is deliberately not a permission model. The enforcement is the connection's, not a
+check that could be reached around — and **each backend enforces it as far as it can**,
+which is not equally far:
+
+- **SQLite** refuses at statement preparation, through an authorizer that whitelists four
+  read actions; a read-only attach also carries `mode=ro` in its connection URI. **DuckDB**
+  opens `access_mode=read_only`. Neither runs the statement at all.
+- **MySQL and MariaDB** open a read-only session, and they have to: DDL commits itself
+  there, so a `CREATE TABLE` on a connection that never commits would otherwise be
+  permanent.
+- **PostgreSQL and SQL Server** keep the transactional floor — the read connection never
+  commits, so a write is rolled back — which is sufficient because their DDL is
+  transactional too.
+- **Oracle** keeps the same floor, and it holds for DML. It does *not* hold for DDL:
+  Oracle commits DDL as it runs it, before anything can object, and it has no session-level
+  read-only posture to reach for. So a `CREATE` sent to `query` there really does take
+  effect, and the refusal says so rather than claiming otherwise.
+
+Underneath all of them is one dialect-free rule: **a statement that returns no rows is not
+a read**, and is refused on that ground. No SQL is parsed to decide it — a `SELECT` returns
+rows even when it matches none — and without it a rolled-back write came back as a
+statement that succeeded and returned nothing, which is indistinguishable from success.
 
 A database that was `save`d and is attached again later is, like any other external
 database, **read-only by default** until the caller says otherwise.
@@ -194,6 +214,35 @@ what is unambiguous, say what was assumed, refuse an actual choice*:
 the source** the server cannot know and the caller often does, rather than a judgement the
 caller was already making. It applies to character-separated text only, and is refused —
 not ignored — anywhere else.
+
+### The backends, and what each one needed
+
+A database is reached through a SQLAlchemy engine, and `create_engine` is generic — so
+`Backend` is **not** an interface a database must implement to be reachable. A dialect
+nobody has subclassed still opens, still queries, still composes. A subclass exists only
+where the generic answer means something different here, or nothing at all:
+
+| Backend | Reached as | What it could not be asked portably |
+|---|---|---|
+| SQLite | file, URL | `query_only` and an authorizer; `VACUUM INTO` for `save`; residency from the page count; `typeof()` for mixed columns; the declared type *is* the affinity |
+| DuckDB | file, URL | nothing — the generic answers are the whole answer |
+| PostgreSQL | URL | nothing |
+| MySQL / MariaDB | URL | a read-only session, since DDL commits itself; an index over a *prefix*, since `TEXT` cannot be a key |
+| Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |
+| SQL Server | URL | `sp_rename`; `VARCHAR` sized from the data, since `TEXT` is deprecated and unindexable |
+
+Two things generalised out of that table and became generic rather than per-dialect. **A
+declared type is named by the backend**, because the portable spellings are what make one
+column `TEXT` on PostgreSQL, `CLOB` on Oracle and `INTEGER` on all of them — the literal
+uppercase forms used before could not create a table on Oracle at all, and quietly put
+float64 data into PostgreSQL's four-byte `REAL`. And **a value leaving `query` is spelled
+for JSON**, because a server-side database returns far more than SQLite's three storage
+classes: a `Decimal`, a `date`, a `timedelta`, a `UUID`, raw `bytes`. A `Decimal` left
+alone reached the client as the *string* `"155000"`, and an agent then compares and adds
+text.
+
+Every dialect is exercised against a live container (`docker-compose.test.yml`), and the
+tests skip — with the command to start one — rather than fail where none is running.
 
 ## Dates, and the two spellings that carry their own meaning
 
@@ -288,14 +337,18 @@ correct against each other.
 ## What comes after
 
 Still level 0, and in this order: the format catalogue above (**done**), then more
-backends. DuckDB is in, reached as a file or a URL and told apart from SQLite by its
-header. The endpoint databases — PostgreSQL, MySQL/MariaDB, SQL Server, Oracle — come
-next, each with a container so no dialect is tested blind; every one of them is available
-as an official image. `Backend` already opens, queries and composes any dialect
-SQLAlchemy speaks without being subclassed, so what each one needs is a test harness
-rather than a code path.
+backends (**done** — the seven in the table above, each against a container of its own).
 
-After that: whether SQLAlchemy needs extending for anything left over.
+The expectation going into the backends was that they would need a test harness rather
+than a code path, and that was half right: nothing about *reaching* a dialect needed
+writing, and the two that needed nothing at all — DuckDB and PostgreSQL — are the proof.
+What the harness found instead was four defects the file-backed dialects could not have
+shown, each of them a wrong answer rather than an error: a number arriving as text, a
+write reported as a success, a `CREATE TABLE` that was permanent despite being refused,
+and a type name that no other database has.
+
+What is left: measuring `CONSTRAINTS.md` against the formats added since it was written,
+and whether SQLAlchemy needs extending for anything after that.
 
 Building blocks first: **simple, composable, multi-faceted, and where possible
 transparent even to the LLM.**
