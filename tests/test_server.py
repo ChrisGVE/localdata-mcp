@@ -599,6 +599,45 @@ def test_a_database_moved_to_disk_says_nothing_and_answers_the_same(session):
     assert "spill" not in json.dumps(call("info"))
 
 
+def test_the_next_call_after_the_budget_is_crossed_is_the_one_that_spills(session):
+    """The deferral is wired into the tool surface, and fires exactly once.
+
+    The transparency test above asserts that nothing *changes* when a database
+    moves to disk — which is the right claim, and is also true when the database
+    never moves at all. Disabling ``relieve_memory`` in ``_session`` left the
+    whole suite green (323/323): every other spill test drives ``Registry``
+    directly and so proves the mechanism works without ever proving that
+    anything calls it. This asserts the wiring.
+
+    Both halves matter. Spilling *during* the load that crossed the budget would
+    be a defect too — the overshoot is deliberately tolerated once, because
+    unloading mid-load is worse than briefly holding too much.
+    """
+    config_module.use(Config(roots=(session,), memory_budget_mb=1))
+    rows = "\n".join(f"{index},label{index},{index * 2}" for index in range(60_000))
+    write_csv(session / "big.csv", f"id,label,amount\n{rows}\n")
+
+    call("attach", database=str(session / "big.csv"), nickname="big")
+
+    registry = server_module._registry
+    assert registry.workspace.resident_bytes("big") > 1024 * 1024, (
+        "the load did not cross the 1 MB budget, so this test would pass "
+        "whether or not anything spills"
+    )
+    assert registry.slot("big").spill_path is None, (
+        "spilled during the load that crossed the budget; the overshoot is "
+        "meant to be tolerated exactly once"
+    )
+
+    call("info")
+
+    spilled = registry.slot("big").spill_path
+    assert spilled is not None, "the next tool call did not relieve the pressure"
+    assert spilled.exists()
+    # On disk now, so residency is no longer a question that applies to it.
+    assert registry.workspace.resident_bytes("big") is None
+
+
 # ---------------------------------------------------------------------------
 # The slot limit, and what an eviction has to say
 # ---------------------------------------------------------------------------
