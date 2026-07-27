@@ -263,31 +263,36 @@ def _build_typed_table(live: Live) -> str:
 
     table = live.table("typed")
     metadata = MetaData()
-    defined = Table(
-        table,
-        metadata,
+    values = {
+        "amount": Decimal("12345.6789"),
+        "day": date(2024, 3, 1),
+        "moment": datetime(2024, 3, 1, 14, 30),
+        "clock": time(14, 30),
+        "blob": b"\x00\xff",
+        "flag": True,
+    }
+    columns = [
         Column("amount", Numeric(12, 4)),
         Column("day", Date),
         Column("moment", DateTime),
         Column("clock", Time),
         Column("blob", LargeBinary),
         Column("flag", Boolean),
-    )
+    ]
+    if live.endpoint.dialect == "oracle":
+        # Oracle has no time-of-day type at all — a bare time is a DATE with the
+        # date part ignored, or an INTERVAL. Leaving the column out is the honest
+        # fixture: this test is about what comes *back*, and nothing can come
+        # back from a column the database will not hold.
+        columns = [column for column in columns if column.name != "clock"]
+        values.pop("clock")
+
+    defined = Table(table, metadata, *columns)
     engine = create_engine(live.url)
     try:
         with engine.begin() as conn:
             metadata.create_all(conn)
-            conn.execute(
-                defined.insert(),
-                {
-                    "amount": Decimal("12345.6789"),
-                    "day": date(2024, 3, 1),
-                    "moment": datetime(2024, 3, 1, 14, 30),
-                    "clock": time(14, 30),
-                    "blob": b"\x00\xff",
-                    "flag": True,
-                },
-            )
+            conn.execute(defined.insert(), values)
     finally:
         engine.dispose()
     return table
@@ -309,7 +314,9 @@ def test_every_value_reaches_the_wire_as_something_json_can_hold(live):
     assert answer["ok"] is True, answer
     row = dict(zip(answer["columns"], answer["rows"][0]))
     assert row["amount"] == pytest.approx(12345.6789)
-    assert row["day"] == "2024-03-01"
+    # Oracle's DATE carries a time of day whether or not one was given, so it
+    # comes back as the instant it actually is rather than as a bare date.
+    assert row["day"] in ("2024-03-01", "2024-03-01T00:00:00")
     assert row["moment"] == "2024-03-01T14:30:00"
     assert row["blob"] == "0x00ff"
     # Booleans are the one case a dialect may answer with an integer, and both
@@ -317,7 +324,8 @@ def test_every_value_reaches_the_wire_as_something_json_can_hold(live):
     assert row["flag"] in (True, 1)
     # A time of day is a *duration* on MySQL, which is the dialect's own reading
     # of the column and not something to paper over. Either spelling is ISO 8601.
-    assert row["clock"] in ("14:30:00", "PT14H30M0S")
+    if "clock" in row:
+        assert row["clock"] in ("14:30:00", "PT14H30M0S")
 
 
 def test_info_describes_a_table_the_endpoint_holds(live):
@@ -451,11 +459,17 @@ def test_ddl_through_query_never_reaches_the_database(live):
     """Refusing after the fact is not enough where a rollback cannot undo it.
 
     MySQL and MariaDB commit DDL implicitly, so a ``CREATE TABLE`` sent through
-    a read connection that never commits is *permanent* — the table was still
+    a read connection that never commits was *permanent* — the table was still
     there on the next connection. The transactional floor assumes a write can be
     left uncommitted and thereby undone, and on those two dialects it cannot be,
-    so the read posture has to refuse the statement rather than decline to keep
-    it. The second assertion is the one that would have caught it.
+    so the read posture refuses the statement rather than declining to keep it.
+
+    Oracle is where that stops being possible: its implicit commit runs *before*
+    the statement is considered and ends the read-only transaction, and it has no
+    session-level equivalent. So there the table really does appear, and what is
+    tested is that the refusal says so — a refusal claiming a statement did not
+    happen, when it did, is the same lie as calling a rolled-back write a
+    success.
     """
     attach_writable(live)
     orphan = live.table("nope")
@@ -464,12 +478,22 @@ def test_ddl_through_query_never_reaches_the_database(live):
 
     assert made["ok"] is False, made
     assert "create" in made["error"]
+
     engine = create_engine(live.url)
     try:
         with engine.connect() as conn:
-            assert orphan not in inspect(conn).get_table_names()
+            landed = orphan.lower() in [
+                name.lower() for name in inspect(conn).get_table_names()
+            ]
     finally:
         engine.dispose()
+
+    if backend_for(live.endpoint.dialect).ddl_survives_refusal():
+        assert landed, "the caveat is only honest if the statement really ran"
+        assert "already taken effect" in made["error"]
+    else:
+        assert not landed
+        assert "already taken effect" not in made["error"]
 
 
 def test_a_read_only_attach_refuses_create_and_drop(live):

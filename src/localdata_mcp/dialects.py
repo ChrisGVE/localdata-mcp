@@ -39,10 +39,16 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import (
+    INTEGER,
+    REAL,
+    TEXT,
     Connection,
+    Double,
     Engine,
     Index,
+    Integer,
     LargeBinary,
+    String,
     Table,
     Text,
     create_engine,
@@ -50,6 +56,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.types import TypeEngine
 from sqlalchemy.pool import StaticPool
 
 __all__ = [
@@ -90,6 +97,13 @@ class Refusal:
         """Read the last refusal and forget it, so it cannot leak into the next."""
         seen, self.what = self.what, None
         return seen
+
+
+#: The declared type of a loaded column, to the portable Core type that renders
+#: it. Keyed by the three names :mod:`loader` decides between; what each becomes
+#: in SQL is SQLAlchemy's business and differs per dialect, which is exactly what
+#: makes this the generic answer.
+_PORTABLE_TYPES: dict[str, Any] = {"INTEGER": Integer, "REAL": Double, "TEXT": Text}
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +196,21 @@ class Backend:
         """
         return False
 
+    def ddl_survives_refusal(self) -> bool:
+        """Whether DDL sent to a read connection takes effect despite refusal.
+
+        ``False`` here, and true of every backend that either refuses DDL
+        outright or keeps it inside the transaction that is never committed.
+        Oracle is the exception: it commits DDL as it runs it, and the implicit
+        commit ends the read-only transaction before the statement is
+        considered, so there is nothing left to refuse *with*.
+
+        Reported rather than papered over. A refusal that says a statement did
+        not happen, when it did, is the same lie in the other direction as
+        reporting a rolled-back write as a success.
+        """
+        return False
+
     def resident_bytes(self, engine: Engine) -> int | None:
         """Bytes this database is holding in *our* process, or ``None``.
 
@@ -224,6 +253,30 @@ class Backend:
         prepare = conn.dialect.identifier_preparer.quote
         conn.execute(text(f"ALTER TABLE {prepare(table)} RENAME TO {prepare(to)}"))
 
+    def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:
+        """The Core type a loaded column is created as, for this backend.
+
+        ``longest`` is how many characters the widest value in the column
+        actually has, measured rather than assumed, and ``None`` when the column
+        holds no text. It is ignored generically — an unbounded text type needs
+        no size — and used by the one dialect that has no unbounded text type
+        worth having.
+
+        Generic through SQLAlchemy's *portable* types, which is the whole point
+        of them: ``Text`` is ``TEXT`` on PostgreSQL and ``CLOB`` on Oracle, and
+        neither name has to appear here. The uppercase forms this used to name
+        directly meant "emit this exact token", which is why a table could not be
+        created on Oracle at all — it has no ``TEXT`` — and why a float64 column
+        landed in PostgreSQL's ``REAL``, four bytes wide, losing precision with
+        nothing said.
+
+        ``Double`` rather than ``Float`` deliberately: the data is float64, and
+        ``FLOAT`` is single precision on MySQL. A backend whose own spelling
+        matters more than the portable one overrides this — SQLite does, because
+        its three declared types decide column affinity.
+        """
+        return _PORTABLE_TYPES[declared]()
+
     def build_index(
         self, name: str, table: Table, columns: Sequence[str]
     ) -> tuple[Index, tuple[str, ...]]:
@@ -251,6 +304,12 @@ class Backend:
 # ---------------------------------------------------------------------------
 # SQLite
 # ---------------------------------------------------------------------------
+
+
+#: SQLite's three storage classes, named exactly. ``INTEGER``/``REAL``/``TEXT``
+#: are what set a column's affinity, so these are the spellings that have to
+#: reach the DDL rather than whatever a portable type would render.
+_SQLITE_TYPES: dict[str, Any] = {"INTEGER": INTEGER, "REAL": REAL, "TEXT": TEXT}
 
 
 #: What a read query is allowed to do, as SQLite authorizer action codes.
@@ -421,6 +480,19 @@ class SQLiteBackend(Backend):
 
             dbapi_conn.set_authorizer(authorize)
 
+    # -- column types ------------------------------------------------------
+
+    def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:
+        """The exact token, because on SQLite the token *is* the behaviour.
+
+        A column's declared type decides its affinity, and affinity decides
+        whether ``'42'`` and ``42`` compare equal — so ``REAL`` and ``DOUBLE``
+        are not two spellings of one thing here, and neither is what ``info``
+        reports the column to be. The portable types are right everywhere the
+        declaration is only a declaration; this is the one place it is not.
+        """
+        return _SQLITE_TYPES[declared]()
+
     # -- residency ---------------------------------------------------------
 
     def resident_bytes(self, engine: Engine) -> int | None:
@@ -590,6 +662,63 @@ class MySQLBackend(Backend):
         )
 
 
+# ---------------------------------------------------------------------------
+# Oracle
+# ---------------------------------------------------------------------------
+
+
+#: The widest ``VARCHAR2`` a database without extended string sizes will take.
+#: Past this there is only ``CLOB``, which Oracle will not group, sort or index.
+_VARCHAR2_MAX = 4000
+
+
+@dataclass(frozen=True)
+class OracleBackend(Backend):
+    """Oracle, where the portable text type is the wrong one.
+
+    ``Text`` renders as ``CLOB`` here, and a ``CLOB`` cannot be used as a
+    comparison key — ``GROUP BY``, ``ORDER BY``, ``DISTINCT`` and every index on
+    it are refused with ORA-22848. A loaded file's text columns are the ones an
+    agent groups and joins on, so the portable answer, correct everywhere else,
+    makes the table nearly unusable here. ``VARCHAR2`` sized from what the column
+    actually holds is what Oracle wants, and it is measured rather than guessed
+    because the frame is right there.
+    """
+
+    name: str = "oracle"
+
+    def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:
+        if declared != "TEXT":
+            return super().column_type(declared, longest=longest)
+        width = max(1, longest or 1)
+        if width > _VARCHAR2_MAX:
+            # Nothing else will hold it. The column loses grouping and
+            # indexing, and Oracle says so plainly the first time it is used
+            # that way, which is better than truncating the values to fit.
+            return Text()
+        return String(width)
+
+    def ddl_survives_refusal(self) -> bool:
+        """Oracle commits DDL as it runs it, and nothing here can get in first.
+
+        The generic transactional floor is kept rather than raised, which is
+        the opposite of the decision MySQL got, and it is the measurement that
+        decides it. Oracle *does* roll DML back, so the floor holds for
+        everything it can hold for. The obvious way to raise it —
+        ``SET TRANSACTION READ ONLY`` — takes a read-consistent snapshot, and a
+        read-only transaction then refuses to read a table whose definition
+        changed within the same second (ORA-01466). That is exactly the compose
+        arc: ``create`` a table, then query it. It would have broken the
+        ordinary path to tighten a guarantee that already holds by rollback.
+
+        The DDL gap it would not have closed anyway: the implicit commit runs
+        *before* the statement is considered and ends the read-only transaction,
+        so there is nothing to refuse with. Hence this, and the caveat the
+        refusal carries.
+        """
+        return True
+
+
 _SQLITE = SQLiteBackend()
 _GENERIC = Backend()
 
@@ -604,6 +733,7 @@ BACKENDS: dict[str, Backend] = {
     "sqlite": _SQLITE,
     "mysql": MySQLBackend(),
     "mariadb": MySQLBackend(name="mariadb"),
+    "oracle": OracleBackend(),
 }
 
 

@@ -59,9 +59,6 @@ from xml.etree import ElementTree
 
 import pandas as pd
 from sqlalchemy import (
-    INTEGER,
-    REAL,
-    TEXT,
     Column,
     Engine,
     MetaData,
@@ -111,6 +108,16 @@ _NOT_A_READ = (
     "whatever the datasource itself permits. Composition has its own verbs: "
     "create adds a table or an index, update renames a table, drop removes "
     "either. A statement that does read returns rows even when it matches none."
+)
+
+#: Added where the refusal arrives too late to be the whole truth. Only Oracle
+#: needs it today; the wording is the backend's name and this sentence, so a
+#: second such dialect says the same thing without a second message.
+_DDL_ALREADY_RAN = (
+    "One caveat specific to {name}: it commits a CREATE or a DROP as it runs it, "
+    "before anything here can object, so if that is what this was then it has "
+    "already taken effect and this refusal did not undo it. Check with info, and "
+    "use drop to remove what it made."
 )
 
 
@@ -343,6 +350,19 @@ _NO_SUCH_TABLE = re.compile(
 )
 
 
+def _not_a_read(entry: Tagged) -> str:
+    """The refusal, plus the caveat where the refusal cannot be the whole truth.
+
+    On a backend that commits DDL as it runs it, a ``CREATE`` sent here has
+    already happened by the time anything can object, and saying only "refused"
+    would be the same lie in the other direction as calling a rolled-back write
+    a success.
+    """
+    if entry.backend.ddl_survives_refusal():
+        return f"{_NOT_A_READ} {_DDL_ALREADY_RAN.format(name=entry.backend.name)}"
+    return _NOT_A_READ
+
+
 def _objected_to_the_leading_verb(message: str, sql: str) -> bool:
     """Whether the database refused the *kind* of statement, not its wording.
 
@@ -406,10 +426,21 @@ def _unique_columns(raw_names: list[Any]) -> list[str]:
 # Type mapping
 # ---------------------------------------------------------------------------
 
-#: Declared type to the Core type that renders it. The uppercase spellings are
-#: SQLAlchemy's "exactly this SQL type" forms — ``Float`` would render ``FLOAT``
-#: and quietly change what ``info`` reports a column to be.
-_CORE_TYPES = {"INTEGER": INTEGER, "REAL": REAL, "TEXT": TEXT}
+
+def _longest_value(values: pd.Series, declared: str) -> int | None:
+    """How wide the widest value in a text column actually is, in characters.
+
+    ``None`` for a column that holds no text, because the question does not
+    arise there. Measured rather than assumed for the one dialect that has to
+    size the column up front: Oracle's usable text type is ``VARCHAR2``, and a
+    number picked out of the air would either waste the row or truncate it.
+    """
+    if declared != "TEXT":
+        return None
+    present = values.dropna()
+    if present.empty:
+        return 0
+    return int(present.astype(str).str.len().max())
 
 
 def _declared_type(values: pd.Series) -> str:
@@ -1561,8 +1592,17 @@ class Workspace:
             table,
             MetaData(),
             *[
-                Column(name, _CORE_TYPES[sql_type]())
-                for name, sql_type in zip(columns, declared)
+                # What a declared type is *called* in SQL is the backend's to
+                # say: SQLite's affinity depends on the exact token, Oracle's
+                # portable text type cannot be grouped on, and PostgreSQL's REAL
+                # is only four bytes wide.
+                Column(
+                    name,
+                    entry.backend.column_type(
+                        sql_type, longest=_longest_value(frame[original], sql_type)
+                    ),
+                )
+                for name, original, sql_type in zip(columns, frame.columns, declared)
             ],
         )
 
@@ -1753,7 +1793,7 @@ class Workspace:
                     stream_results=True, yield_per=_YIELD_PER
                 ).execute(text(sql))
                 if not result.returns_rows:
-                    raise LoadError(_NOT_A_READ)
+                    raise LoadError(_not_a_read(entry))
                 names = list(result.keys())
                 return names, [tuple(row) for row in result]
         except SQLAlchemyError as exc:
@@ -1780,11 +1820,11 @@ class Workspace:
         if entry.backend.denies_write(exc):
             # The backend refused the statement itself and said so in its own
             # words, which name no verb the caller could use instead.
-            return LoadError(_NOT_A_READ)
+            return LoadError(_not_a_read(entry))
 
         message = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
         if _objected_to_the_leading_verb(message, sql):
-            return LoadError(_NOT_A_READ)
+            return LoadError(_not_a_read(entry))
 
         stale = re.search(rf"no such table:\s*{re.escape(entry.tag)}\.(\w+)", message)
         if stale is not None:
