@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<employees>
+  <employee><name>Ada</name><role>Engineering</role><salary>120000</salary><started>2021-03-01</started></employee>
+  <employee><name>Grace</name><role>Engineering</role><salary>135000</salary><started>2019-11-15</started></employee>
+  <employee><name>Alan</name><role>Research</role><salary>98000</salary><started>2022-07-04</started></employee>
+</employees>

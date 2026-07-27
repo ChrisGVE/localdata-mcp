@@ -724,3 +724,134 @@ def test_a_null_survives_the_json_round_trip_as_a_null(workspace, root):
     workspace.load_file(str(target), "main", table_name="nulls")
     _, rows = workspace.query("main", "SELECT b FROM nulls")
     assert rows[0][0] is None
+
+
+# ---------------------------------------------------------------------------
+# XML
+# ---------------------------------------------------------------------------
+
+
+def test_repeated_elements_under_the_root_are_the_rows(workspace, root):
+    info = workspace.load_file(str(root / "employees.xml"), "main")
+
+    assert info.row_count == 3
+    assert [c.name for c in info.columns] == ["name", "role", "salary", "started"]
+    assert info.notes == ()
+
+    _, rows = workspace.query("main", "SELECT sum(salary) FROM employees")
+    assert rows[0][0] == 353000
+
+
+def test_an_xml_number_is_a_number_and_a_date_is_recognised(workspace, root):
+    """Element text is all strings until something types it."""
+    info = workspace.load_file(str(root / "employees.xml"), "main")
+    by_name = {c.name: c for c in info.columns}
+
+    assert by_name["salary"].declared_type == "INTEGER"
+    assert by_name["started"].temporal_standard == "iso8601_utc"
+
+
+def test_attributes_are_columns_too(workspace, root):
+    info = workspace.load_file(str(root / "attributes.xml"), "main")
+
+    assert info.row_count == 2
+    assert [c.name for c in info.columns] == ["id", "name"]
+
+
+def test_the_one_repeated_element_is_the_table_and_the_singletons_are_named(
+    workspace, root
+):
+    """A metadata element beside the rows is the XML spelling of a wrapped JSON object."""
+    info = workspace.load_file(str(root / "wrapped.xml"), "main")
+
+    assert info.row_count == 2
+    assert [c.name for c in info.columns] == ["name", "salary"]
+    assert len(info.notes) == 1
+    assert "row" in info.notes[0] and "generated" in info.notes[0]
+
+
+def test_two_repeated_elements_are_two_tables_and_are_refused(workspace, root):
+    with pytest.raises(LoadError) as raised:
+        workspace.load_file(str(root / "two_kinds.xml"), "main")
+
+    assert "employee" in str(raised.value) and "department" in str(raised.value)
+
+
+def test_a_nested_element_is_kept_as_xml_text_rather_than_dropped(workspace, root):
+    """pandas.read_xml drops the subtree and leaves NaN. That is data loss with no signal."""
+    info = workspace.load_file(str(root / "nested.xml"), "main")
+
+    _, rows = workspace.query("main", "SELECT address FROM nested ORDER BY name")
+    assert "<city>London</city>" in rows[0][0]
+
+    note = " ".join(info.notes)
+    assert "address" in note
+
+
+def test_a_repeated_child_is_a_list_and_is_refused_by_name(workspace, root):
+    """pandas.read_xml keeps the last one and says nothing, losing the rest."""
+    with pytest.raises(LoadError) as raised:
+        workspace.load_file(str(root / "repeated.xml"), "main")
+
+    assert "tag" in str(raised.value)
+
+
+def test_an_xml_row_holding_only_text_names_no_column(workspace, root):
+    target = root / "scalars.xml"
+    target.write_text("<data><item>1</item><item>2</item></data>")
+
+    with pytest.raises(LoadError):
+        workspace.load_file(str(target), "main")
+
+
+def test_malformed_xml_names_the_file(workspace, root):
+    target = root / "broken.xml"
+    target.write_text("<data><row><a>1</a></data>")
+
+    with pytest.raises(LoadError, match="broken.xml"):
+        workspace.load_file(str(target), "main")
+
+
+def test_xml_round_trips_through_the_export(workspace, root):
+    workspace.load_file(str(root / "employees.xml"), "main")
+    columns, rows = workspace.query("main", "SELECT * FROM employees ORDER BY name")
+    target = root / "again.xml"
+
+    export_module.export_rows(columns, rows, str(target))
+    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
+
+    assert reloaded.row_count == len(rows)
+    _, back = workspace.query("main", "SELECT * FROM reloaded ORDER BY name")
+    assert back == rows
+
+
+def test_a_null_is_an_absent_element_so_it_comes_back_null(workspace, root):
+    """An empty element would come back as text and stop being a NULL."""
+    target = root / "nulls.xml"
+    export_module.export_rows(["a", "b"], [(1, None), (2, "x")], str(target))
+
+    assert "<b>" not in target.read_text().split("</row>")[0]
+    workspace.load_file(str(target), "main", table_name="nulls")
+    _, rows = workspace.query("main", "SELECT b FROM nulls ORDER BY a")
+    assert rows[0][0] is None
+
+
+def test_markup_in_a_value_is_escaped_and_survives(workspace, root):
+    target = root / "markup.xml"
+    export_module.export_rows(["a"], [("<b> & </b>",)], str(target))
+
+    assert "&lt;b&gt;" in target.read_text()
+    workspace.load_file(str(target), "main", table_name="markup")
+    _, rows = workspace.query("main", "SELECT a FROM markup")
+    assert rows[0][0] == "<b> & </b>"
+
+
+def test_a_column_name_xml_cannot_spell_is_refused_not_mangled(workspace, root):
+    """The remedy is one AS in the caller's SQL, so say that rather than guess a name."""
+    target = root / "bad_name.xml"
+
+    with pytest.raises(export_module.ExportError) as raised:
+        export_module.export_rows(["first name"], [(1,)], str(target))
+
+    assert "first name" in str(raised.value)
+    assert not target.exists()

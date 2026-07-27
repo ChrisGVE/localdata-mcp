@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
 from uuid import uuid4
+from xml.etree import ElementTree
 
 import pandas as pd
 from sqlalchemy import (
@@ -494,6 +495,142 @@ def _read_jsonl(path: Path) -> ReadResult:
     return _frame_of_records(records, ())
 
 
+def _read_xml(path: Path) -> ReadResult:
+    """Read an XML document whose root holds one repeated element per row.
+
+    Written rather than delegated to ``pandas.read_xml``, which is fail-open on
+    two shapes this corpus contains. Measured against the stdlib parser: a row
+    holding a nested element comes back with that column ``NaN`` — the subtree
+    silently dropped — and a row with a tag repeated twice keeps only the last
+    one. Both are data loss with nothing reported, which is the class this
+    server exists to refuse.
+
+    Columns are the row's attributes and the tags of its direct children. A
+    child with children of its own is kept as its XML text (as a nested JSON
+    value is kept as JSON text); a tag appearing twice in one row is a list
+    rather than a column, and is refused by name.
+    """
+    try:
+        root = ElementTree.parse(path).getroot()
+    except ElementTree.ParseError as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+    rows, notes = _rows_within(root, path.name)
+
+    records = []
+    nested: dict[str, None] = {}  # insertion-ordered, and deduplicating
+    for element in rows:
+        record, held = _record_of(element, path.name)
+        records.append(record)
+        nested.update(dict.fromkeys(held))
+
+    if nested:
+        notes = notes + (
+            f"Nested elements in {', '.join(nested)} were kept as XML text, "
+            f"because SQL has no nested type. The text is the element as it "
+            f"stood in the file, so nothing was lost.",
+        )
+
+    result = _frame_of_records(records, notes)
+    return ReadResult(_inferred_types(result.frame), result.notes)
+
+
+def _inferred_types(frame: pd.DataFrame) -> pd.DataFrame:
+    """Read numbers out of text, since every value in XML arrives as text.
+
+    The same inference ``read_csv`` performs, applied here because this reader
+    builds its frame by hand. A column is converted only when **every** non-null
+    value in it parses, so a column mixing numbers and text stays text and the
+    mixed-column signal downstream still has something to find.
+
+    The skip test asks what a column *is* rather than comparing its dtype to
+    ``object``: pandas 3 infers a dedicated ``str`` dtype for text, so an
+    ``!= object`` guard here skipped every column it was meant to convert.
+    """
+    for name in frame.columns:
+        series = frame[name]
+        if pd.api.types.is_numeric_dtype(
+            series
+        ) or pd.api.types.is_datetime64_any_dtype(series):
+            continue
+        present = series.notna().sum()
+        if not present:
+            continue
+        candidate = pd.to_numeric(series, errors="coerce")
+        if candidate.notna().sum() == present:
+            frame[name] = candidate
+    return frame
+
+
+def _rows_within(
+    root: ElementTree.Element, name: str
+) -> tuple[list[ElementTree.Element], tuple[str, ...]]:
+    """Pick the repeated element that is the table, on JSON's rules.
+
+    One kind of child is the table. Several kinds, one of which repeats, is the
+    wrapped shape — a ``<generated>`` beside the rows — and the note names what
+    was left out. Two kinds that both repeat are two tables, which is a choice,
+    so it is refused.
+    """
+    groups: dict[str, list[ElementTree.Element]] = {}
+    for child in root:
+        groups.setdefault(child.tag, []).append(child)
+
+    if not groups:
+        raise LoadError(f"Could not read {name}: <{root.tag}> holds no elements.")
+    if len(groups) == 1:
+        return next(iter(groups.values())), ()
+
+    repeated = [tag for tag, members in groups.items() if len(members) > 1]
+    if len(repeated) == 1:
+        tag = repeated[0]
+        others = ", ".join(f"<{other}>" for other in groups if other != tag)
+        return groups[tag], (
+            f"{name} holds <{tag}> repeated among other elements, and <{tag}> "
+            f"was loaded as the table. The rest ({others}) are not part of it.",
+        )
+    if repeated:
+        listed = ", ".join(f"<{tag}>" for tag in repeated)
+        raise LoadError(
+            f"Could not read {name}: it holds more than one table ({listed}), "
+            f"and which one you want is not something this server should "
+            f"decide. Split the file, or attach it as one table per file."
+        )
+    raise LoadError(
+        f"Could not read {name}: <{root.tag}> holds one each of "
+        f"{', '.join(f'<{tag}>' for tag in groups)}, so nothing in it repeats "
+        f"as rows do."
+    )
+
+
+def _record_of(element: ElementTree.Element, name: str) -> tuple[dict, list[str]]:
+    """One row — attributes then children by tag — and which parts were nested."""
+    record: dict[str, object] = dict(element.attrib)
+    nested = []
+
+    for child in element:
+        if child.tag in record:
+            raise LoadError(
+                f"Could not read {name}: <{child.tag}> appears more than once "
+                f"in a single <{element.tag}>, which makes it a list rather "
+                f"than a column. A table cannot hold it without choosing which "
+                f"one to keep, and choosing would lose the rest."
+            )
+        if len(child):
+            # Kept whole. Dropping it is what pandas does, and it reports nothing.
+            record[child.tag] = ElementTree.tostring(child, encoding="unicode").strip()
+            nested.append(child.tag)
+        else:
+            record[child.tag] = child.text
+
+    if not record:
+        raise LoadError(
+            f"Could not read {name}: <{element.tag}> has no attributes and no "
+            f"child elements, so it names no columns. A row needs named parts."
+        )
+    return record, nested
+
+
 def _table_within(document: object, name: str) -> tuple[list[dict], tuple[str, ...]]:
     """Find the one table in a parsed JSON document, or refuse and say why."""
     if isinstance(document, list):
@@ -596,6 +733,7 @@ READERS: dict[str, Reader] = {
     ".json": _read_json,
     ".jsonl": _read_jsonl,
     ".ndjson": _read_jsonl,
+    ".xml": _read_xml,
 }
 
 

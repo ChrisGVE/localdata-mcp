@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data>
+  <row><name>Ada</name><address><city>London</city></address></row>
+  <row><name>Grace</name><address><city>New York</city></address></row>
+</data>

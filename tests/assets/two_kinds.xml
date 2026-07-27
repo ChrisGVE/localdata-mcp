@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data>
+  <employee><name>Ada</name></employee>
+  <employee><name>Grace</name></employee>
+  <department><floor>3</floor></department>
+  <department><floor>1</floor></department>
+</data>

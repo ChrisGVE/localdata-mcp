@@ -28,9 +28,11 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
+from xml.sax.saxutils import escape
 
 from .paths import resolve_write_path
 
@@ -136,11 +138,56 @@ def _unserializable(value: object) -> str:
     )
 
 
+#: What XML will accept as an element name. Conservative against the spec, which
+#: also permits a large range of Unicode: a name outside this set is refused
+#: rather than rewritten, so no column silently changes its name on the way out.
+_XML_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.\-]*\Z")
+
+
+def _write_xml(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    """``<rows><row><column>value</column></row></rows>``.
+
+    **A NULL is an absent element, not an empty one.** ``<b></b>`` reads back as
+    text and stops being a NULL, so the round trip would quietly turn every
+    missing value into a present empty one.
+
+    A column whose name XML cannot spell is refused by name. The alternative is
+    inventing a spelling — ``first name`` becoming ``first_name`` — which the
+    caller never asked for and would not be told about; the remedy is one ``AS``
+    in their own SQL.
+    """
+    for column in columns:
+        if not _XML_NAME.match(str(column)):
+            raise ExportError(
+                f"{column!r} cannot be an XML element name, so this result "
+                f"cannot be written as XML without renaming a column. Alias it "
+                f"in the SQL — SELECT {column!r} AS a_name — or export to CSV, "
+                f"which puts no constraint on column names."
+            )
+
+    written = 0
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write('<?xml version="1.0" encoding="utf-8"?>\n<rows>\n')
+        for row in rows:
+            handle.write("  <row>\n")
+            for column, value in zip(columns, row):
+                if value is None:
+                    continue
+                handle.write(f"    <{column}>{escape(str(value))}</{column}>\n")
+            handle.write("  </row>\n")
+            written += 1
+        handle.write("</rows>\n")
+    return written
+
+
 #: Extension to writer, the counterpart of ``loader.READERS``. A new output
 #: format is one entry here; nothing upstream of it needs to know.
 WRITERS: dict[str, Writer] = {
     ".csv": _write_csv,
     ".tsv": _write_tsv,
+    ".xml": _write_xml,
     # As on the read side, `.txt` is treated as comma-separated. The two
     # registries agree, so a file this server writes is a file it can read back.
     ".txt": _write_csv,
