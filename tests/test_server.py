@@ -20,8 +20,10 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+import foreign
 import pytest
 from fastmcp import Client
+from sqlalchemy import Integer, Text
 
 from localdata_mcp import config as config_module
 from localdata_mcp import server as server_module
@@ -69,14 +71,12 @@ def listed_tools():
 
 
 def _build_database(path: Path) -> None:
-    connection = sqlite3.connect(path)
-    connection.execute("CREATE TABLE departments (department TEXT, floor INTEGER)")
-    connection.executemany(
-        "INSERT INTO departments VALUES (?, ?)",
+    foreign.build_database(
+        path,
+        "departments",
+        [("department", Text), ("floor", Integer)],
         [("Engineering", 3), ("Sales", 1), ("Marketing", 2)],
     )
-    connection.commit()
-    connection.close()
 
 
 def write_csv(path: Path, text: str) -> Path:
@@ -1176,12 +1176,18 @@ def test_create_refuses_a_multi_table_source_and_points_at_attach(session):
 
 
 def _build_duckdb(path: Path) -> None:
-    import duckdb
+    """The same builder as the SQLite one, given a different dialect.
 
-    connection = duckdb.connect(str(path))
-    connection.execute("CREATE TABLE sales (region VARCHAR, amount INTEGER)")
-    connection.execute("INSERT INTO sales VALUES ('north', 100), ('south', 250)")
-    connection.close()
+    Which is the point of it going through Core: a fixture holding
+    ``duckdb.connect`` would have been a second, parallel way to make a table.
+    """
+    foreign.build_database(
+        path,
+        "sales",
+        [("region", Text), ("amount", Integer)],
+        [("north", 100), ("south", 250)],
+        dialect="duckdb",
+    )
 
 
 def test_a_duckdb_file_attaches_as_a_database(session):

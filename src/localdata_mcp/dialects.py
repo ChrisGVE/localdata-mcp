@@ -33,7 +33,7 @@ to need a per-backend answer, it earns an entry here; wrapping a statement in
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
@@ -158,11 +158,12 @@ class Backend:
     #: registered in its own right exists to avoid.
     name: str = "generic"
 
-    #: How this dialect is told, **in the URL**, to open a file read-only.
-    #: ``None`` means it has no way of being told, and the generic transactional
-    #: floor is the whole guarantee (see :meth:`read_posture`). A ``ClassVar``
-    #: because it is a property of the dialect, not of an instance.
-    read_only_query: ClassVar[str | None] = None
+    #: How this dialect is told, **in the URL**, to open a file read-only —
+    #: as query parameters, not as a string to append. Empty means it has no way
+    #: of being told, and the generic transactional floor is the whole guarantee
+    #: (see :meth:`read_posture`). A ``ClassVar`` because it is a property of the
+    #: dialect, not of an instance.
+    read_only_query: ClassVar[Mapping[str, str]] = {}
 
     def open(self, url: str | URL, *, writable: bool) -> Engines:
         """Two engines onto one datasource — one reading, one writing.
@@ -193,14 +194,22 @@ class Backend:
         a per-dialect fact stated in shared code is a dispatch on dialect name
         however it is spelled.
 
-        ``writable=False`` appends :attr:`read_only_query` where the dialect has
-        one. Where it has none, nothing is appended and nothing is lost: the
-        read engine still never commits, which is the floor :meth:`read_posture`
-        documents.
+        ``writable=False`` carries :attr:`read_only_query` where the dialect has
+        a way of being told. Where it has none, nothing is added and nothing is
+        lost: the read engine still never commits, which is the floor
+        :meth:`read_posture` documents.
+
+        **Built through :meth:`URL.create` rather than by formatting a string.**
+        A path is not a URL and interpolating one into a URL re-reads it as
+        syntax: ``why? not.db`` splits at the ``?`` and the database becomes
+        ``why``, which then fails to open with a message about the wrong file.
+        ``URL.create`` takes the path as a *value*, so nothing in it is parsed.
         """
-        url = f"{self.name}:///{path.resolve()}"
-        if not writable and self.read_only_query:
-            url = f"{url}?{self.read_only_query}"
+        url = URL.create(
+            self.name,
+            database=str(path.resolve()),
+            query={} if writable else dict(self.read_only_query),
+        )
         return self.open(url, writable=writable)
 
     def read_posture(self, engine: Engine, refusal: Refusal) -> None:
@@ -633,7 +642,7 @@ class DuckDBBackend(Backend):
     """
 
     name: str = "duckdb"
-    read_only_query: ClassVar[str | None] = "access_mode=read_only"
+    read_only_query: ClassVar[Mapping[str, str]] = {"access_mode": "read_only"}
 
 
 # ---------------------------------------------------------------------------

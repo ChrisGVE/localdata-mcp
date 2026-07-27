@@ -12,8 +12,9 @@ import os
 import sqlite3
 from pathlib import Path
 
+import foreign
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Integer, Text, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from localdata_mcp import config as config_module
@@ -233,14 +234,12 @@ def test_missing_file_is_refused(workspace, root):
 
 
 def _build_database(path: Path) -> None:
-    connection = sqlite3.connect(path)
-    connection.execute("CREATE TABLE departments (department TEXT, floor INTEGER)")
-    connection.executemany(
-        "INSERT INTO departments VALUES (?, ?)",
+    foreign.build_database(
+        path,
+        "departments",
+        [("department", Text), ("floor", Integer)],
         [("Engineering", 3), ("Sales", 1), ("Marketing", 2)],
     )
-    connection.commit()
-    connection.close()
 
 
 # A read-only workspace opened directly from a database file no longer exists:

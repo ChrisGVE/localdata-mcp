@@ -21,8 +21,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import foreign
 import pytest
-from sqlalchemy import Index, MetaData, Table, create_engine, text
+from sqlalchemy import Index, MetaData, Table, Text, create_engine, text
 
 from localdata_mcp import config as config_module
 from localdata_mcp.config import Config
@@ -57,15 +58,12 @@ def registry(root):
 
 
 def build_database(path: Path, table: str = "products") -> Path:
-    connection = sqlite3.connect(path)
-    connection.execute(f"CREATE TABLE {table} (sku TEXT, name TEXT)")
-    connection.executemany(
-        f"INSERT INTO {table} VALUES (?, ?)",
+    return foreign.build_database(
+        path,
+        table,
+        [("sku", Text), ("name", Text)],
         [("a", "Widget"), ("b", "Gadget")],
     )
-    connection.commit()
-    connection.close()
-    return path
 
 
 def csv_at(path: Path, text: str = "sku,qty\na,3\nb,4\n") -> Path:
