@@ -61,7 +61,7 @@ mcp = FastMCP(
     instructions=(
         "SQL over local data files and databases.\n\n"
         "Attach each datasource with attach(database) — a tabular file (CSV, "
-        "TSV, JSON, JSON Lines, XML), a SQLite "
+        "TSV, JSON, YAML, XML, Parquet and more), a SQLite "
         "database file, or a database URL. **Every datasource becomes a database, "
         "named by a nickname**, so even a single CSV holds its rows in a table. "
         "attach returns the nickname it actually used, which may not be the one "
@@ -362,8 +362,9 @@ def attach(
     same thing again. Go and ask the question instead.
 
     Args:
-        database: A tabular file (.csv, .tsv, .txt, .json, .jsonl, .ndjson,
-            .xml), a SQLite database file, or a database URL.
+        database: A tabular file (.csv, .tsv, .txt, .json, .jsonl,
+            .ndjson, .xml, .yaml, .yml, .fwf, .parquet, .feather, .orc), a
+            SQLite database file, or a database URL.
         nickname: The name this datasource answers to — pass it to every later
             call. Derived from the filename when omitted. If it collides with a
             slot already open, a numeric suffix is added — so always use the
@@ -512,8 +513,9 @@ def query(
         nickname: Which datasource executes the statement.
         sql: The SQL statement.
         path: Write the full result to this file instead of returning rows. The
-            suffix chooses the format (.csv, .tsv, .txt, .json, .jsonl, .ndjson,
-            .xml); one this server cannot
+            suffix chooses the format (.csv, .tsv, .txt, .json, .jsonl,
+            .ndjson, .xml, .yaml, .yml, .md, .parquet, .feather, .orc);
+            one this server cannot
             write is refused by name rather than written as something else.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the path is theirs, so the refusal you get

@@ -46,9 +46,55 @@ dependencies = [
   "tomli>=2.0; python_version<'3.11'",
 ]
 
+# Formats and database drivers are extras, not dependencies. A user reading CSVs
+# should not carry a spreadsheet parser, and one querying PostgreSQL should not
+# carry an ODS reader. Every format is *known* to the server whether or not its
+# library is installed — the refusal names the extra to install, so a missing
+# library is an instruction rather than a mystery.
+#
+# `formats` and `databases` exist because the two groups serve different users:
+# local spreadsheet and Parquet work needs no drivers, and warehouse work needs
+# no ODS reader. Several extras install together, comma-separated (PEP 508):
+#
+#     uv tool install 'localdata-mcp[parquet,postgres]'
+#     uv tool install 'localdata-mcp[all]'
+#
+# Quote the brackets — `[` and `]` are glob characters in zsh.
+#
+# There is no `xml` extra: the stdlib ElementTree parser proved sufficient, so
+# lxml is needed only to *read* HTML.
 [project.optional-dependencies]
 dev = [
   "pytest>=6.0.0",
+]
+
+# -- formats ---------------------------------------------------------------
+yaml = ["PyYAML>=6.0"]
+markdown = ["tabulate>=0.9"]
+html = ["lxml>=4.9"]
+excel = ["openpyxl>=3.1"]
+xls = ["xlrd>=2.0"]
+ods = ["odfpy>=1.4"]
+numbers = ["numbers-parser>=4.4"]
+# One library covers all three columnar formats.
+parquet = ["pyarrow>=14.0"]
+
+# -- database drivers ------------------------------------------------------
+duckdb = ["duckdb>=1.0", "duckdb-engine>=0.13"]
+postgres = ["psycopg[binary]>=3.1"]
+mysql = ["PyMySQL>=1.1"]
+mssql = ["pyodbc>=5.0"]
+oracle = ["oracledb>=2.0"]
+
+# -- aggregates ------------------------------------------------------------
+formats = [
+  "localdata-mcp[yaml,markdown,html,excel,xls,ods,numbers,parquet]",
+]
+databases = [
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle]",
+]
+all = [
+  "localdata-mcp[formats,databases]",
 ]
 
 [project.urls]

@@ -1,0 +1,6 @@
+- name: Ada
+  role: Engineering
+  salary: 120000
+- name: Grace
+  role: Engineering
+  salary: 135000

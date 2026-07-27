@@ -26,6 +26,7 @@ choice, expressed in SQL, rather than a transformation applied silently here.
 from __future__ import annotations
 
 import csv
+import importlib
 import json
 import os
 import re
@@ -182,12 +183,92 @@ def _write_xml(
     return written
 
 
+def _require(module: str, extra: str, doing: str):
+    """Import an optional format library, or say how to install it.
+
+    The writing counterpart of ``loader._require``, and separate from it because
+    the failure is a different kind: this one refuses a *destination* the caller
+    named, so it raises ``ExportError`` and the partial file is cleaned up.
+    """
+    try:
+        return importlib.import_module(module)
+    except ImportError as exc:
+        raise ExportError(
+            f"{doing} needs {module}, which is not installed. Install it with: "
+            f"pip install 'localdata-mcp[{extra}]' (or [all] for every format)."
+        ) from exc
+
+
+def _write_yaml(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    yaml = _require("yaml", "yaml", "Writing YAML")
+    records = [dict(zip(columns, row)) for row in rows]
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(records, handle, sort_keys=False, allow_unicode=True)
+    return len(records)
+
+
+def _write_markdown(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    """A GitHub-flavoured table.
+
+    Write-only, and it is the one format here that is deliberately lossy: a
+    Markdown table has no types and no quoting, so there is no reader for it
+    and none is offered. It exists because a result is sometimes wanted for a
+    document rather than for another program.
+    """
+    tabulate = _require("tabulate", "markdown", "Writing Markdown")
+    materialised = [list(row) for row in rows]
+    path.write_text(
+        tabulate.tabulate(materialised, headers=list(columns), tablefmt="github")
+        + "\n",
+        encoding="utf-8",
+    )
+    return len(materialised)
+
+
+def _write_columnar(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    """Parquet, Feather/Arrow or ORC, chosen by the suffix.
+
+    The only writers here that cannot stream: a columnar file stores each column
+    contiguously, so the whole result has to exist before any of it can be
+    written. That is the format's shape, not an oversight.
+    """
+    _require("pyarrow", "parquet", f"Writing {path.suffix.lower()}")
+    import pandas as pd
+
+    frame = pd.DataFrame(list(rows), columns=list(columns))
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
+        frame.to_parquet(path, index=False)
+    elif suffix == ".orc":
+        frame.to_orc(path, index=False)
+    else:
+        import pyarrow as pa
+
+        table = pa.Table.from_pandas(frame, preserve_index=False)
+        with pa.OSFile(str(path), "wb") as sink:
+            with pa.ipc.new_file(sink, table.schema) as writer:
+                writer.write_table(table)
+    return len(frame)
+
+
 #: Extension to writer, the counterpart of ``loader.READERS``. A new output
 #: format is one entry here; nothing upstream of it needs to know.
 WRITERS: dict[str, Writer] = {
     ".csv": _write_csv,
     ".tsv": _write_tsv,
     ".xml": _write_xml,
+    ".yaml": _write_yaml,
+    ".yml": _write_yaml,
+    ".md": _write_markdown,
+    ".parquet": _write_columnar,
+    ".feather": _write_columnar,
+    ".orc": _write_columnar,
     # As on the read side, `.txt` is treated as comma-separated. The two
     # registries agree, so a file this server writes is a file it can read back.
     ".txt": _write_csv,

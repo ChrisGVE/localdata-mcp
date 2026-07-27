@@ -48,6 +48,7 @@ it is paid once per load, not per query.
 
 from __future__ import annotations
 
+import importlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -495,6 +496,85 @@ def _read_jsonl(path: Path) -> ReadResult:
     return _frame_of_records(records, ())
 
 
+def _require(module: str, extra: str, doing: str):
+    """Import an optional format library, or say how to install it.
+
+    Every format is *known* to this server whether or not its library is here,
+    so a caller asking for one that is not installed gets an instruction rather
+    than a mystery. Listing only the installed formats would make the tool's own
+    description vary by environment, which is worse: the agent could not learn
+    what this server does without discovering what it happens to have.
+    """
+    try:
+        return importlib.import_module(module)
+    except ImportError as exc:
+        raise LoadError(
+            f"{doing} needs {module}, which is not installed. Install it with: "
+            f"pip install 'localdata-mcp[{extra}]' (or [all] for every format)."
+        ) from exc
+
+
+def _read_yaml(path: Path) -> ReadResult:
+    """YAML parses to the same structures JSON does, so it gets the same rules.
+
+    ``safe_load``, never ``load``: the full loader constructs arbitrary Python
+    objects from a document, and every document here arrives from outside.
+    """
+    yaml = _require("yaml", "yaml", "Reading YAML")
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+    records, notes = _table_within(document, path.name)
+    return _frame_of_records(records, notes)
+
+
+def _read_fwf(path: Path) -> ReadResult:
+    """Fixed-width text, whose column boundaries are inferred from alignment.
+
+    Nothing in the file states where the columns are, so pandas finds them by
+    looking at which character positions stay blank. That is the only way to
+    read the format without a declared layout — and it is still a guess, so the
+    note says so rather than letting an inferred split pass as a fact.
+    """
+    return ReadResult(
+        pd.read_fwf(path),
+        (
+            f"{path.name} is fixed-width, so its column boundaries were inferred "
+            f"from which character positions are blank on every line — nothing "
+            f"in the file declares them. Check the columns are the ones you "
+            f"expect before relying on the split.",
+        ),
+    )
+
+
+def _read_columnar(path: Path) -> ReadResult:
+    """Parquet, Feather/Arrow and ORC — typed formats, so nothing is inferred.
+
+    Feather goes through ``pyarrow.ipc`` rather than ``pandas.read_feather``,
+    which routes to a ``pyarrow.feather`` entry point deprecated as of pyarrow
+    24 and warns on every call. Same file format either way.
+    """
+    suffix = path.suffix.lower()
+    _require("pyarrow", "parquet", f"Reading {suffix}")
+    try:
+        if suffix == ".parquet":
+            frame = pd.read_parquet(path)
+        elif suffix == ".orc":
+            frame = pd.read_orc(path)
+        else:
+            import pyarrow as pa
+
+            with pa.memory_map(str(path), "rb") as source:
+                frame = pa.ipc.open_file(source).read_all().to_pandas()
+    except LoadError:
+        raise
+    except Exception as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+    return ReadResult(frame)
+
+
 def _read_xml(path: Path) -> ReadResult:
     """Read an XML document whose root holds one repeated element per row.
 
@@ -734,6 +814,12 @@ READERS: dict[str, Reader] = {
     ".jsonl": _read_jsonl,
     ".ndjson": _read_jsonl,
     ".xml": _read_xml,
+    ".yaml": _read_yaml,
+    ".yml": _read_yaml,
+    ".fwf": _read_fwf,
+    ".parquet": _read_columnar,
+    ".feather": _read_columnar,
+    ".orc": _read_columnar,
 }
 
 

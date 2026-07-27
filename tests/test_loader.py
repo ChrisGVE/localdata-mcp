@@ -180,8 +180,8 @@ def test_duplicate_and_blank_headers_become_usable_columns(workspace, root, tmp_
 
 
 def test_unsupported_extension_names_what_is_supported(workspace, root):
-    target = root / "thing.parquet"
-    target.write_bytes(b"not really parquet")
+    target = root / "thing.wibble"
+    target.write_bytes(b"not a format this server knows")
     with pytest.raises(LoadError, match="csv"):
         workspace.load_file(str(target), "main")
 
@@ -855,3 +855,90 @@ def test_a_column_name_xml_cannot_spell_is_refused_not_mangled(workspace, root):
 
     assert "first name" in str(raised.value)
     assert not target.exists()
+
+
+# ---------------------------------------------------------------------------
+# YAML, Markdown, fixed width, and the columnar three
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_is_read_on_the_same_rules_as_json(workspace, root):
+    """It parses to the same structures, so it gets the same reader logic."""
+    info = workspace.load_file(str(root / "config_rows.yaml"), "main")
+
+    assert info.row_count == 2
+    assert [c.name for c in info.columns] == ["name", "role", "salary"]
+    assert info.notes == ()
+
+
+def test_a_wrapped_yaml_document_names_the_key_it_loaded(workspace, root):
+    info = workspace.load_file(str(root / "wrapped.yaml"), "main")
+
+    assert info.row_count == 2
+    assert len(info.notes) == 1
+    assert "employees" in info.notes[0]
+
+
+def test_yaml_round_trips_through_the_export(workspace, root):
+    workspace.load_file(str(root / "config_rows.yaml"), "main")
+    columns, rows = workspace.query("main", "SELECT * FROM config_rows ORDER BY name")
+    target = root / "again.yaml"
+
+    export_module.export_rows(columns, rows, str(target))
+    reloaded = workspace.load_file(str(target), "main", table_name="reloaded")
+
+    _, back = workspace.query("main", "SELECT * FROM reloaded ORDER BY name")
+    assert reloaded.row_count == 2
+    assert back == rows
+
+
+def test_markdown_is_written_as_a_table_and_is_write_only(workspace, root):
+    """pandas has no Markdown reader, so offering one would be a promise we cannot keep."""
+    target = root / "out.md"
+
+    export_module.export_rows(["name", "salary"], [("Ada", 120000)], str(target))
+
+    written = target.read_text()
+    assert "| name" in written and "Ada" in written and "120000" in written
+    assert ".md" not in loader_module.READERS
+
+
+def test_fixed_width_is_read_and_says_the_boundaries_were_inferred(workspace, root):
+    """Nothing in the file states the columns, so the caller is told they were guessed."""
+    info = workspace.load_file(str(root / "payroll.fwf"), "main")
+
+    assert info.row_count == 3
+    assert [c.name for c in info.columns] == ["name", "salary"]
+    assert len(info.notes) == 1
+    assert "inferred" in info.notes[0]
+
+
+@pytest.mark.parametrize("suffix", [".parquet", ".feather", ".orc"])
+def test_a_columnar_format_round_trips_every_type_exactly(workspace, root, suffix):
+    """Typed formats: the types survive, so this is stricter than the CSV round trip."""
+    workspace.load_file(str(root / "simple.csv"), "main")
+    columns, rows = workspace.query(
+        "main", "SELECT name, age, salary FROM simple ORDER BY name"
+    )
+    target = root / f"out{suffix}"
+
+    result = export_module.export_rows(columns, rows, str(target))
+    assert result.row_count == 5
+
+    reloaded = workspace.load_file(str(target), "main", table_name="back")
+    assert reloaded.row_count == 5
+    by_name = {c.name: c for c in reloaded.columns}
+    assert by_name["age"].declared_type == "INTEGER"
+
+    _, back = workspace.query(
+        "main", "SELECT name, age, salary FROM back ORDER BY name"
+    )
+    assert back == rows
+
+
+def test_a_columnar_file_that_is_not_one_is_refused_by_name(workspace, root):
+    target = root / "lying.parquet"
+    target.write_bytes(b"this is not parquet")
+
+    with pytest.raises(LoadError, match="lying.parquet"):
+        workspace.load_file(str(target), "main")
