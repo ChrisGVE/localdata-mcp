@@ -1,7 +1,21 @@
 # LocalData MCP - Integration Test Database Services
-# Usage: docker compose -f docker-compose.test.yml up -d
-# Ports are offset to avoid conflicts with local database instances.
-# Oracle Free requires ~2 GB image and 120 s startup.
+#
+# One container per endpoint dialect, so no dialect is tested blind.
+# Ports are offset so nothing collides with a local instance of the same engine.
+#
+#   docker compose -f docker-compose.test.yml up -d            # all of them
+#   docker compose -f docker-compose.test.yml up -d localdata-test-postgres
+#   docker compose -f docker-compose.test.yml down -v
+#
+# Each service is READ-WRITE and seeded by the tests, not by this file: the
+# server's own verbs are what should create the tables, because a fixture that
+# builds them another way tests the fixture.
+#
+# SQLite and DuckDB are file-based and need no container.
+#
+# Oracle is ~2 GB and takes ~90 s to become healthy; SQL Server ~30 s. Both are
+# free official images and neither needs credentials to pull. Wait on the
+# healthcheck rather than on a timer.
 
 services:
   localdata-test-postgres:
@@ -62,89 +76,20 @@ services:
       retries: 15
       start_period: 90s
 
-  # -- NoSQL databases --
-
-  localdata-test-mongodb:
-    image: mongo:7
+  localdata-test-mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: testpass
+      MARIADB_USER: testuser
+      MARIADB_PASSWORD: testpass
+      MARIADB_DATABASE: testdb
     ports:
-      - "17017:27017"
+      - "13307:3306"
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
       timeout: 5s
-      retries: 5
-
-  localdata-test-redis:
-    image: redis:7-alpine
-    ports:
-      - "16379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  localdata-test-elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
-    environment:
-      discovery.type: single-node
-      xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "-Xms256m -Xmx256m"
-    ports:
-      - "19200:9200"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
-      interval: 10s
-      timeout: 10s
       retries: 10
-      start_period: 30s
-
-  localdata-test-influxdb:
-    image: influxdb:2.7
-    environment:
-      DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: testuser
-      DOCKER_INFLUXDB_INIT_PASSWORD: testpass123
-      DOCKER_INFLUXDB_INIT_ORG: testorg
-      DOCKER_INFLUXDB_INIT_BUCKET: testbucket
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: testtokenforlocaldata
-    ports:
-      - "18086:8086"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8086/health || exit 1"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-
-  localdata-test-neo4j:
-    image: neo4j:5-community
-    environment:
-      NEO4J_AUTH: none
-      NEO4J_server_memory_pagecache_size: 128M
-      NEO4J_server_memory_heap_initial__size: 128M
-      NEO4J_server_memory_heap_max__size: 256M
-    ports:
-      - "17687:7687"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-
-  localdata-test-couchdb:
-    image: couchdb:3
-    environment:
-      COUCHDB_USER: admin
-      COUCHDB_PASSWORD: admin
-    ports:
-      - "15984:5984"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5984/_up || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
 networks:
   default:
