@@ -27,6 +27,7 @@ from fastmcp import Client
 from sqlalchemy import Integer, Text
 
 from localdata_mcp import config as config_module
+from localdata_mcp import export as export_module
 from localdata_mcp import server as server_module
 from localdata_mcp.config import Config
 
@@ -425,6 +426,75 @@ def test_an_xlsx_export_is_still_a_workbook(session):
     inside = set(zipfile.ZipFile(target).namelist())
     assert "[Content_Types].xml" in inside, sorted(inside)
     assert "mimetype" not in inside, "this is an OpenDocument package wearing .xlsx"
+
+
+#: One distinguishing mark per writer, and a module that has to import for the
+#: case to mean anything. The mark is deliberately a property only the right
+#: format has: a magic number where the format carries one, an archive member
+#: where it is a Zip, a structural token otherwise.
+FORMAT_MARKS = {
+    ".csv": (None, lambda p: p.read_bytes().splitlines()[0] == b"name,salary"),
+    ".tsv": (None, lambda p: p.read_bytes().splitlines()[0] == b"name\tsalary"),
+    ".txt": (None, lambda p: p.read_bytes().splitlines()[0] == b"name,salary"),
+    ".json": (None, lambda p: p.read_bytes().lstrip()[:1] == b"["),
+    ".jsonl": (None, lambda p: json.loads(p.read_bytes().splitlines()[0])),
+    ".ndjson": (None, lambda p: json.loads(p.read_bytes().splitlines()[0])),
+    ".xml": (None, lambda p: p.read_bytes().lstrip()[:5] == b"<?xml"),
+    ".html": (None, lambda p: b"<table>" in p.read_bytes()),
+    ".htm": (None, lambda p: b"<table>" in p.read_bytes()),
+    ".md": (None, lambda p: b"|" in p.read_bytes()),
+    ".yaml": ("yaml", lambda p: p.read_bytes().lstrip()[:1] in (b"-", b"[")),
+    ".yml": ("yaml", lambda p: p.read_bytes().lstrip()[:1] in (b"-", b"[")),
+    ".parquet": ("pyarrow", lambda p: p.read_bytes()[:4] == b"PAR1"),
+    ".feather": ("pyarrow", lambda p: p.read_bytes()[:6] == b"ARROW1"),
+    ".orc": ("pyarrow", lambda p: p.read_bytes()[:3] == b"ORC"),
+    ".xlsx": (
+        "openpyxl",
+        lambda p: "[Content_Types].xml" in zipfile.ZipFile(p).namelist(),
+    ),
+    ".ods": ("odf", lambda p: "META-INF/manifest.xml" in zipfile.ZipFile(p).namelist()),
+}
+
+
+@pytest.mark.parametrize("suffix", sorted(FORMAT_MARKS))
+def test_every_writer_produces_the_format_its_suffix_names(session, suffix):
+    """§10.1 says the suffix is the whole of the format decision. This asserts it.
+
+    It was asserted nowhere until `.ods` was caught writing XLSX. The magic
+    numbers for Parquet, Feather and ORC had been checked once by hand and
+    written into `CONSTRAINTS.md`, which records that they were right on the day
+    — an invariant kept in prose is not kept at all. Every writer in `WRITERS`
+    is covered here, so the next one to drift takes a test with it.
+
+    Deliberately not a round trip. A round trip through a reader that sniffs its
+    input passes on a file of the wrong format, which is precisely how `.ods`
+    survived; these marks are properties only the correct format has.
+    """
+    module, mark = FORMAT_MARKS[suffix]
+    if module:
+        pytest.importorskip(module)
+
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    target = session / f"out{suffix}"
+
+    result = call(
+        "query",
+        nickname="staff",
+        sql="SELECT name, salary FROM simple ORDER BY name",
+        path=str(target),
+    )
+
+    assert result["ok"] is True, result
+    assert target.exists(), f"{suffix} reported ok and wrote nothing"
+    assert mark(target), f"{target.name} is not {suffix}: {target.read_bytes()[:64]!r}"
+
+
+def test_the_identity_table_covers_every_writer():
+    """A table of cases is only a guarantee while it is complete."""
+    assert set(FORMAT_MARKS) == set(export_module.WRITERS), (
+        "WRITERS and the format-identity table have diverged: "
+        f"{set(export_module.WRITERS) ^ set(FORMAT_MARKS)}"
+    )
 
 
 def test_an_export_to_a_format_this_server_cannot_write_is_refused(session):
