@@ -872,8 +872,23 @@ date column comes back as `datetime64` from every one of them:
 | `.xlsx`, `.ods` | `datetime64` — **including a workbook set to the 1904 system**, verified |
 | `.parquet`, `.feather`, `.orc` | `datetime64` |
 | `.dta` (Stata) | `datetime64` |
+| `.numbers` (Apple) | `datetime` — see below |
 | **`.json`** | **`int64`** — pandas writes and reads epoch-milliseconds, and does not convert back |
 | **`.csv` / `.tsv` / `.txt`** | **text, or a bare number** |
+
+**Apple Numbers is the case that looked most likely to leak an epoch, and does not.** It genuinely
+stores dates the Cocoa way — seconds from **2001-01-01** — confirmed in `numbers-parser`'s own
+source (`constants.py`: `EPOCH = datetime(2001, 1, 1)`, applied at `cell.py:911` and
+`model.py:2612` as `EPOCH + timedelta(seconds=…)`) rather than inferred from a round-trip. But the
+epoch is *internal*: a `DateCell` yields a `datetime`, verified on a synthetic file across both
+boundaries that would expose an epoch error — 2001-01-01, which is zero in Cocoa seconds, and
+1970-01-01, which is negative.
+
+Two things to know before that reader is added. `.numbers` is **not a flat file**: it is a package
+holding Snappy-compressed protobuf (`.iwa`) archives, so it needs `numbers-parser` — pandas has no
+reader for it and never will. And a Numbers *table* is not a frame: it carries merged cells, empty
+trailing rows (a fresh document reads back with eight of them) and header rows that are structural
+rather than data, so mapping one to a table is its own decision and not a `read_*` call.
 
 So the epoch zoo is the reader's problem for every format that carries its own types, and the
 readers solve it. It reaches us in exactly two places, and both are formats that declare nothing:
