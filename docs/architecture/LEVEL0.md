@@ -176,7 +176,7 @@ of a writer works from columns and rows.
 | Group | Read | Write |
 |---|---|---|
 | Flat | `.csv` `.tsv` `.txt` `.fwf` | `.csv` `.tsv` `.txt` `.md` |
-| Structured | `.json` `.jsonl` `.ndjson` `.yaml` `.yml` `.xml` | same, less `.fwf` |
+| Structured | `.json` `.jsonl` `.ndjson` `.yaml` `.yml` `.xml` | same |
 | Spreadsheet | `.xlsx` `.xlsm` `.xls` `.ods` `.numbers` | `.xlsx` `.ods` |
 | Columnar | `.parquet` `.feather` `.orc` | same |
 | Web | `.html` `.htm` | same |

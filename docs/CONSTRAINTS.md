@@ -976,7 +976,7 @@ buffer.
 
 `query(path=…)` is the documented route for a result that "does not belong in an answer". It is
 accurate about the *answer*, and an agent may not infer more than it says — because the rows are
-materialised in full by `Workspace.query` before `export_csv` ever sees them:
+materialised in full by `Workspace.query` before `export_rows` ever sees them:
 
 | Shape | In the answer | With `path=` | Ratio |
 |---|---|---|---|
@@ -988,9 +988,33 @@ What `path=` does save is everything *downstream* of the materialisation: the to
 `[list(row) for row in rows]`, a second full copy costing a further **1.14–1.28×**, and the JSON
 text (20.79 MB for the 200,000-row result). Real, and not the dominant term.
 
-`export_csv` already takes an `Iterable` and writes row by row, so the streaming half exists; what
-does not exist is a way for `Workspace.query` to hand it an unmaterialised cursor. Closing that is a
-change to the read path, not a fix to the export — **open, and Chris's call**.
+**The export half streams for nine suffixes of seventeen, and not for the other eight.** Measured
+2026-07-27 by handing `export_rows` a generator that records the file's size as each row is consumed
+— a writer that streams grows the file while the generator is still running, one that materialises
+leaves it at zero until the end (50,000 rows, ~1.2 MB, far past any file buffer):
+
+| | Suffixes | Bytes on disk as the last row was consumed |
+|---|---|---|
+| **Streams** — writes row by row, never holds the result | `.csv` `.tsv` `.txt` `.json` `.jsonl` `.ndjson` `.xml` `.html` `.htm` | 0.87–2.77 MB |
+| **Materialises** — builds the whole result first | `.yaml` `.yml` `.md` `.parquet` `.feather` `.orc` `.xlsx` `.ods` | **0** |
+
+For the columnar three the materialisation is the format's shape — a columnar file stores each
+column contiguously, so nothing can be written until everything exists — and they are still the
+*fastest* writers measured. For YAML, Markdown and the workbooks it is simply how they are written:
+`_write_yaml` builds a list of dicts, `_write_markdown` a list of lists, and both workbook formats a
+whole `DataFrame`. That is not free at volume — **`_write_yaml` cost 22.9 minutes and ~5.4 GB for
+1,000,000 × 11 where `.csv` cost 30 s** (measured under a memory configuration whose absolute
+numbers do not otherwise transfer; this one does, because the list of dicts is built whatever the
+budget is).
+
+So `path=` bounds the answer for every format, and bounds the *peak* for none of them — but for the
+eight materialising suffixes it is doubly so: the caller pays `Workspace.query`'s full result list
+**and** the writer's own copy of it. **A large result wanted on disk should be asked for in a
+streaming format.**
+
+What does not exist for any of them is a way for `Workspace.query` to hand the writer an
+unmaterialised cursor. Closing that is a change to the read path, not a fix to the export — **open,
+and tracked as task 21**.
 
 ### 9.3 Two memory dimensions, and the budget is on only one of them
 
@@ -1137,6 +1161,44 @@ contents — the same silent-wrong-answer shape as §1.1 and §8.1, in the expor
 registry keyed on suffix, refusing an unknown one by name the way `read_file` already does, is the
 fix and is also the seam every new format arrives through.
 
+> **Resolved 2026-07-27**, and the fix is the registry this section asked for. Re-measured against
+> the code on `new-v3` at `af95ce79`, through the tool functions rather than the writers directly:
+>
+> | Asked for | Reported | Written |
+> |---|---|---|
+> | `out.csv` | `ok: true` | `a,b\r\n1,x\r\n2,y\r\n` |
+> | `out.json` | `ok: true` | `[\n  {"a": 1, "b": "x"…` |
+> | `out.parquet` | `ok: true` | `PAR1…` |
+> | `out.feather` | `ok: true` | `ARROW1…` |
+> | `out.orc` | `ok: true` | `ORC…` |
+> | `out.xlsx`, `out.ods` | `ok: true` | `PK\x03\x04…` (zip) |
+> | `out.wibble` | **`ok: false`** | nothing — *"No writer for `'.wibble'`. The suffix chooses the format. Supported: …"* |
+> | a name with no suffix | **`ok: false`** | nothing — refused the same way |
+>
+> **The suffix now selects the format, and an unknown one is refused by name before the path is
+> resolved** — deliberately before, so a request the server was never going to satisfy cannot cost
+> the caller an existing file on its way to failing.
+>
+> The catalogue is no longer one format in either direction. `loader.READERS` holds **20 suffixes
+> across 10 readers**; `export.WRITERS` holds **17 suffixes across 9 writers**:
+>
+> | | Suffixes |
+> |---|---|
+> | Read and written (16) | `.csv` `.tsv` `.txt` `.json` `.jsonl` `.ndjson` `.xml` `.yaml` `.yml` `.parquet` `.feather` `.orc` `.xlsx` `.ods` `.html` `.htm` |
+> | Read only (4) | `.fwf` `.numbers` `.xls` `.xlsm` |
+> | Written only (1) | `.md` |
+>
+> **The sixteen-suffix overlap is the round-trip property, not a coincidence**: a file this server
+> writes is one it can read back, and the two `DELIMITED` sets are held identical for the same
+> reason. The five that do not overlap each name a real asymmetry — `.xls` lost its writer when xlrd
+> dropped writing, `.numbers` and `.fwf` have no writer worth having, and Markdown is deliberately
+> write-only because a Markdown table has no types and no quoting, so no reader could return what
+> went in.
+>
+> What this section got right and is worth keeping: **the suffix is the whole of the format
+> decision**, in both directions, so a new format is one registry entry and nothing upstream of it
+> changes.
+
 ### 10.2 Loading dominates; everything else is comparatively cheap
 
 | Step | Wide (1M x 11) | Tall (10M x 5) |
@@ -1215,7 +1277,9 @@ Two consequences worth carrying:
 
 Peak RSS **~3.0 GB**, against a 1.22 GB source. The load is the peak, not the extract: `read_file`
 builds the whole pandas frame before a single row is inserted, so the load peak tracks the *file*
-and no chunk size bounds it (§3.2a bounds the *insert*, which is a later step). Residency afterwards
+and no chunk size bounds it (§3.2a bounds the *insert*, which is a later step). **This is the read
+side of §9.2's gap and is tracked as task 21** — the memory budget bounds resting pages, not either
+transient peak, so no configuration closes it. Residency afterwards
 is far smaller — 1,305 MB for the wide file, 735 MB for the tall — because that measures SQLite
 pages, which is §9.3's point restated at volume.
 
