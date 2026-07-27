@@ -18,6 +18,7 @@ import json
 import re
 import sqlite3
 import subprocess
+import zipfile
 from pathlib import Path
 
 import foreign
@@ -366,6 +367,64 @@ def test_the_export_suffix_chooses_the_format(session):
 
     assert result["ok"] is True
     assert target.read_text().splitlines()[0] == "name\tsalary"
+
+
+def test_an_ods_export_is_an_ods_file_and_not_a_workbook_under_a_false_name(session):
+    """`.ods` wrote XLSX, and every test we had said it was fine.
+
+    The read-back check that should have caught it could not: pandas sniffs a
+    workbook's real format from its contents and reads the file happily, so the
+    round trip returned the right rows out of a file of the wrong format. The
+    magic-byte check could not either — ODS and XLSX are both Zip archives and
+    both open `PK\\x03\\x04`. What distinguishes them is what is *inside* the
+    archive, so that is what this asserts.
+
+    The cause was one argument. `pandas.DataFrame.to_excel` infers its engine
+    from the suffix of a `str` path but **not** of a `pathlib.Path` — measured
+    on pandas 3.0.2, where a `Path` silently falls back to openpyxl — and the
+    writer is handed a `Path`. The fix names the engine instead of inferring it.
+    """
+    pytest.importorskip("odf")
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    target = session / "out.ods"
+
+    result = call(
+        "query",
+        nickname="staff",
+        sql="SELECT name, salary FROM simple",
+        path=str(target),
+    )
+    assert result["ok"] is True
+
+    inside = set(zipfile.ZipFile(target).namelist())
+    assert "mimetype" in inside, f"not an OpenDocument package: {sorted(inside)}"
+    assert "META-INF/manifest.xml" in inside, sorted(inside)
+    assert "[Content_Types].xml" not in inside, "this is a workbook wearing .ods"
+
+    # The property a caller actually depends on: the reader named by the suffix
+    # can open it. Left as the last assertion because it is the slowest, and the
+    # membership checks above say *why* when it fails.
+    pandas = pytest.importorskip("pandas")
+    assert not pandas.read_excel(target, engine="odf").empty
+
+
+def test_an_xlsx_export_is_still_a_workbook(session):
+    """The other half of the pair — the fix must not swap the two engines."""
+    pytest.importorskip("openpyxl")
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    target = session / "out.xlsx"
+
+    result = call(
+        "query",
+        nickname="staff",
+        sql="SELECT name, salary FROM simple",
+        path=str(target),
+    )
+    assert result["ok"] is True
+
+    inside = set(zipfile.ZipFile(target).namelist())
+    assert "[Content_Types].xml" in inside, sorted(inside)
+    assert "mimetype" not in inside, "this is an OpenDocument package wearing .xlsx"
 
 
 def test_an_export_to_a_format_this_server_cannot_write_is_refused(session):

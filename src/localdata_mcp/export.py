@@ -275,6 +275,17 @@ def _write_workbook(
     would need several results, which is not what this verb is handed. ``.xls``
     is absent from the writers on purpose: xlrd dropped writing and nothing
     maintained replaces it, so it is read-only here.
+
+    ``engine`` is passed explicitly, and that is not belt-and-braces. Pandas
+    infers the engine from the suffix of a ``str`` path but **not** of a
+    ``Path`` — measured on pandas 3.0.2 — and this function is handed a
+    ``Path``, so inference quietly fell back to openpyxl and every ``.ods``
+    export was a workbook wearing an OpenDocument name. It was invisible for as
+    long as it was because both formats are Zip archives that open ``PK\\x03\\x04``,
+    and because pandas reads a workbook back by sniffing its contents rather
+    than trusting the suffix, so the round trip returned the right rows out of
+    the wrong file. We already know which engine we want here — the ``_require``
+    check above names it — so saying so costs one argument and cannot regress.
     """
     suffix = path.suffix.lower()
     module, package, extra = (
@@ -286,7 +297,9 @@ def _write_workbook(
     import pandas as pd
 
     frame = pd.DataFrame(list(rows), columns=list(columns))
-    frame.to_excel(path, sheet_name=path.stem[:31] or "Sheet1", index=False)
+    frame.to_excel(
+        path, sheet_name=path.stem[:31] or "Sheet1", index=False, engine=module
+    )
     return len(frame)
 
 
