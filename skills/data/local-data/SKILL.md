@@ -149,6 +149,7 @@ by name rather than written as something else. Choose it rather than defaulting:
 | They want | Ask for | Why |
 |---|---|---|
 | to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
+| to open it in LibreOffice specifically | `.ods` | same cap, and ~13× slower than `.xlsx`; use `.xlsx` unless OpenDocument was asked for |
 | a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
 | something big, for another program | `.parquet` | fastest and smallest of all of them |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |

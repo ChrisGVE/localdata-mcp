@@ -1512,6 +1512,16 @@ the format, and it is only visible now: before §10.1's defect was fixed, `.ods`
 so every ODS timing this document ever carried was an XLSX timing. Uncapped, `.ods` crossed 16 GB
 about six minutes into the export without producing a file at all.
 
+> **Decided 2026-07-28: `.ods` stays, and the cost is told to the caller instead.** Being slow is
+> not being wrong — the format is correct, the cap bounds its memory, and OpenDocument is what some
+> people actually need. Dropping a working format because it is slow would remove real capability
+> to save a wait the caller can decide about for themselves, and the comparison with `.xls` does
+> not hold: `.xls` is read-only here because no maintained writer exists, not because a writer was
+> judged too slow. So the 13.5x is now stated where it can be acted on — `query`'s own docstring
+> and the shipped skill both say to reach for `.xlsx` unless OpenDocument was specifically wanted.
+> This follows the standing shape of the server: it offers the primitive and reports the cost, and
+> the judging is the caller's.
+
 `.xlsx`, `.ods` and `.yaml` were three of the eight suffixes §9.2 listed as materialising every row
 before writing any of it, measured at the scale where that stops being a footnote. **Two of the
 three still are** — the workbooks, now bounded by the cap. `.yaml` streams as of 2026-07-28, and

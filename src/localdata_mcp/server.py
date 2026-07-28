@@ -624,7 +624,9 @@ def query(
             of all of them. .yaml is an order of magnitude slower than anything
             else here, and .md holds the whole table because a Markdown column
             is only as wide as its widest value. A spreadsheet (.xlsx, .ods)
-            refuses more than 65,535 rows outright.
+            refuses more than 65,535 rows outright, and of those two .ods takes
+            around thirteen times as long as .xlsx for the same rows — ask for
+            it when OpenDocument is what was wanted, not by default.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the path is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file
