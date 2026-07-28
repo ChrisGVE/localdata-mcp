@@ -489,6 +489,69 @@ def test_every_writer_produces_the_format_its_suffix_names(session, suffix):
     assert mark(target), f"{target.name} is not {suffix}: {target.read_bytes()[:64]!r}"
 
 
+@pytest.mark.parametrize("suffix", [".xlsx", ".ods"])
+def test_a_spreadsheet_refuses_more_rows_than_it_is_worth_writing(session, suffix):
+    """Refused, not truncated — a short file that reports success is a wrong answer.
+
+    Both spreadsheet writers build the whole document before a byte reaches the
+    disk, so the cost of the export scales with the result: a million rows of
+    eleven columns cost 12.9 GB as `.xlsx`, and `.ods` crossed 16 GB without
+    producing a file. The refusal is settled before the frame is built, so it
+    does not pay the memory it is declining to spend.
+    """
+    module = {"xlsx": "openpyxl", "ods": "odf"}[suffix.lstrip(".")]
+    pytest.importorskip(module)
+    over = export_module.SPREADSHEET_ROW_LIMIT + 1
+    call(
+        "attach",
+        database=str(session / "simple.csv"),
+        nickname="staff",
+    )
+    # A generated result rather than a fixture of 65,536 rows: `sqlite_master`
+    # is not big enough, so count the rows out in SQL.
+    target = session / f"big{suffix}"
+    refused = call(
+        "query",
+        nickname="staff",
+        sql=(
+            "WITH RECURSIVE n(i) AS ("
+            f"  SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {over}"
+            ") SELECT i FROM n"
+        ),
+        path=str(target),
+    )
+
+    assert refused["ok"] is False
+    assert f"{export_module.SPREADSHEET_ROW_LIMIT:,}" in refused["error"]
+    assert ".csv" in refused["error"], "the refusal should name a format that works"
+    assert not target.exists(), "a refused export must not leave a partial file"
+
+
+@pytest.mark.parametrize("suffix", [".xlsx", ".ods"])
+def test_a_spreadsheet_writes_right_up_to_the_limit(session, suffix):
+    """The boundary is inclusive, and the row that trips it is the one after."""
+    module = {"xlsx": "openpyxl", "ods": "odf"}[suffix.lstrip(".")]
+    pytest.importorskip(module)
+    at = export_module.SPREADSHEET_ROW_LIMIT
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    target = session / f"exact{suffix}"
+
+    result = call(
+        "query",
+        nickname="staff",
+        sql=(
+            "WITH RECURSIVE n(i) AS ("
+            f"  SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {at}"
+            ") SELECT i FROM n"
+        ),
+        path=str(target),
+    )
+
+    assert result["ok"] is True, result
+    assert result["rows_written"] == at
+    assert target.exists()
+
+
 def test_the_identity_table_covers_every_writer():
     """A table of cases is only a guarantee while it is complete."""
     assert set(FORMAT_MARKS) == set(export_module.WRITERS), (

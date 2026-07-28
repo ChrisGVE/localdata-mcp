@@ -31,6 +31,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 from xml.sax.saxutils import escape
@@ -266,6 +267,26 @@ def _write_columnar(
     return len(frame)
 
 
+#: The most rows this server will write to a spreadsheet.
+#:
+#: Not the format's limit. A modern worksheet holds 1,048,576 rows and the older
+#: one held 65,536, and this sits just under the older figure deliberately: a
+#: spreadsheet is something a person opens and looks at, and a million-row
+#: workbook is not that. It is a file that takes minutes to write, gigabytes to
+#: build, and that no spreadsheet application opens comfortably.
+#:
+#: It bounds the memory too, which is the measured half. Both writers build the
+#: whole document before writing any of it (§9.2), so the export peak scales
+#: with the result: a million rows of eleven columns cost 12.9 GB as `.xlsx`,
+#: and `.ods` crossed 16 GB without finishing. At this cap the same shape is
+#: about a fifteenth of that.
+#:
+#: **Write side only.** Reading a large spreadsheet somebody else produced is
+#: untouched — the limit is on what this server chooses to emit, not on what it
+#: will accept.
+SPREADSHEET_ROW_LIMIT = 65_535
+
+
 def _write_workbook(
     columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
 ) -> int:
@@ -296,7 +317,25 @@ def _write_workbook(
     _require(module, extra, f"Writing {suffix}")
     import pandas as pd
 
-    frame = pd.DataFrame(list(rows), columns=list(columns))
+    # Take one row more than the limit and no further. Both spreadsheet writers
+    # build the entire document in memory before a byte reaches the disk, so the
+    # count has to be settled *before* the frame is built or the refusal costs
+    # the same memory as the export it is refusing. Measured at a million rows
+    # of eleven columns: `.xlsx` reached 12.9 GB, and `.ods` crossed 16 GB
+    # without producing a file at all.
+    collected = list(islice(rows, SPREADSHEET_ROW_LIMIT + 1))
+    if len(collected) > SPREADSHEET_ROW_LIMIT:
+        raise ExportError(
+            f"More than {SPREADSHEET_ROW_LIMIT:,} rows will not be written to "
+            f"{suffix}. A spreadsheet is a format for reading, and both writers "
+            f"build the whole document in memory before writing any of it, so a "
+            f"result this size costs gigabytes and produces a file no "
+            f"spreadsheet opens comfortably. Ask for .csv, .parquet or .jsonl, "
+            f"none of which have a row limit — or narrow the result with LIMIT "
+            f"if a spreadsheet is what you need."
+        )
+
+    frame = pd.DataFrame(collected, columns=list(columns))
     frame.to_excel(
         path, sheet_name=path.stem[:31] or "Sheet1", index=False, engine=module
     )
