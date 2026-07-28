@@ -1401,26 +1401,44 @@ repetitions except `.xlsx` and `.ods`, which embed a timestamp (that check is wh
 | `.xml` | 26.6 s | 132.9 s | — | — |
 | `.html` | 24.6 s | **refused** | — | — |
 | `.md` | 226.0 s | write-only | — | — |
-| `.xlsx` | 525.3 s | 580.9 s | — | — |
 | `.yaml` | 1,619.2 s → 1.39 GB | **could not complete** | — | — |
-| `.ods` | **could not complete** | — | — | — |
+| `.xlsx` | *refused above 65,535 rows — see below* | | | |
+| `.ods` | *refused above 65,535 rows — see below* | | | |
 
-**Two formats cannot be round-tripped at 1M rows on this machine, and one cannot be written at
-all.** Both were aborted by the harness's 16 GB ceiling, which is a chosen bound rather than a
-property of the machine (64 GB installed) — so what is measured is *"exceeds 16 GB"*, not the point
-at which each would succeed, and that point was not worth an hour of run time to find.
+**`.yaml` cannot be round-tripped at 1M rows on this machine.** It writes in **1,619 s (27
+minutes)** producing **1.39 GB**, and then **exceeds 16 GB reading it back**. That ceiling is a
+chosen bound rather than a property of the machine (64 GB installed), so what is measured is
+*"exceeds 16 GB"* and not the point at which it would succeed. `yaml.safe_dump` over a million
+records was already known to be 20+ minutes; the read side is the new part. **YAML has no cap and
+no decision behind it yet** — unlike the spreadsheets below, there is no "it is a format for
+reading" argument to bound it with.
 
-* **`.yaml`** writes 1M rows in **1,619 s (27 minutes)** producing **1.39 GB**, and then **exceeds
-  16 GB reading it back**. `yaml.safe_dump` over a million records was already known to be 20+
-  minutes; the read side is the new part.
-* **`.ods`** **exceeds 16 GB during the export itself**, about six minutes in — it never produces a
-  file. Note what this means against the row above it: `.xlsx` completes the same corpus in 525 s.
-  Before the defect in §10.1 was fixed, `.ods` *appeared* to complete at 1M rows **because it was
-  writing XLSX**. Fixing it made the format correct and made it unusable at this scale. Both are
-  true, and the second is a consequence of the first rather than a regression.
+#### Spreadsheets are capped, and measured at the cap
 
-These are the two formats §9.2 lists as materialising every row before writing any of it, measured
-at a scale where that stops being a footnote.
+`export.SPREADSHEET_ROW_LIMIT` **refuses more than 65,535 rows**, so timing a spreadsheet at a
+million measures the refusal. Measured separately at the cap, same corpus and the same eleven
+columns:
+
+| | Rows | Seconds | File | Peak RSS added |
+|---|---|---|---|---|
+| `.xlsx` at the cap | 65,535 | **40.7 s** | 43.7 MB | **+0.3 MB** |
+| `.ods` at the cap | 65,535 | **551.4 s** | 48.2 MB | +1,179 MB |
+| `.xlsx` over the cap | refused | 0.88 s | none | **+0 MB** |
+
+**The cap is what bounds the memory.** Uncapped, `.xlsx` on the same corpus added **4,832 MB** and
+the run peaked at **12.9 GB**; at the cap it adds nothing measurable over the attach baseline. The
+refusal costs 0.88 s and no memory at all — it is settled before the frame is built, so declining a
+million rows does not pay what writing them would have, and it leaves no partial file.
+
+**What the cap does not fix is `.ods` being slow.** 551 s for 65,535 rows is **13.5x `.xlsx`'s
+40.7 s** on identical input — the same ratio measured at 50,000 rows, so it is a property of odfpy
+rather than of scale. Nine minutes for a file a spreadsheet opens in seconds is the honest cost of
+the format, and it is only visible now: before §10.1's defect was fixed, `.ods` was writing XLSX,
+so every ODS timing this document ever carried was an XLSX timing. Uncapped, `.ods` crossed 16 GB
+about six minutes into the export without producing a file at all.
+
+`.xlsx`, `.ods` and `.yaml` are three of the eight suffixes §9.2 lists as materialising every row
+before writing any of it, measured at the scale where that stops being a footnote.
 
 **A columnar format is a large win on writing and a small one on reading, and the gap between
 those two is the result worth keeping.** Against CSV, on the same rows:
