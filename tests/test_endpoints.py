@@ -97,7 +97,7 @@ class Live:
         return str(self.root / "people.csv")
 
 
-@pytest.fixture(params=ENDPOINTS, ids=lambda endpoint: endpoint.dialect)
+@pytest.fixture(params=ENDPOINTS, ids=lambda endpoint: endpoint.name)
 def live(request, tmp_path):
     """A reachable endpoint, a fresh session, and no tables left behind.
 

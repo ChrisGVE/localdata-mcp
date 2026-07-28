@@ -329,3 +329,24 @@ def test_every_endpoint_builder_round_trips_its_own_credentials():
             # port above — an interpolated URL would have lost both.
             continue
         assert parsed.password == hostile, endpoint.dialect
+
+
+def test_every_endpoint_has_its_own_identity_even_when_it_shares_a_dialect():
+    """Two endpoints may share a dialect; they may never share a name. Issue #44.
+
+    A dialect is not an identity. TiDB and OceanBase speak MySQL's wire and have
+    no dialect of their own; YugabyteDB, Greenplum and OpenGauss are addressed as
+    PostgreSQL. Keyed on dialect, the second of any such pair reads the first's
+    URL out of the probe cache and runs its whole suite against a container it
+    never named — reporting green for a database that was never reached.
+
+    Asserted over the table rather than at the two places that consume it, so an
+    endpoint added later cannot reintroduce it without this failing.
+    """
+    import endpoints
+
+    names = [endpoint.name for endpoint in endpoints.ENDPOINTS]
+    assert len(names) == len(set(names)), f"duplicate endpoint names: {names}"
+
+    services = [endpoint.service for endpoint in endpoints.ENDPOINTS]
+    assert len(services) == len(set(services)), f"duplicate services: {services}"

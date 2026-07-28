@@ -53,11 +53,21 @@ class Endpoint:
     ``dialect`` is SQLAlchemy's own backend name — the key
     :func:`localdata_mcp.dialects.backend_for` looks up — so a subclass added for
     this dialect is exercised by these tests without anything here changing.
+
+    **``dialect`` is not an identity, and must never be used as one.** Several
+    databases are reached through a dialect they did not write: TiDB and
+    OceanBase speak MySQL's wire and have no dialect of their own, and
+    YugabyteDB, Greenplum and OpenGauss are addressed as PostgreSQL. Keying
+    anything per-endpoint on it means the second such endpoint silently reuses
+    the first's container and reports a database as tested that was never
+    reached. :attr:`name` is the identity; ``dialect`` says only which backend
+    answers.
     """
 
-    #: SQLAlchemy's backend name for this database.
+    #: SQLAlchemy's backend name for this database. Not unique across endpoints.
     dialect: str
-    #: The service in ``docker-compose.test.yml`` that provides it.
+    #: The service in ``docker-compose.test.yml`` that provides it. Unique by
+    #: construction, since compose services are.
     service: str
     #: The port the container listens on *inside* itself, which is the right-hand
     #: side of the compose port mapping. The published port is read from there.
@@ -76,6 +86,17 @@ class Endpoint:
     #: :class:`Unavailable` when it does not. pyodbc needs a *system* ODBC
     #: driver, which importing it says nothing about.
     precondition: Callable[[], None] | None = None
+
+    @property
+    def name(self) -> str:
+        """What this endpoint is called, uniquely, in a cache key or a test id.
+
+        Derived from the service rather than stored, so it cannot drift from it
+        and so adding an endpoint cannot forget it. The prefix every service
+        carries is dropped because it is the same on all of them and only makes
+        the test ids harder to read.
+        """
+        return self.service.removeprefix("localdata-test-")
 
 
 #: Driver libraries to fall back on when the driver manager has nothing
@@ -441,21 +462,27 @@ def _handshake(url: str, warmup: float) -> None:
         time.sleep(1.0)
 
 
-#: One probe per dialect per session: either the URL it answered on, or the
-#: reason it was skipped. Ten tests against five dialects must not pay Oracle's
-#: warmup ten times, and must not each print a different reason for the same
-#: absence.
+#: One probe per *endpoint* per session: either the URL it answered on, or the
+#: reason it was skipped. Eighteen tests against one database must not pay
+#: Oracle's warmup eighteen times, and must not each print a different reason for
+#: the same absence.
+#:
+#: **Keyed by :attr:`Endpoint.name`, not by dialect.** Keyed by dialect, a second
+#: endpoint sharing one — TiDB on MySQL's, YugabyteDB on PostgreSQL's — would
+#: read the first's URL out of this cache and run its whole suite against a
+#: container it never named, reporting green for a database that was never
+#: reached. See issue #44.
 _probed: dict[str, str | Unavailable] = {}
 
 
 def url_for(endpoint: Endpoint) -> str:
     """The URL this endpoint answers on, or :class:`Unavailable` saying why not."""
-    if endpoint.dialect not in _probed:
+    if endpoint.name not in _probed:
         try:
-            _probed[endpoint.dialect] = _probe(endpoint)
+            _probed[endpoint.name] = _probe(endpoint)
         except Unavailable as exc:
-            _probed[endpoint.dialect] = exc
-    answer = _probed[endpoint.dialect]
+            _probed[endpoint.name] = exc
+    answer = _probed[endpoint.name]
     if isinstance(answer, Unavailable):
         raise answer
     return answer
