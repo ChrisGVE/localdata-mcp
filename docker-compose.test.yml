@@ -22,7 +22,14 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: testuser
-      POSTGRES_PASSWORD: testpass
+      # Deliberately hostile, and it is the point rather than a joke. Every
+      # character here moves a URL boundary: `@` starts the host, `/` the path,
+      # `?` the query, `#` the fragment. One endpoint carrying such a password
+      # is what proves the harness passes credentials as *values* all the way to
+      # the driver, rather than formatting them into a URL that is then reparsed
+      # — see issue #43. `pg_isready` below authenticates by local socket, so
+      # the healthcheck is unaffected.
+      POSTGRES_PASSWORD: "p@ss:w/rd?x#y"
       POSTGRES_DB: testdb
     ports:
       - "15432:5432"
