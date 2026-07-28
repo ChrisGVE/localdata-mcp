@@ -51,6 +51,7 @@ from __future__ import annotations
 import importlib
 import json
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
@@ -1786,6 +1787,36 @@ class Workspace:
         was quietly rolled back would otherwise be reported as a statement that
         succeeded and returned nothing.
         """
+        with self.query_stream(tag, sql) as (names, rows):
+            return names, list(rows)
+
+    @contextmanager
+    def query_stream(
+        self, tag: str, sql: str
+    ) -> Iterator[tuple[list[str], Iterator[tuple]]]:
+        """The same read as :meth:`query`, handed back **unmaterialised**.
+
+        Yields ``(column_names, rows)`` where ``rows`` is a lazy iterator over
+        the open cursor, valid only inside the ``with`` block — the connection
+        closes on the way out, so a caller who wants the rows afterwards wants
+        :meth:`query` instead.
+
+        This exists for the one caller that never needs the rows in memory: a
+        result being written to a file. ``query`` already streamed from the
+        driver, but it then built a list of every row and handed *that* to the
+        writer, so a result on its way to disk existed twice — once as a list of
+        tuples, and again in whatever the writer itself builds. Eight of the
+        seventeen export suffixes write row by row and need neither copy.
+
+        ``query`` is this method plus a ``list`` rather than the two sharing
+        copied code: one read path, and one place where the read-only posture
+        and the returns-rows refusal are decided.
+
+        **A failure part-way through the result is explained the same way**, by
+        ``_rows`` below rather than by the ``except`` here: the rows are pulled
+        from the caller's frame, so a driver error raised on the way to the
+        third million rows never passes through this function at all.
+        """
         entry = self.entry(tag)
         entry.engines.refusal.take()
         try:
@@ -1795,8 +1826,23 @@ class Workspace:
                 ).execute(text(sql))
                 if not result.returns_rows:
                     raise LoadError(_not_a_read(entry))
-                names = list(result.keys())
-                return names, [tuple(row) for row in result]
+                yield list(result.keys()), self._rows(entry, result, sql)
+        except SQLAlchemyError as exc:
+            raise self._explain(entry, exc, sql) from exc
+
+    def _rows(self, entry: Tagged, result: Any, sql: str) -> Iterator[tuple]:
+        """Pull rows off an open cursor, explaining a failure that arrives late.
+
+        A generator expression would do everything this does except the last
+        part. A cursor streaming a large result can fail after it has already
+        handed back rows — a lost connection, a server-side timeout — and that
+        failure is raised inside whichever frame is iterating. Written as its
+        own generator, the ``try`` lives in the frame the rows come from, so the
+        error is translated wherever it is consumed.
+        """
+        try:
+            for row in result:
+                yield tuple(row)
         except SQLAlchemyError as exc:
             raise self._explain(entry, exc, sql) from exc
 

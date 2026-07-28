@@ -393,6 +393,66 @@ def test_dropping_a_table_removes_it_and_dropping_it_twice_is_an_error(workspace
 
 
 # ---------------------------------------------------------------------------
+# Reading without assembling — query_stream
+# ---------------------------------------------------------------------------
+
+
+def test_query_stream_returns_what_query_returns(workspace, root):
+    """One read path, so the two must agree on rows and on column names."""
+    workspace.load_file(str(root / "simple.csv"), "main")
+    sql = "SELECT name, salary FROM simple ORDER BY name"
+
+    columns, rows = workspace.query("main", sql)
+    with workspace.query_stream("main", sql) as (streamed_columns, streamed_rows):
+        streamed = list(streamed_rows)
+
+    assert streamed_columns == columns
+    assert streamed == rows
+
+
+def test_query_stream_hands_back_rows_it_has_not_read_yet(workspace, root):
+    """The point of the method: the first row arrives before the last is read.
+
+    Asserted against the cursor rather than against memory — a lazy iterator is
+    the mechanism, and a peak measurement is the consequence. The consequence is
+    asserted separately, as a growth shape, in ``test_volume``.
+    """
+    workspace.load_file(str(root / "simple.csv"), "main")
+
+    with workspace.query_stream("main", "SELECT name FROM simple") as (_, rows):
+        assert not isinstance(rows, (list, tuple))
+        first = next(iter(rows))
+        assert isinstance(first, tuple)
+        # Four of the five are still on the cursor at this point; draining them
+        # here proves the iterator is a live view of it rather than a spent one.
+        assert len(list(rows)) == 4
+
+
+def test_query_stream_refuses_a_write_exactly_as_query_does(workspace, root):
+    """The read-only posture is decided once, so it cannot differ between them."""
+    workspace.load_file(str(root / "simple.csv"), "main")
+    sql = "UPDATE simple SET salary = 0"
+
+    with pytest.raises(LoadError) as materialised:
+        workspace.query("main", sql)
+
+    with pytest.raises(LoadError) as streamed:
+        with workspace.query_stream("main", sql) as (_, rows):
+            list(rows)
+
+    assert str(streamed.value) == str(materialised.value)
+
+
+def test_query_stream_explains_a_missing_table_the_same_way(workspace, root):
+    """A statement that cannot run fails at the top of the block, explained."""
+    workspace.load_file(str(root / "simple.csv"), "main")
+
+    with pytest.raises(LoadError, match="No such table"):
+        with workspace.query_stream("main", "SELECT * FROM absent") as (_, rows):
+            list(rows)
+
+
+# ---------------------------------------------------------------------------
 # Export — the overwrite boundary
 # ---------------------------------------------------------------------------
 

@@ -629,38 +629,49 @@ def query(
     """
     with _lock:
         registry = _session()
-        try:
-            columns, rows = registry.query(nickname, sql)
-        except SlotError as exc:
-            return _failed(exc)
-        except Exception as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
         if path is None:
+            try:
+                columns, rows = registry.query(nickname, sql)
+            except SlotError as exc:
+                return _failed(exc)
+            except Exception as exc:
+                return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
             return {
                 "ok": True,
                 "columns": columns,
-                # Spelled for JSON here and not in `loader`, because the rows
-                # below go to `export_rows` instead, and a file is better served
-                # by the native value — a Parquet timestamp column wants a
-                # timestamp, not the text an answer needs.
+                # Spelled for JSON here and not in `loader`, because a result
+                # bound for a file goes to `export_rows` instead, and a file is
+                # better served by the native value — a Parquet timestamp column
+                # wants a timestamp, not the text an answer needs.
                 "rows": [[_wire_value(value) for value in row] for row in rows],
                 "row_count": len(rows),
             }
 
+        # A result bound for a file is never assembled. `query_stream` holds the
+        # cursor open for as long as the writer is pulling from it, so the rows
+        # go from the database to the disk without a list of them existing —
+        # which for the eight suffixes that write row by row means the peak does
+        # not move with the size of the result.
         try:
-            result = export_rows(
-                columns,
-                rows,
-                path,
-                force=force,
-                claimed=registry.claimed_paths(),
-                delimiter=delimiter,
-            )
+            with registry.query_stream(nickname, sql) as (columns, rows):
+                result = export_rows(
+                    columns,
+                    rows,
+                    path,
+                    force=force,
+                    claimed=registry.claimed_paths(),
+                    delimiter=delimiter,
+                )
         except (ExportError, PathNotAllowed) as exc:
+            return _failed(exc)
+        except SlotError as exc:
             return _failed(exc)
         except OSError as exc:
             return {"ok": False, "error": f"Could not write {path}: {exc}"}
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
         return {
             "ok": True,

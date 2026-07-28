@@ -306,6 +306,30 @@ def test_the_export_writes_every_row_the_statement_selected(session):
     assert len(target.read_text().splitlines()) == 6  # header included
 
 
+def test_a_writers_refusal_is_not_reported_as_a_slot_problem(session):
+    """An export failure must answer the question the caller actually asked.
+
+    The rows now reach the writer straight off the open cursor, so the writer
+    raises from *inside* the block that runs the statement. The layer holding
+    that block explains a failed statement by looking for another slot's
+    nickname in the SQL — sound for a statement, and here it would read the
+    column ``salary`` as the ``salary`` slot and answer a question about a file
+    suffix with a sentence about joining across databases.
+    """
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call("attach", database=str(session / "records.json"), nickname="salary")
+
+    refused = call(
+        "query",
+        nickname="staff",
+        sql="SELECT name, salary FROM simple",
+        path=str(session / "out.bogus"),
+    )
+    assert refused["ok"] is False
+    assert "No writer for '.bogus'" in refused["error"]
+    assert "separate databases" not in refused["error"]
+
+
 def test_the_export_refuses_to_clobber_then_takes_the_users_answer(session):
     """The refusal has to read as a question, or the agent just retries.
 

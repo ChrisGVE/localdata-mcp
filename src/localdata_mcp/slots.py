@@ -48,9 +48,10 @@ import re
 import shutil
 import tempfile
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 from sqlalchemy.engine import make_url
 
@@ -131,6 +132,20 @@ def url_scheme(database: str) -> str | None:
     """The scheme of a datasource URL, or ``None`` for a filesystem path."""
     match = _URL.match(database)
     return match.group("scheme") if match else None
+
+
+def _ours(rows: Iterator[tuple]) -> Iterator[tuple]:
+    """Report a load failure arriving mid-result as one of this layer's own.
+
+    The counterpart, for a streamed read, of what ``query`` does in one line:
+    a ``LoadError`` from below already reads as a complete answer, so it is
+    restated as a ``SlotError`` rather than reaching the surface with another
+    exception class prefixed to it.
+    """
+    try:
+        yield from rows
+    except LoadError as exc:
+        raise SlotError(str(exc)) from exc
 
 
 @dataclass(frozen=True)
@@ -975,15 +990,47 @@ class Registry:
         ours, without the exception's class name prefixed to a sentence that
         was already a complete answer.
         """
+        with self.query_stream(nickname, sql) as (columns, rows):
+            return columns, list(rows)
+
+    @contextmanager
+    def query_stream(
+        self, nickname: str, sql: str
+    ) -> Iterator[tuple[list[str], Iterator[tuple]]]:
+        """:meth:`query` with the rows left on the cursor, for writing to a file.
+
+        The slot is resolved before the statement runs, exactly as in ``query``,
+        so the residency bookkeeping a read triggers happens up front rather
+        than part-way through an export.
+
+        **The statement and the rows are guarded differently, deliberately.**
+        ``_explain`` reads the SQL for a nickname belonging to another slot and
+        offers "these are separate databases" as the reading — sound for a
+        statement that has just failed, and wrong for anything raised later. The
+        caller of this method is a *writer*, and its failures — an unwritable
+        suffix, a full disk — have nothing to do with the SQL. Running them
+        through ``_explain`` would answer a question about a file with a
+        sentence about slots, and a table whose name happens to match another
+        slot's nickname is all it would take. So ``_explain`` sees the statement
+        only; a failure arriving mid-result is reported as ours and no more.
+        """
         slot = self.slot(nickname)
+        streaming = self._workspace.query_stream(nickname, sql)
         try:
-            return self._workspace.query(nickname, sql)
+            columns, rows = streaming.__enter__()
         except LoadError as exc:
             self._explain(exc, sql, slot)
             raise SlotError(str(exc)) from exc
         except Exception as exc:
             self._explain(exc, sql, slot)
             raise
+
+        try:
+            yield columns, _ours(rows)
+        finally:
+            # Closes the connection whether the writer finished, refused or
+            # raised. The exception, if there is one, is already on its way up.
+            streaming.__exit__(None, None, None)
 
     def describe(self, nickname: str, table: str) -> TableInfo:
         """Describe one table inside a slot."""

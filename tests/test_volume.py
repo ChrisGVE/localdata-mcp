@@ -1,7 +1,13 @@
 """Volume behaviour: the memory invariant, asserted as a growth property.
 
-The claim these tests defend is one sentence — **the row sequence handed to
-executemany is never materialised** — and it is only meaningful as a *shape*.
+Two claims are defended here, and both are only meaningful as a *shape*:
+
+* **the row sequence handed to executemany is never materialised** — the load
+  side;
+* **a query written to a file is never materialised** — the export side, where
+  the rows go from the database cursor to the writer without a list of them
+  existing anywhere in between.
+
 Asserting "the peak stays under N megabytes" would pass on a machine with more
 headroom and hide a per-row accumulation entirely. Asserting the peak barely
 moves while the row count grows four-fold catches it.
@@ -24,6 +30,7 @@ import pandas as pd
 import pytest
 
 from localdata_mcp import config as config_module
+from localdata_mcp import server as server_module
 from localdata_mcp.config import Config
 from localdata_mcp.loader import Workspace
 
@@ -127,8 +134,74 @@ def test_large_file_answers_correctly(root):
         workspace.close()
 
 
+def _export_peak(root: Path, rows: int, name: str) -> tuple[float, int]:
+    """Return (peak MB, rows written) for ``query`` writing straight to a file.
+
+    Driven through ``server.query`` rather than through ``Workspace`` and
+    ``export_rows`` separately, because the claim is about the *path* between
+    them: either of those two halves can be perfectly lazy while the code that
+    joins them builds a list. Testing the seam underneath would validate the
+    seam and leave the join untested.
+
+    The source file is written and attached before tracing starts, so what is
+    measured is the cursor-to-disk path and nothing else.
+    """
+    source = root / f"{name}.csv"
+    _write_csv(source, rows)
+
+    server_module._reset()
+    try:
+        attached = server_module.attach(str(source))
+        assert attached["ok"], attached
+        nickname = attached["nickname"]
+        target = root / f"{name}-out.csv"
+
+        tracemalloc.start()
+        answer = server_module.query(
+            nickname,
+            f"SELECT id, name, score, flag FROM {name}",
+            path=str(target),
+        )
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        assert answer["ok"], answer
+        # Counted from the file rather than from the report: a writer that
+        # streamed nothing and said it wrote everything is the shape this whole
+        # test exists to catch.
+        with target.open() as handle:
+            assert sum(1 for _ in handle) == rows + 1
+        return peak / 1_048_576, answer["rows_written"]
+    finally:
+        server_module._reset()
+
+
+def test_export_peak_does_not_scale_with_row_count(root):
+    """A result written to a file never exists as a list of rows.
+
+    ``Workspace.query`` streams from the driver but returns a list, so a query
+    exported to a file used to hold every row in memory before the writer saw
+    the first one — on top of whatever the writer itself builds. For a format
+    that writes row by row, the peak must be flat.
+    """
+    small_peak, small_rows = _export_peak(root, SMALL_ROWS, "small")
+    large_peak, large_rows = _export_peak(root, LARGE_ROWS, "large")
+
+    assert small_rows == SMALL_ROWS
+    assert large_rows == LARGE_ROWS
+
+    # Same generous bound and same reasoning as the insert test above: this
+    # catches an accumulation, which shows as a ratio near 4, not a constant.
+    growth = large_peak / max(small_peak, 0.001)
+    assert growth < 2.0, (
+        f"export peak grew {growth:.2f}x for a 4x row increase "
+        f"({small_peak:.2f} MB -> {large_peak:.2f} MB). The result is probably "
+        f"being materialised between the cursor and the writer."
+    )
+
+
 def test_export_of_a_large_result_is_complete(root):
-    """The export path must not truncate or hold the whole result in memory."""
+    """Volume must not cost completeness on the way out."""
     from localdata_mcp.export import export_rows
 
     path = root / "big.csv"
