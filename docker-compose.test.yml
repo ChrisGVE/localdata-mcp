@@ -91,6 +91,23 @@ services:
       timeout: 5s
       retries: 10
 
+  # Reached over HTTP on 8123, not over the native protocol on 9000: the
+  # dialect that ships with clickhouse-connect is an HTTP one, and only the
+  # port it speaks on is published.
+  localdata-test-clickhouse:
+    image: clickhouse/clickhouse-server:25.3
+    environment:
+      CLICKHOUSE_USER: testuser
+      CLICKHOUSE_PASSWORD: testpass
+      CLICKHOUSE_DB: testdb
+    ports:
+      - "18123:8123"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 networks:
   default:
     name: localdata-test-net

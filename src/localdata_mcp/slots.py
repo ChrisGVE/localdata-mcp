@@ -648,6 +648,13 @@ class Registry:
                 )
         try:
             return self._workspace.create_index(nickname, table, columns)
+        except UnsupportedOperation as exc:
+            # Not a failure to index — a datasource whose index model this verb
+            # cannot express. Nothing was created, so there is nothing to clean
+            # up, and the backend's own words say what orders a table there
+            # instead. The same shape as save refusing a datasource it does not
+            # hold.
+            raise SlotError(str(exc)) from exc
         except LoadError as exc:
             raise SlotError(str(exc)) from exc
 

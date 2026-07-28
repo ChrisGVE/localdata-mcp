@@ -85,13 +85,16 @@ postgres = ["psycopg[binary]>=3.1"]
 mysql = ["PyMySQL>=1.1"]
 mssql = ["pyodbc>=5.0"]
 oracle = ["oracledb>=2.0"]
+# The dialect ships inside the official driver as `clickhousedb`, not as the
+# third-party `clickhouse-sqlalchemy` — see docs/CONSTRAINTS.md §11.1.
+clickhouse = ["clickhouse-connect[sqlalchemy]>=1.6"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse]",
 ]
 all = [
   "localdata-mcp[formats,databases]",

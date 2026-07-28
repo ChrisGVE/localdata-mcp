@@ -1650,3 +1650,164 @@ The index still pays for itself on the first join:
 2.16x) and by **14.2x on every join after** (§10.4 said 12.1x). Every absolute number moved and
 **both conclusions held**, which is the useful part: the ordering in §10 was never the fragile
 thing, the absolute seconds were.
+
+## §11 — ClickHouse, the first backend with no transactions (2026-07-28)
+
+The first entry from the backend catalogue. ClickHouse was taken first because it removes the thing
+every other backend here has: transactions. What that removes turns out to be the *floor* the
+read-only guarantee stands on, and most of what follows is a consequence.
+
+All 18 endpoint tests pass against `clickhouse/clickhouse-server:25.3`. Four of the findings below
+are defects in the driver rather than facts about the database, and they are marked as such so that
+nobody later "fixes" ClickHouse for them.
+
+### 11.1 The live dialect is inside `clickhouse-connect`, not `clickhouse-sqlalchemy`
+
+The obvious candidate is the wrong one. `clickhouse-sqlalchemy` carries a `4 - Beta` classifier, is
+sdist-only, has **no GitHub releases at all**, and its last commit is 2025-11-24. Its release
+ordering on PyPI is also inverted — 0.2.8 and 0.2.9 were published *after* 0.3.2.
+
+`clickhouse-connect` is ClickHouse's own driver: `5 - Production/Stable`, v1.6.0 published five days
+before this measurement, commits landing daily, and `sqlalchemy>=1.4.40,<3.0`. It registers the
+dialect under the name **`clickhousedb`** (and `clickhousedb.connect`), speaks HTTP on 8123 rather
+than the native protocol on 9000, and ships a `MIGRATING_FROM_CLICKHOUSE_SQLALCHEMY.md` in-tree —
+upstream itself treats the third-party package as the thing to move away from.
+
+This is the second time the dialect a search finds first was not the live one; §-note in the s42
+handover records the same for Trino. **The registered dialect name is also the backend key**, so
+`backend_for` looks up `clickhousedb`, not `clickhouse`.
+
+### 11.2 A missing value silently becomes an empty string — in one code path, and raises in the other
+
+A ClickHouse column is `NOT NULL` unless declared `Nullable`, and the portable Core types render as
+aliases (`TEXT` → `String`, `INTEGER` → `Int32`, `DOUBLE` → `Float64`) that inherit that. Inserting
+`None` into one behaves **two different ways depending on the batch size**:
+
+| Insert | Result |
+|---|---|
+| One row, `{'name': None}` | **stored as `''`, reported as success**, `isNull()` = 0 |
+| Two rows, one with `None` | `DataError: Invalid None value in non-Nullable column` |
+
+The single-row case is the dangerous one and it is the fail-open shape this project keeps meeting: a
+value that was absent comes back present, and nothing anywhere says so. A loaded file has gaps as a
+matter of course, so this is not an edge case on the load path — it *is* the load path.
+
+`column_type` therefore returns `Nullable(String)` / `Nullable(Int64)` / `Nullable(Float64)`. With
+those, a missing value round-trips as missing and an aggregate skips it rather than counting an empty
+string as a value. This is the fourth dialect to need a `column_type` override and the first to need
+one for a reason that is about *nullability* rather than about width.
+
+### 11.3 The driver's exceptions are not its DBAPI's exceptions, so SQLAlchemy never wraps them
+
+`clickhouse_connect.dbapi` exports an `Error` as PEP 249 requires, but nothing the driver raises
+inherits from it — `driver.exceptions.ClickHouseError` and `dbapi.Error` are unrelated class trees.
+SQLAlchemy decides what to wrap by `isinstance(e, dialect.loaded_dbapi.Error)`, so a ClickHouse
+failure is **not** a `SQLAlchemyError`, carries **no** `.orig`, and passes untouched through every
+`except SQLAlchemyError` in this codebase.
+
+Measured consequence: the read-only refusal reached the caller as
+`DatabaseError: Received ClickHouse exception, code: 164 …` instead of the words naming the verb to
+use instead. The statement was still refused — the guarantee held — but the agent was told only
+"no", which is precisely the message it cannot act on.
+
+The fix is a named set, `Backend.driver_errors()`, added to the guards that translate a driver
+failure into words. **Not** a widening to `except Exception`: that would pull unrelated failures into
+an explainer written for driver errors, which is the mistake recorded in the carried gotchas.
+
+The error code itself is clean — the exception carries `code = 164` as an attribute, so
+`denies_write` matches on the code and never on the sentence, which here contains both a version
+string and a URL.
+
+### 11.4 Two Core types the driver cannot bind
+
+Neither is a ClickHouse limitation.
+
+* **`LargeBinary`.** `clickhouse_connect.dbapi` does not define the `Binary` constructor PEP 249
+  requires. SQLAlchemy's bind processor calls it and gets `AttributeError: module
+  'clickhouse_connect.dbapi' has no attribute 'Binary'` before any statement is sent. ClickHouse
+  stores binary perfectly well; `String` holds arbitrary bytes.
+* **`Time`.** The column *is* created — `TIME` is a real type, stored as an integer number of
+  seconds — but a Python `time` reaches the server as the bare literal `14:30:00` where an `Int64`
+  was expected, and the insert fails to parse. A column that exists and refuses every value is worse
+  than one that does not exist.
+
+Both are recorded on the backend as `unstorable_column_types()`. That axis also absorbed Oracle's
+"no time-of-day type", which had been a literal dialect-name branch in a test fixture — the one place
+standing instruction 1 says a dialect fact may never be stated.
+
+### 11.5 `readonly=1` is the whole read-only guarantee, because there is no floor beneath it
+
+Every other backend either refuses a write or declines to keep it. ClickHouse does neither: with no
+transactions there is nothing to leave uncommitted, and an `INSERT` sent through a read connection is
+simply applied — measured, and the row was still there on the next connection.
+
+`readonly=1` carried in the URL supplies the posture the database has no other way to hold. Measured
+against the container: it refuses `INSERT` **and** `CREATE TABLE` with code 164, `SELECT` continues
+to work, and the orphan table did not land. `readonly=2` behaves identically for these.
+
+Two consequences worth stating plainly:
+
+* **`ddl_survives_refusal()` is `False` here**, and ClickHouse is therefore *stronger* than Oracle on
+  this axis despite having no transactions at all. The refusal happens before the statement runs, so
+  there is no caveat to carry.
+* **`read_only_query` now applies to a server URL, not only to a file.** `Backend.open` was building
+  both engines from the same URL and leaving the posture to the transactional floor. That was
+  adequate while every endpoint had one. A dialect that can be told read-only in the URL should be
+  told so however it was reached, and here the URL is the *only* place the posture can be stated.
+
+### 11.6 The index verb does not apply, and saying so is the answer
+
+Three separate things fail, and only the first is about syntax:
+
+1. `CREATE INDEX` without a `TYPE` is refused outright — code 80, `CREATE INDEX without TYPE is
+   forbidden`.
+2. What ClickHouse has instead is a **data-skipping** index
+   (`ALTER TABLE … ADD INDEX … TYPE minmax GRANULARITY 1`, which does work). It prunes granules that
+   cannot match. It is not a point lookup and offers no uniqueness — it does not answer the question
+   a caller asking for an index is asking.
+3. **The dialect reflects no indexes at all.** After creating one, `system.data_skipping_indices`
+   shows `('probe4_ix', 'minmax', 'salary')` while `get_indexes()` and a reflected `Table.indexes`
+   both return empty. So one created here could afterwards be neither listed by `info` nor found by
+   `drop`.
+
+Creating one anyway, under a name handed back to the caller, would produce an answer that reads as
+done and cannot be acted on. `build_index` therefore raises `UnsupportedOperation` naming what
+actually orders a ClickHouse table — the ordering key, chosen when the table is created — and
+`builds_indexes()` is `False` so the endpoint test asserts the refusal rather than skipping the case.
+
+### 11.7 What needed no override, which is the result that matters
+
+The seam generalised. Against nine overridable axes, ClickHouse needed six answers, and the ones it
+did **not** need are the point:
+
+| Axis | ClickHouse |
+|---|---|
+| `read_posture` | **generic** — the URL carries it |
+| `resident_bytes` | **generic** — `None`, a server holds nothing here |
+| `snapshot` | **generic** — refused, nothing local to write |
+| `storage_classes` | **generic** — real column types |
+| `read_only_query` | `readonly=1` |
+| `denies_write` | code 164 |
+| `column_type` | `Nullable(…)` |
+| `rename_table` | `RENAME TABLE` |
+| `build_index` | refused |
+| `table_options` | `MergeTree ORDER BY tuple()` |
+
+`ALTER TABLE … RENAME TO` is not merely unsupported: ClickHouse parses `ALTER TABLE … RENAME` as the
+start of `RENAME COLUMN` and fails at the `TO`, so the generic spelling produces a syntax error
+naming a clause the caller never wrote. `RENAME TABLE` is the statement, and it keeps case through
+the dialect's own preparer.
+
+Two axes are new, and both were added because ClickHouse has something no previous backend had rather
+than because it is awkward: `table_options()` (it has no default table engine, so the DDL does not
+fail at the database — it fails at compile time with nothing created) and `driver_errors()` (11.3).
+
+### 11.8 Not measured here
+
+`ORDER BY tuple()` means a loaded table has **no ordering key**, which is the honest default — a file
+has no natural key, and picking one would silently decide the physical layout and the primary index
+on the caller's behalf. What that costs on a large table, and whether a caller should be offered the
+choice, is unmeasured. The benchmark corpus in §10 has never been run against an endpoint.
+
+Nor is the no-auth case covered: ClickHouse's default posture is the `default` user with an empty
+password, and every endpoint here still uses one auth mode — username and password in the URL.
