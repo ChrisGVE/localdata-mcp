@@ -20,7 +20,9 @@ from pathlib import Path
 import foreign
 import pytest
 from sqlalchemy import Text, text
+from sqlalchemy.engine import make_url
 
+from endpoints import Unavailable
 from localdata_mcp.dialects import (
     BACKENDS,
     Backend,
@@ -196,3 +198,124 @@ def test_the_generic_file_open_carries_the_read_only_posture(tmp_path):
         assert "access_mode" not in writable.write.url.query
     finally:
         writable.dispose()
+
+
+def test_the_generic_url_open_carries_the_read_only_posture(tmp_path):
+    """A server URL is not a weaker claim on the posture than a file path is.
+
+    ``open_file`` has always carried :attr:`Backend.read_only_query`; ``open``
+    did not, and left the read engine to the transactional floor. That was
+    adequate only while every endpoint had a floor to stand on. ClickHouse has
+    no transactions, so the URL is the *only* place its posture can be stated —
+    and a dialect that can be told read-only in the URL should be told so
+    however it was reached.
+
+    Exercised on DuckDB rather than on ClickHouse because it needs no container:
+    the behaviour under test is generic, and picking the dialect that is
+    reachable from a file keeps it in the fast suite.
+    """
+    database = build_database(tmp_path / "warehouse.duckdb", dialect="duckdb")
+    engines = backend_for("duckdb").open(f"duckdb:///{database}", writable=True)
+    try:
+        # The read engine is told, and the write engine is not — writable is the
+        # absence of the posture on the writer, not a second code path.
+        assert engines.read.url.query["access_mode"] == "read_only"
+        assert "access_mode" not in engines.write.url.query
+    finally:
+        engines.dispose()
+
+
+def test_a_backend_with_nothing_to_say_leaves_the_url_alone(tmp_path):
+    """An empty ``read_only_query`` must add nothing, not an empty query string.
+
+    The generic floor is the whole guarantee for most dialects, and a URL that
+    gained a stray ``?`` on the way to the read engine would be a change to
+    every one of them for the benefit of none.
+    """
+    database = build_database(tmp_path / "plain.db")
+    engines = backend_for("postgresql").open(f"sqlite:///{database}", writable=True)
+    try:
+        assert engines.read.url == engines.write.url
+    finally:
+        engines.dispose()
+
+
+def test_an_endpoint_url_survives_a_hostile_password():
+    """The harness may not interpolate a credential into a URL. See issue #43.
+
+    A URL is parsed, not concatenated. Every character below moves a boundary:
+    ``@`` starts the host, ``/`` starts the path, ``?`` starts the query, ``#``
+    starts the fragment. Built by formatting, this password reaches the driver
+    as something else entirely and the harness connects somewhere nobody
+    configured.
+
+    The assertion is on the **parsed** value rather than on the rendered text,
+    because that is what the driver will act on — and it is what fails on the
+    formatted version, where ``make_url`` reads ``h@ck`` as a host.
+    """
+    import endpoints
+
+    hostile = "p@ss:w/rd?x#y"
+    built = endpoints._url(
+        "postgresql+psycopg",
+        username="us@r",
+        password=hostile,
+        port=15432,
+        database="testdb",
+    )
+
+    parsed = make_url(built)
+    assert parsed.password == hostile
+    assert parsed.username == "us@r"
+    assert parsed.host == endpoints.HOST
+    assert parsed.port == 15432
+    assert parsed.database == "testdb"
+
+
+def test_every_endpoint_builder_round_trips_its_own_credentials():
+    """The rule holds for all of them, so a new endpoint cannot quietly opt out.
+
+    ``tests/endpoints.py`` gains one builder per database as the backend
+    catalogue is worked through, and the obvious way to write the next one is to
+    copy the last. This sweeps the table rather than naming builders, so a
+    builder added later is covered the day it appears.
+    """
+    import endpoints
+
+    hostile = "p@ss:w/rd?x#y"
+    for endpoint in endpoints.ENDPOINTS:
+        environment = {
+            key: hostile
+            for key in (
+                "POSTGRES_PASSWORD",
+                "MYSQL_PASSWORD",
+                "MARIADB_PASSWORD",
+                "MSSQL_SA_PASSWORD",
+                "APP_USER_PASSWORD",
+                "CLICKHOUSE_PASSWORD",
+            )
+        }
+        environment.update(
+            {
+                key: "testuser"
+                for key in ("POSTGRES_USER", "MYSQL_USER", "MARIADB_USER", "APP_USER")
+            }
+        )
+        environment["CLICKHOUSE_USER"] = "testuser"
+        environment.update(
+            {
+                key: "testdb"
+                for key in ("POSTGRES_DB", "MYSQL_DATABASE", "MARIADB_DATABASE")
+            }
+        )
+        environment["CLICKHOUSE_DB"] = "testdb"
+
+        try:
+            built = endpoint.url(environment, 15432)
+        except Unavailable:
+            # Only MSSQL, and only where no ODBC driver is installed. The
+            # builder cannot be exercised without one, and that is a skip
+            # everywhere else in this harness too.
+            continue
+
+        assert make_url(built).password == hostile, endpoint.dialect

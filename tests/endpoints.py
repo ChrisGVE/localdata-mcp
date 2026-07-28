@@ -32,7 +32,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-from urllib.parse import quote
+
+from sqlalchemy.engine import URL
 
 COMPOSE = Path(__file__).resolve().parent.parent / "docker-compose.test.yml"
 
@@ -113,17 +114,57 @@ def _odbc_driver() -> str:
     )
 
 
+def _url(
+    drivername: str,
+    *,
+    username: str,
+    password: str,
+    port: int,
+    database: str | None = None,
+    query: dict[str, str] | None = None,
+) -> str:
+    """One endpoint URL, assembled from parts rather than formatted into text.
+
+    **Every builder below goes through here, and none of them may interpolate a
+    credential.** A URL is parsed, not concatenated: a password holding ``@``,
+    ``:``, ``/``, ``?`` or ``#`` is re-read as structure, and an ``@`` in
+    particular turns everything after it into a host — so the harness would
+    connect somewhere nobody configured, or fail naming a host nobody wrote.
+
+    ``URL.create`` takes each part as a **value** and renders whatever escaping
+    that part needs. This is the same defect, and the same remedy, as
+    ``Backend.open_file`` in :mod:`localdata_mcp.dialects`, whose docstring
+    records a path re-read as syntax. It bit nothing here only because the
+    compose file's passwords happen to hold no delimiter.
+    """
+    return URL.create(
+        drivername,
+        username=username,
+        password=password,
+        host=HOST,
+        port=port,
+        database=database,
+        query=query or {},
+    ).render_as_string(hide_password=False)
+
+
 def _postgres(env: dict[str, str], port: int) -> str:
-    return (
-        f"postgresql+psycopg://{env['POSTGRES_USER']}:{env['POSTGRES_PASSWORD']}"
-        f"@{HOST}:{port}/{env['POSTGRES_DB']}"
+    return _url(
+        "postgresql+psycopg",
+        username=env["POSTGRES_USER"],
+        password=env["POSTGRES_PASSWORD"],
+        port=port,
+        database=env["POSTGRES_DB"],
     )
 
 
 def _mysql(env: dict[str, str], port: int) -> str:
-    return (
-        f"mysql+pymysql://{env['MYSQL_USER']}:{env['MYSQL_PASSWORD']}"
-        f"@{HOST}:{port}/{env['MYSQL_DATABASE']}"
+    return _url(
+        "mysql+pymysql",
+        username=env["MYSQL_USER"],
+        password=env["MYSQL_PASSWORD"],
+        port=port,
+        database=env["MYSQL_DATABASE"],
     )
 
 
@@ -135,9 +176,12 @@ def _mariadb(env: dict[str, str], port: int) -> str:
     have diverged enough that being told which one is on the other end is worth
     more than sharing a name.
     """
-    return (
-        f"mariadb+pymysql://{env['MARIADB_USER']}:{env['MARIADB_PASSWORD']}"
-        f"@{HOST}:{port}/{env['MARIADB_DATABASE']}"
+    return _url(
+        "mariadb+pymysql",
+        username=env["MARIADB_USER"],
+        password=env["MARIADB_PASSWORD"],
+        port=port,
+        database=env["MARIADB_DATABASE"],
     )
 
 
@@ -150,11 +194,17 @@ def _mssql(env: dict[str, str], port: int) -> str:
     certificate is self-signed, hence ``TrustServerCertificate`` — Microsoft's
     driver 18 encrypts by default and would otherwise refuse the container
     outright. FreeTDS ignores the setting, which is harmless.
+
+    The driver name goes in as a query *value*: it holds spaces, and on some
+    machines it is an absolute path, neither of which may reach the URL as text.
     """
-    return (
-        f"mssql+pyodbc://sa:{quote(env['MSSQL_SA_PASSWORD'], safe='')}"
-        f"@{HOST}:{port}/master"
-        f"?driver={quote(_odbc_driver(), safe='')}&TrustServerCertificate=yes"
+    return _url(
+        "mssql+pyodbc",
+        username="sa",
+        password=env["MSSQL_SA_PASSWORD"],
+        port=port,
+        database="master",
+        query={"driver": _odbc_driver(), "TrustServerCertificate": "yes"},
     )
 
 
@@ -163,11 +213,16 @@ def _oracle(env: dict[str, str], port: int) -> str:
 
     ``FREEPDB1`` is the pluggable database the image creates and the one
     ``APP_USER`` is created in; the container's own root service would need
-    privileged credentials and holds nothing a test wants.
+    privileged credentials and holds nothing a test wants. It is named as a
+    query parameter rather than as the database, which is how the thin mode
+    distinguishes a service from a SID.
     """
-    return (
-        f"oracle+oracledb://{env['APP_USER']}:{env['APP_USER_PASSWORD']}"
-        f"@{HOST}:{port}/?service_name=FREEPDB1"
+    return _url(
+        "oracle+oracledb",
+        username=env["APP_USER"],
+        password=env["APP_USER_PASSWORD"],
+        port=port,
+        query={"service_name": "FREEPDB1"},
     )
 
 
@@ -180,9 +235,12 @@ def _clickhouse(env: dict[str, str], port: int) -> str:
     project. The port is the HTTP one — this dialect does not speak the native
     protocol on 9000, and only the port it speaks on is published.
     """
-    return (
-        f"clickhousedb://{env['CLICKHOUSE_USER']}:{env['CLICKHOUSE_PASSWORD']}"
-        f"@{HOST}:{port}/{env['CLICKHOUSE_DB']}"
+    return _url(
+        "clickhousedb",
+        username=env["CLICKHOUSE_USER"],
+        password=env["CLICKHOUSE_PASSWORD"],
+        port=port,
+        database=env["CLICKHOUSE_DB"],
     )
 
 
