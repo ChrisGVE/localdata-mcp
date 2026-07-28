@@ -1250,6 +1250,11 @@ fix and is also the seam every new format arrives through.
 
 ### 10.2 Loading dominates; everything else is comparatively cheap
 
+> **Re-measured in §10.7 (2026-07-28).** The timings below are single draws taken before the
+> harness could repeat a condition or record what the machine was doing. §10.7 supersedes them with
+> medians of three and a per-step spread. The **conclusion** of this section — that loading
+> dominates — survives; the absolute seconds do not, and the 149.6 s below is explained there.
+
 | Step | Wide (1M x 11) | Tall (10M x 5) |
 |---|---|---|
 | `attach` | **149.6 s** — 6,683 rows/s, 8.1 MB/s | **472.5 s** — 21,162 rows/s, 1.6 MB/s |
@@ -1268,6 +1273,9 @@ files**, so neither alone predicts a load.
 
 ### 10.3 Re-opening a saved database skips the work rather than doing it faster
 
+> **Re-measured in §10.7 (2026-07-28), and the conclusion held** — 67x for the wide file and 568x
+> for the tall, against the 46x and 787x below.
+
 3.2 s against 149.6 s (**46x**) for the wide file, 0.6 s against 472.5 s (**787x**) for the tall.
 
 §5.2 says an order-of-magnitude ratio is usually two different operations, and here it plainly is —
@@ -1280,6 +1288,10 @@ the concrete argument for `save` as a working habit rather than only an escape f
 the same operation with the same shape, which is the expected result and a useful negative.
 
 ### 10.4 An index pays for itself on the first join, not the second
+
+> **Re-measured in §10.7 (2026-07-28), and the conclusion held.** Every absolute number moved —
+> the index wins by 1.93x counting the build rather than 2.16x, and 14.2x afterwards rather than
+> 12.1x — but the ordering and the argument are unchanged.
 
 The tall file's `foreign_id` points into the wide file's `id`, and nothing declares it. Composed the
 way the surface intends — `create` lands the second table in the first's database, then ordinary SQL:
@@ -1334,3 +1346,143 @@ pages, which is §9.3's point restated at volume.
 
 Storage is close to parity throughout: wide 1.22 GB CSV → 1,305 MB resident → 1.37 GB saved
 database; tall 0.76 GB → 735 MB → 0.77 GB. Nothing expands or compresses meaningfully.
+
+### 10.7 The re-measurement — with repetitions, and with the conditions written down
+
+**Measured 2026-07-27/28 (session 40).** Everything above in §10 is a **single draw**. This section
+re-measures it as the **median of three repetitions of the whole condition**, at the server's own
+**100 MB default budget** — never disabled, so the slot spills and the arm is `disk`, which is the
+only arm comparable with an endpoint database (§5.2). Each step also records its own load average
+and the kernel's `Pageouts`/`Swapouts` differenced across it, so **a timing that includes paging
+says so instead of being explained afterwards.**
+
+**Read the spread before the number.** A per-step spread is max/min over the repetitions, and it is
+the bar any comparison has to clear: a format 1.3x faster in a step whose own spread is 1.4x has
+not been shown to be faster. The spread belongs to the pair being compared — the widest spread
+anywhere in a run is *not* a universal floor.
+
+#### Load and lifecycle
+
+| Step | Wide (1M x 11) | spread | Tall (10M x 5) | spread |
+|---|---|---|---|---|
+| `attach` | **107.3 s** | 1.23x | **261.0 s** | 1.24x |
+| `SELECT count(*)` — *includes the spill, see below* | 13.4 s | 1.35x | 7.5 s | 1.34x |
+| extract `SELECT *` to CSV | 56.8 s | 1.19x | 88.9 s | 1.29x |
+| `save` to a database file | 9.1 s | 1.31x | 5.3 s | 1.27x |
+| re-attach that saved file | 1.6 s | 3.03x | 0.5 s | 2.91x |
+
+**§10.2's `count(*)` of 1.15 s and this 13.4 s are not the same operation.** Relief is lazy —
+`relieve_memory` runs on the way *into* an operation — so at a spilling budget the count is the
+step the spill happens in, and the spill is inside its timing. §10.2's figure was a resident slot
+at a large budget. Neither number is wrong; the step is simply not a read-throughput baseline at a
+budget that spills, and it was described as one.
+
+**§10.2's unexplained 149.6 s no longer needs a code explanation.** Attach here spans 101.5–124.4 s
+and **every repetition paged** — the first pushed **626,278 pages (~2.4 GB) to swap** during the
+attach alone. A paging attach lands squarely in the 149.6 s range. The likeliest reading is now a
+measured mechanism rather than a guess, and **the `d4abba1b` A/B is probably unnecessary.**
+
+#### The format sweep
+
+Extract, then read the file back through `attach`. Every byte count reproduced **exactly** across
+repetitions except `.xlsx` and `.ods`, which embed a timestamp (that check is what caught §10.1's
+`.ods` defect).
+
+| | Wide extract | Wide read back | Tall extract | Tall read back |
+|---|---|---|---|---|
+| `.feather` | **19.0 s** | **74.8 s** | **55.9 s** | 218.1 s |
+| `.orc` | 22.5 s | 79.3 s | 61.0 s | **205.8 s** |
+| `.parquet` | 26.2 s | 79.1 s | 58.7 s | 208.4 s |
+| `.jsonl` | 39.2 s | 107.3 s | 110.9 s | 293.4 s |
+| `.json` | 40.3 s | 116.7 s | 130.5 s | 318.9 s |
+| `.csv` | 56.8 s | 111.0 s | 88.9 s | 290.4 s |
+| `.txt` | 57.1 s | 109.8 s | 83.7 s | 262.5 s |
+| `.tsv` | 57.6 s | 107.0 s | 88.5 s | 283.6 s |
+| `.xml` | 26.6 s | 132.9 s | — | — |
+| `.html` | 24.6 s | **refused** | — | — |
+| `.md` | 226.0 s | write-only | — | — |
+| `.xlsx` | 525.3 s | 580.9 s | — | — |
+
+**A columnar format is a large win on writing and a small one on reading, and the gap between
+those two is the result worth keeping.** Against CSV, on the same rows:
+
+| | Wide | Tall |
+|---|---|---|
+| extract | **2.2–3.0x faster** | **1.5–1.6x faster** |
+| read back | **1.40–1.48x faster** | **1.41x faster** |
+
+The read-back figure reproduces on both corpora, which is what makes it worth trusting. It is also
+the one that contradicts the obvious expectation: re-attaching Parquet does no text parsing at all
+and still costs 71% of re-attaching the CSV of the same rows. **Read-back is dominated by inserting
+rows into SQLite, not by decoding the file**, so choosing a columnar export buys much less on the
+load path than on the write path.
+
+The write advantage is a property of the *data*, not of the format: 3.0x on the wide corpus and
+1.6x on the tall. Wide carries a 1000-character text column, and serialising long text to CSV is
+exactly what a columnar writer avoids. Neither figure generalises without saying which corpus it
+came from.
+
+**HTML stops round-tripping at roughly 417,000 rows of 11 columns.** The export succeeds at 1M rows
+(24.6 s) and the read back is refused: at about `2 x columns + 2` document nodes per row, 1M rows is
+~24M nodes against libxml2's 10,000,000 ceiling. That is the improved message from `af95ce79`
+working — the same condition used to report only `"unknown error"`.
+
+#### The budget bounds the slot, not the process
+
+**Peak RSS reached 14.16 GB during the wide sweep, at a 100 MB budget, over a 1.22 GB source** —
+within 1.8 GB of the run's 16 GB abort ceiling. `.xlsx` alone held **12.9 GB** while writing.
+
+Nothing malfunctioned: the arm read `disk` throughout, so `relieve_memory` had spilled the slot
+exactly as designed. **The DataFrame a materialising writer builds is not the slot**, and the budget
+governs slot residency. This is §10.6's gap restated on the *write* side — §10.6 records that the
+load peak tracks the file and no configuration bounds it; the same is true of the export peak.
+Task 21 covers the read side. Whether the export path should be admitted against the budget is a
+design question, not a defect in what the budget claims to do.
+
+#### The two arms, and what spilling actually costs
+
+The same wide corpus at a **4,000 MB** budget, where the slot stays resident, against the 100 MB
+budget above, where it spills. Both are bounded — §5.2's rule is that a local slot is only
+comparable with an endpoint database when it is on disk, not that the resident arm may go
+unmeasured.
+
+| Step | Disk arm (100 MB) | spread | Resident arm (4 GB) | spread | shown? |
+|---|---|---|---|---|---|
+| `attach` | 107.3 s | 1.23x | 80.5 s | 1.17x | 1.33x — **yes** |
+| `SELECT count(*)` | 13.4 s | 1.35x | **0.54 s** | 1.14x | **24.9x — yes** |
+| extract → csv | 56.8 s | 1.19x | 44.6 s | 1.03x | 1.27x — **yes** |
+| read back csv | 111.0 s | 1.24x | 87.8 s | 1.05x | 1.26x — marginal |
+| extract → parquet | 26.2 s | 1.15x | 23.0 s | 1.02x | 1.14x — **no** |
+| read back parquet | 79.1 s | 1.33x | 73.3 s | 1.05x | 1.08x — **no** |
+| `save` | 9.1 s | 1.31x | 7.6 s | 1.08x | 1.19x — no |
+
+**Spilling costs a one-off spill and roughly a quarter on the operations after it** — and on the
+Parquet steps the difference does not clear its own noise, so it is recorded as not shown rather
+than as a small effect. The `count(*)` column is the spill itself, and 0.54 s is where §10.2's
+1.15 s belongs: a resident slot answering a cheap aggregate.
+
+**The more useful result is in the spread column.** On the resident arm the spreads collapse to
+**1.02–1.17x**, against 1.15–1.35x on the disk arm, and only **3 of 27 steps paged** against **32 of
+63**. The variance §10 has been carrying since session 35 — the ±25% band, the 1.50x within-condition
+span, the "unattributed speedup" of session 39 — **is very largely the machine paging, not the code
+varying.** Measure on an arm that does not page and the same operations reproduce to a few percent.
+
+#### The conclusions of §10.3 and §10.4 survive re-measurement
+
+Re-opening a saved database still skips the work rather than doing it faster: **107.3 s → 1.6 s**
+(67x) for the wide file, **261.0 s → 0.5 s** (568x) for the tall. `create(type="table")` reading the
+10M-row file cost **231.3 s** against `attach`'s 261.0 s — 0.89x, where §10.3 measured 1.11x. Both
+sit either side of 1.0, which is the point: it is the same operation with the same shape.
+
+The index still pays for itself on the first join:
+
+| | s40 (median of 3) | spread | §10.4 |
+|---|---|---|---|
+| Join, no index | 31.4 s | 1.12x | 124.8 s |
+| Build index on `tall.foreign_id` | 14.1 s | 1.24x | 47.4 s |
+| Join, indexed | 2.2 s | 2.37x | 10.3 s |
+
+14.1 + 2.2 = 16.3 s against 31.4 s, so the index wins by **1.93x counting the build** (§10.4 said
+2.16x) and by **14.2x on every join after** (§10.4 said 12.1x). Every absolute number moved and
+**both conclusions held**, which is the useful part: the ordering in §10 was never the fragile
+thing, the absolute seconds were.
