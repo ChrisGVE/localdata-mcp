@@ -1053,7 +1053,8 @@ record: **9.04 → 0.17 MB** at 50,000 rows, **35.80 → 0.17 MB** at 200,000, *
 a top-level sequence dumped in pieces concatenates into the same sequence, byte for byte. It cost
 540 MB at 200,000 rows before and 2.46 MB after. **It remains by far the slowest writer**: 90.9 s
 against `.csv`'s 2.4 s on the same result, which is PyYAML serialising rather than anything about
-the peak, and which puts a million rows at roughly eight minutes.
+the peak. Confirmed at the full 1M × 11 corpus, where it writes 1.39 GB in **237.6 s adding no
+measurable RSS over its baseline** — the size at which the old writer held gigabytes (§10.7).
 
 So the group boundary now falls at **eleven streaming suffixes and six materialising ones**
 (`.md` `.parquet` `.feather` `.orc` `.xlsx` `.ods`), and each of the six is deliberate:
@@ -1475,7 +1476,25 @@ reading" argument to bound it with.
 > **Decided 2026-07-28: no cap, and the writer streams instead.** The write side was the half
 > this server controls, and it is now bounded — `_write_yaml` dumps a chunk at a time, byte-for-byte
 > what one dump would have written, holding **2.46 MB at 200,000 rows where it held 540 MB**
-> (§9.2). **A cap was considered and rejected.** The spreadsheet argument does not transfer: 65,535
+> (§9.2).
+>
+> **Re-run on this same corpus and budget** (`tmp/perf/probe_streamed_export.py`, 1M × 11,
+> 100 MB budget), with `.csv` alongside as the control for what "streaming" looks like here:
+>
+> | | Rows | Seconds | File | Peak RSS over the step's baseline |
+> |---|---|---|---|---|
+> | `.csv` | 1,000,000 | 55.5 s | 1.21 GB | **+0 MB** |
+> | `.yaml` | 1,000,000 | **237.6 s** | 1.39 GB | **+0 MB** |
+>
+> **The memory result is the clean one**: where the old writer held ~5.4 GB (§9.2) the new one adds
+> nothing measurable over the baseline it started the step at, on the corpus that used to defeat it.
+> **The 1,619 s → 238 s is not clean and must not be quoted as a 6.8x code speedup** — the earlier
+> figure was drawn from a sweep in which steps paged (§10.7's opening), so the gap mixes the writer
+> change with the conditions it was measured under. What can be said is that both the peak and the
+> wall clock moved in the same direction and that YAML is still, by a wide margin, the slowest
+> writer here: 237.6 s against `.csv`'s 55.5 s on the identical result.
+>
+> **A cap was considered and rejected.** The spreadsheet argument does not transfer: 65,535
 > is the older worksheet's own limit and a spreadsheet is a thing a person opens, whereas YAML has
 > no such number and is read by programs as often as by people. Inventing a bound for it would have
 > been an arbitrary refusal dressed as a format fact.
