@@ -1889,3 +1889,89 @@ one statement at a time. Nothing here says how the server behaves when Cockroach
 retryable error (`40001`), which is the failure mode a real deployment meets and which no other
 backend in this harness produces. That is unmeasured, and it is the one thing about this dialect
 worth measuring later.
+
+## §13 — TiDB, and the assumption underneath `BACKENDS` (2026-07-28)
+
+Third from the backend catalogue, and the first that was **backed out rather than taken**. Nothing
+about TiDB is committed: no compose service, no URL builder, no `ENDPOINTS` entry. What follows is
+measured, and it is recorded because the measurement is about the *seam* rather than about TiDB.
+
+The worklist predicted this one would need no subclass and that the absence would be the finding.
+The opposite happened, and it is a better finding.
+
+### 13.1 TiDB refuses the statement MySQL's read-only posture is built on
+
+TiDB has no SQLAlchemy dialect of its own — PingCAP's documentation says to connect with
+`mysql+pymysql`, and there is no `sqlalchemy-tidb` on PyPI. So `backend_for("mysql")` returns
+`MySQLBackend`, which opens a read-only session on every read connection. TiDB will not:
+
+```
+pymysql.err.NotSupportedError: SET SESSION TRANSACTION READ ONLY has only noop
+implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+```
+
+The statement runs in a `connect` event listener, so this is not a degraded read posture — **every**
+connection fails and `attach` fails outright. 16 of 18 endpoint tests never get past the fixture.
+
+**The workaround the error suggests fails open, and must not be used.** `tidb_enable_noop_functions`
+does not implement the statement; it makes it a *no-op*. Enabling it buys a successful attach and a
+read-only posture that silently does nothing — the exact shape §11.2, §5 and the memory-admission
+work all record this project being bitten by. A guarantee that reports itself as installed and
+enforces nothing is worse than one that refuses.
+
+### 13.2 The shape TiDB wants already exists, and cannot be reached
+
+Measured directly against `pingcap/tidb:latest` (v7.5.1):
+
+| | TiDB |
+|---|---|
+| DDL survives an uncommitted transaction | **yes** |
+| DML rows surviving an uncommitted insert | **0** |
+
+So TiDB wants precisely **Oracle's shape**: keep the generic transactional floor, which holds for
+DML, and answer `ddl_survives_refusal() == True`, because a `CREATE` through `query` really does
+land and the refusal has to say so.
+
+That shape is already in the seam. It is simply unreachable — MySQL and TiDB both resolve to
+`MySQLBackend`, which installs a posture TiDB rejects and answers `ddl_survives_refusal() == False`,
+the opposite of the truth.
+
+### 13.3 The assumption, stated plainly
+
+`BACKENDS` is keyed by SQLAlchemy dialect name and `backend_for()` resolves on it. That encodes:
+
+> a dialect name identifies the engine on the other end
+
+**It does not.** A dialect names a *wire protocol and a driver*, and several engines answer on each.
+This is the production-code twin of the harness defect fixed at `d7cb14d8`, where the probe cache
+and the pytest ids made the same wrong assumption and would have run one container's suite under
+another container's name.
+
+It is a tier of the worklist rather than one database. TiDB and OceanBase inherit `MySQLBackend`,
+which carries real engine-specific behaviour, and that is where it breaks. YugabyteDB, Greenplum and
+OpenGauss inherit the *generic* `Backend` and are probably unaffected — which is not a guess but the
+CockroachDB result from §12 read forward: a different engine on PostgreSQL's wire needed nothing,
+because PostgreSQL itself needs nothing.
+
+The decision this needs — whether to resolve a backend by asking the server what it is, which
+requires a connection *before* the backend is chosen and so inverts the current
+`backend_for` → `open` order — is issue #45 and task 24. It was not made here, because making it
+silently mid-worklist is how an architecture drifts.
+
+One thing worth doing whichever way that goes: a read posture that cannot be installed should reach
+the caller as "this datasource cannot be opened read-only" rather than as the driver's own sentence
+about noop functions.
+
+### 13.4 An operational limit, found the hard way
+
+Running eight containers at once had CockroachDB **killed** by the Docker VM:
+
+```
+WARNING: disk slowness detected: unable to sync log files within 10s
+/cockroach/cockroach.sh: line 265: 59 Killed "${start_node_query[@]}"
+```
+
+The endpoint suite went from 1m25s to 6m02s with ten failures and ten errors, none of which were
+code. The catalogue is approaching what this machine holds concurrently, and a worklist with sixteen
+entries will not fit at all — containers will need bringing up per-dialect rather than all at once.
+Recorded because a killed container looks exactly like a broken commit until the logs are read.
