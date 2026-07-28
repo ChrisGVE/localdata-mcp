@@ -753,56 +753,6 @@ def _read_workbook(path: Path) -> ReadResult:
     return ReadResult(tables)
 
 
-def _read_html(path: Path) -> ReadResult:
-    """Every table on the page.
-
-    HTML gives its tables no names, so they are numbered — ``page``,
-    ``page_2``, ``page_3`` — after the file. A page usually holds one table and
-    then the bare name is enough; a page holding several is the case the numbers
-    exist for, and loading only the first would be the workbook mistake again.
-    """
-    _require("lxml", "html", "Reading HTML")
-    from lxml import etree
-
-    try:
-        # `flavor` pinned: left unset, pandas falls through to html5lib when lxml
-        # finds no table, and the caller is told to install html5lib rather than
-        # that the page has no table on it.
-        found = pd.read_html(path, flavor="lxml")
-    except ValueError as exc:
-        # pandas says "No tables found", which does not name the file.
-        raise LoadError(f"Could not read {path.name}: no table on the page.") from exc
-    except etree.XPathEvalError as exc:
-        # libxml2 says, in full, "unknown error". Measured cause: pandas locates
-        # tables with `//table`, and libxml2 abandons an XPath evaluation that
-        # traverses more than XPATH_MAX_NODES — 10,000,000, exactly. A row costs
-        # about `2 * columns + 2` nodes, so the ceiling is ~1,230,000 rows at
-        # three columns and ~400,000 at eleven. Above it every HTML file fails
-        # this way, whatever its size in bytes.
-        #
-        # Worth naming rather than passing through, because the failure is at
-        # the far end of a round trip this server will happily make: it *writes*
-        # an HTML table of any size, and cannot read that one back.
-        raise LoadError(
-            f"Could not read {path.name}: it holds more than the 10,000,000 "
-            f"document nodes lxml will search for a table (roughly "
-            f"2 x columns + 2 per row). The file is not damaged and nothing is "
-            f"wrong with the table — HTML is a presentation format and this one "
-            f"is too large to parse back. Ask for the same result as .parquet, "
-            f".csv or .jsonl, none of which have this limit."
-        ) from exc
-    except Exception as exc:
-        raise LoadError(f"Could not read {path.name}: {exc}") from exc
-
-    stem = path.stem
-    return ReadResult(
-        tuple(
-            NamedFrame(frame, stem if index == 0 else f"{stem}_{index + 1}")
-            for index, frame in enumerate(found)
-        )
-    )
-
-
 def _read_numbers(path: Path) -> ReadResult:
     """Apple Numbers, whose sheets each hold their own named tables.
 
@@ -1127,8 +1077,6 @@ READERS: dict[str, Reader] = {
     ".xls": _read_workbook,
     ".ods": _read_workbook,
     ".numbers": _read_numbers,
-    ".html": _read_html,
-    ".htm": _read_html,
 }
 
 #: The formats a delimiter means anything for. Everything else carries its own
@@ -1805,8 +1753,8 @@ class Workspace:
         result being written to a file. ``query`` already streamed from the
         driver, but it then built a list of every row and handed *that* to the
         writer, so a result on its way to disk existed twice — once as a list of
-        tuples, and again in whatever the writer itself builds. Eleven of the
-        seventeen export suffixes write row by row and need neither copy.
+        tuples, and again in whatever the writer itself builds. Nine of the
+        fifteen export suffixes write row by row and need neither copy.
 
         ``query`` is this method plus a ``list`` rather than the two sharing
         copied code: one read path, and one place where the read-only posture

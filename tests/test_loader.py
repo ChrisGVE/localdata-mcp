@@ -1042,7 +1042,7 @@ def test_a_columnar_file_that_is_not_one_is_refused_by_name(workspace, root):
 
 
 # ---------------------------------------------------------------------------
-# Spreadsheets and HTML — the formats that hold more than one table
+# Spreadsheets — the formats that hold more than one table
 # ---------------------------------------------------------------------------
 
 
@@ -1091,31 +1091,6 @@ def test_an_ods_workbook_reads_like_any_other(workspace, root):
     assert [info.name for info in landed] == ["staff", "departments"]
 
 
-def test_every_table_on_an_html_page_is_loaded(workspace, root):
-    """A page's tables are numbered, because HTML gives them no names."""
-    landed = workspace.load_file(str(root / "tables.html"), "main")
-
-    assert len(landed) == 2
-    assert [info.row_count for info in landed] == [3, 2]
-
-
-def test_a_page_with_one_table_needs_no_number(workspace, root):
-    (info,) = workspace.load_file(str(root / "one_table.html"), "main")
-    assert info.name == "one_table"
-    assert info.row_count == 3
-
-
-def test_html_round_trips_through_the_export(workspace, root):
-    workspace.load_file(str(root / "one_table.html"), "main")
-    columns, rows = workspace.query("main", "SELECT * FROM one_table ORDER BY name")
-    target = root / "again.html"
-
-    export_module.export_rows(columns, rows, str(target))
-    (reloaded,) = workspace.load_file(str(target), "main", table_name="reloaded")
-
-    assert reloaded.row_count == 3
-
-
 def test_xlsx_round_trips_through_the_export(workspace, root):
     workspace.load_file(str(root / "one_sheet.xlsx"), "main")
     columns, rows = workspace.query(
@@ -1130,51 +1105,32 @@ def test_xlsx_round_trips_through_the_export(workspace, root):
     assert back == rows
 
 
-def test_a_page_with_no_table_is_refused(workspace, root):
-    target = root / "prose.html"
-    target.write_text("<html><body><p>No tables here at all.</p></body></html>")
+def test_html_is_not_a_format_this_server_knows(workspace, root):
+    """Dropped from both registries on 2026-07-28, so it must be gone from both.
 
-    with pytest.raises(LoadError, match="no table"):
-        workspace.load_file(str(target), "main")
+    HTML was the one suffix that broke the round-trip property the overlap
+    between the two registries is supposed to mean: it wrote a table of any size
+    and could not read back past lxml's 10,000,000-node XPath ceiling — roughly
+    417,000 rows of eleven columns. What it wrote was a bare ``<table>``
+    fragment rather than a document, so it was not much use to a person either,
+    and ``.md`` already covers a result meant for reading.
 
-
-@pytest.mark.slow
-def test_an_html_table_too_large_to_parse_says_so_instead_of_unknown_error(
-    workspace, root
-):
-    """lxml's own words for this are, in full, "unknown error".
-
-    Measured: pandas locates tables with ``//table``, and libxml2 abandons an
-    XPath evaluation past ``XPATH_MAX_NODES`` — 10,000,000, exactly. 1,230,000
-    three-column rows parse; 1,250,000 do not. A row costs about
-    ``2 * columns + 2`` nodes, which is why the wide benchmark corpus (1M x 11)
-    fails at a quarter of that row count.
-
-    Marked slow because the file has to be genuinely over the limit — there is
-    no smaller input that produces this failure, and a mocked one would test the
-    mock. The refusal is what matters: this server will *write* an HTML table of
-    any size and cannot read that one back, so the far end of a round trip it
-    offers has to say what happened and name a format that works.
+    A file it cannot read is refused by name and the refusal lists what it does
+    take, which is the same answer any unknown suffix gets — there is nothing
+    special about this one now.
     """
-    target = root / "enormous.html"
-    cells = "".join(f"<td>v{column}</td>" for column in range(3))
-    with target.open("w") as handle:
-        handle.write(
-            "<table>\n<thead><tr><th>a</th><th>b</th><th>c</th></tr></thead>\n"
-        )
-        handle.write("<tbody>\n")
-        for _ in range(1_300_000):
-            handle.write(f"<tr>{cells}</tr>\n")
-        handle.write("</tbody>\n</table>\n")
+    assert ".html" not in loader_module.READERS
+    assert ".htm" not in loader_module.READERS
+    assert ".html" not in export_module.WRITERS
+    assert ".htm" not in export_module.WRITERS
 
-    with pytest.raises(LoadError) as raised:
-        workspace.load_file(str(target), "main")
+    page = root / "page.html"
+    page.write_text("<table><tr><th>a</th></tr><tr><td>1</td></tr></table>")
+    with pytest.raises(LoadError, match="No reader for '.html'"):
+        workspace.load_file(str(page), "main")
 
-    message = str(raised.value)
-    assert "10,000,000" in message
-    assert "unknown error" not in message
-    # It names a way out, rather than only refusing.
-    assert ".parquet" in message
+    with pytest.raises(export_module.ExportError, match="No writer for '.html'"):
+        export_module.export_rows(["a"], [(1,)], str(root / "out.html"))
 
 
 def test_apple_numbers_is_read_without_its_empty_grid(workspace, root):

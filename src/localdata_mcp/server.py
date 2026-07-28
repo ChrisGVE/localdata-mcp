@@ -454,7 +454,7 @@ def attach(
     Args:
         database: A tabular file (.csv, .tsv, .txt, .json, .jsonl,
             .ndjson, .xml, .yaml, .yml, .fwf, .parquet, .feather, .orc,
-            .xlsx, .xlsm, .xls, .ods, .numbers, .html, .htm), a
+            .xlsx, .xlsm, .xls, .ods, .numbers), a
             SQLite database file, or a database URL.
         nickname: The name this datasource answers to — pass it to every later
             call. Derived from the filename when omitted. If it collides with a
@@ -615,7 +615,7 @@ def query(
         path: Write the full result to this file instead of returning rows. The
             suffix chooses the format (.csv, .tsv, .txt, .json,
             .jsonl, .ndjson, .xml, .yaml, .yml, .md, .parquet, .feather, .orc,
-            .xlsx, .ods, .html, .htm);
+            .xlsx, .ods);
             one this server cannot
             write is refused by name rather than written as something else.
             For a very large result the suffix is worth choosing rather than
@@ -661,8 +661,8 @@ def query(
         # A result bound for a file is never assembled. `query_stream` holds the
         # cursor open for as long as the writer is pulling from it, so the rows
         # go from the database to the disk without a list of them existing —
-        # which for the eleven suffixes that write row by row means the peak
-        # does not move with the size of the result.
+        # which for the nine suffixes that write row by row means the peak does
+        # not move with the size of the result.
         try:
             with registry.query_stream(nickname, sql) as (columns, rows):
                 result = export_rows(

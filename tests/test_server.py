@@ -483,8 +483,6 @@ FORMAT_MARKS = {
     ".jsonl": (None, lambda p: json.loads(p.read_bytes().splitlines()[0])),
     ".ndjson": (None, lambda p: json.loads(p.read_bytes().splitlines()[0])),
     ".xml": (None, lambda p: p.read_bytes().lstrip()[:5] == b"<?xml"),
-    ".html": (None, lambda p: b"<table>" in p.read_bytes()),
-    ".htm": (None, lambda p: b"<table>" in p.read_bytes()),
     ".md": (None, lambda p: b"|" in p.read_bytes()),
     ".yaml": ("yaml", lambda p: p.read_bytes().lstrip()[:1] in (b"-", b"[")),
     ".yml": ("yaml", lambda p: p.read_bytes().lstrip()[:1] in (b"-", b"[")),

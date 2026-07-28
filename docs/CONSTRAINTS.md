@@ -980,6 +980,8 @@ buffer.
 > peak whatever the row count. What survives is the *reasoning* — a bound that is real and measures
 > the wrong thing — and the six suffixes that still materialise because their format requires it.
 > The corrected numbers are the second table below; the tables above it are what was true before.
+> Both tables still name `.html` and `.htm`, which were dropped from the catalogue later the same
+> day (§10.7); nothing else about the measurement changes.
 
 `query(path=…)` is the documented route for a result that "does not belong in an answer". It is
 accurate about the *answer*, and an agent may not infer more than it says — because the rows are
@@ -1038,7 +1040,6 @@ tool function itself, four columns of mixed int/text/float:
 | `.jsonl` `.ndjson` | 0.05 MB | 0.05 MB | 1.01× | 9.2 |
 | `.json` | 0.05 MB | 0.05 MB | 1.01× | 9.3 |
 | `.xml` | 0.05 MB | 0.06 MB | 1.00× | 4.3 |
-| `.html` `.htm` | 0.07 MB | 0.07 MB | 1.00× | 4.2 |
 | `.yaml` `.yml` | 3.13 MB | 2.46 MB | 0.79× | 90.9 |
 | `.md` | 36.42 MB | 144.19 MB | **3.96×** | 22.8 |
 | `.parquet` | 13.12 MB | 52.89 MB | **4.03×** | 1.8 |
@@ -1056,8 +1057,11 @@ against `.csv`'s 2.4 s on the same result, which is PyYAML serialising rather th
 the peak. Confirmed at the full 1M × 11 corpus, where it writes 1.39 GB in **237.6 s adding no
 measurable RSS over its baseline** — the size at which the old writer held gigabytes (§10.7).
 
-So the group boundary now falls at **eleven streaming suffixes and six materialising ones**
-(`.md` `.parquet` `.feather` `.orc` `.xlsx` `.ods`), and each of the six is deliberate:
+So the group boundary now falls at **nine streaming suffixes and six materialising ones**
+(`.md` `.parquet` `.feather` `.orc` `.xlsx` `.ods`), and each of the six is deliberate.
+(The measurements above were taken while `.html` and `.htm` were still in the catalogue; they
+streamed, at 0.07 MB flat, and were removed later the same day for a reason unrelated to their
+peak — see §10.7.)
 
 * the **columnar three** must have every value before they write any of it, because a columnar file
   stores each column contiguously. They are also the fastest and the most compact writers here, and
@@ -1279,6 +1283,12 @@ fix and is also the seam every new format arrives through.
 > **Real ODS costs about thirteen times what the workbook did**, which is the measure of how much
 > was being skipped: 50,000 rows extracted in **156.2 s** against **11.8 s**, and read back in
 > **66.3 s** against **13.4 s**. Any ODS timing recorded before `813920f5` is a timing of XLSX.
+>
+> **Corrected again 2026-07-28: `.html` and `.htm` were removed from both registries**, so the
+> counts above now read **18 suffixes across 9 readers** and **15 across 8 writers**, and the
+> overlap is **fourteen**. The round-trip property is stated the same way and is now true without
+> the exception HTML had always been — it wrote a table of any size and could not read back past
+> ~417,000 rows of eleven columns (§10.7). The reasoning is in `LEVEL0.md`.
 
 > **The timings below carry a wide environmental variance, measured 2026-07-27.** They were
 > taken in a single pass, and a later run of the same steps came out 2–3x faster, which was
@@ -1569,6 +1579,17 @@ came from.
 (24.6 s) and the read back is refused: at about `2 x columns + 2` document nodes per row, 1M rows is
 ~24M nodes against libxml2's 10,000,000 ceiling. That is the improved message from `af95ce79`
 working — the same condition used to report only `"unknown error"`.
+
+> **Resolved 2026-07-28 by removing the format.** This measurement is what settled it: HTML was the
+> only suffix in the catalogue that would write a file the server could not read back, so it was the
+> only one breaking the round-trip property the reader/writer overlap is supposed to state. The
+> writer also produced a bare `<table>` fragment rather than a document, leaving it worse than `.md`
+> for a person and worse than `.csv` for a program. Capping the writer at the node ceiling was
+> considered — the bound is computable, `10,000,000 / (2 x columns + 2)`, and would have scaled with
+> column count rather than guessing a row count. **Both sides were dropped instead**, on Chris's
+> call: a reader kept for inputs that are rarely table-shaped documents was earning its place by
+> history rather than by use. lxml was its only dependency, and the `html` extra went with it. The
+> catalogue is now **18 read, 15 written, 14 both**.
 
 #### The budget bounds the slot, not the process
 

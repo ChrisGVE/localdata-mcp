@@ -61,8 +61,9 @@ dependencies = [
 #
 # Quote the brackets — `[` and `]` are glob characters in zsh.
 #
-# There is no `xml` extra: the stdlib ElementTree parser proved sufficient, so
-# lxml is needed only to *read* HTML.
+# There is no `xml` extra: the stdlib ElementTree parser proved sufficient. Nor
+# is there an `html` one any more — HTML was dropped from both registries on
+# 2026-07-28, and lxml was the only thing that needed it.
 [project.optional-dependencies]
 dev = [
   "pytest>=6.0.0",
@@ -71,7 +72,6 @@ dev = [
 # -- formats ---------------------------------------------------------------
 yaml = ["PyYAML>=6.0"]
 markdown = ["tabulate>=0.9"]
-html = ["lxml>=4.9"]
 excel = ["openpyxl>=3.1"]
 xls = ["xlrd>=2.0"]
 ods = ["odfpy>=1.4"]
@@ -88,7 +88,7 @@ oracle = ["oracledb>=2.0"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
-  "localdata-mcp[yaml,markdown,html,excel,xls,ods,numbers,parquet]",
+  "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
   "localdata-mcp[duckdb,postgres,mysql,mssql,oracle]",

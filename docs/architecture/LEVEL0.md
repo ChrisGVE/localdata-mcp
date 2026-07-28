@@ -21,11 +21,12 @@ datasource and the SQL addresses tables inside it by their own names; putting tw
 datasources together is `create`, which copies one into the other so the join is an
 ordinary statement.
 
-**A file may hold more than one table, and all of them land.** Sheets in a workbook and
-tables on an HTML page are the cases that force it. Reading the first and ignoring the
-rest would leave data that is present in the file unreachable through the server — the
-same silent loss as dropping a value — so the datasource, being a database, holds every
-table the file had, under the names the file gave them.
+**A file may hold more than one table, and all of them land.** Sheets in a workbook are
+the case that forces it — a `.numbers` document and a JSON file carrying several arrays
+are the same shape. Reading the first and ignoring the rest would leave data that is
+present in the file unreachable through the server — the same silent loss as dropping a
+value — so the datasource, being a database, holds every table the file had, under the
+names the file gave them.
 
 That premise was already true of the registry. What level 0 changes is the *verbs*:
 they were file verbs wearing database names. Attach made a database, and after that you
@@ -179,7 +180,17 @@ of a writer works from columns and rows.
 | Structured | `.json` `.jsonl` `.ndjson` `.yaml` `.yml` `.xml` | same |
 | Spreadsheet | `.xlsx` `.xlsm` `.xls` `.ods` `.numbers` | `.xlsx` `.ods` |
 | Columnar | `.parquet` `.feather` `.orc` | same |
-| Web | `.html` `.htm` | same |
+
+> **`.html` and `.htm` were removed from both registries on 2026-07-28.** They had been a
+> "Web" group of their own. Reading them was defensible — a saved page is a real thing to
+> be handed — but writing them was not: the writer emitted a bare `<table>` fragment
+> rather than a document, so it served a person no better than `.md` and a program worse
+> than `.csv`. And it was **the one suffix that broke the round-trip property the overlap
+> between these two registries is supposed to mean** — it wrote a table of any size and
+> could not read back past lxml's 10,000,000-node XPath ceiling, about 417,000 rows of
+> eleven columns. Dropping both sides was chosen over capping the writer, because a format
+> kept only for a reader that a document-shaped input rarely satisfies is a format earning
+> its place by history. lxml was its only dependency and the `html` extra went with it.
 
 **The suffix chooses the format, and one with no writer is refused by name.** Writing CSV
 under a `.parquet` name was the defect this replaced: the file's name lied about its
