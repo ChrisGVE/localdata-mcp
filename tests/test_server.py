@@ -104,6 +104,25 @@ def test_the_surface_is_eight_verbs_each_with_a_description():
         assert by_name[name].inputSchema["properties"], name
 
 
+def test_the_shipped_skill_grants_exactly_the_tools_that_exist():
+    """The skill travels with the server, so its tool list is part of the surface.
+
+    It had drifted: the skill still granted ``add_table`` and ``drop_table``,
+    two verbs replaced by ``create`` and ``drop``, and granted nothing for
+    ``update`` at all — so the tools an agent was allowed to call and the tools
+    there are to call were three names apart, and nothing said so. An invariant
+    kept in prose is not kept.
+    """
+    skill = Path(__file__).parent.parent / "skills" / "data" / "local-data" / "SKILL.md"
+    granted = re.search(r"^allowed-tools:(.*)$", skill.read_text(), re.MULTILINE)
+    assert granted is not None, "the skill declares no allowed-tools"
+
+    names = granted.group(1).split()
+    prefix = "mcp__localdata__"
+    assert all(name.startswith(prefix) for name in names), names
+    assert {name[len(prefix) :] for name in names} == TOOLS
+
+
 def test_the_nickname_is_required_everywhere_it_routes():
     """It names the engine to execute against, so it cannot be optional."""
     by_name = {tool.name: tool for tool in listed_tools()}

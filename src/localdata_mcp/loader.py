@@ -1805,7 +1805,7 @@ class Workspace:
         result being written to a file. ``query`` already streamed from the
         driver, but it then built a list of every row and handed *that* to the
         writer, so a result on its way to disk existed twice — once as a list of
-        tuples, and again in whatever the writer itself builds. Eight of the
+        tuples, and again in whatever the writer itself builds. Eleven of the
         seventeen export suffixes write row by row and need neither copy.
 
         ``query`` is this method plus a ``list`` rather than the two sharing

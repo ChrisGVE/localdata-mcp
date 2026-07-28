@@ -974,6 +974,13 @@ buffer.
 
 ### 9.2 `path=` bounds the answer, not the peak
 
+> **Fixed 2026-07-28, and the section is kept for the shape of the finding.** The materialisation
+> this section measures is gone: `Workspace.query_stream` hands the writer the open cursor, so a
+> result bound for a file is never assembled, and eleven of the seventeen suffixes now hold a flat
+> peak whatever the row count. What survives is the *reasoning* — a bound that is real and measures
+> the wrong thing — and the six suffixes that still materialise because their format requires it.
+> The corrected numbers are the second table below; the tables above it are what was true before.
+
 `query(path=…)` is the documented route for a result that "does not belong in an answer". It is
 accurate about the *answer*, and an agent may not infer more than it says — because the rows are
 materialised in full by `Workspace.query` before `export_rows` ever sees them:
@@ -1015,6 +1022,55 @@ streaming format.**
 What does not exist for any of them is a way for `Workspace.query` to hand the writer an
 unmaterialised cursor. Closing that is a change to the read path, not a fix to the export — **open,
 and tracked as task 21**.
+
+#### The correction (2026-07-28) — the cursor reaches the writer
+
+`Workspace.query_stream` yields the column names and a lazy iterator over the open cursor;
+`query` is that method plus a `list`, so there is still one read path. `server.query` uses the
+streaming form when — and only when — `path=` is given.
+
+Peak Python allocation for the whole `query(path=…)` call, measured with `tracemalloc` through the
+tool function itself, four columns of mixed int/text/float:
+
+| Suffix | 50,000 rows | 200,000 rows | Growth for 4× the rows | 200,000 rows, seconds |
+|---|---|---|---|---|
+| `.csv` | 0.18 MB | 0.18 MB | 1.00× | 2.4 |
+| `.jsonl` `.ndjson` | 0.05 MB | 0.05 MB | 1.01× | 9.2 |
+| `.json` | 0.05 MB | 0.05 MB | 1.01× | 9.3 |
+| `.xml` | 0.05 MB | 0.06 MB | 1.00× | 4.3 |
+| `.html` `.htm` | 0.07 MB | 0.07 MB | 1.00× | 4.2 |
+| `.yaml` `.yml` | 3.13 MB | 2.46 MB | 0.79× | 90.9 |
+| `.md` | 36.42 MB | 144.19 MB | **3.96×** | 22.8 |
+| `.parquet` | 13.12 MB | 52.89 MB | **4.03×** | 1.8 |
+| `.feather` | 13.12 MB | 52.89 MB | **4.03×** | 1.7 |
+| `.orc` | 13.12 MB | 52.82 MB | **4.03×** | 1.7 |
+
+The same measurement on the CSV path before and after, so the size of what was removed is on the
+record: **9.04 → 0.17 MB** at 50,000 rows, **35.80 → 0.17 MB** at 200,000, **143.68 → 0.17 MB** at
+800,000. The old figure is the list of tuples, and it tracked the row count exactly.
+
+**YAML moved from the materialising group to the streaming one** by being dumped a chunk at a time —
+a top-level sequence dumped in pieces concatenates into the same sequence, byte for byte. It cost
+540 MB at 200,000 rows before and 2.46 MB after. **It remains by far the slowest writer**: 90.9 s
+against `.csv`'s 2.4 s on the same result, which is PyYAML serialising rather than anything about
+the peak, and which puts a million rows at roughly eight minutes.
+
+So the group boundary now falls at **eleven streaming suffixes and six materialising ones**
+(`.md` `.parquet` `.feather` `.orc` `.xlsx` `.ods`), and each of the six is deliberate:
+
+* the **columnar three** must have every value before they write any of it, because a columnar file
+  stores each column contiguously. They are also the fastest and the most compact writers here, and
+  the right destination for a large result;
+* the **two workbooks** are capped at 65,535 rows (§10.7), so their peak is bounded by the cap;
+* **`.md`** builds a list of lists and one string, because a Markdown table's column widths are not
+  known until the last row has been seen. It is the most expensive per row of anything measured —
+  144 MB for 200,000 rows — and it is a format for putting a small result in a document. **No cap
+  has been set on it**: nothing has failed there, and the number above is on the record so the
+  question can be settled with evidence rather than by analogy to the spreadsheets.
+
+**The read path still materialises**, and that is the other half of task 21: `read_file` builds the
+whole pandas frame before a row is inserted (§10.6). A very large YAML this server writes is
+therefore one it may not be able to read back — the cliff belongs to loading, not to YAML.
 
 ### 9.3 Two memory dimensions, and the budget is on only one of them
 
@@ -1340,7 +1396,10 @@ Peak RSS **~3.0 GB**, against a 1.22 GB source. The load is the peak, not the ex
 builds the whole pandas frame before a single row is inserted, so the load peak tracks the *file*
 and no chunk size bounds it (§3.2a bounds the *insert*, which is a later step). **This is the read
 side of §9.2's gap and is tracked as task 21** — the memory budget bounds resting pages, not either
-transient peak, so no configuration closes it. Residency afterwards
+transient peak, so no configuration closes it. **The export side of that gap was closed on
+2026-07-28** (§9.2); this side is what is left of the task, and it is the larger half: every reader
+produces a whole frame, so it is the loading of a large file — not the writing of one — that now
+sets the peak. Residency afterwards
 is far smaller — 1,305 MB for the wide file, 735 MB for the tall — because that measures SQLite
 pages, which is §9.3's point restated at volume.
 
@@ -1413,6 +1472,22 @@ records was already known to be 20+ minutes; the read side is the new part. **YA
 no decision behind it yet** — unlike the spreadsheets below, there is no "it is a format for
 reading" argument to bound it with.
 
+> **Decided 2026-07-28: no cap, and the writer streams instead.** The write side was the half
+> this server controls, and it is now bounded — `_write_yaml` dumps a chunk at a time, byte-for-byte
+> what one dump would have written, holding **2.46 MB at 200,000 rows where it held 540 MB**
+> (§9.2). **A cap was considered and rejected.** The spreadsheet argument does not transfer: 65,535
+> is the older worksheet's own limit and a spreadsheet is a thing a person opens, whereas YAML has
+> no such number and is read by programs as often as by people. Inventing a bound for it would have
+> been an arbitrary refusal dressed as a format fact.
+>
+> **What remains is the read side, and it is not a YAML defect.** `read_file` builds the whole
+> pandas frame before inserting a row, so the 16 GB is the load path (task 21's other half, §10.6);
+> YAML is simply the format that reaches it soonest, being the bulkiest on disk. Until that is
+> closed, a very large YAML this server writes is one it may not read back — **recorded here as a
+> documented cliff rather than papered over with a limit**. The 27 minutes is unchanged and is
+> PyYAML serialising, not memory: YAML remains the slowest writer by an order of magnitude, and
+> `.jsonl` is the format to ask for when the result is large and the shape is the same.
+
 #### Spreadsheets are capped, and measured at the cap
 
 `export.SPREADSHEET_ROW_LIMIT` **refuses more than 65,535 rows**, so timing a spreadsheet at a
@@ -1437,8 +1512,10 @@ the format, and it is only visible now: before §10.1's defect was fixed, `.ods`
 so every ODS timing this document ever carried was an XLSX timing. Uncapped, `.ods` crossed 16 GB
 about six minutes into the export without producing a file at all.
 
-`.xlsx`, `.ods` and `.yaml` are three of the eight suffixes §9.2 lists as materialising every row
-before writing any of it, measured at the scale where that stops being a footnote.
+`.xlsx`, `.ods` and `.yaml` were three of the eight suffixes §9.2 listed as materialising every row
+before writing any of it, measured at the scale where that stops being a footnote. **Two of the
+three still are** — the workbooks, now bounded by the cap. `.yaml` streams as of 2026-07-28, and
+§9.2's corrected table puts the boundary at eleven streaming suffixes against six materialising.
 
 **A columnar format is a large win on writing and a small one on reading, and the gap between
 those two is the result worth keeping.** Against CSV, on the same rows:

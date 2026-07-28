@@ -1,7 +1,7 @@
 ---
 name: local-data
 description: Answer questions about local data files and SQLite databases with SQL — attach a spreadsheet or CSV, look one file up against another, check the match is complete, and keep the result. Use whenever someone points at a data file and asks a question about what is in it.
-allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__add_table mcp__localdata__drop_table mcp__localdata__save
+allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save
 argument-hint: "<file-path> [and what you want to know]"
 ---
 
@@ -25,7 +25,7 @@ as a table called `sales` in a database called `shop` that this statement was
 never pointed at.
 
 **One statement reaches one datasource.** There is no join across nicknames; to
-put two files together, land one inside the other with `add_table` first.
+put two files together, land one inside the other with `create` first.
 
 Users will not talk this way — they say *"the sales file"* — and the translation
 is yours to do silently. Never make someone say "table".
@@ -43,15 +43,16 @@ They speak spreadsheet. Translate, and answer in their words.
 | "the sales file", "that spreadsheet" | the nickname you got back from `attach` |
 | "column", "field", "header" | a column |
 | "row", "record", "line", "entry" | a row |
-| "look up", "match against", "VLOOKUP", "cross-reference" | `add_table` with `join_on`, then a join |
+| "look up", "match against", "VLOOKUP", "cross-reference" | `create` the second file into the same datasource, then a join |
 | "the total", "sum it up", "how many" | `sum()`, `count()` |
 | "group by region", "break it down by" | `GROUP BY` |
 | "filter out", "only show" | `WHERE` |
+| "export it", "send me the file", "save as CSV" | `query` with `path=` |
 
 Answer with the number and what it means, not with the SQL. Show the SQL only
 when asked, when the result is surprising, or when they need to trust it.
 
-## The three things people ask for
+## The things people ask for
 
 ### 1. "Have a look at this file"
 
@@ -71,10 +72,10 @@ someone spend twenty minutes building something that evaporates.
 ### 2. "Can you look it up against this other file?"
 
 This is the common one, and the mistake is attaching the second file as its own
-datasource. **Add it to the database that is already open:**
+datasource. **Read it into the database that is already open:**
 
 ```
-add_table(nickname="shop", source="/path/prices.csv", join_on="sku")
+create(nickname="shop", type="table", source="/path/prices.csv")
 ```
 
 Two reasons, and the second is the one that bites later:
@@ -86,31 +87,81 @@ Two reasons, and the second is the one that bites later:
   the relationship between them is gone. Landing the second file inside the
   first is what makes the lookup survivable.
 
-`join_on` names the column the two files share. Pass it, and the response tells
-you whether the match is actually complete. That response also describes the
-table it read in, so — as with `attach` — there is nothing for an `info` call
-straight afterwards to add.
+The response describes the table it read in, so — as with `attach` — there is
+nothing for an `info` call straight afterwards to add.
+
+If the join is slow because both sides are large, index the column you are
+joining on first. Nothing guesses this for you, because which query is coming is
+yours to know:
+
+```
+create(nickname="shop", type="index", table="prices", columns=["sku"])
+```
+
+`info(nickname, table)` lists the indexes already there — cheaper than asking
+for one twice. The name comes back, and that is the name `drop` wants.
 
 **`query` will not write.** Not a permission you can ask for — a property of the
 verb. If you find yourself reaching for `INSERT` or `CREATE TABLE`, the answer is
-`add_table`; for removing one, `drop_table`.
+`create`; for removing one, `drop(nickname, type="table", name=…)`.
 
-**Then say what you found, in their terms.** The response gives facts; the
-sentence is yours:
+**Whether the match is complete is yours to check, and nothing checks it for
+you.** It is an anti-join — ordinary SQL over two tables in one database, and
+you must run it in **both** directions, because the rows in the new file that
+nothing refers to are usually the surprise:
 
-> `missing_from_added: {values: ["b", "c"], total: 2}`
+```sql
+SELECT sku FROM sales  WHERE sku NOT IN (SELECT sku FROM prices)
+SELECT sku FROM prices WHERE sku NOT IN (SELECT sku FROM sales)
+```
 
-means two things in *their* file have no match. Say:
+**Then say what you found, in their terms**, and never as SQL:
 
 > "Two products in the sales file have no price listed — `b` and `c`. And
 > there's a price for `z`, which never appears in sales. Want me to leave those
 > out, or treat the missing prices as zero?"
 
-Never say "anti-join". Never hand back the raw payload. And check **both**
-directions — the rows in the new file that nothing refers to are usually the
-surprise.
+Never say "anti-join" to them. A join that silently dropped rows is the single
+most likely way to hand back a confident wrong number, so do not skip this
+because the totals looked plausible.
 
-### 3. "Keep this"
+### 2b. "That sheet is called Sheet1"
+
+A workbook's tables arrive under the names the *spreadsheet* chose. Rename
+rather than re-reading the file — the rows, types and any index stay put:
+
+```
+update(nickname="shop", type="table", name="Sheet1", to="q2_sales")
+```
+
+### 3. "Send me the result"
+
+A result they want as a *file* — to open in Excel, to mail on, to feed something
+else — goes straight to disk instead of coming back through you:
+
+```
+query(nickname, "SELECT …", path="/path/result.csv")
+```
+
+**The suffix chooses the format**, and one this server cannot write is refused
+by name rather than written as something else. Choose it rather than defaulting:
+
+| They want | Ask for | Why |
+|---|---|---|
+| to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
+| a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
+| something big, for another program | `.parquet` | fastest and smallest of all of them |
+| it pasted into a document | `.md` | small results only — it builds the whole table in memory |
+
+`.yaml` is available and is roughly an order of magnitude slower than anything
+else here; reach for `.jsonl` instead unless YAML is specifically wanted.
+
+This is also the answer when a result is simply too big to return — say so and
+offer it, rather than returning tens of thousands of rows through the
+conversation. The path is theirs: ask for it, and treat "the file already
+exists" as a question for them, exactly as with `save` below.
+
+### 4. "Keep this"
 
 ```
 save(nickname, path="/path/analysis.db")

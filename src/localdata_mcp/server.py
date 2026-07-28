@@ -618,6 +618,13 @@ def query(
             .xlsx, .ods, .html, .htm);
             one this server cannot
             write is refused by name rather than written as something else.
+            For a very large result the suffix is worth choosing rather than
+            defaulting to. .csv and .jsonl write row by row and never hold the
+            result; .parquet does hold it, but is the fastest and most compact
+            of all of them. .yaml is an order of magnitude slower than anything
+            else here, and .md holds the whole table because a Markdown column
+            is only as wide as its widest value. A spreadsheet (.xlsx, .ods)
+            refuses more than 65,535 rows outright.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the path is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file
@@ -652,8 +659,8 @@ def query(
         # A result bound for a file is never assembled. `query_stream` holds the
         # cursor open for as long as the writer is pulling from it, so the rows
         # go from the database to the disk without a list of them existing —
-        # which for the eight suffixes that write row by row means the peak does
-        # not move with the size of the result.
+        # which for the eleven suffixes that write row by row means the peak
+        # does not move with the size of the result.
         try:
             with registry.query_stream(nickname, sql) as (columns, rows):
                 result = export_rows(
