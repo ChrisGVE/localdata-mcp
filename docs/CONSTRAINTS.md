@@ -1402,6 +1402,25 @@ repetitions except `.xlsx` and `.ods`, which embed a timestamp (that check is wh
 | `.html` | 24.6 s | **refused** | — | — |
 | `.md` | 226.0 s | write-only | — | — |
 | `.xlsx` | 525.3 s | 580.9 s | — | — |
+| `.yaml` | 1,619.2 s → 1.39 GB | **could not complete** | — | — |
+| `.ods` | **could not complete** | — | — | — |
+
+**Two formats cannot be round-tripped at 1M rows on this machine, and one cannot be written at
+all.** Both were aborted by the harness's 16 GB ceiling, which is a chosen bound rather than a
+property of the machine (64 GB installed) — so what is measured is *"exceeds 16 GB"*, not the point
+at which each would succeed, and that point was not worth an hour of run time to find.
+
+* **`.yaml`** writes 1M rows in **1,619 s (27 minutes)** producing **1.39 GB**, and then **exceeds
+  16 GB reading it back**. `yaml.safe_dump` over a million records was already known to be 20+
+  minutes; the read side is the new part.
+* **`.ods`** **exceeds 16 GB during the export itself**, about six minutes in — it never produces a
+  file. Note what this means against the row above it: `.xlsx` completes the same corpus in 525 s.
+  Before the defect in §10.1 was fixed, `.ods` *appeared* to complete at 1M rows **because it was
+  writing XLSX**. Fixing it made the format correct and made it unusable at this scale. Both are
+  true, and the second is a consequence of the first rather than a regression.
+
+These are the two formats §9.2 lists as materialising every row before writing any of it, measured
+at a scale where that stops being a footnote.
 
 **A columnar format is a large win on writing and a small one on reading, and the gap between
 those two is the result worth keeping.** Against CSV, on the same rows:
