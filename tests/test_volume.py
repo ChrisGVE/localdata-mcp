@@ -134,7 +134,9 @@ def test_large_file_answers_correctly(root):
         workspace.close()
 
 
-def _export_peak(root: Path, rows: int, name: str) -> tuple[float, int]:
+def _export_peak(
+    root: Path, rows: int, name: str, suffix: str = ".csv"
+) -> tuple[float, int]:
     """Return (peak MB, rows written) for ``query`` writing straight to a file.
 
     Driven through ``server.query`` rather than through ``Workspace`` and
@@ -154,7 +156,7 @@ def _export_peak(root: Path, rows: int, name: str) -> tuple[float, int]:
         attached = server_module.attach(str(source))
         assert attached["ok"], attached
         nickname = attached["nickname"]
-        target = root / f"{name}-out.csv"
+        target = root / f"{name}-out{suffix}"
 
         tracemalloc.start()
         answer = server_module.query(
@@ -166,11 +168,15 @@ def _export_peak(root: Path, rows: int, name: str) -> tuple[float, int]:
         tracemalloc.stop()
 
         assert answer["ok"], answer
-        # Counted from the file rather than from the report: a writer that
+        # Checked against the file rather than the report: a writer that
         # streamed nothing and said it wrote everything is the shape this whole
-        # test exists to catch.
-        with target.open() as handle:
-            assert sum(1 for _ in handle) == rows + 1
+        # test exists to catch. Line-counting is exact for the delimited case
+        # and meaningless for the rest, which get the weaker check.
+        if suffix == ".csv":
+            with target.open() as handle:
+                assert sum(1 for _ in handle) == rows + 1
+        else:
+            assert target.stat().st_size > 0
         return peak / 1_048_576, answer["rows_written"]
     finally:
         server_module._reset()
@@ -197,6 +203,32 @@ def test_export_peak_does_not_scale_with_row_count(root):
         f"export peak grew {growth:.2f}x for a 4x row increase "
         f"({small_peak:.2f} MB -> {large_peak:.2f} MB). The result is probably "
         f"being materialised between the cursor and the writer."
+    )
+
+
+def test_yaml_export_peak_does_not_scale_with_row_count(root):
+    """YAML is written a chunk at a time, so it inherits the flat peak.
+
+    It is the format that made this worth doing. The writer used to build a
+    dict per row into one list and hand the whole list to ``safe_dump``, which
+    then built its own representation of all of it — two full copies of the
+    result on top of the list of rows that reached it. A million rows of eleven
+    columns crossed 16 GB on the way back in (CONSTRAINTS §10.7); the write side
+    is now bounded whatever the read side does.
+    """
+    pytest.importorskip("yaml")
+
+    small_peak, small_rows = _export_peak(root, SMALL_ROWS, "ysmall", ".yaml")
+    large_peak, large_rows = _export_peak(root, LARGE_ROWS, "ylarge", ".yaml")
+
+    assert small_rows == SMALL_ROWS
+    assert large_rows == LARGE_ROWS
+
+    growth = large_peak / max(small_peak, 0.001)
+    assert growth < 2.0, (
+        f"yaml export peak grew {growth:.2f}x for a 4x row increase "
+        f"({small_peak:.2f} MB -> {large_peak:.2f} MB). The writer is probably "
+        f"collecting the rows before dumping them."
     )
 
 

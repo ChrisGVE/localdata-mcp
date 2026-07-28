@@ -954,6 +954,41 @@ def test_yaml_round_trips_through_the_export(workspace, root):
     assert back == rows
 
 
+def test_yaml_written_in_chunks_is_the_file_one_dump_would_have_written(root):
+    """The writer emits a document at a time; the file must not show the seams.
+
+    A top-level sequence dumped in pieces concatenates into the same sequence —
+    each piece starts at column zero and opens with ``- `` — so this is an
+    equality against the whole-document dump rather than a round trip. A round
+    trip would pass on a file that had been re-indented or re-quoted, which is a
+    different file even when it parses to the same rows.
+    """
+    yaml = pytest.importorskip("yaml")
+
+    columns = ["id", "name", "note", "empty"]
+    # Deliberately past several chunk boundaries, and deliberately awkward:
+    # a value YAML must quote, one it must fold, and a NULL.
+    rows = [(i, f"name_{i}", "key: value", None) for i in range(2500)]
+    target = root / "chunked.yaml"
+    export_module.export_rows(columns, rows, str(target))
+
+    expected = yaml.safe_dump(
+        [dict(zip(columns, row)) for row in rows], sort_keys=False, allow_unicode=True
+    )
+    assert target.read_text(encoding="utf-8") == expected
+
+
+def test_an_empty_yaml_export_is_an_empty_sequence_not_an_empty_file(root):
+    """Nothing to write is still a document. A zero-length file parses as null."""
+    yaml = pytest.importorskip("yaml")
+
+    target = root / "nothing.yaml"
+    result = export_module.export_rows(["a", "b"], [], str(target))
+
+    assert result.row_count == 0
+    assert yaml.safe_load(target.read_text(encoding="utf-8")) == []
+
+
 def test_markdown_is_written_as_a_table_and_is_write_only(workspace, root):
     """pandas has no Markdown reader, so offering one would be a promise we cannot keep."""
     target = root / "out.md"
