@@ -118,7 +118,7 @@ def _url(
     drivername: str,
     *,
     username: str,
-    password: str,
+    password: str | None,
     port: int,
     database: str | None = None,
     query: dict[str, str] | None = None,
@@ -134,8 +134,13 @@ def _url(
     ``URL.create`` takes each part as a **value** and renders whatever escaping
     that part needs. This is the same defect, and the same remedy, as
     ``Backend.open_file`` in :mod:`localdata_mcp.dialects`, whose docstring
-    records a path re-read as syntax. It bit nothing here only because the
-    compose file's passwords happen to hold no delimiter.
+    records a path re-read as syntax. The Postgres container carries a password
+    full of delimiters so that this is proved rather than assumed.
+
+    ``password=None`` means **no password at all**, which is not the same as an
+    empty one: ``URL.create`` omits the ``:`` entirely, and that is the form a
+    trust-authenticated server expects. CockroachDB in insecure mode is the one
+    endpoint here reached that way.
     """
     return URL.create(
         drivername,
@@ -244,6 +249,28 @@ def _clickhouse(env: dict[str, str], port: int) -> str:
     )
 
 
+def _cockroachdb(env: dict[str, str], port: int) -> str:
+    """CockroachDB, on the PostgreSQL wire but as its own dialect.
+
+    ``cockroachdb+psycopg`` rather than ``postgresql+psycopg``: psycopg speaks to
+    it either way, but the scheme is what decides which dialect SQLAlchemy loads
+    and therefore which backend answers — the same reason MariaDB is addressed as
+    MariaDB. Addressing it as PostgreSQL would test PostgreSQL's answers against
+    CockroachDB's behaviour, which is precisely the question this endpoint exists
+    to ask.
+
+    ``root`` with **no password**, because the container runs ``--insecure``.
+    ``defaultdb`` is the database a fresh single node creates.
+    """
+    return _url(
+        "cockroachdb+psycopg",
+        username="root",
+        password=None,
+        port=port,
+        database="defaultdb",
+    )
+
+
 #: Every endpoint dialect this server is tested against, in the order they were
 #: taken on. A dialect is here because it has a container; nothing about the
 #: server enumerates dialects, so this list is a statement about *coverage*, not
@@ -299,6 +326,14 @@ ENDPOINTS = (
         driver="clickhouse_connect",
         extra="clickhouse",
         url=_clickhouse,
+    ),
+    Endpoint(
+        dialect="cockroachdb",
+        service="localdata-test-cockroachdb",
+        container_port=26257,
+        driver="sqlalchemy_cockroachdb",
+        extra="cockroachdb",
+        url=_cockroachdb,
     ),
 )
 

@@ -115,6 +115,22 @@ services:
       timeout: 5s
       retries: 10
 
+  # Single node, and insecure on purpose: it is the only service here that
+  # authenticates with NO password at all, which is a second auth mode the
+  # harness otherwise never exercises. `start-single-node` skips the cluster
+  # initialisation a real deployment needs.
+  localdata-test-cockroachdb:
+    image: cockroachdb/cockroach:latest
+    command: start-single-node --insecure
+    ports:
+      - "16257:26257"
+    healthcheck:
+      test: ["CMD-SHELL", "cockroach sql --insecure --host=localhost:26257 -e 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+
 networks:
   default:
     name: localdata-test-net

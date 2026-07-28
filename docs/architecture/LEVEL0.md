@@ -8,7 +8,8 @@ The surface is built, and the gate has since opened onto its own breadth: more f
 and more backends are **still level 0**, because they are nothing new — the same verbs
 pointed at more kinds of source. Formats are done. The backends are an open catalogue
 being worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
-Server, Oracle and ClickHouse each run every verb, each against a container of its own.
+Server, Oracle, ClickHouse and CockroachDB each run every verb, each against a container
+of its own.
 
 ## The premise
 
@@ -246,6 +247,7 @@ where the generic answer means something different here, or nothing at all:
 | Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |
 | SQL Server | URL | `sp_rename`; `VARCHAR` sized from the data, since `TEXT` is deprecated and unindexable |
 | ClickHouse | URL | `readonly=1`, since there is no transaction to withhold; `Nullable` columns, since a non-nullable one takes a missing value and stores `''`; `RENAME TABLE`; an engine clause on every `CREATE TABLE`; and the refusal of `create(type='index')`, since its indexes cannot be reflected |
+| CockroachDB | URL | nothing — and on a different engine speaking PostgreSQL's wire, that is the result rather than an absence |
 
 Two things generalised out of that table and became generic rather than per-dialect. **A
 declared type is named by the backend**, because the portable spellings are what make one

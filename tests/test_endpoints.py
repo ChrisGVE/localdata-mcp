@@ -182,12 +182,26 @@ def test_an_endpoint_attaches_as_an_engine_and_keeps_its_password(live):
     # Read-only is the default for a datasource that came from outside, whatever
     # rights the credentials themselves carry.
     assert attached["writable"] is False
+
+    secret = _password(live)
+    if secret is None:
+        # CockroachDB runs --insecure and is reached with no password at all.
+        # There is nothing to redact, and inventing a `***` for an absent
+        # credential would tell the caller a secret was carried when none was.
+        assert "***" not in attached["source"]
+        return
     assert "***" in attached["source"]
-    assert _password(live) not in json.dumps(attached)
+    assert secret not in json.dumps(attached)
 
 
 def test_a_failed_open_does_not_echo_the_password(live):
     """The driver's own complaint frequently quotes the whole URL back."""
+    if _password(live) is None:
+        pytest.skip(
+            "reached with no password: CockroachDB's --insecure mode accepts any "
+            "password for root, so a deliberately wrong one still connects and "
+            "there is no failed open to inspect"
+        )
     wrong = make_url(live.url).set(password="definitely-not-the-password")
 
     refused = call("attach", database=wrong.render_as_string(hide_password=False))
@@ -196,8 +210,14 @@ def test_a_failed_open_does_not_echo_the_password(live):
     assert "definitely-not-the-password" not in refused["error"]
 
 
-def _password(live: Live) -> str:
-    return str(make_url(live.url).password)
+def _password(live: Live) -> str | None:
+    """The password this endpoint is reached with, or ``None`` where there is none.
+
+    ``None`` rather than the string ``"None"``, which is what ``str()`` of an
+    absent password gives and which would then be searched for in the payload —
+    an assertion that passes for the wrong reason.
+    """
+    return make_url(live.url).password
 
 
 def test_residency_does_not_apply_to_a_server_side_database(live):

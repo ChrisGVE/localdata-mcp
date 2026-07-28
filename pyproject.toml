@@ -88,13 +88,16 @@ oracle = ["oracledb>=2.0"]
 # The dialect ships inside the official driver as `clickhousedb`, not as the
 # third-party `clickhouse-sqlalchemy` — see docs/CONSTRAINTS.md §11.1.
 clickhouse = ["clickhouse-connect[sqlalchemy]>=1.6"]
+# CockroachDB speaks the PostgreSQL wire protocol and its dialect rides on the
+# same psycopg 3 driver, so this extra is the dialect and nothing else.
+cockroachdb = ["sqlalchemy-cockroachdb>=2.0.4", "psycopg[binary]>=3.1"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb]",
 ]
 all = [
   "localdata-mcp[formats,databases]",

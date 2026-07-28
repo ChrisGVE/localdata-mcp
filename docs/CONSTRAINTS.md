@@ -1811,3 +1811,81 @@ choice, is unmeasured. The benchmark corpus in §10 has never been run against a
 
 Nor is the no-auth case covered: ClickHouse's default posture is the `default` user with an empty
 password, and every endpoint here still uses one auth mode — username and password in the URL.
+
+## §12 — CockroachDB, the dialect that needed nothing (2026-07-28)
+
+Second entry from the backend catalogue, and the first from the wire-compatible tier. The reason
+that tier is in the worklist at all is that its members are cheap *because* they are compatible —
+one `endpoints.py` entry, the generic `Backend`, no subclass — and **if they pass unchanged that is
+itself the result**, because it shows the seam generalises rather than having been fitted to the
+engines it was built against.
+
+CockroachDB passes unchanged. 17 of 18 endpoint tests green against `cockroachdb/cockroach:latest`,
+the eighteenth skipped for a reason that is about the auth mode rather than the database.
+
+### 12.1 No `Backend` subclass, and that is the finding
+
+The question this endpoint was taken to answer was whether **"postgresql" names the dialect or the
+engine** — whether the answers the seam gives for PostgreSQL are really about the wire protocol or
+about that specific server. Every axis came back generic:
+
+| Axis | CockroachDB |
+|---|---|
+| `read_posture` | generic — the transactional floor holds |
+| `denies_write` | generic — nothing to recognise, the floor does not refuse |
+| `ddl_survives_refusal` | generic `False` — DDL is transactional, so a read connection's `CREATE` rolls back |
+| `column_type` | generic — the portable types render correctly |
+| `rename_table` | generic — `ALTER TABLE … RENAME TO` is accepted verbatim |
+| `build_index` | generic — Core's `Index` is enough, and it reflects |
+| `resident_bytes` / `snapshot` / `storage_classes` | generic |
+
+So `BACKENDS` gains no entry, `backend_for("cockroachdb")` returns a plain `Backend` carrying its own
+name, and every verb works. This is the second dialect after PostgreSQL to need nothing at all, and
+it is a stronger result than PostgreSQL's: PostgreSQL needing nothing could mean the generic answers
+*are* PostgreSQL's answers. A different engine on the same wire needing nothing means they are not.
+
+**It is addressed as `cockroachdb+psycopg`, not as `postgresql+psycopg`.** psycopg reaches it either
+way, but the scheme decides which dialect SQLAlchemy loads and therefore which backend answers —
+the same reason MariaDB is registered in its own right rather than aliased to MySQL. Addressing it
+as PostgreSQL would have tested PostgreSQL's answers against CockroachDB's behaviour, which is the
+one thing this endpoint exists not to do.
+
+The dialect is `sqlalchemy-cockroachdb` 2.0.4, maintained by Cockroach Labs, requiring
+`SQLAlchemy>=2.0.47,<2.1`. It registers four entry points; `cockroachdb.psycopg` rides the psycopg 3
+driver the PostgreSQL endpoint already carries, so the extra is the dialect and nothing else.
+
+### 12.2 The first endpoint reached with no password, and two tests assumed there would be one
+
+The container runs `start-single-node --insecure`, so `root` connects with **no password at all**.
+That is a genuinely different auth mode from the five that came before — all of which embed a
+username and password in the URL — and it broke two tests that had quietly assumed otherwise:
+
+* **`test_an_endpoint_attaches_as_an_engine_and_keeps_its_password`** asserted `"***" in source`.
+  With no credential there is nothing to redact, and rendering a `***` for an absent password would
+  tell the caller a secret was carried when none was. It now asserts the redaction where there is a
+  password and its *absence* where there is not.
+* **`test_a_failed_open_does_not_echo_the_password`** sets a deliberately wrong password and expects
+  the open to fail. **Insecure mode accepts any password for `root`**, so the open succeeded and the
+  test failed on its own premise. It now skips, naming that.
+
+Neither was a defect in the server; both were the harness generalising from five endpoints that
+happened to share an auth mode. This is the coverage gap task 23 exists for, meeting the code from
+the other direction — and it is worth noting that adding a *backend* is what surfaced it, not adding
+an auth test.
+
+`_password()` now returns `str | None` rather than `str(...)`. It had been stringifying an absent
+password into the literal `"None"`, which was then searched for in the payload — an assertion that
+would have passed for the wrong reason.
+
+`URL.create(password=None)` omits the `:` entirely rather than rendering an empty one, which is the
+form a trust-authenticated server expects. That distinction is why the harness helper takes
+`password: str | None` rather than defaulting to `""`.
+
+### 12.3 What this did not test
+
+CockroachDB's interesting properties — serializable isolation by default, retryable transaction
+errors under contention, distribution across nodes — are invisible to a single-node harness running
+one statement at a time. Nothing here says how the server behaves when CockroachDB returns a
+retryable error (`40001`), which is the failure mode a real deployment meets and which no other
+backend in this harness produces. That is unmeasured, and it is the one thing about this dialect
+worth measuring later.
