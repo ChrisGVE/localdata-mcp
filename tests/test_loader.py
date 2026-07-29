@@ -15,7 +15,7 @@ from pathlib import Path
 import foreign
 import pytest
 from sqlalchemy import Integer, Text, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from localdata_mcp import config as config_module
 from localdata_mcp import export as export_module
@@ -1240,3 +1240,76 @@ def test_a_tsv_written_without_a_delimiter_is_still_tab_separated(workspace, roo
     target = root / "plain.tsv"
     export_module.export_rows(["a", "b"], [(1, 2)], str(target))
     assert target.read_text().splitlines()[0] == "a\tb"
+
+
+# ---------------------------------------------------------------------------
+# A catalog read the database asked us to run again
+# ---------------------------------------------------------------------------
+
+
+def _refused(code: str, attribute: str = "sqlstate") -> SQLAlchemyError:
+    """A driver failure carrying a SQLSTATE, wrapped the way SQLAlchemy wraps one.
+
+    Built rather than provoked because provoking it needs a distributed engine:
+    the live proof is the pair of rename tests in :mod:`test_endpoints`, which
+    failed against YugabyteDB before this retry existed. What is asserted here is
+    the decision — retry on 40001, never on anything else — which is the part
+    that must hold on a machine with no containers at all.
+    """
+    original = type("DriverFailure", (Exception,), {attribute: code})("refused")
+    return OperationalError("SELECT relname FROM pg_catalog.pg_class", {}, original)
+
+
+def test_a_catalog_read_refused_for_a_stale_snapshot_is_run_again():
+    """SQLSTATE 40001 means "try again", and trying again is the whole remedy.
+
+    A DDL committed on one connection leaves another pooled connection holding a
+    catalog snapshot the cluster has moved past. Being refused is what refreshes
+    it, so the second read succeeds.
+    """
+    answers = iter([_refused("40001"), ("people",)])
+
+    def read():
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    assert loader_module._run_again_once(read) == ("people",)
+
+
+def test_a_read_refused_twice_raises_rather_than_looping():
+    """Once. A snapshot that is still stale on the second read is a real failure."""
+    calls = []
+
+    def read():
+        calls.append(1)
+        raise _refused("40001")
+
+    with pytest.raises(SQLAlchemyError):
+        loader_module._run_again_once(read)
+    assert len(calls) == 2
+
+
+def test_a_failure_that_is_not_a_serialization_failure_is_not_retried():
+    """The retry is keyed on the code, not on the fact that something went wrong.
+
+    Running a genuinely broken read a second time buys nothing and hides the
+    first error behind an identical one.
+    """
+    calls = []
+
+    def read():
+        calls.append(1)
+        raise _refused("42P01")  # undefined_table
+
+    with pytest.raises(SQLAlchemyError):
+        loader_module._run_again_once(read)
+    assert len(calls) == 1
+
+
+def test_the_code_is_read_from_whichever_attribute_the_driver_publishes():
+    """psycopg 3 says ``sqlstate``, psycopg 2 says ``pgcode``; the code is the same."""
+    assert loader_module._asks_to_be_retried(_refused("40001", "pgcode"))
+    assert loader_module._asks_to_be_retried(_refused("40001", "sqlstate"))
+    assert not loader_module._asks_to_be_retried(_refused("40001", "errno"))

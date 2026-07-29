@@ -54,7 +54,7 @@ import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Iterator, Sequence
+from typing import Any, Callable, Iterator, Sequence, TypeVar
 from uuid import uuid4
 from xml.etree import ElementTree
 
@@ -85,6 +85,11 @@ __all__ = [
     "Workspace",
     "LoadError",
 ]
+
+#: What a retried read gives back, whatever that happens to be. Only
+#: :func:`_run_again_once` uses it, to keep its caller's return type rather than
+#: flattening every catalog read to ``Any``.
+_T = TypeVar("_T")
 
 
 class LoadError(RuntimeError):
@@ -360,6 +365,67 @@ def _driver_failures(entry: Tagged) -> tuple[type[BaseException], ...]:
     answer is a named set rather than catching ``Exception`` here.
     """
     return (SQLAlchemyError, *entry.backend.driver_errors())
+
+
+#: SQLSTATE 40001, ``serialization_failure``: this transaction was aborted and
+#: the statement should simply be run again. A standard code with one standard
+#: meaning, not any one database's invention.
+_SERIALIZATION_FAILURE = "40001"
+
+
+def _asks_to_be_retried(exc: BaseException) -> bool:
+    """Whether the database said this statement should just be run again.
+
+    The code is standard; the attribute carrying it is not. psycopg 3 publishes
+    ``sqlstate``, psycopg 2 ``pgcode``, and a driver doing neither simply fails
+    to match — which costs nothing, because the answer is then the error the
+    caller would have received anyway.
+    """
+    original = getattr(exc, "orig", None)
+    return any(
+        getattr(original, attribute, None) == _SERIALIZATION_FAILURE
+        for attribute in ("sqlstate", "pgcode")
+    )
+
+
+def _run_again_once(read: Callable[[], _T]) -> _T:
+    """Run a catalog read, once more if the database asked for exactly that.
+
+    A distributed engine caches the catalog per connection, so a DDL committed
+    on one connection leaves every *other* pooled connection holding a snapshot
+    the cluster has moved past. The next catalog read on such a connection is
+    refused with SQLSTATE 40001 — YugabyteDB's wording is "A DDL occurred while
+    processing this query. Try again." — and the read after it succeeds, because
+    being refused is what refreshes the snapshot.
+
+    Measured on YugabyteDB, where ``update`` renamed a table and then reported
+    that it had failed. The DDL had committed and the rows were under the new
+    name; it was the *describe* afterwards that met a stale snapshot on another
+    engine. Reporting a change as failed when it succeeded is the worst answer
+    available — worse than the raw error, because the obvious next move is to
+    rename again and be told there is no such table.
+
+    **Not a** :class:`~localdata_mcp.dialects.Backend` **axis, deliberately.**
+    40001 means one thing everywhere: PostgreSQL raises it under SERIALIZABLE
+    and every distributed SQL engine raises it routinely, so there is no
+    per-dialect answer to override. A dialect branch here would be the shape
+    standing instruction 1 forbids — and it would have nowhere to live in any
+    case, since YugabyteDB is reached through PostgreSQL's dialect and could
+    only get an answer of its own by changing PostgreSQL's (issue #45).
+
+    **Once, and only for a read.** A catalog read is idempotent, so running it
+    again carries no consequence, and one retry is all the refusal costs — this
+    is a snapshot being refreshed, not contention being waited out, so there is
+    nothing for a backoff to help with. A *write* that fails this way is not
+    retried here: whether it is safe to send again depends on what it was, and
+    that is the caller's judgement rather than this server's to make.
+    """
+    try:
+        return read()
+    except SQLAlchemyError as exc:
+        if not _asks_to_be_retried(exc):
+            raise
+    return read()
 
 
 def _not_a_read(entry: Tagged) -> str:
@@ -1366,9 +1432,13 @@ class Workspace:
         are queried like tables, so telling them apart here would be a
         distinction without a use.
         """
-        inspector = inspect(self.entry(tag).engines.read)
-        names = set(inspector.get_table_names()) | set(inspector.get_view_names())
-        return tuple(sorted(n for n in names if not n.startswith("sqlite_")))
+
+        def read() -> tuple[str, ...]:
+            inspector = inspect(self.entry(tag).engines.read)
+            names = set(inspector.get_table_names()) | set(inspector.get_view_names())
+            return tuple(sorted(n for n in names if not n.startswith("sqlite_")))
+
+        return _run_again_once(read)
 
     def rename_table(self, tag: str, table: str, to: str) -> None:
         """Rename a table, moving its cached description with it.
@@ -1641,6 +1711,7 @@ class Workspace:
             return known
 
         entry = self.entry(tag)
+
         # Inspected over the *write* engine, as residency is, and for the same
         # reason: this is the server asking about the schema, not the caller's
         # SQL running, so it must not be subject to the read posture the
@@ -1655,8 +1726,14 @@ class Workspace:
         # directly, and one that does raises on an engine — ClickHouse's does.
         # Opening the connection here is what the engine form would have done
         # anyway, so nothing is paid for it.
-        with entry.engines.write.connect() as conn:
-            described = inspect(conn).get_columns(table)
+        # The connection is opened *inside* the retried read, not around it: a
+        # transaction refused for a stale snapshot stays refused, so running the
+        # inspection again on the same connection would meet the same answer.
+        def read() -> list[Any]:
+            with entry.engines.write.connect() as conn:
+                return inspect(conn).get_columns(table)
+
+        described = _run_again_once(read)
         if not described:
             raise LoadError(f"No such table: {tag}.{table}")
 
