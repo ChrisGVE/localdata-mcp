@@ -305,14 +305,20 @@ def _build_typed_table(live: Live) -> str:
     # A column this backend cannot be given is left out rather than asserted
     # around: this test is about what comes *back*, and nothing can come back
     # from a column that was never made. Which ones those are is the backend's
-    # to say — Oracle has no time-of-day type — because a dialect fact stated in
-    # a fixture is the same defect as one stated in shared code.
+    # to say — Oracle has no time-of-day type, and ClickHouse's driver cannot
+    # bind bytes — because a dialect fact stated in a fixture is the same defect
+    # as one stated in shared code.
     unstorable = backend_for(live.endpoint.dialect).unstorable_column_types()
     for column in [c for c in columns if type(c.type).__name__ in unstorable]:
         columns.remove(column)
         values.pop(column.name)
 
-    defined = Table(table, metadata, *columns)
+    # Whatever this dialect's CREATE TABLE cannot be written without — asked of
+    # the backend rather than branched on here, because a dialect fact stated in
+    # a fixture is the same defect as one stated in shared code.
+    defined = Table(
+        table, metadata, *columns, **backend_for(live.endpoint.dialect).table_options()
+    )
     engine = create_engine(live.url)
     try:
         with engine.begin() as conn:
@@ -396,6 +402,17 @@ def test_an_index_can_be_created_and_dropped(live):
     made = call(
         "create", nickname="endpoint", type="index", table=table, columns=["department"]
     )
+
+    if not backend_for(live.endpoint.dialect).builds_indexes():
+        # ClickHouse. Its secondary indexes are data-skipping indexes, which
+        # cannot be reflected and do not answer a lookup, so the verb does not
+        # apply — and the refusal has to name what orders a table there instead,
+        # or the caller has been told "no" and nothing else.
+        assert made["ok"] is False, made
+        assert "ordering key" in made["error"]
+        assert call("info", nickname="endpoint", table=table)["indexes"] == []
+        return
+
     assert made["ok"] is True, made
     assert made["columns"] == ["department"]
     for warning in made.get("warnings", []):

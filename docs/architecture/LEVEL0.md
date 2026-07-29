@@ -8,7 +8,8 @@ The surface is built, and the gate has since opened onto its own breadth: more f
 and more backends are **still level 0**, because they are nothing new — the same verbs
 pointed at more kinds of source. Formats are done. The backends are an open catalogue
 being worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
-Server, Oracle and CockroachDB each run every verb, each against a container of its own.
+Server, Oracle, ClickHouse and CockroachDB each run every verb, each against a container
+of its own.
 
 ## The premise
 
@@ -158,6 +159,10 @@ which is not equally far:
   Oracle commits DDL as it runs it, before anything can object, and it has no session-level
   read-only posture to reach for. So a `CREATE` sent to `query` there really does take
   effect, and the refusal says so rather than claiming otherwise.
+- **ClickHouse** has no transactions at all, so there is no floor to keep: a write sent to
+  a connection that never commits is simply applied. Its read engine therefore carries
+  `readonly=1` in the URL, and the database refuses DML and DDL alike before either runs —
+  which makes it *stronger* here than the backends that rely on rollback, not weaker.
 
 Underneath all of them is one dialect-free rule: **a statement that returns no rows is not
 a read**, and is refused on that ground. No SQL is parsed to decide it — a `SELECT` returns
@@ -241,6 +246,7 @@ where the generic answer means something different here, or nothing at all:
 | MySQL / MariaDB | URL | a read-only session, since DDL commits itself; an index over a *prefix*, since `TEXT` cannot be a key |
 | Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |
 | SQL Server | URL | `sp_rename`; `VARCHAR` sized from the data, since `TEXT` is deprecated and unindexable |
+| ClickHouse | URL | `readonly=1`, since there is no transaction to withhold; `Nullable` columns, since a non-nullable one takes a missing value and stores `''`; `RENAME TABLE`; an engine clause on every `CREATE TABLE`; and the refusal of `create(type='index')`, since its indexes cannot be reflected |
 | CockroachDB | URL | nothing — and on a different engine speaking PostgreSQL's wire, that is the result rather than an absence |
 
 Two things generalised out of that table and became generic rather than per-dialect. **A

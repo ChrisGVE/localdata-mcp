@@ -23,8 +23,13 @@ mean something different, or nothing at all, on another backend"**:
 * **Storage classes.** SQLite lets a column hold values of different types and
   ``typeof()`` counts them. On a backend with real column types the question does
   not arise, and an empty histogram is the truthful answer rather than a gap.
-* **What a table can be asked to hold.** Oracle has no time-of-day type, so a
-  column of one cannot be made there and nothing could come back out of it.
+* **What a ``CREATE TABLE`` must carry.** Most backends have a default table
+  storage and a bare ``CREATE TABLE`` is complete. ClickHouse has none, and the
+  statement does not compile at all without an engine clause.
+* **Whether an index is a thing this verb can make.** Naming columns is the whole
+  of an index on every backend whose indexes can afterwards be found by
+  reflection. ClickHouse's cannot, and its secondary indexes answer a different
+  question, so the truthful answer there is that the verb does not apply.
 
 Everything else — creating tables, inserting, introspection via ``inspect()``,
 streaming reads — is Core and lives in :mod:`loader`. When something new turns out
@@ -64,6 +69,7 @@ from sqlalchemy.pool import StaticPool
 __all__ = [
     "BACKENDS",
     "Backend",
+    "ClickHouseBackend",
     "DuckDBBackend",
     "Engines",
     "MySQLBackend",
@@ -345,6 +351,41 @@ class Backend:
         """
         return _PORTABLE_TYPES[declared]()
 
+    def table_options(self) -> Mapping[str, Any]:
+        """Dialect keyword arguments every ``CREATE TABLE`` here must carry.
+
+        Empty generically, because on every backend with a default table
+        storage a bare ``CREATE TABLE`` is a complete statement. ClickHouse is
+        the exception this exists for: it has no default engine, so a table
+        created without one is not a table it will make — the DDL does not fail
+        at the database, it fails at compile time with nothing created.
+
+        A mapping rather than a flag, because what has to be said is the
+        dialect's own vocabulary and only its own compiler reads it. Shared code
+        passes it through to ``Table(...)`` without knowing what is in it, which
+        is what keeps this from being a dispatch on dialect name.
+        """
+        return {}
+
+    def driver_errors(self) -> tuple[type[BaseException], ...]:
+        """Failures from this driver that SQLAlchemy will not have wrapped.
+
+        Empty generically, and empty for every well-behaved driver: SQLAlchemy
+        catches whatever is a subclass of the DBAPI module's own ``Error`` and
+        re-raises it as a ``SQLAlchemyError`` carrying the original on ``.orig``.
+        Shared code catches that one type and every backend is covered.
+
+        A driver whose exceptions are *not* subclasses of the ``Error`` it
+        exports breaks that contract without saying so: nothing is wrapped, the
+        failure arrives as the driver's own class with no ``.orig``, and every
+        ``except SQLAlchemyError`` it passes through does not see it. Naming the
+        types here is what puts such a driver back under the same handling —
+        deliberately a named set rather than widening a guard to ``Exception``,
+        which would pull unrelated failures into an explainer written for
+        driver errors.
+        """
+        return ()
+
     def unstorable_column_types(self) -> frozenset[str]:
         """Core column types a value cannot make the round trip through here.
 
@@ -352,7 +393,8 @@ class Backend:
         produces — :meth:`column_type` answers for those, and every backend can
         hold all three. It is about the much wider value space of a table
         somebody else made and this server merely reaches, which is the only
-        kind an endpoint ever is: Oracle has no time-of-day type at all.
+        kind an endpoint ever is: Oracle has no time-of-day type at all, and
+        ClickHouse's driver can bind neither ``bytes`` nor a ``time``.
 
         "Cannot hold" covers the way in as well as the column itself: a type
         whose column is created and then refuses every value belongs here too,
@@ -362,6 +404,21 @@ class Backend:
         import, and so a backend can name a type this module never mentions.
         """
         return frozenset()
+
+    def builds_indexes(self) -> bool:
+        """Whether ``create(type='index')`` means anything on this backend.
+
+        ``True`` for every backend whose indexes are created by naming columns
+        and can afterwards be found by reflection — which is what ``info``
+        listing one and ``drop`` removing one both depend on.
+
+        ``False`` says the whole verb does not apply here, and it is reported
+        rather than faked for the same reason :meth:`snapshot` refuses: an index
+        that cannot be listed or dropped, created under a name the caller is
+        handed, would be a lie the caller then builds on. See
+        :class:`ClickHouseBackend`.
+        """
+        return True
 
     def build_index(
         self, name: str, table: Table, columns: Sequence[str]
@@ -897,6 +954,183 @@ class MSSQLBackend(Backend):
         )
 
 
+# ---------------------------------------------------------------------------
+# ClickHouse
+# ---------------------------------------------------------------------------
+
+
+#: ClickHouse's own code for "this query cannot run in readonly mode", raised
+#: for DML and DDL alike. Matched on the code for the reason MySQL's is: a
+#: sentence carries a locale and a version and a code carries neither.
+_CLICKHOUSE_READ_ONLY = 164
+
+#: What a table loaded from a file is ordered by. ``tuple()`` is ClickHouse's
+#: spelling for *no ordering key*, and it is the honest one here: a file has no
+#: natural key, and inventing one out of the first column would silently decide
+#: the physical layout — and the primary index — on the caller's behalf.
+_NO_ORDERING_KEY = "tuple()"
+
+
+@dataclass(frozen=True)
+class ClickHouseBackend(Backend):
+    """ClickHouse, which has no transactions and therefore no floor to stand on.
+
+    Every other backend here either refuses a write or declines to keep it. This
+    one does neither by default: there is no transaction to leave uncommitted, so
+    an ``INSERT`` sent through a read connection is simply *applied* — measured,
+    and the row was still there on the next connection. The generic guarantee is
+    not weakened here, it is absent, so the posture has to come from the database
+    itself. ``readonly=1`` in the URL is what supplies it, and it refuses DML and
+    DDL alike before either reaches the data.
+
+    That makes ClickHouse the first backend where :attr:`read_only_query` is
+    load-bearing for a *server* rather than a file, which is why
+    :meth:`Backend.open` now carries it.
+
+    Reached over HTTP through the dialect that ships inside ``clickhouse-connect``
+    as ``clickhousedb``. The third-party ``clickhouse-sqlalchemy`` is a different
+    project and not the live one; ``docs/CONSTRAINTS.md`` §11.1 records how that
+    was established.
+    """
+
+    name: str = "clickhousedb"
+    read_only_query: ClassVar[Mapping[str, str]] = {"readonly": "1"}
+
+    def denies_write(self, exc: Exception) -> bool:
+        """Recognise ClickHouse's own refusal, by code rather than by prose.
+
+        The driver puts the server's error code on the exception as ``code``, so
+        there is nothing to parse out of the message — which is what the base
+        class asks for and the reason it asks: this same refusal renders with a
+        version string and a URL in it, both of which move.
+        """
+        origin = getattr(exc, "orig", exc)
+        return getattr(origin, "code", None) == _CLICKHOUSE_READ_ONLY
+
+    def driver_errors(self) -> tuple[type[BaseException], ...]:
+        """This driver's failures reach us unwrapped, so name them.
+
+        ``clickhouse_connect`` exports an ``Error`` from its DBAPI module as PEP
+        249 requires, but the exceptions it actually raises do not inherit from
+        it — ``driver.exceptions.ClickHouseError`` and
+        ``dbapi.Error`` are unrelated classes. SQLAlchemy therefore never
+        recognises a ClickHouse failure as a DBAPI error and re-raises it
+        untouched, so without this every refusal reached the caller as the
+        driver's raw sentence instead of the words naming the verb to use
+        instead. See ``docs/CONSTRAINTS.md`` §11.3.
+        """
+        from clickhouse_connect.driver.exceptions import ClickHouseError
+
+        return (ClickHouseError,)
+
+    def table_options(self) -> Mapping[str, Any]:
+        """Every table needs an engine, and ``MergeTree`` is the one to give it.
+
+        ClickHouse has no default table engine, and the dialect's DDL compiler
+        raises rather than guessing — so without this, ``create`` does not
+        produce a failed statement, it produces no statement at all.
+
+        ``MergeTree`` because it is the ordinary storage engine and the only one
+        that supports what the rest of this server then does with a table.
+        Imported here rather than at module scope so that installing the server
+        without the ``clickhouse`` extra still imports this module — which is the
+        same reason every other driver stays out of the import list.
+        """
+        from clickhouse_connect.cc_sqlalchemy.engines import MergeTree
+
+        return {"clickhousedb_engine": MergeTree(order_by=_NO_ORDERING_KEY)}
+
+    def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:
+        """``Nullable`` on every column, because a loaded file has gaps.
+
+        A ClickHouse column is ``NOT NULL`` unless it says otherwise, and the
+        portable types render as aliases that inherit that — so a CSV with an
+        empty cell cannot be stored in one. **The failure is worse than a
+        refusal in one direction:** a single-row insert of ``None`` into a
+        non-nullable ``String`` stores the empty string and reports success, so
+        a missing value silently becomes a present one; the same ``None`` inside
+        a multi-row batch raises instead. Measured both ways — see
+        ``docs/CONSTRAINTS.md`` §11.2.
+
+        Wrapping in ``Nullable`` is what makes the two agree, and it makes them
+        agree on the truthful answer: a missing value comes back missing, and an
+        aggregate skips it rather than counting an empty string as a value.
+        """
+        from clickhouse_connect.cc_sqlalchemy.types import (
+            Float64,
+            Int64,
+            Nullable,
+            String,
+        )
+
+        return Nullable({"INTEGER": Int64, "REAL": Float64, "TEXT": String}[declared])
+
+    def unstorable_column_types(self) -> frozenset[str]:
+        """Two the driver cannot bind — and both are the driver's gap, not the
+        database's.
+
+        ``LargeBinary``: ClickHouse stores binary perfectly well, ``String``
+        holds arbitrary bytes. What is missing is in
+        ``clickhouse_connect.dbapi``, which does not define the ``Binary``
+        constructor PEP 249 requires; SQLAlchemy's bind processor calls it and
+        gets an ``AttributeError`` before any statement is sent.
+
+        ``Time``: the column is created — ``TIME`` is a real ClickHouse type,
+        stored as an integer number of seconds — but a Python ``time`` reaches
+        the server as the bare literal ``14:30:00`` where an ``Int64`` was
+        expected, and the insert fails to parse. So the column exists and cannot
+        be written to, which is worse than not having it.
+
+        Stated as the driver's gaps rather than the database's so that nobody
+        later "fixes" ClickHouse for them. See ``docs/CONSTRAINTS.md`` §11.4.
+        """
+        return frozenset({"LargeBinary", "Time"})
+
+    def rename_table(self, conn: Connection, table: str, to: str) -> None:
+        """``RENAME TABLE``, which is a statement of its own here.
+
+        ``ALTER TABLE … RENAME TO`` is not merely unsupported — ClickHouse parses
+        ``ALTER TABLE … RENAME`` as the start of ``RENAME COLUMN`` and fails at
+        the ``TO``, so the generic spelling produces a syntax error naming a
+        clause the caller never wrote. Both identifiers go through the dialect's
+        own preparer, as the generic implementation's do.
+        """
+        prepare = conn.dialect.identifier_preparer.quote
+        conn.execute(text(f"RENAME TABLE {prepare(table)} TO {prepare(to)}"))
+
+    def builds_indexes(self) -> bool:
+        return False
+
+    def build_index(
+        self, name: str, table: Table, columns: Sequence[str]
+    ) -> tuple[Index, tuple[str, ...]]:
+        """Refused, because ClickHouse's index is not this kind of index.
+
+        Three separate things fail here and only the first is about syntax.
+        ``CREATE INDEX`` without a ``TYPE`` is refused outright (code 80). What
+        ClickHouse does have — ``ALTER TABLE … ADD INDEX … TYPE minmax`` — is a
+        *data-skipping* index: it prunes granules that cannot match, and it
+        offers neither the point lookup nor the uniqueness a caller asking for an
+        index is asking for. And the dialect reflects no indexes at all, so one
+        created that way could not afterwards be listed by ``info`` nor found by
+        ``drop`` — measured, ``system.data_skipping_indices`` shows it while
+        reflection returns nothing.
+
+        Creating one anyway, under a name handed back to the caller, would
+        produce exactly the shape this server refuses elsewhere: an answer that
+        reads as done and cannot be acted on. So this says what is true, and
+        names the thing that actually orders a ClickHouse table.
+        """
+        raise UnsupportedOperation(
+            f"A {self.name} table is indexed by the ordering key it was created "
+            f"with, not by adding an index afterwards. Its secondary indexes are "
+            f"data-skipping indexes, which cannot be listed or dropped through "
+            f"this interface and do not answer a lookup the way an index does. "
+            f"To make {', '.join(columns)} fast to filter on, create the table "
+            f"ordered by those columns in {self.name} itself, and attach it here."
+        )
+
+
 _SQLITE = SQLiteBackend()
 
 #: Dialect name to the backend that has something *extra* to say about it. An
@@ -913,6 +1147,7 @@ BACKENDS: dict[str, Backend] = {
     "mariadb": MySQLBackend(name="mariadb"),
     "oracle": OracleBackend(),
     "mssql": MSSQLBackend(),
+    "clickhousedb": ClickHouseBackend(),
 }
 
 

@@ -351,6 +351,17 @@ _NO_SUCH_TABLE = re.compile(
 )
 
 
+def _driver_failures(entry: Tagged) -> tuple[type[BaseException], ...]:
+    """The exception types a failure from this datasource can arrive as.
+
+    ``SQLAlchemyError`` covers every driver that lets SQLAlchemy wrap it, which
+    is nearly all of them. The backend adds any its driver raises unwrapped —
+    see :meth:`dialects.Backend.driver_errors` for why that happens and why the
+    answer is a named set rather than catching ``Exception`` here.
+    """
+    return (SQLAlchemyError, *entry.backend.driver_errors())
+
+
 def _not_a_read(entry: Tagged) -> str:
     """The refusal, plus the caveat where the refusal cannot be the whole truth.
 
@@ -1449,7 +1460,7 @@ class Workspace:
         try:
             with entry.engines.write.begin() as conn:
                 index.create(conn)
-        except SQLAlchemyError as exc:
+        except _driver_failures(entry) as exc:
             raise LoadError(f"Could not create {name} on {tag}.{table}: {exc}") from exc
         return IndexInfo(name=name, table=table, columns=tuple(columns), notes=notes)
 
@@ -1474,7 +1485,7 @@ class Workspace:
         try:
             with entry.engines.write.begin() as conn:
                 index.drop(conn)
-        except SQLAlchemyError as exc:
+        except _driver_failures(entry) as exc:
             raise LoadError(f"Could not drop {tag}.{name}: {exc}") from exc
         return existing
 
@@ -1554,6 +1565,11 @@ class Workspace:
                 )
                 for name, original, sql_type in zip(columns, frame.columns, declared)
             ],
+            # Anything this dialect's CREATE TABLE cannot be written without.
+            # Empty for all but ClickHouse, which has no default table engine —
+            # and passed through without being read here, so that what it
+            # contains stays the backend's business rather than this module's.
+            **entry.backend.table_options(),
         )
 
         try:
@@ -1573,7 +1589,7 @@ class Workspace:
                     f"{unrepresentable.value!r} cannot be stored in a 64-bit "
                     f"column without corrupting it."
                 ) from exc
-            if isinstance(exc, (SQLAlchemyError, OverflowError)):
+            if isinstance(exc, (*_driver_failures(entry), OverflowError)):
                 raise LoadError(f"Could not insert rows from {source}: {exc}") from exc
             raise
 
@@ -1634,7 +1650,13 @@ class Workspace:
         # ability is implied either way — a read-only datasource is opened
         # read-only on *both* engines, so the database refuses a write whichever
         # one asks.
-        described = inspect(entry.engines.write).get_columns(table)
+        # Bound to a *connection* rather than to the engine. Both are ordinary
+        # SQLAlchemy, but a dialect supplying its own inspector may use the bind
+        # directly, and one that does raises on an engine — ClickHouse's does.
+        # Opening the connection here is what the engine form would have done
+        # anyway, so nothing is paid for it.
+        with entry.engines.write.connect() as conn:
+            described = inspect(conn).get_columns(table)
         if not described:
             raise LoadError(f"No such table: {tag}.{table}")
 
@@ -1775,7 +1797,7 @@ class Workspace:
                 if not result.returns_rows:
                     raise LoadError(_not_a_read(entry))
                 yield list(result.keys()), self._rows(entry, result, sql)
-        except SQLAlchemyError as exc:
+        except _driver_failures(entry) as exc:
             raise self._explain(entry, exc, sql) from exc
 
     def _rows(self, entry: Tagged, result: Any, sql: str) -> Iterator[tuple]:
@@ -1791,7 +1813,7 @@ class Workspace:
         try:
             for row in result:
                 yield tuple(row)
-        except SQLAlchemyError as exc:
+        except _driver_failures(entry) as exc:
             raise self._explain(entry, exc, sql) from exc
 
     def _explain(self, entry: Tagged, exc: SQLAlchemyError, sql: str) -> LoadError:
