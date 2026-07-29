@@ -1869,3 +1869,91 @@ The endpoint suite went from 1m25s to 6m02s with ten failures and ten errors, no
 code. The catalogue is approaching what this machine holds concurrently, and a worklist with sixteen
 entries will not fit at all — containers will need bringing up per-dialect rather than all at once.
 Recorded because a killed container looks exactly like a broken commit until the logs are read.
+
+## §14 — The MCP 2026-07-28 specification, measured against this server (2026-07-29)
+
+The fifth MCP spec release landed on 2026-07-28: a **stateless protocol core**, Multi Round-Trip
+Requests, header-based routing, cacheable list results, hardened OAuth 2.1, and a formal extensions
+framework (Tasks, MCP Apps) with a twelve-month deprecation window. `initialize`/`initialized` and
+the `Mcp-Session-Id` header are retired.
+
+**This server needs no architectural change, and that is not luck.** It was measured, not assumed.
+
+### 14.1 The handle-based design is already what the spec prescribes
+
+The specification's own guidance for a server that must carry state:
+
+> Dropping the protocol-level session doesn't force your application to be stateless. If your server
+> needs to carry state across calls, mint an explicit handle from a tool and have the model pass it
+> back as an argument.
+
+That is exactly `attach` → **nickname**. Every verb takes the nickname as an argument, and `attach`
+returns the one it actually used. Checked against the code rather than remembered:
+`server._registry` is a **module-level global**, one per *process*, and `_session()` is only a name
+for "the process's registry" — it is not keyed to any protocol session identifier. Nothing anywhere
+reads `Mcp-Session-Id`.
+
+The server also uses **no `Context` parameter**, so it uses none of sampling, MCP-level logging or
+progress — the capabilities the stateless core removes because they push a request down a live
+connection. (`Config(roots=...)` is our own filesystem allowlist and has nothing to do with protocol
+Roots.)
+
+### 14.2 Run against the new stack: 113 of 114, and the one failure is ours
+
+`fastmcp 4.0.0b1` (published the same day as the spec, on `mcp 2.0.0`) implements it and, in its own
+words, "answers both the sessionless `2026-07-28` protocol and the older session-based handshake,
+negotiated per connection". The tool-surface suite was run against it directly:
+
+| | Result |
+|---|---|
+| `tests/test_server.py` on fastmcp 3.2.0 / mcp 1.27.0 | 114 passed |
+| `tests/test_server.py` on fastmcp 4.0.0b1 / mcp 2.0.0 | **113 passed, 1 failed** |
+
+**No source change was needed for either.** Both problems are in the tests:
+
+1. `Tool.inputSchema` is renamed `input_schema` — a deprecation warning, at `test_server.py:104`.
+2. `test_the_tool_descriptions_name_exactly_the_formats_that_exist` fails, and the reason is worth
+   stating precisely because it looks alarming and is not.
+
+### 14.3 The `Args:` block moves out of the description and into the schema
+
+Measured, for `attach`:
+
+| | `description` length | carries the format list |
+|---|---|---|
+| fastmcp 3.2.0 | 1832 chars | yes |
+| fastmcp 4.0.0b1 | **555 chars** | no |
+
+fastmcp 4 stops folding the docstring's `Args:` section into the tool description and puts each
+parameter's prose into the **input schema's per-property `description`** instead. Confirmed by
+reading the schema back: `database` still carries the full reader catalogue, `nickname`, `writable`
+and `delimiter` each carry their own text.
+
+**Nothing is lost, and the placement is better** — a client can render per-parameter help, and the
+format catalogue reaches the agent attached to the parameter it governs rather than buried in one
+long string. What breaks is only our test, which greps the description for the list. Under fastmcp 4
+it must grep the parameter schema.
+
+This matters more here than it would elsewhere: the format catalogue *is* the tool description for
+`attach` and `query`, and the test exists so a format cannot land without the agent being told. It
+must keep doing that job against whichever field carries it.
+
+### 14.4 What is deliberately not being done yet
+
+`fastmcp 4.0.0b1` is a beta. The pin stays `fastmcp>=3.0.0` and is deliberately **not** capped: the
+server genuinely runs on both majors, so capping would refuse users a working combination to protect
+a test. Adoption waits for a stable 4.x — task 25 names the two test changes it needs.
+
+Three parts of the new spec are worth a second look then, none urgent:
+
+* **Cacheable list results** (`ttlMs`, `cacheScope`). This tool list is static for the life of the
+  process, so it can advertise a long TTL — a small, free win, and fastmcp's to implement.
+* **MRTR** (`resultType: "input_required"`) would let a tool ask mid-call instead of refusing. It is
+  tempting for the ambiguous-source case, where a file with two candidate tables is currently refused
+  naming both. **It should be resisted by default**: standing instruction 4 says the server offers
+  primitives and the LLM does the judging, and a refusal that names both candidates already gives the
+  caller everything it needs to choose.
+* **The stateless core bounds where this server could ever be deployed**, not how it behaves today. A
+  slot is memory or a temp file in *this* process, so several instances behind a load balancer would
+  not share slots. That is fine for a local stdio server, which is what this is, and it is the reason
+  hosting was dropped as a concern rather than a gap to close.
