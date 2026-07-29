@@ -252,24 +252,6 @@ def _oracle(env: dict[str, str], port: int) -> str:
     )
 
 
-def _clickhouse(env: dict[str, str], port: int) -> str:
-    """ClickHouse over HTTP, through the dialect inside ``clickhouse-connect``.
-
-    ``clickhousedb`` is the dialect's registered name and the key
-    :func:`localdata_mcp.dialects.backend_for` looks up; the third-party
-    ``clickhouse-sqlalchemy`` registers ``clickhouse`` and is a different
-    project. The port is the HTTP one — this dialect does not speak the native
-    protocol on 9000, and only the port it speaks on is published.
-    """
-    return _url(
-        "clickhousedb",
-        username=env["CLICKHOUSE_USER"],
-        password=env["CLICKHOUSE_PASSWORD"],
-        port=port,
-        database=env["CLICKHOUSE_DB"],
-    )
-
-
 def _cockroachdb(env: dict[str, str], port: int) -> str:
     """CockroachDB, on the PostgreSQL wire but as its own dialect.
 
@@ -339,14 +321,6 @@ ENDPOINTS = (
         extra="oracle",
         url=_oracle,
         warmup=120.0,
-    ),
-    Endpoint(
-        dialect="clickhousedb",
-        service="localdata-test-clickhouse",
-        container_port=8123,
-        driver="clickhouse_connect",
-        extra="clickhouse",
-        url=_clickhouse,
     ),
     Endpoint(
         dialect="cockroachdb",

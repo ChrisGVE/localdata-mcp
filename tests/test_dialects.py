@@ -204,15 +204,13 @@ def test_the_generic_url_open_carries_the_read_only_posture(tmp_path):
     """A server URL is not a weaker claim on the posture than a file path is.
 
     ``open_file`` has always carried :attr:`Backend.read_only_query`; ``open``
-    did not, and left the read engine to the transactional floor. That was
-    adequate only while every endpoint had a floor to stand on. ClickHouse has
-    no transactions, so the URL is the *only* place its posture can be stated —
-    and a dialect that can be told read-only in the URL should be told so
-    however it was reached.
+    did not, and left the read engine to the transactional floor. A dialect that
+    can be *told* read-only in the URL should be told so however it was reached —
+    a datasource named by URL is not a weaker claim on the posture than one named
+    by path, and being told is stronger than not being committed.
 
-    Exercised on DuckDB rather than on ClickHouse because it needs no container:
-    the behaviour under test is generic, and picking the dialect that is
-    reachable from a file keeps it in the fast suite.
+    DuckDB is the dialect that has something to say here and is reachable from a
+    file, so this stays in the fast suite.
     """
     database = build_database(tmp_path / "warehouse.duckdb", dialect="duckdb")
     engines = backend_for("duckdb").open(f"duckdb:///{database}", writable=True)
@@ -292,7 +290,6 @@ def test_every_endpoint_builder_round_trips_its_own_credentials():
                 "MARIADB_PASSWORD",
                 "MSSQL_SA_PASSWORD",
                 "APP_USER_PASSWORD",
-                "CLICKHOUSE_PASSWORD",
             )
         }
         environment.update(
@@ -301,14 +298,12 @@ def test_every_endpoint_builder_round_trips_its_own_credentials():
                 for key in ("POSTGRES_USER", "MYSQL_USER", "MARIADB_USER", "APP_USER")
             }
         )
-        environment["CLICKHOUSE_USER"] = "testuser"
         environment.update(
             {
                 key: "testdb"
                 for key in ("POSTGRES_DB", "MYSQL_DATABASE", "MARIADB_DATABASE")
             }
         )
-        environment["CLICKHOUSE_DB"] = "testdb"
 
         try:
             built = endpoint.url(environment, 15432)
