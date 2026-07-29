@@ -2599,3 +2599,188 @@ of task 21 is taken up.
 
 Its concurrency story is equally untouched: `SERIALIZABLE` with no other level available says a
 single-statement harness will never see a conflict, not that conflicts resolve well.
+
+## §19 — CrateDB, where a write is durable before it is readable (2026-07-29)
+
+Eleventh endpoint dialect, eighth from the backend catalogue (task 22, worklist item 8), and the
+first from the **search-engine lineage** rather than the database one — a distributed SQL layer over
+Lucene. Two of its properties have no precedent in this seam, and one of them found a fail-open in
+shared code that every dialect before it had been passing by luck.
+
+Measured against the official `crate` image, server **6.4.1**, through `sqlalchemy-cratedb` 0.43.1 on
+the `crate` client 2.2.1 — Crate.io's own, Apache-2.0, released 2026-06-22. This is the best-provenance
+image in the harness: `crate` is an *official* Docker Hub library image, which no other entry in the
+catalogue has been.
+
+### 19.1 An INSERT that reported rows, and the floor that believed it
+
+The finding, and it was never about CrateDB.
+
+`Workspace.query_stream` refuses a statement that is not a read, and decided it this way:
+
+```python
+if not result.returns_rows:
+    raise LoadError(_not_a_read(entry))
+```
+
+Every dialect before this one answered `returns_rows = False` for an `INSERT`. CrateDB answers
+**`True`** — one row, of **zero columns** — so the statement passed the floor, `query` reported
+`ok: True`, and the row stayed inserted, there being no transaction to withhold it. A caller who was
+told `query` refuses writes was told the truth about the *policy* and a lie about *this statement*.
+
+The fix is generic and names no dialect:
+
+```python
+names = list(result.keys()) if result.returns_rows else []
+if not names:
+    raise LoadError(_not_a_read(entry))
+```
+
+A `SELECT` returns rows even when it matches none, and it always projects at least one column, so the
+test stays exact rather than heuristic. **The assumption that failed was in shared code**: that a
+driver saying "rows" meant a caller was reading. Asking for a column as well is the same question
+asked completely.
+
+Proved able to fail in the only way that counts — it *did* fail, before the fix, as
+`test_query_refuses_a_write_even_where_the_datasource_permits_it[cratedb]` reporting
+`{'columns': [], 'ok': True, 'row_count': 1, 'rows': [[]]}`.
+
+### 19.2 No transactions, and unlike ClickHouse nothing to put in their place
+
+ClickHouse (§11) was "the first backend with no transactions", and the phrase turned out to be doing
+two jobs. ClickHouse has no transactions *and* has `readonly=1`, a posture the server enforces before
+a statement reaches the data. CrateDB has neither:
+
+| | ClickHouse | CrateDB |
+|---|---|---|
+| Transactions | none | none |
+| Isolation levels offered by the dialect | — | `()` — the tuple is empty |
+| Read-only session | `readonly=1` in the URL | none; its read-only setting is a **cluster-wide** block that would stop the write engine too |
+| DML through a read connection | refused | **applied** — measured, the row was there afterwards |
+| DDL through a read connection | refused | **applied** — measured, the table was there afterwards |
+
+So CrateDB is the first backend where a refused write really happened, and `Backend` gains
+`dml_survives_refusal()` to say so — the sibling of `ddl_survives_refusal()`, which Oracle has
+answered `True` since §5. They are split rather than merged because they are independent: Oracle's DDL
+survives while its DML does not, and one axis would have to lie about one of them.
+
+**The refusal is still issued, and that is not a formality.** What it now says is true in both
+directions: `query` does not write here, *and* this particular statement was not undone. A refusal
+claiming a statement did not happen, when it did, is the same lie as reporting a rolled-back write as
+a success — the judgement §5 recorded for Oracle, reaching rows for the first time.
+
+### 19.3 Durable before readable, and why waiting was the wrong answer
+
+Rows land in a Lucene index that refreshes on a timer. Measured, on a fresh table:
+
+| Moment | `SELECT COUNT(*)` |
+|---|---|
+| immediately after the write commits | **0** |
+| after `REFRESH TABLE` | 1 |
+| without refreshing, polling | 1, after **0.92 s** |
+
+`insert_frame` counts the rows it just wrote and puts that number in the payload, so left alone this
+is not a flaky test but a **wrong payload for a reason the caller cannot see** — 0 on a fast machine,
+correct on a slow one, and nothing to tell them which they were handed.
+
+`Backend.settle(conn, table)` is the new axis: a no-op for every transactional backend, because there
+the commit *is* the moment rows become visible, and `REFRESH TABLE` on CrateDB. It runs on the same
+connection and inside the same block as the insert, so a write and the visibility of that write cannot
+be separated by a failure between them.
+
+Waiting instead was considered and rejected twice over: it trades a wrong answer for a slow one, and
+it picks a timeout by guessing at a server setting that is free to change. The measured 0.92 s is
+what the default happens to be here, not a contract.
+
+Two tests write *below* the verbs and therefore had to ask for it themselves —
+`_build_typed_table` and the refused-write count. Both consult the seam rather than naming the
+dialect, which is the precedent `unstorable_column_types` already set.
+
+### 19.4 A date that arrived as a number
+
+CrateDB's HTTP protocol carries values untyped, with the column types beside them, and the driver
+spells a value as a Python object only if it is asked to. Unasked, a `TIMESTAMP` reached the caller as
+`1709251200000` — epoch milliseconds. JSON carries that perfectly happily and an agent reads it as a
+quantity, which is precisely the failure standing rule 7 exists to prevent: **dates are canonical UTC
+ISO 8601 text, never epoch integers.**
+
+It is not reachable through SQLAlchemy's typing. A Core `select()` over a reflected table converts
+correctly, because SQLAlchemy knows the column types; `query` runs the caller's own text, where it
+knows nothing — and the DBAPI cursor description supplies **no type codes at all**, every field
+`None`:
+
+```
+(('d', None, None, None, None, None, None), ('n', None, None, None, None, None, None))
+```
+
+The driver's own `DefaultTypeConverter` is the public answer, working off the `col_types` the server
+sends alongside the rows. `Backend.connect_args()` is the new axis that delivers it — driver arguments
+a URL cannot express, given to the read and write engines alike so the two cannot disagree about how a
+value is spelled. With it, the same column comes back `2024-03-01T00:00:00Z`.
+
+The `Z` is information, not noise: CrateDB has no date type, so a date is a `TIMESTAMP`, and its
+instants are UTC. Three spellings now satisfy that assertion — a bare date, a naive instant, and a
+UTC-marked one — and each is the truth its dialect can tell. None is an epoch integer.
+
+### 19.5 `Numeric` is silently truncated, and the database is not at fault
+
+The dangerous one, because nothing fails.
+
+`sqlalchemy-cratedb` renders `Numeric` as **`BIGINT`**. `Decimal("12345.6789")` is therefore stored as
+`12345`, and read back as `Decimal("12345.0000")` — SQLAlchemy's own type re-applies the scale on the
+way out, which is what makes the loss invisible. Measured three ways:
+
+| Declared as | Value in | Value out |
+|---|---|---|
+| `Numeric(10, 2)` via SQLAlchemy | `Decimal("1.25")` | `Decimal('1.00')` |
+| `Numeric(38, 4)` via SQLAlchemy | `Decimal("1.25")` | `Decimal('1.0000')` |
+| `NUMERIC(10,2)` in raw SQL, literal | `1.25` | `1.25` |
+| `NUMERIC(10,2)` in raw SQL, bound `Decimal` | `Decimal("1.25")` | `1.25` |
+
+`SHOW CREATE TABLE` confirms it directly: the column SQLAlchemy declared `Numeric(10,2)` is created as
+`"c" BIGINT`. **The database supports the type; the dialect does not use it.** Recorded as the
+dialect's defect so nobody later fixes CrateDB for it — issue #52.
+
+Nothing this server writes reaches it: `_declared_type` emits only `INTEGER`, `REAL` and `TEXT`, so
+the exposure is a caller's own table. `Numeric` therefore joins `unstorable_column_types()`, alongside
+`LargeBinary` and `Time` — a column that silently corrupts is worse than one that cannot be created,
+which is the judgement §11.4 already recorded for ClickHouse's `Time`.
+
+`LargeBinary` and `Time` are here for a different reason from ClickHouse's two of the same name: those
+are the *driver's* gaps, where the type exists and cannot be bound. These are the database's absences.
+`CREATE TABLE` is refused at parse time — `Cannot find data type: blob`, `Cannot find data type:
+time` — so the column is never made.
+
+### 19.6 Everything else, and a healthcheck that repeated a known gotcha
+
+| Axis | CrateDB |
+|---|---|
+| `builds_indexes` | `False` — `CREATE INDEX` is *unparseable* (`no viable alternative at input 'CREATE INDEX'`), because every column is already indexed on write unless the table says `INDEX OFF` |
+| `rename_table` | generic — `ALTER TABLE … RENAME TO` accepted verbatim |
+| `folds_identifiers` | generic `False` — a quoted `Mixed902b` reflects back verbatim |
+| `impostors` | none; it answers on its own dialect |
+| `resident_bytes` / `snapshot` / `storage_classes` | generic |
+
+`builds_indexes` now has **three** users — ClickHouse, Trino and CrateDB — refusing for three
+different reasons: an index of another kind, no data to index, and an index already there. The axis
+carries the fact and only the sentence differs, which is what an axis is for. §11 recorded an
+objection that it might have one user forever; that is now twice retired.
+
+The healthcheck repeated the `yugabyted` gotcha exactly. `network.host=_site_` binds the container's
+own interface, so `crash --hosts http://localhost:4200` returned `CONNECT ERROR` for two minutes while
+the database answered perfectly well — `curl` against the container's address returned the node banner
+and the same `crash` command succeeded. **A healthcheck must probe the address the server actually
+binds**, and this is the second endpoint to prove it. The entry uses `$(hostname -i)`.
+
+The image reaches healthy in ~10 s. It publishes three ports — 4200 HTTP, 4300 transport, 5432
+PostgreSQL-wire — and **only 4200 is published**, deliberately: addressing the compatibility layer
+would load PostgreSQL's dialect and answer PostgreSQL's questions about CrateDB, the mistake §12
+records for CockroachDB.
+
+### 19.7 What this did not test
+
+The whole distributed half. One node with `discovery.type=single-node` says nothing about sharding,
+replication, or what a partial write looks like when a node is lost — and CrateDB's answers there are
+the reason anyone chooses it. Its eventual-consistency window was measured at rest, with one writer;
+nothing here says what `settle` costs under load, or whether a refresh forced after every insert is
+the right trade at a million rows rather than at five.

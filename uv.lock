@@ -622,6 +622,20 @@ wheels = [
 ]
 
 [[package]]
+name = "crate"
+version = "2.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "orjson" },
+    { name = "urllib3" },
+    { name = "verlib2" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/00/c0/bafb5700785ac6f8e13cd47e1d34d657f5c7cbc035f439f09869a437d0d6/crate-2.2.1.tar.gz", hash = "sha256:dd329ed1d83f678d2f5ecba1adafb4673ef7006c76aa1d7ac8e9e2b9e091975d", size = 72619, upload-time = "2026-06-17T08:57:45.392Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ea/3a/1e7973cc233ba64c1a892f5fa4641f634bda4740b5a2bd0997732c84744a/crate-2.2.1-py3-none-any.whl", hash = "sha256:2f17bf6a8c7e8ab7351a28c8da98c3686f5adfcc5c7123cbe664f7d7bcc81831", size = 34189, upload-time = "2026-06-17T08:57:44.085Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "46.0.6"
 source = { registry = "https://pypi.org/simple" }
@@ -867,6 +881,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d0/32/4f1b2cfd7b50db89114949f90158b1dcc2c92a1917b9f57c0ff24e47a2f4/fastmcp-3.2.0.tar.gz", hash = "sha256:d4830b8ffc3592d3d9c76dc0f398904cf41f04910e41a0de38cc1004e0903bef", size = 26318581, upload-time = "2026-03-30T20:25:37.692Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4f/67/684fa2d2de1e7504549d4ca457b4f854ccec3cd3be03bd86b33b599fbf58/fastmcp-3.2.0-py3-none-any.whl", hash = "sha256:e71aba3df16f86f546a4a9e513261d3233bcc92bef0dfa647bac3fa33623f681", size = 705550, upload-time = "2026-03-30T20:25:35.499Z" },
+]
+
+[[package]]
+name = "geojson"
+version = "3.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/a9/bd61eee2c7904947094b74866b569f3fd5a8d6ac907ecdfecef74b19d459/geojson-3.3.0.tar.gz", hash = "sha256:92e83b9cb378a450b42f1207bb9b2a031f9fc89185f335153c44369b8b8b71fd", size = 25141, upload-time = "2026-05-28T21:48:08.214Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/5e/fdd72167b57158d743353f71d453200719744d1e75f18b1c8230508db370/geojson-3.3.0-py3-none-any.whl", hash = "sha256:a2d885187eeaa8b357600b3fcc9d963cb4300d1694196636dbd7eddc82fd0825", size = 15181, upload-time = "2026-05-28T21:48:06.648Z" },
 ]
 
 [[package]]
@@ -1165,6 +1188,7 @@ all = [
     { name = "pyyaml" },
     { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
+    { name = "sqlalchemy-cratedb" },
     { name = "sqlalchemy-monetdb" },
     { name = "tabulate" },
     { name = "trino", extra = ["sqlalchemy"] },
@@ -1177,6 +1201,9 @@ cockroachdb = [
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy-cockroachdb" },
 ]
+cratedb = [
+    { name = "sqlalchemy-cratedb" },
+]
 databases = [
     { name = "clickhouse-connect", extra = ["sqlalchemy"] },
     { name = "duckdb" },
@@ -1187,6 +1214,7 @@ databases = [
     { name = "pyodbc" },
     { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
+    { name = "sqlalchemy-cratedb" },
     { name = "sqlalchemy-monetdb" },
     { name = "trino", extra = ["sqlalchemy"] },
 ]
@@ -1253,7 +1281,7 @@ requires-dist = [
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.0" },
     { name = "duckdb-engine", marker = "extra == 'duckdb'", specifier = ">=0.13" },
     { name = "fastmcp", specifier = ">=3.0.0" },
-    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb"], marker = "extra == 'databases'" },
+    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb"], marker = "extra == 'databases'" },
     { name = "localdata-mcp", extras = ["formats", "databases"], marker = "extra == 'all'" },
     { name = "localdata-mcp", extras = ["yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet"], marker = "extra == 'formats'" },
     { name = "numbers-parser", marker = "extra == 'numbers'", specifier = ">=4.4" },
@@ -1271,13 +1299,14 @@ requires-dist = [
     { name = "setuptools", marker = "extra == 'monetdb'", specifier = "<82" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlalchemy-cockroachdb", marker = "extra == 'cockroachdb'", specifier = ">=2.0.4" },
+    { name = "sqlalchemy-cratedb", marker = "extra == 'cratedb'", specifier = ">=0.43" },
     { name = "sqlalchemy-monetdb", marker = "extra == 'monetdb'", specifier = ">=2.0" },
     { name = "tabulate", marker = "extra == 'markdown'", specifier = ">=0.9" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "trino", extras = ["sqlalchemy"], marker = "extra == 'trino'", specifier = ">=0.330" },
     { name = "xlrd", marker = "extra == 'xls'", specifier = ">=2.0" },
 ]
-provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "formats", "databases", "all"]
+provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "formats", "databases", "all"]
 
 [[package]]
 name = "lz4"
@@ -2820,6 +2849,21 @@ wheels = [
 ]
 
 [[package]]
+name = "sqlalchemy-cratedb"
+version = "0.43.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "crate" },
+    { name = "geojson" },
+    { name = "sqlalchemy" },
+    { name = "verlib2" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/53/35/4fbea8c79f6df5d06ee1956648bb9ef4f08114cd9dae0329ab1cd2c45f20/sqlalchemy_cratedb-0.43.1.tar.gz", hash = "sha256:0466573af3dc5b796dc6df45ac4085d67eb4fba614a72a029c2b4671aead78a7", size = 48411, upload-time = "2026-06-22T08:54:22.56Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/3c/946062f221bde60332ac175aeb40a7426a6e076056b4ad60c7bf5af7ece8/sqlalchemy_cratedb-0.43.1-py3-none-any.whl", hash = "sha256:1db7a30a7f76a023f63b0c4d396e4c32becd45c66c72c327f58720685335199b", size = 46774, upload-time = "2026-06-22T08:54:21.293Z" },
+]
+
+[[package]]
 name = "sqlalchemy-monetdb"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3016,6 +3060,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5e/da/6eee1ff8b6cbeed47eeb5229749168e81eb4b7b999a1a15a7176e51410c9/uvicorn-0.44.0.tar.gz", hash = "sha256:6c942071b68f07e178264b9152f1f16dfac5da85880c4ce06366a96d70d4f31e", size = 86947, upload-time = "2026-04-06T09:23:22.826Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/23/a5bbd9600dd607411fa644c06ff4951bec3a4d82c4b852374024359c19c0/uvicorn-0.44.0-py3-none-any.whl", hash = "sha256:ce937c99a2cc70279556967274414c087888e8cec9f9c94644dfca11bd3ced89", size = 69425, upload-time = "2026-04-06T09:23:21.524Z" },
+]
+
+[[package]]
+name = "verlib2"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/94/b3f689e44c14702ce67fdf24db649e8193958f8de971e69d024ef7e6b295/verlib2-0.3.2.tar.gz", hash = "sha256:a0a6af9838d8d26c18225a30c8d57fb70714462e3cd29f2451e7982d5a51e21e", size = 16987, upload-time = "2026-03-31T01:18:45.997Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/b2/5d2d39c1afb8b3904ed053dc4ec4a992f17c6a993e51e62a4af0d7878d00/verlib2-0.3.2-py3-none-any.whl", hash = "sha256:ddcc6f3a4f42019703ac5f6406faecefcd5f122e84a3d1a58190ddff23ec0426", size = 15054, upload-time = "2026-03-31T01:18:46.805Z" },
 ]
 
 [[package]]

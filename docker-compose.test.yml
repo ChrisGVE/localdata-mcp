@@ -213,6 +213,49 @@ services:
       retries: 12
       start_period: 15s
 
+  # A distributed SQL store built on Lucene, and the official `crate` image. It
+  # publishes three ports: 4200 is the HTTP endpoint its own driver speaks, 4300
+  # is inter-node transport, and 5432 is a PostgreSQL-wire compatibility layer.
+  # Only 4200 is published here, because that is the one the dialect uses —
+  # addressing the 5432 layer instead would test PostgreSQL's dialect against
+  # CrateDB's behaviour, which is the mistake §12 records for CockroachDB.
+  #
+  # `-Cdiscovery.type=single-node` stops it looking for peers to form a cluster
+  # with, and the heap is held down because it sizes itself for a dedicated node
+  # by default and this machine runs out of containers before it runs out of
+  # dialects (issue #46).
+  localdata-test-cratedb:
+    image: crate:latest
+    command: >
+      crate -Cdiscovery.type=single-node
+      -Cnetwork.host=_site_
+      -Cstats.enabled=true
+    environment:
+      CRATE_HEAP_SIZE: 512m
+    ports:
+      - "14200:4200"
+    healthcheck:
+      # `crash`, the image's own SQL client, running a real statement. The HTTP
+      # endpoint answers before the SQL layer will accept one, so probing the
+      # port would report ready while every statement is still refused — the
+      # same shape Trino's health script gets right by insisting on
+      # `"starting": false`.
+      #
+      # `$(hostname -i)`, not `localhost`, and for the same reason the YugabyteDB
+      # entry above says so: `network.host=_site_` binds the container's own
+      # interface, so a loopback probe is refused while the database answers
+      # perfectly well on the published port. Measured — `curl localhost:4200`
+      # returns nothing here and `curl 172.19.0.2:4200` returns the node banner.
+      test:
+        [
+          "CMD-SHELL",
+          "crash --hosts http://$$(hostname -i):4200 -c 'SELECT 1' >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
 networks:
   default:
     name: localdata-test-net

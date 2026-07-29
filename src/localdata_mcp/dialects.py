@@ -70,6 +70,7 @@ __all__ = [
     "BACKENDS",
     "Backend",
     "ClickHouseBackend",
+    "CrateDBBackend",
     "DuckDBBackend",
     "Engines",
     "MySQLBackend",
@@ -242,15 +243,33 @@ class Backend:
         and on a backend with no transactions the URL is the *only* place the
         posture can be stated — there is no rollback floor underneath it.
         Where the mapping is empty nothing is added and nothing changes.
+
+        Anything the *driver* has to be told that a URL cannot carry comes from
+        :meth:`connect_args`, and is given to both engines: a read and a write
+        onto one datasource must not disagree about how values are spelled.
         """
         refusal = Refusal()
+        connect_args = dict(self.connect_args())
         engines = Engines(
-            write=create_engine(url),
-            read=create_engine(self._read_only(url)),
+            write=create_engine(url, connect_args=connect_args),
+            read=create_engine(self._read_only(url), connect_args=connect_args),
             refusal=refusal,
         )
         self.read_posture(engines.read, refusal)
         return engines
+
+    def connect_args(self) -> Mapping[str, Any]:
+        """Driver arguments this dialect needs that a URL cannot express. None here.
+
+        Distinct from :attr:`read_only_query`, which is part of the URL and says
+        what the *connection may do*. This says what the driver must be handed —
+        a Python object, not a string — and applies to reading and writing
+        alike.
+
+        Empty for every dialect whose driver already returns the types its
+        columns declare, which is all of them but CrateDB.
+        """
+        return {}
 
     def _read_only(self, url: str | URL) -> URL:
         """``url`` with this dialect's read-only query parameters merged in.
@@ -336,6 +355,50 @@ class Backend:
         reporting a rolled-back write as a success.
         """
         return False
+
+    def dml_survives_refusal(self) -> bool:
+        """Whether *data* sent to a read connection takes effect despite refusal.
+
+        The same admission as :meth:`ddl_survives_refusal`, asked about rows
+        rather than about schema, and ``False`` everywhere the transactional
+        floor exists — an ``INSERT`` on a connection that never commits is
+        rolled back, so the refusal and the outcome agree.
+
+        They come apart on a database with **no transactions at all**. ClickHouse
+        has none either, but supplies a posture of its own (``readonly=1``) that
+        refuses the statement before it reaches the data, so its answer is still
+        ``False``. CrateDB has neither: no transaction to withhold and no
+        read-only session to ask for, so a write reaches the data and the
+        refusal that follows is a true statement about what this server *permits*
+        and a false one about what happened.
+
+        Split from ``ddl_survives_refusal`` rather than folded into it because
+        the two are genuinely independent — Oracle's DDL survives while its DML
+        does not — and a single axis would have to lie about one of them.
+        """
+        return False
+
+    def settle(self, conn: Connection, table: str) -> None:
+        """Make rows just written visible to the next read. Nothing, generically.
+
+        Every transactional backend here has already done this by the time a
+        write commits: the commit *is* the point rows become visible, so there is
+        nothing left to ask for and this stays a no-op.
+
+        It exists for the search-engine lineage, where a write is durable long
+        before it is visible. CrateDB writes into a Lucene index refreshed on a
+        timer, so a table counted immediately after an insert answers **0** and
+        answers correctly a second later. Left alone, that turns every write into
+        a race: ``insert_frame`` reports the row count it read, and the number it
+        would report is whatever the timer happened to have done — which is not a
+        flaky test so much as a payload that is wrong for a reason the caller
+        cannot see.
+
+        Waiting it out was the alternative and is worse: it trades a wrong answer
+        for a slow one, and it picks a timeout by guessing at a setting the
+        server is free to change.
+        """
+        return None
 
     def resident_bytes(self, engine: Engine) -> int | None:
         """Bytes this database is holding in *our* process, or ``None``.
@@ -1371,6 +1434,159 @@ class TrinoBackend(Backend):
         )
 
 
+# ---------------------------------------------------------------------------
+# CrateDB
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CrateDBBackend(Backend):
+    """CrateDB, where a write is durable before it is visible and cannot be undone.
+
+    A distributed SQL layer over Lucene, and the first backend here from the
+    search-engine lineage rather than the database one. Two of its properties
+    follow from that ancestry and neither has a precedent in this seam.
+
+    **There are no transactions, and unlike ClickHouse there is no posture to put
+    in their place.** ClickHouse has no transactions either and answers
+    ``readonly=1``, which refuses a statement before it reaches the data.
+    CrateDB offers no session-level equivalent — its read-only setting is a
+    cluster-wide block that would stop the *write* engine too — so a write sent
+    through a read connection is simply applied. Measured: an ``INSERT`` on a
+    connection that never commits was still there afterwards, and so was a
+    ``CREATE TABLE``. Both survivals are declared rather than papered over.
+
+    **A committed write is not immediately readable.** Rows land in a Lucene
+    index refreshed on a timer, so a count taken straight after an insert
+    answers ``0`` and answers ``1`` about a second later. :meth:`settle` asks for
+    the refresh explicitly rather than waiting for it.
+
+    Reached over the HTTP endpoint on 4200 through Crate.io's own dialect. The
+    same server also speaks the PostgreSQL wire on 5432; addressing it that way
+    would load PostgreSQL's dialect and answer PostgreSQL's questions, which is
+    the mistake ``docs/CONSTRAINTS.md`` §12 records for CockroachDB.
+    """
+
+    name: str = "crate"
+
+    def connect_args(self) -> Mapping[str, Any]:
+        """The driver's own type converter, without which a date arrives as a number.
+
+        CrateDB's HTTP protocol carries values untyped and the column types
+        beside them, so the driver only spells a value as a Python object if it
+        is asked to. Unasked, a ``TIMESTAMP`` reaches the caller as
+        ``1709251200000`` — epoch milliseconds, an integer JSON is perfectly
+        happy to carry and an agent will read as a quantity. That is the exact
+        failure ``test_every_value_reaches_the_wire_as_something_json_can_hold``
+        exists to catch, and the reason dates are canonical ISO 8601 text here.
+
+        Not reachable through SQLAlchemy's own typing, which is why it is set on
+        the driver. A Core ``select()`` over a reflected table converts correctly
+        because SQLAlchemy knows the column types; ``query`` runs the caller's
+        own text, where it knows nothing and the DBAPI cursor description
+        supplies no type codes at all — every field is ``None``. The converter is
+        the driver's public answer to that, and it works off the ``col_types``
+        the server sends.
+        """
+        from crate.client.converter import DefaultTypeConverter
+
+        return {"converter": DefaultTypeConverter()}
+
+    def dml_survives_refusal(self) -> bool:
+        """``True``, and it is the honest answer rather than a resigned one.
+
+        No transaction to withhold and no read-only session to ask for, so the
+        row is in the index by the time this server has anything to say about
+        it. The refusal that follows is true about what is permitted here and
+        false about what happened, and a caller told otherwise would go looking
+        for a row that exists.
+        """
+        return True
+
+    def ddl_survives_refusal(self) -> bool:
+        """``True``, for the same reason and measured the same way.
+
+        Oracle reaches this state by committing DDL implicitly; CrateDB reaches
+        it by never having had a transaction. The consequence is identical, which
+        is why the axis is asked rather than the dialect named.
+        """
+        return True
+
+    def settle(self, conn: Connection, table: str) -> None:
+        """``REFRESH TABLE``, so a row just written can be read back.
+
+        The default refresh interval is a second, which is *fast* and entirely
+        beside the point: the question is not how long the wrong answer lasts
+        but whether this server ever gives one. ``insert_frame`` counts the rows
+        it just wrote and puts that number in the payload, so without this the
+        number reported is whatever the timer had done by then — 0 on a fast
+        machine, correct on a slow one, and no way for the caller to tell which
+        they were handed.
+
+        Run on the same connection as the insert, inside the same block, so a
+        write and the visibility of that write cannot be separated by a failure.
+        """
+        conn.execute(
+            text(f"REFRESH TABLE {conn.dialect.identifier_preparer.quote(table)}")
+        )
+
+    def unstorable_column_types(self) -> frozenset[str]:
+        """Three, and the third is the dangerous one because it does not fail.
+
+        ``LargeBinary`` and ``Time`` are the database's own absences, unlike
+        ClickHouse's two of the same name which are its *driver's*: here
+        ``CREATE TABLE`` is refused at parse time — ``Cannot find data type:
+        blob``, ``Cannot find data type: time`` — so the column is never made and
+        there is nothing to write to. CrateDB stores binary as a base64
+        ``STRING`` and time-of-day inside a ``TIMESTAMP``; neither is what the
+        portable type means, and substituting one would put a value in a column
+        whose type says something else.
+
+        ``Numeric`` is here for the opposite reason: **nothing fails.** The
+        dialect renders it as ``BIGINT``, so ``Decimal("12345.6789")`` is stored
+        as ``12345`` and read back as ``Decimal("12345.0000")`` — the scale is
+        re-applied on the way out by SQLAlchemy's own type, which is what makes
+        the loss invisible. Measured against the alternative: a column declared
+        ``NUMERIC(10,2)`` in raw SQL holds ``1.25`` exactly, so **the database
+        supports the type and the dialect does not use it**. Stated as the
+        dialect's defect so nobody later fixes CrateDB for it — issue #52.
+
+        A column that silently corrupts is worse than one that cannot be created,
+        which is the same judgement ClickHouse's ``Time`` entry records. Nothing
+        this server writes reaches it — ``_declared_type`` emits only
+        ``INTEGER``, ``REAL`` and ``TEXT`` — so the exposure is a caller's own
+        table, and naming it here is what keeps the harness from asserting a
+        value it would silently be handed wrong.
+        """
+        return frozenset({"LargeBinary", "Time", "Numeric"})
+
+    def builds_indexes(self) -> bool:
+        return False
+
+    def build_index(
+        self, name: str, table: Table, columns: Sequence[str]
+    ) -> tuple[Index, tuple[str, ...]]:
+        """Refused, because CrateDB has already done it.
+
+        ``CREATE INDEX`` is not merely unsupported, it is unparseable — ``no
+        viable alternative at input 'CREATE INDEX'`` — and that is the design
+        rather than a gap: every column is indexed on write unless the table
+        says ``INDEX OFF``. There is no index to add because there is no column
+        without one.
+
+        This is the third user of :meth:`builds_indexes`, after ClickHouse and
+        Trino, and the three refuse for three different reasons — an index of
+        another kind, no data to index, and an index already there. The axis
+        carries the fact; only the sentence differs.
+        """
+        raise UnsupportedOperation(
+            f"A {self.name} datasource indexes every column as it is written, so "
+            f"there is no index to add — {', '.join(columns)} on {table.name} is "
+            f"already fast to filter on. Creating one here would report work that "
+            f"was never done."
+        )
+
+
 _SQLITE = SQLiteBackend()
 
 #: Dialect name to the backend that has something *extra* to say about it. An
@@ -1392,6 +1608,7 @@ BACKENDS: dict[str, Backend] = {
     "mssql": MSSQLBackend(),
     "clickhousedb": ClickHouseBackend(),
     "trino": TrinoBackend(),
+    "crate": CrateDBBackend(),
 }
 
 

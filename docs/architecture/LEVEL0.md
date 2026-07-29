@@ -8,9 +8,9 @@ The surface is built, and the gate has since opened onto its own breadth: more f
 and more backends are **still level 0**, because they are nothing new — the same verbs
 pointed at more kinds of source. Formats are done. The backends are an open catalogue
 being worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
-Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino and MonetDB each run every
-verb, each against a container of its own — except SQLite and DuckDB, which are files and
-need none.
+Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB and CrateDB each run
+every verb, each against a container of its own — except SQLite and DuckDB, which are
+files and need none.
 
 ## The premise
 
@@ -252,6 +252,7 @@ where the generic answer means something different here, or nothing at all:
 | YugabyteDB | URL | nothing — reached on PostgreSQL's dialect, which is why the seam had to learn to ask the *engine* what it is rather than trust the dialect's name |
 | Trino | URL | an isolation level, since the driver connects in `AUTOCOMMIT` and there is no transaction left to withhold; `LargeBinary`; and `create(type='index')`, since it owns no storage to index |
 | MonetDB | URL | nothing — the first column store here, and it answers every axis the way a row store does |
+| CrateDB | URL | that a refused write really happened, since it has neither transactions nor a read-only session; a `REFRESH TABLE` before a write can be read back; the driver's type converter, without which a date arrives as epoch milliseconds; `LargeBinary` and `Time`, which it does not have, and `Numeric`, which its dialect silently truncates; and the refusal of `create(type='index')`, since every column is indexed already |
 
 Two things generalised out of that table and became generic rather than per-dialect. **A
 declared type is named by the backend**, because the portable spellings are what make one

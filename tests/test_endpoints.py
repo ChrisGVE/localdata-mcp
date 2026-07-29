@@ -199,10 +199,11 @@ def test_a_failed_open_does_not_echo_the_password(live):
     if _password(live) is None:
         pytest.skip(
             "reached with no password, so there is no wrong one to send and no "
-            "failed open to inspect. Three endpoints are: CockroachDB's "
-            "--insecure mode accepts any password for root, YugabyteDB "
-            "authenticates a fresh cluster by trust, and Trino with no "
-            "authenticator configured takes whoever the client says it is"
+            "failed open to inspect. Four endpoints are, each for its own "
+            "reason: CockroachDB's --insecure mode accepts any password for "
+            "root, YugabyteDB authenticates a fresh cluster by trust, Trino "
+            "with no authenticator configured takes whoever the client says it "
+            "is, and a fresh CrateDB node has no users to authenticate against"
         )
     wrong = make_url(live.url).set(password="definitely-not-the-password")
 
@@ -341,9 +342,22 @@ def _build_typed_table(live: Live) -> str:
         with engine.begin() as conn:
             metadata.create_all(conn)
             conn.execute(defined.insert(), values)
+            # This fixture writes below the verbs, so nothing has asked the
+            # backend to make the row readable. On every transactional database
+            # the commit does it; on CrateDB the row is durable and invisible
+            # until the index refreshes, and the test would read an empty table.
+            # Asked of the seam rather than of the dialect name — the same way
+            # `unstorable_column_types` is consulted a few lines above.
+            backend_for_url(live.url).settle(conn, table)
     finally:
         engine.dispose()
     return table
+
+
+#: Every column :func:`_build_typed_table` defines, in one place so the test
+#: below can state which of them a backend dropped rather than only checking the
+#: ones that happened to survive.
+_TYPED_COLUMNS = ("amount", "day", "moment", "clock", "blob", "flag")
 
 
 def test_every_value_reaches_the_wire_as_something_json_can_hold(live):
@@ -361,18 +375,41 @@ def test_every_value_reaches_the_wire_as_something_json_can_hold(live):
 
     assert answer["ok"] is True, answer
     row = dict(zip(answer["columns"], answer["rows"][0]))
-    assert row["amount"] == pytest.approx(12345.6789)
-    # Oracle's DATE carries a time of day whether or not one was given, so it
-    # comes back as the instant it actually is rather than as a bare date.
-    assert row["day"] in ("2024-03-01", "2024-03-01T00:00:00")
-    assert row["moment"] == "2024-03-01T14:30:00"
-    # Absent only where the backend said it could not hold the column at all,
-    # which is checked above by the fixture leaving it out.
-    if "blob" in row:
-        assert row["blob"] == "0x00ff"
+
+    # Which columns the fixture left out is the backend's statement, so it is
+    # asserted rather than tolerated. `if "blob" in row` — what this replaces —
+    # passes just as quietly when a column is missing for a reason nobody
+    # declared, which is the fail-open shape this project keeps meeting.
+    absent = {
+        name
+        for name, declared in (
+            ("amount", "Numeric"),
+            ("blob", "LargeBinary"),
+            ("clock", "Time"),
+        )
+        if declared in backend_for_url(live.url).unstorable_column_types()
+    }
+    assert set(_TYPED_COLUMNS) - absent == set(row), (row, absent)
+
+    # Three spellings, and each is the truth its dialect can tell. Oracle's DATE
+    # carries a time of day whether or not one was given, so it comes back as
+    # the instant it actually is rather than as a bare date. CrateDB has no date
+    # type at all — a date is a TIMESTAMP, and its instants are UTC, so the `Z`
+    # is information rather than noise. All three are ISO 8601, which is what
+    # the rule asks for; none is an epoch integer, which is what it forbids.
+    assert row["day"] in (
+        "2024-03-01",
+        "2024-03-01T00:00:00",
+        "2024-03-01T00:00:00Z",
+    )
+    assert row["moment"] in ("2024-03-01T14:30:00", "2024-03-01T14:30:00Z")
     # Booleans are the one case a dialect may answer with an integer, and both
     # spellings are JSON numbers or literals, so both are usable as they stand.
     assert row["flag"] in (True, 1)
+    if "amount" in row:
+        assert row["amount"] == pytest.approx(12345.6789)
+    if "blob" in row:
+        assert row["blob"] == "0x00ff"
     # A time of day is a *duration* on MySQL, which is the dialect's own reading
     # of the column and not something to paper over. Either spelling is ISO 8601.
     if "clock" in row:
@@ -529,9 +566,32 @@ def test_query_refuses_a_write_even_where_the_datasource_permits_it(live):
     # The refusal has to name where mutation lives, or the same statement is
     # simply sent again.
     assert "create" in written["error"]
-    assert call("query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}")[
-        "rows"
-    ] == [[5]]
+
+    backend = backend_for_url(live.url)
+    if backend.dml_survives_refusal():
+        # A database with no transactions and no read-only session applies the
+        # write before there is anything to refuse it with — the same shape as
+        # the DDL caveat below, asked about rows. What is tested here is that
+        # the refusal is still issued and the row really did land; claiming it
+        # did not would send the caller looking for a row that exists.
+        #
+        # Settled first, because on such a backend the row is durable before it
+        # is readable, and counting straight away would report the refresh
+        # timer's state rather than the database's.
+        engine = create_engine(live.url)
+        try:
+            with engine.begin() as conn:
+                backend.settle(conn, table)
+        finally:
+            engine.dispose()
+        expected = [[6]]
+    else:
+        expected = [[5]]
+
+    after = call(
+        "query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}"
+    )["rows"]
+    assert after == expected, after
 
 
 def test_ddl_through_query_never_reaches_the_database(live):

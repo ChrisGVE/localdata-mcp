@@ -407,6 +407,32 @@ def _monetdb(env: dict[str, str], port: int) -> str:
     )
 
 
+def _cratedb(env: dict[str, str], port: int) -> str:
+    """CrateDB over its own HTTP endpoint, not over the PostgreSQL wire it also speaks.
+
+    The server publishes both: 4200 carries the HTTP protocol Crate.io's own
+    driver and dialect speak, and 5432 is a PostgreSQL compatibility layer. Only
+    the first is published by the compose entry, deliberately — addressing the
+    compatibility layer would load PostgreSQL's dialect and test PostgreSQL's
+    answers against CrateDB's behaviour, the mistake CockroachDB's entry exists
+    not to make.
+
+    ``crate`` with **no password**: a fresh node has no users configured and its
+    HTTP endpoint accepts any client. This is the fifth no-auth endpoint here,
+    after CockroachDB, YugabyteDB, Trino and MonetDB — which is why task 23's
+    first item keeps being covered by accident.
+
+    No database component at all. CrateDB has no databases to choose between;
+    tables live in schemas, and an unqualified name lands in ``doc``.
+    """
+    return _url(
+        "crate",
+        username="crate",
+        password=None,
+        port=port,
+    )
+
+
 #: Every endpoint dialect this server is tested against, in the order they were
 #: taken on. A dialect is here because it has a container; nothing about the
 #: server enumerates dialects, so this list is a statement about *coverage*, not
@@ -502,6 +528,15 @@ ENDPOINTS = (
         driver="pymonetdb",
         extra="monetdb",
         url=_monetdb,
+    ),
+    Endpoint(
+        dialect="crate",
+        service="localdata-test-cratedb",
+        container_port=4200,
+        driver="crate",
+        extra="cratedb",
+        url=_cratedb,
+        warmup=60.0,
     ),
 )
 

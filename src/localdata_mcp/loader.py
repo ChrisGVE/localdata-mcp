@@ -1687,6 +1687,11 @@ class Workspace:
                 # exists at a time. See the module docstring for the numbers.
                 for block in self._blocks(frame, columns):
                     conn.execute(statement, block)
+                # Nothing for every backend that makes a committed write
+                # readable, which is all of them but the search-engine lineage.
+                # Inside the block on purpose: a write and the visibility of
+                # that write must not be separable by a failure between them.
+                entry.backend.settle(conn, table)
         except Exception as exc:
             unrepresentable = _unrepresentable(exc)
             if unrepresentable is not None:
@@ -1864,15 +1869,26 @@ class Workspace:
         a time, which is what keeps the *server's* memory flat while the rows
         accumulate.
 
-        **A statement that returns no rows is not a read**, and is refused on
-        that ground alone — no SQL is parsed to decide it. A ``SELECT`` returns
-        rows even when it matches none, so the distinction is exact rather than
-        heuristic. This is the floor under every dialect: where the database
+        **A statement that returns no rows — or returns rows of no columns — is
+        not a read**, and is refused on that ground alone; no SQL is parsed to
+        decide it. A ``SELECT`` returns rows even when it matches none, and it
+        always projects at least one column, so the distinction is exact rather
+        than heuristic. This is the floor under every dialect: where the database
         itself refuses a write on a read-only connection (SQLite's authorizer,
         DuckDB's ``access_mode``, a read-only session on the servers that have
         one) the refusal arrives before this, and where it does not, a write that
         was quietly rolled back would otherwise be reported as a statement that
         succeeded and returned nothing.
+
+        **The column half was added because ``returns_rows`` alone let a write
+        through.** CrateDB answers an ``INSERT`` with a result its driver reports
+        as returning rows — one row, of *zero* columns — so the statement passed
+        the floor and came back ``ok`` while the row it inserted stayed inserted,
+        there being no transaction to withhold. That is the exact lie this
+        function exists to prevent, and it was not a CrateDB fact so much as an
+        assumption in shared code: that a driver saying "rows" means a caller was
+        reading. Asking for a column as well is the same question asked
+        completely, and it stays generic — no dialect is named to enforce it.
         """
         with self.query_stream(tag, sql) as (names, rows):
             return names, list(rows)
@@ -1911,9 +1927,10 @@ class Workspace:
                 result = conn.execution_options(
                     stream_results=True, yield_per=_YIELD_PER
                 ).execute(text(sql))
-                if not result.returns_rows:
+                names = list(result.keys()) if result.returns_rows else []
+                if not names:
                     raise LoadError(_not_a_read(entry))
-                yield list(result.keys()), self._rows(entry, result, sql)
+                yield names, self._rows(entry, result, sql)
         except _driver_failures(entry) as exc:
             raise self._explain(entry, exc, sql) from exc
 

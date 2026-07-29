@@ -109,13 +109,17 @@ trino = ["trino[sqlalchemy]>=0.330"]
 # guessed. This is the only version ceiling in this file; see
 # docs/CONSTRAINTS.md §18.1 before relaxing it.
 monetdb = ["sqlalchemy-monetdb>=2.0", "setuptools<82"]
+# Crate.io's own dialect, and it brings its own driver: `crate` speaks CrateDB's
+# HTTP endpoint on 4200 rather than the PostgreSQL wire the same server also
+# offers on 5432, so no PostgreSQL driver is involved and none is pulled in.
+cratedb = ["sqlalchemy-cratedb>=0.43"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb]",
 ]
 all = [
   "localdata-mcp[formats,databases]",
