@@ -75,6 +75,7 @@ __all__ = [
     "MySQLBackend",
     "Refusal",
     "SQLiteBackend",
+    "TrinoBackend",
     "UnsupportedOperation",
     "backend_for",
 ]
@@ -326,6 +327,28 @@ class Backend:
         """
         prepare = conn.dialect.identifier_preparer.quote
         conn.execute(text(f"ALTER TABLE {prepare(table)} RENAME TO {prepare(to)}"))
+
+    def folds_identifiers(self) -> bool:
+        """Whether this backend renames a table to a case it chose itself.
+
+        ``False`` for every backend that keeps a **quoted** identifier verbatim,
+        which is all of them bar one: the whole reason
+        :meth:`rename_table` goes through the dialect's own preparer is that an
+        *unquoted* ``Mixed`` folds on half these dialects, and quoting is what
+        stops it. Trino is the exception — it lower-cases every identifier at
+        the connector, quoted or not, so a table asked for as ``Mixed`` is
+        stored as ``mixed`` and there is nothing a preparer can do about it.
+
+        Nothing dispatches on this. :meth:`loader.Workspace.landed_as` asks the
+        database what the table ended up called and needs no dialect fact at
+        all, which is the right way round — a name is observable, so observe it.
+        This exists so a *test* can tell the two outcomes apart: asserting only
+        that the reported name is findable would let a genuine folding
+        regression through on PostgreSQL, and asserting case-insensitively
+        would let all of them through. A dialect fact stated in a test fixture
+        is the same defect as one stated in shared code, so it is stated here.
+        """
+        return False
 
     def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:
         """The Core type a loaded column is created as, for this backend.
@@ -1131,6 +1154,137 @@ class ClickHouseBackend(Backend):
         )
 
 
+# ---------------------------------------------------------------------------
+# Trino
+# ---------------------------------------------------------------------------
+
+
+#: Trino's own name for "this catalog will not write except in autocommit",
+#: raised for DML and DDL alike once a connection is out of autocommit. Matched
+#: on the name the server sends rather than on the sentence, for the reason
+#: MySQL's and ClickHouse's numeric codes are: a sentence carries a locale and a
+#: version, an error name carries neither.
+_TRINO_AUTOCOMMIT_WRITE = "AUTOCOMMIT_WRITE_CONFLICT"
+
+#: What the read engine is set to, and the reason is availability rather than
+#: strictness — see :meth:`TrinoBackend.read_posture`. Anything other than
+#: autocommit would do; this is the only one that can be reached.
+_TRINO_ISOLATION = "SERIALIZABLE"
+
+
+@dataclass(frozen=True)
+class TrinoBackend(Backend):
+    """Trino, which is a query engine rather than a database.
+
+    It owns no storage. Every table it can see belongs to a *catalog* — a
+    configured connector onto some other system — so several of the questions
+    this seam asks have answers that are about Trino's position in the stack
+    rather than about a feature it lacks:
+
+    * **It has no indexes at all**, and not as an omission. Trino's speed comes
+      from pushing predicates down into the catalog, so what makes a column fast
+      to filter on is how the *underlying* system stores it. There is no
+      ``CREATE INDEX`` to fail; the verb does not apply.
+    * **It folds every identifier to lower case**, quoted or not, at the
+      connector rather than in the parser. Both spellings still resolve, so
+      nothing breaks — but a table asked for as ``Mixed`` is called ``mixed``,
+      and no preparer can prevent it.
+    * **Its driver defaults to autocommit**, which is what makes
+      :meth:`read_posture` load-bearing here rather than a refinement.
+    """
+
+    name: str = "trino"
+
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        """Take the read engine out of autocommit, so there is a floor at all.
+
+        The generic guarantee is that a read connection never commits and
+        whatever it changed is therefore rolled back. **This driver connects in
+        ``AUTOCOMMIT`` by default**, which does not weaken that guarantee so
+        much as delete it: every statement commits itself as it runs, so an
+        ``INSERT`` sent through the read connection was simply *applied* —
+        measured, and the row was still there on the next connection. The same
+        shape ClickHouse has, arrived at from the opposite direction: there the
+        database has no transactions, here it has them and the driver declines
+        to use them.
+
+        Naming any real isolation level restores the floor, and what happens
+        next depends on the catalog rather than on this code. A catalog that
+        writes transactionally accepts the statement and has it rolled back —
+        the generic floor, working. A catalog that writes only in autocommit —
+        ``memory``, which the test harness uses — refuses it outright with
+        :data:`_TRINO_AUTOCOMMIT_WRITE`, which :meth:`denies_write` then
+        recognises. Both are safe; the default is the one that is not.
+
+        ``SERIALIZABLE`` is not a strictness decision. It is the **only** level
+        SQLAlchemy can hand this dialect: SQLAlchemy normalises an isolation
+        level to spaces (``READ UNCOMMITTED``) and the dialect looks it up in an
+        enum keyed with underscores (``READ_UNCOMMITTED``), so every level whose
+        name has two words raises ``KeyError`` at connect time. The one-word
+        name is the one that survives the round trip. If that is ever fixed
+        upstream the weakest level becomes reachable and is the better choice,
+        since nothing here wants a stricter snapshot — only a transaction.
+        ``docs/CONSTRAINTS.md`` §16.2 records the measurement.
+
+        Set on the engine rather than per call, for the reason SQLite's
+        ``query_only`` and MySQL's read-only session are: a posture toggled
+        around a statement has a window in which it is something else.
+        """
+        engine.update_execution_options(isolation_level=_TRINO_ISOLATION)
+
+    def denies_write(self, exc: Exception) -> bool:
+        """Recognise the catalog's refusal, by the name the server sent.
+
+        Only catalogs that cannot write inside a transaction raise this; one
+        that can will have accepted the write and had it rolled back, where the
+        generic answer of ``False`` is the correct one and there is no refusal
+        to recognise.
+        """
+        origin = getattr(exc, "orig", exc)
+        return getattr(origin, "error_name", None) == _TRINO_AUTOCOMMIT_WRITE
+
+    def folds_identifiers(self) -> bool:
+        return True
+
+    def unstorable_column_types(self) -> frozenset[str]:
+        """One, and it is the driver's gap rather than Trino's.
+
+        Trino has ``VARBINARY`` and stores binary perfectly well. What is
+        missing is in ``trino.dbapi``, whose literal formatter calls ``.encode``
+        on the value it was given — which is what you do to a ``str``, so a
+        ``bytes`` raises ``AttributeError`` before any statement is sent. The
+        column is created and cannot be written to, which is worse than not
+        having it.
+
+        Stated as the driver's gap so that nobody later "fixes" Trino for it.
+        """
+        return frozenset({"LargeBinary"})
+
+    def builds_indexes(self) -> bool:
+        return False
+
+    def build_index(
+        self, name: str, table: Table, columns: Sequence[str]
+    ) -> tuple[Index, tuple[str, ...]]:
+        """Refused, because Trino has no indexes to build — by design, not by gap.
+
+        Unlike ClickHouse, which has an index of a different kind, Trino has
+        none whatsoever: it holds no data, so there is nothing of its own to
+        index. A filter is made fast by being pushed down into the catalog,
+        where the underlying system's own layout — partitioning, sorting, its
+        real indexes — decides what it costs. Creating something here under a
+        name handed back to the caller would be an answer that reads as done and
+        cannot be acted on, which is what this refuses.
+        """
+        raise UnsupportedOperation(
+            f"A {self.name} datasource holds no data of its own, so it has no "
+            f"indexes to create — a filter is made fast by the catalog it reads "
+            f"through, not here. To make {', '.join(columns)} fast to filter on, "
+            f"index or partition {table.name} in the system behind the catalog, "
+            f"and query it through {self.name} as before."
+        )
+
+
 _SQLITE = SQLiteBackend()
 
 #: Dialect name to the backend that has something *extra* to say about it. An
@@ -1148,6 +1302,7 @@ BACKENDS: dict[str, Backend] = {
     "oracle": OracleBackend(),
     "mssql": MSSQLBackend(),
     "clickhousedb": ClickHouseBackend(),
+    "trino": TrinoBackend(),
 }
 
 

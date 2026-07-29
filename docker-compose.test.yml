@@ -156,6 +156,31 @@ services:
       retries: 20
       start_period: 30s
 
+  # A query engine rather than a database: Trino holds nothing itself and reads
+  # everything through a *catalog*. The stock image ships four — `memory`,
+  # `tpch`, `tpcds` and `jmx` — and `memory` is the only writable one that needs
+  # no external system behind it, so it is the catalog these tests address. It
+  # keeps its tables in the coordinator's heap and loses them when the container
+  # stops, which for a test harness is exactly right.
+  #
+  # No credentials of any kind: without an authenticator configured Trino
+  # accepts whatever username is offered and asks for no password, which makes
+  # this the fourth no-auth endpoint here after CockroachDB and YugabyteDB.
+  localdata-test-trino:
+    image: trinodb/trino:476
+    ports:
+      - "18080:8080"
+    healthcheck:
+      # The image's own script, which asks /v1/info and — the part a naive probe
+      # misses — insists on `"starting": false`. Trino answers HTTP long before
+      # it will accept a query, so a probe that only checks the port reports
+      # ready while every statement is still refused with SERVER_STARTING_UP.
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
 networks:
   default:
     name: localdata-test-net

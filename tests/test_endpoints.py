@@ -198,9 +198,11 @@ def test_a_failed_open_does_not_echo_the_password(live):
     """The driver's own complaint frequently quotes the whole URL back."""
     if _password(live) is None:
         pytest.skip(
-            "reached with no password: CockroachDB's --insecure mode accepts any "
-            "password for root, so a deliberately wrong one still connects and "
-            "there is no failed open to inspect"
+            "reached with no password, so there is no wrong one to send and no "
+            "failed open to inspect. Three endpoints are: CockroachDB's "
+            "--insecure mode accepts any password for root, YugabyteDB "
+            "authenticates a fresh cluster by trust, and Trino with no "
+            "authenticator configured takes whoever the client says it is"
         )
     wrong = make_url(live.url).set(password="definitely-not-the-password")
 
@@ -403,13 +405,16 @@ def test_an_index_can_be_created_and_dropped(live):
         "create", nickname="endpoint", type="index", table=table, columns=["department"]
     )
 
-    if not backend_for(live.endpoint.dialect).builds_indexes():
-        # ClickHouse. Its secondary indexes are data-skipping indexes, which
-        # cannot be reflected and do not answer a lookup, so the verb does not
-        # apply — and the refusal has to name what orders a table there instead,
-        # or the caller has been told "no" and nothing else.
+    backend = backend_for(live.endpoint.dialect)
+    if not backend.builds_indexes():
+        # ClickHouse, whose secondary indexes are data-skipping indexes that
+        # cannot be reflected and do not answer a lookup; and Trino, which holds
+        # no data and so has nothing of its own to index. On both the verb does
+        # not apply, and the refusal has to name the database that declined —
+        # a caller told "no" by "a generic datasource" has been told nothing.
+        # What each says instead is the backend's own words, not this fixture's.
         assert made["ok"] is False, made
-        assert "ordering key" in made["error"]
+        assert backend.name in made["error"]
         assert call("info", nickname="endpoint", table=table)["indexes"] == []
         return
 
@@ -448,6 +453,13 @@ def test_a_rename_onto_a_name_that_needs_quoting_keeps_the_case(live):
     ``Mixed`` rather than as whatever the database would have folded it to. A
     dialect that folded it would report the rename as done and then have no such
     table, which is the shape of a silently wrong answer rather than an error.
+
+    Trino is where quoting stops being enough: it lower-cases every identifier
+    at the connector, so ``Mixed`` is *stored* as ``mixed`` however it is
+    written. There the guarantee cannot be that the case survives, so it is the
+    other one — that the name reported back is the name the database actually
+    has. Both halves are asserted for every dialect, and which one applies is
+    the backend's to say rather than this fixture's.
     """
     attach_writable(live)
     table = land_people(live)
@@ -456,8 +468,15 @@ def test_a_rename_onto_a_name_that_needs_quoting_keeps_the_case(live):
     answer = call("update", nickname="endpoint", type="table", name=table, to=mixed)
 
     assert answer["ok"] is True, answer
-    assert answer["table"] == mixed
-    assert mixed in call("info", nickname="endpoint")["tables"]
+    if backend_for(live.endpoint.dialect).folds_identifiers():
+        assert answer["table"] == mixed.lower()
+    else:
+        assert answer["table"] == mixed
+    # The part that holds everywhere, and the one an agent's next statement
+    # depends on: what came back is findable under exactly that spelling.
+    listed = call("info", nickname="endpoint")["tables"]
+    assert answer["table"] in listed
+    assert table not in listed
 
 
 def test_a_table_can_be_dropped(live):

@@ -1440,13 +1440,42 @@ class Workspace:
 
         return _run_again_once(read)
 
-    def rename_table(self, tag: str, table: str, to: str) -> None:
-        """Rename a table, moving its cached description with it.
+    def landed_as(self, tag: str, wanted: str) -> str:
+        """What a table just created or renamed is *actually* called.
 
-        The bookkeeping matters as much as the DDL: ``_tables`` is keyed on
-        ``tag.table`` and a stale entry would leave the old name describable
-        after it stopped existing — the same class of defect as the slot listing
-        that reported a table it no longer had.
+        Asked rather than assumed, and that is the whole of it: a database may
+        store a name in a case it chose itself. Trino lower-cases every
+        identifier at the connector, quoted or not, so a table asked for as
+        ``Mixed`` is called ``mixed`` — and reporting ``Mixed`` back names a
+        table the caller will not find in the listing they get in the same
+        payload.
+
+        Deliberately observed rather than looked up per dialect. A name is a
+        fact the database will state if asked, so asking costs one reflection
+        and needs no dialect knowledge; a table of which backends fold would be
+        a dispatch on dialect name, and one that went stale would fail silently.
+
+        ``wanted`` is returned unchanged when nothing matches it — which is what
+        every non-folding backend hits on the first line, and what a fold this
+        does not recognise (a truncation, say) degrades to. That is the previous
+        behaviour, so this can only improve an answer, never break one.
+        """
+        names = self.table_names(tag)
+        if wanted in names:
+            return wanted
+        folded = [name for name in names if name.lower() == wanted.lower()]
+        return folded[0] if len(folded) == 1 else wanted
+
+    def rename_table(self, tag: str, table: str, to: str) -> str:
+        """Rename a table, moving its cached description with it, and say to what.
+
+        The name comes back because it is not always the name that was asked
+        for — see :meth:`landed_as`. The bookkeeping matters as much as the DDL:
+        ``_tables`` is keyed on ``tag.table`` and a stale entry would leave the
+        old name describable after it stopped existing — the same class of
+        defect as the slot listing that reported a table it no longer had. Keyed
+        under the *wanted* name on a backend that folded it, the entry would be
+        just as stale, and this is where that is settled for every caller.
         """
         entry = self.entry(tag)
         try:
@@ -1455,10 +1484,12 @@ class Workspace:
         except SQLAlchemyError as exc:
             raise LoadError(f"Could not rename {tag}.{table}: {exc}") from exc
 
+        landed = self.landed_as(tag, to)
         known = self._tables.pop(f"{tag}.{table}", None)
         if known is not None:
-            moved = replace(known, name=to)
+            moved = replace(known, name=landed)
             self._tables[moved.qualified] = moved
+        return landed
 
     def drop_table(self, tag: str, table: str) -> None:
         entry = self.entry(tag)
@@ -1664,7 +1695,11 @@ class Workspace:
             raise
 
         info = TableInfo(
-            name=table,
+            # Under the name the database gave it, which is not always the one
+            # asked for — see landed_as. Reporting the requested name would put
+            # a table in this payload that is absent from the listing in the
+            # next one, on the backend that folds.
+            name=self.landed_as(tag, table),
             row_count=self._count(entry, table),
             columns=self._describe_columns(entry, table, columns, declared, frame),
             source=source,

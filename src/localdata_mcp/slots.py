@@ -746,16 +746,20 @@ class Registry:
             )
 
         try:
-            self._workspace.rename_table(nickname, table, to)
+            # Not `to`: a backend may store the name in a case it chose itself,
+            # and the workspace reports which. Everything below uses what landed
+            # rather than what was asked for, or the slot's list and the
+            # description would disagree with the database and with each other.
+            landed = self._workspace.rename_table(nickname, table, to)
         except LoadError as exc:
             raise SlotError(str(exc)) from exc
 
         # The slot's own table list is a fact about the database, and a stale
         # one is the defect the live-client pass already caught once.
         self._slots[nickname] = replace(
-            slot, tables=tuple(to if one == table else one for one in slot.tables)
+            slot, tables=tuple(landed if one == table else one for one in slot.tables)
         )
-        return self._workspace.describe(nickname, to)
+        return self._workspace.describe(nickname, landed)
 
     def drop_table(self, nickname: str, table: str) -> None:
         """Remove a table from a slot. Composition needs both directions."""

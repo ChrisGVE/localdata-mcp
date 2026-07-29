@@ -338,6 +338,34 @@ def _yugabytedb(env: dict[str, str], port: int) -> str:
     )
 
 
+def _trino(env: dict[str, str], port: int) -> str:
+    """Trino, which is a query engine and therefore names a *catalog*, not a database.
+
+    Trino stores nothing of its own. Every table it can see belongs to a
+    catalog — a configured connector pointing at some other system — so the
+    thing a URL has to name here is which catalog and which schema inside it,
+    and ``memory/default`` is both. The ``memory`` connector is the one writable
+    catalog the stock image ships that needs nothing behind it; ``tpch`` and
+    ``tpcds`` are read-only generators and ``jmx`` exposes the JVM.
+
+    That makes this the first endpoint whose database component is **two path
+    segments**, which ``URL.create`` renders as given — a catalog and a schema
+    are a path, not a name to be escaped into one.
+
+    ``test`` with **no password**, and any username would do: with no
+    authenticator configured Trino takes whoever the client says it is. This is
+    the third no-auth endpoint here, after CockroachDB's ``--insecure`` and
+    YugabyteDB's trust.
+    """
+    return _url(
+        "trino",
+        username="test",
+        password=None,
+        port=port,
+        database="memory/default",
+    )
+
+
 #: Every endpoint dialect this server is tested against, in the order they were
 #: taken on. A dialect is here because it has a container; nothing about the
 #: server enumerates dialects, so this list is a statement about *coverage*, not
@@ -414,6 +442,15 @@ ENDPOINTS = (
         driver="psycopg",
         extra="postgres",
         url=_yugabytedb,
+        warmup=60.0,
+    ),
+    Endpoint(
+        dialect="trino",
+        service="localdata-test-trino",
+        container_port=8080,
+        driver="trino.sqlalchemy",
+        extra="trino",
+        url=_trino,
         warmup=60.0,
     ),
 )

@@ -2212,3 +2212,162 @@ Single node, so YugabyteDB's distribution, its sharding and its cross-node laten
 here, exactly as §12.3 says of CockroachDB. The `40001` measured is the *catalog* form; the
 contention form — two transactions genuinely conflicting — is still unmeasured, and it is the one a
 write would raise, which is precisely the case `_run_again_once` deliberately declines to retry.
+
+## §16 — Trino, the backend that owns no data (2026-07-29)
+
+The fifth entry from the backend catalogue, and the first that is not a database. Trino is a *query
+engine*: it holds no storage of its own and reads everything through a **catalog**, a configured
+connector onto some other system. Several of the seam's questions therefore have answers that are
+about Trino's position in the stack rather than about a feature it lacks — it has no indexes because
+it has nothing to index, not because indexing was left out.
+
+All 18 endpoint tests pass against `trinodb/trino:476`, addressing the `memory` catalog. Five of the
+findings below needed an answer; two of those five are defects in the client library rather than
+facts about Trino, and they are marked as such so that nobody later "fixes" Trino for them.
+
+### 16.1 The live dialect is inside `trino`, and the standalone package has become a shim
+
+The same shape as ClickHouse's §11.1, and this time the evidence is unusually direct. The obvious
+candidate `sqlalchemy-trino` last shipped **0.5.0 on 2022-05-05** — and its own metadata now
+declares `trino[sqlalchemy] (>=0.310)` as a dependency. It does not compete with the official
+dialect; it *requires* it. Installing it would add a package to pull in the one already chosen.
+
+`trino` is Trino's own client: **0.338.0, uploaded 2026-06-29**, Apache-2.0, and the dialect lives at
+`trino.sqlalchemy`, registered under the name `trino`. Its `Development Status` is still `4 - Beta`,
+which is a cost to record rather than grounds to exclude — the eligibility rule §11 settled asks only
+whether an open-source SQLAlchemy adapter exists, and this is the engine's own.
+
+### 16.2 The driver connects in autocommit, which deletes the floor rather than weakening it
+
+The generic read-only guarantee is transactional: `query` opens a connection, never commits, closes
+it, and whatever the statement changed is rolled back. **The Trino client's default isolation level
+is `AUTOCOMMIT`**, so every statement commits itself as it runs. Measured: an `INSERT` sent through
+a read connection that never commits was still there on the next connection.
+
+| Read engine | `SELECT` | `INSERT` | `CREATE TABLE` |
+|---|---|---|---|
+| default (`AUTOCOMMIT`) | served | **applied and kept** | **applied and kept** |
+| `SERIALIZABLE` | served | refused, `AUTOCOMMIT_WRITE_CONFLICT` | refused, `AUTOCOMMIT_WRITE_CONFLICT` |
+
+This is ClickHouse's §11 situation reached from the opposite direction. There the database has no
+transactions at all and the posture had to come from the server (`readonly=1`); here the database has
+them perfectly well and the *driver* declines to use them. Naming any real isolation level on the
+read engine is the whole remedy, and `TrinoBackend.read_posture` is where it is named.
+
+What happens after that is the **catalog's** business rather than this server's, and both outcomes
+are safe:
+
+* A catalog that writes transactionally accepts the statement and has it rolled back on close — the
+  generic floor, working exactly as designed.
+* A catalog that writes only in autocommit refuses it outright with `AUTOCOMMIT_WRITE_CONFLICT`
+  (*"Catalog only supports writes using autocommit: memory"*), which `denies_write` recognises so the
+  refusal names `create` instead of quoting the server. `memory`, which this harness uses, is one.
+
+Reflection, column inspection and ordinary reads were all re-checked on a clean non-autocommit
+connection and all work. What does *not* survive is a connection that has already had a statement
+refused: everything after it fails with `TRANSACTION_ALREADY_ABORTED` until the connection is closed.
+That costs nothing here, because `query` closes its connection either way.
+
+### 16.3 Only one isolation level survives the round trip — a client defect
+
+`SERIALIZABLE` is not a strictness decision. It is the only level that can be reached at all:
+
+| Asked for | Result |
+|---|---|
+| `SERIALIZABLE` | accepted |
+| `READ UNCOMMITTED` | `KeyError: 'READ UNCOMMITTED'` at connect |
+| `READ COMMITTED` | `KeyError: 'READ COMMITTED'` at connect |
+| `REPEATABLE READ` | `KeyError: 'REPEATABLE READ'` at connect |
+
+SQLAlchemy normalises an isolation level to **spaces**; the dialect looks it up in an enum keyed with
+**underscores** (`IsolationLevel.READ_UNCOMMITTED`). Every level whose name is two words therefore
+raises at connect time, and the one-word name is the only one that matches by accident. Nothing here
+wants a stricter snapshot — only a transaction — so if this is ever fixed upstream the weakest level
+becomes reachable and is the better choice.
+
+`isolation_level` is also **ignored as a URL query parameter** (the connection still reports
+`AUTOCOMMIT`), which is why the posture is set on the engine rather than carried in the URL the way
+`read_only_query` carries ClickHouse's and DuckDB's.
+
+### 16.4 Trino folds every identifier, and quoting does not stop it
+
+Every other dialect here keeps a *quoted* identifier verbatim — that is precisely why
+`rename_table` puts both names through the dialect's own preparer. Trino folds anyway, at the
+connector rather than in the parser:
+
+| Asked for | Stored as | Resolves as |
+|---|---|---|
+| `CREATE TABLE "probe_Mixed"` | `probe_mixed` | `"probe_Mixed"`, `"probe_mixed"` and `probe_Mixed` all work |
+| column `"Dept"` | `dept` | — |
+
+Nothing breaks: both spellings still find the table. What breaks is the *answer*. `update` reported
+the table as `Mixed` while `info`, in the very next payload, listed it as `mixed` — one response
+naming a table the other says is not there.
+
+**The fix is generic and needed no dialect fact at all.** `Workspace.landed_as` asks the database
+what the table ended up called and returns that; `rename_table` and `insert_frame` both report it,
+and the cached description is keyed under it. A name is observable, so it is observed — a table of
+which backends fold would be a dispatch on dialect name, and one that went stale would fail silently.
+On every non-folding backend the first line matches and the answer is unchanged.
+
+`Backend.folds_identifiers()` exists **only so a test can tell the two outcomes apart**, and it is in
+the seam rather than in the fixture for the reason standing instruction 1 gives. Asserting merely
+that the reported name is findable would let a genuine folding regression through on PostgreSQL;
+asserting case-insensitively would let all of them through.
+
+### 16.5 No indexes whatsoever, which is not ClickHouse's answer
+
+ClickHouse has an index of a *different kind* — data-skipping, unreflectable, answering a different
+question. Trino has none at all, and the reason is structural: it stores nothing, so there is nothing
+of its own to index. A filter is made fast by being pushed down into the catalog, where the
+underlying system's own layout decides what it costs.
+
+So `builds_indexes()` is `False` and `build_index` refuses, naming where indexing actually lives —
+the system behind the catalog. This is the second user of both axes, which retires the "one user
+forever" objection §11 recorded against them.
+
+The endpoint test asserted ClickHouse's own wording (`"ordering key"`), which is a dialect fact
+stated in a fixture and would have had to grow a branch per backend. It now asserts the property that
+is actually required of any such refusal — **that it names the database which declined** — and lets
+each backend supply its own words.
+
+### 16.6 `bytes` cannot be bound — a client defect, not a Trino one
+
+Trino has `VARBINARY` and stores binary perfectly well. `trino.dbapi` does not: its literal formatter
+calls `.encode` on the value it was handed, which is what one does to a `str`, so a `bytes` raises
+`AttributeError: 'bytes' object has no attribute 'encode'` before any statement is sent. The column
+is created and cannot be written to, which is worse than not having it — the same shape as
+ClickHouse's missing PEP 249 `Binary` constructor (§11.4), and recorded the same way.
+
+Everything else in the typed-value round trip works, including `Time`, which both Oracle and
+ClickHouse could not hold: `Numeric`, `Date`, `DateTime`, `Time` and `Boolean` all came back as the
+values that went in.
+
+### 16.7 The compose entry needed no catalog file after all
+
+Recorded because the groundwork said otherwise. The expectation was that `trinodb/trino:476` ships
+`tpch` and `jmx` but not `memory`, so the compose service would have to write
+`/etc/trino/catalog/memory.properties` from an `entrypoint:` before starting. **The stock image
+already ships all four** — `memory`, `tpch`, `tpcds` and `jmx` — so the service is an image, a port
+and a healthcheck, with nothing written into it.
+
+It also ships its own `/usr/lib/trino/bin/health-check`, which is used verbatim. It asks `/v1/info`
+and — the part a naive probe misses — insists on `"starting": false`. Trino answers HTTP long before
+it will accept a query, so a probe checking only the port reports ready while every statement is
+still refused with `SERVER_STARTING_UP`. That is the §15.5 fail-open shape again, and this time the
+image had already solved it.
+
+No credentials of any kind: with no authenticator configured Trino accepts whatever username the
+client offers and asks for no password. That makes it the **third** endpoint here reached with no
+password, after CockroachDB's `--insecure` and YugabyteDB's trust — so task 23's first auth mode is
+now covered three times over and the remaining ones are still untouched.
+
+### 16.8 What this did not test
+
+One coordinator, one catalog, and that catalog the simplest one there is. Trino's actual subject —
+federating a query across several catalogs at once — is invisible here, and so is everything about
+distribution: no workers, no split scheduling, no cross-node exchange. The `memory` connector also
+happens to be the one that refuses transactional writes, so §16.2's *other* branch — a catalog that
+accepts the write and has it rolled back — is reasoned from the transaction semantics rather than
+measured. Measuring it needs a catalog with a real system behind it, which is a much larger fixture
+than one container.
