@@ -292,6 +292,52 @@ def _cockroachdb(env: dict[str, str], port: int) -> str:
     )
 
 
+def _yugabytedb(env: dict[str, str], port: int) -> str:
+    """YugabyteDB's YSQL layer, addressed as PostgreSQL — and that is a choice.
+
+    The other two PostgreSQL-wire endpoints are addressed as themselves, so this
+    one breaking the pattern needs its reason stated. YugabyteDB *is* eligible
+    under the adapter rule: ``sqlalchemy-yugabytedb`` exists and is Apache-2.0,
+    Yugabyte's own. What that adapter cannot do is be reached from here.
+
+    It registers **psycopg2 drivers only**, and hard-requires
+    ``psycopg2-yugabytedb`` — a fork of psycopg2 pinned at 2.9.3 that publishes
+    wheels for macOS arm64 and nothing else, so every Linux and Windows user
+    compiles it against libpq. Adopting it would put a second PostgreSQL driver
+    family in this project for one database, next to the psycopg 3 the
+    ``postgres`` extra already carries.
+
+    Against that, the dialect itself is 81 lines and none of what it adds is
+    something this server's seam asks about: it narrows the isolation-level
+    lookup, and overrides ``initialize`` in a way that calls
+    ``super(PGDialect, self)`` — *skipping* PGDialect's own initialisation
+    rather than extending it. Plain ``postgresql+psycopg`` connects and reads
+    the version correctly, measured: ``PostgreSQL 15.12-YB-2.25.2.0-b0`` parses
+    to ``(15, 12)``, where CockroachDB's banner could not be parsed at all and
+    is why *that* endpoint genuinely needs its own dialect.
+
+    **The driver's distribution is a quality judgement, and it decides only the
+    addressing, never the eligibility** — those are different tests, and
+    answering one with the other is the mistake ClickHouse's removal and
+    restoration already recorded (``CONSTRAINTS.md`` §11).
+
+    The cost is real and is the finding: reached as ``postgresql``, this
+    database gets ``Backend(name="postgresql")``, so a refusal names PostgreSQL
+    to someone who opened YugabyteDB. That is issue #45 — a dialect name is not
+    an identity — landing on a second item.
+
+    ``yugabyte`` with **no password**: a fresh cluster authenticates by trust,
+    the same URL shape CockroachDB's insecure mode needs.
+    """
+    return _url(
+        "postgresql+psycopg",
+        username="yugabyte",
+        password=None,
+        port=port,
+        database="yugabyte",
+    )
+
+
 #: Every endpoint dialect this server is tested against, in the order they were
 #: taken on. A dialect is here because it has a container; nothing about the
 #: server enumerates dialects, so this list is a statement about *coverage*, not
@@ -355,6 +401,20 @@ ENDPOINTS = (
         driver="sqlalchemy_cockroachdb",
         extra="cockroachdb",
         url=_cockroachdb,
+    ),
+    # Shares PostgreSQL's dialect, driver and extra, and is the first endpoint
+    # here to share any of them. That is what makes it the first real exercise
+    # of `name` being the identity rather than `dialect`: keyed the old way,
+    # this entry would read Postgres's URL out of the probe cache and run its
+    # whole suite against the wrong container while reporting green. See #44.
+    Endpoint(
+        dialect="postgresql",
+        service="localdata-test-yugabytedb",
+        container_port=5433,
+        driver="psycopg",
+        extra="postgres",
+        url=_yugabytedb,
+        warmup=60.0,
     ),
 )
 

@@ -2078,3 +2078,137 @@ Three parts of the new spec are worth a second look then, none urgent:
   slot is memory or a temp file in *this* process, so several instances behind a load balancer would
   not share slots. That is fine for a local stdio server, which is what this is, and it is the reason
   hosting was dropped as a concern rather than a gap to close.
+
+## §15 — YugabyteDB, and the retryable error §12.3 asked for (2026-07-29)
+
+Third entry from the backend catalogue, and the first to **fail** against the seam rather than pass
+through it. It also answers the question §12.3 left open — what this server does when a distributed
+engine returns a retryable `40001` — which arrived here rather than from CockroachDB because
+YugabyteDB raises it for an ordinary rename, not only under contention.
+
+`yugabytedb/yugabyte:2.25.2.0-b359`, `yugabyted start --background=false`, YSQL on 5433. 18 of 18
+endpoint tests green — but only after a defect that two of them found.
+
+### 15.1 The rename succeeded and the server said it had failed
+
+`update(type='table', name=…, to=…)` renamed a table and then reported an error:
+
+```
+(psycopg.errors.SerializationFailure) The catalog snapshot used for this transaction has been
+invalidated: expected: 42, got: 41: MISMATCHED_SCHEMA
+CONTEXT:  Catalog Version Mismatch: A DDL occurred while processing this query. Try again.
+```
+
+The failing statement is not the `ALTER TABLE`. It is the `pg_catalog` reflection **afterwards**:
+
+```sql
+SELECT pg_catalog.pg_class.relname FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace …
+```
+
+YugabyteDB caches the catalog per connection. A DDL committed on the write engine's connection
+leaves every *other* pooled connection — here the read engine's, which `table_names` uses — holding
+a snapshot the cluster has moved past, and its next catalog read is refused. Isolated directly:
+
+| Step | Result |
+|---|---|
+| `CREATE TABLE yb_a`, insert 2 rows | ok |
+| reflect on the read engine (warms its snapshot) | sees `yb_a` |
+| `ALTER TABLE yb_a RENAME TO yb_b` on the write engine | **committed** |
+| reflect again on the read engine | `SerializationFailure`, SQLSTATE `40001` |
+| reflect once more, no delay | `['yb_b']` |
+| `SELECT count(*) FROM yb_b` | `2` |
+
+**The rename had happened.** The rows were under the new name and the caller was told the operation
+failed — the worst answer available, and worse than the raw error, because the obvious next move is
+to rename again and be told there is no such table. Being refused is itself what refreshes the
+snapshot, so the immediately following read succeeds with no sleep: this is a stale snapshot being
+replaced, not contention being waited out, which is why one retry is the whole remedy and a backoff
+would add nothing.
+
+### 15.2 The fix is generic, and deliberately not a `Backend` axis
+
+`loader._run_again_once` runs a catalog read again, once, when the driver reports SQLSTATE `40001`.
+It is **not** a seam axis, for a reason worth stating because every prior backend finding became one:
+
+* **`40001` is standard.** `serialization_failure` means "this transaction was aborted, run it
+  again" in every engine that raises it — PostgreSQL under SERIALIZABLE, CockroachDB, and every
+  distributed SQL engine routinely. There is no per-dialect answer to override, so a dialect branch
+  would be the shape standing instruction 1 forbids.
+* **There is nowhere to put one anyway.** YugabyteDB is reached through PostgreSQL's dialect, so an
+  entry in `BACKENDS` keyed `postgresql` would change *PostgreSQL's* behaviour to serve YugabyteDB.
+  That is issue #45 biting for real rather than in principle — see §15.4.
+
+Scope is deliberately narrow. **Once**, because a second stale snapshot is a real failure rather
+than a slow one, and the test asserts the read is called exactly twice so it cannot become a loop.
+**Reads only**: a catalog read is idempotent, so running it again carries no consequence, whereas
+whether a failed *write* is safe to send again depends on what it was — the caller's judgement, not
+this server's. The code is read from `sqlstate` (psycopg 3) or `pgcode` (psycopg 2); a driver
+publishing neither simply does not match, and the caller then gets the error it would have got.
+
+Four tests in `test_loader.py` pin the decision without needing a container, and all four were
+proved able to fail — two by removing the retry, two by making the classifier always retry.
+
+### 15.3 Addressed as PostgreSQL, and why that is not the pattern break it looks like
+
+The other two PostgreSQL-wire endpoints are addressed as themselves. This one is not, and the reason
+is the adapter rather than the database.
+
+YugabyteDB **is eligible**: `sqlalchemy-yugabytedb` 1.0.0.1 exists and is Apache-2.0, Yugabyte's own.
+What it cannot do is be reached from here. It registers **psycopg2 entry points only** and
+hard-requires `psycopg2-yugabytedb`, a fork of psycopg2 pinned at 2.9.3 publishing wheels for
+**macOS arm64 and nothing else** — every Linux and Windows user compiles it against libpq. Adopting
+it would put a second PostgreSQL driver family in this project for one database, beside the psycopg 3
+the `postgres` extra already carries.
+
+Against that cost, the dialect is 81 lines and adds nothing the seam asks about: it narrows the
+isolation-level lookup, and overrides `initialize` with a call to `super(PGDialect, self)` — which
+*skips* PGDialect's own initialisation rather than extending it. Plain `postgresql+psycopg` connects
+and reads the version correctly: `PostgreSQL 15.12-YB-2.25.2.0-b0` parses to `(15, 12)`, where
+CockroachDB's `CockroachDB CCL v26.2.4 …` could not be parsed at all, which is why *that* endpoint
+genuinely needs a dialect of its own.
+
+**The driver's distribution is a quality judgement and it decides only the addressing, never the
+eligibility.** Those are different tests, and answering one with the other is exactly the mistake
+§11 records ClickHouse being removed and restored over. YugabyteDB is in the catalogue; only its
+scheme is PostgreSQL's.
+
+So it costs **no new dependency at all** — it reuses the `postgres` extra, and `pyproject.toml` is
+untouched. That makes it the cheapest entry the catalogue has taken and the most expensive to
+reason about, which are not the same axis.
+
+### 15.4 Issue #45 now blocks two items, not one
+
+The standing assessment was that `BACKENDS` being keyed by dialect name blocks **OceanBase alone**,
+and that the PostgreSQL-wire entries were "almost certainly unaffected" because CockroachDB needed
+nothing. **That was true only for as long as a PostgreSQL-wire engine needed nothing.** YugabyteDB
+needs something, and the two harms differ in kind:
+
+| Item | Reached as | Harm |
+|---|---|---|
+| OceanBase | `mysql` | inherits `MySQLBackend`'s **overrides** — wrong behaviour |
+| YugabyteDB | `postgresql` | `Backend(name="postgresql")`, so a refusal names the **wrong database** to the caller, and any answer of its own would have to change PostgreSQL's |
+
+The name is user-facing: `Backend.name` is what "A {name} datasource is reached over its own
+connection…" prints, so someone who opened YugabyteDB is told about PostgreSQL. That is mild next to
+OceanBase's, and it is the same root — a dialect names a wire protocol and a driver, never an engine.
+
+Here it was dodged rather than solved, because `40001` genuinely is generic and belonged in the
+generic path regardless. **The next PostgreSQL-wire engine needing something that is not generic has
+no such escape**, and Greenplum is on the worklist already needing `table_options()` for its
+`DISTRIBUTED BY` clause. Issue #45 is updated with this.
+
+### 15.5 The healthcheck that lied, and what it cost
+
+`yugabyted` binds YSQL to the address it advertises — the container's own interface — so a
+healthcheck probing `localhost` is refused while the database answers perfectly well on the
+published port. The container sat `unhealthy` for six minutes with a fully working database behind
+it. The compose entry uses `$(hostname)`, and this is the same fail-open shape `endpoints.py` was
+written to avoid: **a harness looking in the wrong place reports absence, not error.** The remedy
+was the standing one — read `docker logs` before believing a red container.
+
+### 15.6 What this did not test
+
+Single node, so YugabyteDB's distribution, its sharding and its cross-node latency are all invisible
+here, exactly as §12.3 says of CockroachDB. The `40001` measured is the *catalog* form; the
+contention form — two transactions genuinely conflicting — is still unmeasured, and it is the one a
+write would raise, which is precisely the case `_run_again_once` deliberately declines to retry.
