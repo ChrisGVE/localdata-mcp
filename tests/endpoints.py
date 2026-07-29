@@ -385,6 +385,28 @@ def _trino(env: dict[str, str], port: int) -> str:
     )
 
 
+def _monetdb(env: dict[str, str], port: int) -> str:
+    """MonetDB, a column store, through the dialect its own vendor publishes.
+
+    ``monetdb`` three times over, and they are three different things: the
+    dialect ``sqlalchemy-monetdb`` registers, the user the image sets the admin
+    password on, and the database ``MDB_CREATE_DBS`` defaults to creating. Only
+    the last is read from the environment, because only the last is something
+    the compose file could reasonably change.
+
+    The password is the one the entrypoint demands — the image refuses to start
+    without ``MDB_DB_ADMIN_PASS`` rather than coming up with an unreachable
+    database — so it is read from there and never restated here.
+    """
+    return _url(
+        "monetdb",
+        username="monetdb",
+        password=env["MDB_DB_ADMIN_PASS"],
+        port=port,
+        database="monetdb",
+    )
+
+
 #: Every endpoint dialect this server is tested against, in the order they were
 #: taken on. A dialect is here because it has a container; nothing about the
 #: server enumerates dialects, so this list is a statement about *coverage*, not
@@ -472,6 +494,14 @@ ENDPOINTS = (
         extra="trino",
         url=_trino,
         warmup=60.0,
+    ),
+    Endpoint(
+        dialect="monetdb",
+        service="localdata-test-monetdb",
+        container_port=50000,
+        driver="pymonetdb",
+        extra="monetdb",
+        url=_monetdb,
     ),
 )
 

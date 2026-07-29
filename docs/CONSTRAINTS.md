@@ -2448,3 +2448,154 @@ through `backend_for_url` like the server does.
 `PostgreSQLBackend` exists solely to hold that table. Every answer in it is the generic one, and five
 sessions of endpoint work have not turned up anything PostgreSQL needs said for it — it is registered
 for the *other* reason a dialect earns an entry: three engines borrow it.
+
+## §18 — MonetDB, a column store that needed nothing but cost a version ceiling (2026-07-29)
+
+Tenth endpoint dialect, and the seventh entry from the backend catalogue (task 22, worklist item 7).
+MonetDB is a **column store** — the first storage model in this harness that is neither a row store
+nor, like Trino, an absence of storage — and the question it was taken to answer is whether the seam's
+generic answers are about SQL or about how a database keeps its bytes.
+
+They are about SQL. **All 19 endpoint tests pass unchanged, `BACKENDS` gains no entry, and no test
+assertion needed generalising.** Measured against `monetdb/monetdb:latest`, server version
+**11.55.7**, through `sqlalchemy-monetdb` 2.0.0 on `pymonetdb` 1.9.1.
+
+### 18.1 The adapter cannot be imported without `setuptools`, and says so nowhere
+
+This is the cost, and it is a defect in the dialect rather than in the database — recorded so nobody
+later "fixes" MonetDB for it. Issue #50.
+
+`sqlalchemy_monetdb/__init__.py` imports `pkg_resources` at package import, unconditionally, **only
+to read its own version string**:
+
+```python
+import pkg_resources
+try:
+    __version__ = pkg_resources.require("sqlalchemy-monetdb")[0].version
+except pkg_resources.DistributionNotFound:
+    ...
+```
+
+`pkg_resources` is supplied by `setuptools`, which the distribution does not declare — its
+`requires_dist` is `pymonetdb>=1.8.2`, `sqlalchemy>=2.0.34` and test extras, nothing more. A modern
+environment carries no `setuptools` unless something asks for it, so on a clean install **every one of
+the 19 endpoint tests errors at setup** with `ModuleNotFoundError: No module named 'pkg_resources'`.
+There is no way around it from here: SQLAlchemy loads the dialect through the entry point
+`monetdb -> sqlalchemy_monetdb.dialect:MonetDialect`, which runs the package `__init__`.
+
+So the `monetdb` extra carries `setuptools`, and it is bounded. `pkg_resources` shipped inside
+`setuptools` up to and including **81.0.0** and was removed in **82.0.0** — measured by installing
+each version to a clean target and looking, not read from a changelog:
+
+| setuptools | ships `pkg_resources` | warns on import |
+|---|---|---|
+| 80.10.2 | yes | yes |
+| 81.0.0 | yes | yes |
+| 82.0.1 | no | — |
+| 83.0.0 | no | — |
+
+`setuptools<82` is therefore the **only version ceiling in `pyproject.toml`**, and because `monetdb`
+is in the `databases` aggregate it is inherited by `localdata-mcp[databases]` and
+`localdata-mcp[all]`. One `UserWarning` per session survives it: both surviving versions deprecate
+`pkg_resources` on import, and the warning's own advice — "pin to Setuptools<81" — does not silence
+it, because 80.10.2 warns too. The upstream fix is one line of `importlib.metadata`, stdlib since
+3.8.
+
+**Eligibility was never in question.** An open-source SQLAlchemy adapter exists, published under the
+vendor's own `github.com/MonetDB` organisation and MIT-licensed, so MonetDB is eligible under the
+§13 rule. Adapter quality is a cost to record. This is what the cost turned out to be.
+
+### 18.2 Every axis generic, on a storage model nothing here had exercised
+
+| Axis | MonetDB | Measured by |
+|---|---|---|
+| `read_posture` | generic — the transactional floor holds | an `INSERT` on a never-committed connection left **0 rows** behind |
+| `denies_write` | generic — nothing to recognise; the floor declines to keep a write, it does not refuse one | — |
+| `ddl_survives_refusal` | generic `False` | DDL is transactional here |
+| `unstorable_column_types` | generic — **empty** | `LargeBinary`, `Time`, `Date`, `DateTime`, `Numeric`, `Boolean`, `Float`, `String`, `Integer` all stored and read back identical |
+| `folds_identifiers` | generic `False` | a quoted `Mixede0a6` came back from reflection **verbatim**; its lowered form was absent |
+| `builds_indexes` | generic `True` | `CREATE INDEX` accepted, reflected by `get_indexes`, `DROP INDEX` accepted |
+| `rename_table` | generic — `ALTER TABLE … RENAME TO` accepted verbatim | `RENAME TABLE …` is a syntax error: `42000!syntax error, unexpected RENAME` |
+| `impostors` | none — MonetDB answers on its own dialect and borrows nobody's | — |
+| `resident_bytes` / `snapshot` / `storage_classes` | generic | server-side database, no local file to weigh |
+
+Two of those are worth stating rather than tabulating.
+
+**`Time` and `LargeBinary` both store.** They are the two types this harness has watched fail
+elsewhere — Oracle and ClickHouse both refuse one or the other, and Trino refuses `LargeBinary` (§16).
+A column store had no obligation to keep them and does.
+
+**Case survives.** Trino folds every identifier to lower case at the connector whether quoted or not,
+which is what made issue #48 the bad kind of defect — both spellings resolved, so nothing failed while
+`update` and `info` disagreed about a table's name one payload apart. MonetDB preserves what it is
+given, so `landed_as` reports back the name that was asked for, and the assertion that a rename keeps
+its case holds without the seam being consulted.
+
+### 18.3 Isolation is `SERIALIZABLE` and there is nothing else to choose
+
+The dialect offers exactly two levels — `AUTOCOMMIT` and `SERIALIZABLE` — and connects at
+`SERIALIZABLE`. Naming any other raises before a connection is made:
+
+```
+ArgumentError: Invalid value 'READ COMMITTED' for isolation_level.
+Valid isolation levels for 'monetdb' are AUTOCOMMIT, SERIALIZABLE
+```
+
+This is the same *shape* as Trino's single reachable level (§16.3) and the opposite *outcome*. There,
+the driver connected in `AUTOCOMMIT` and the transactional floor was not weakened so much as deleted,
+which is why `TrinoBackend.read_posture` is load-bearing. Here the default is the strict end, the
+floor holds without anything being set, and `read_posture` stays generic. **A short list of isolation
+levels is not by itself a finding; which end of it the driver defaults to is.**
+
+### 18.4 The credential sweep hardcoded its own environment — issue #49
+
+Adding the builder did not fail against the database. It failed against a test, and the test was
+`test_every_endpoint_builder_round_trips_its_own_credentials`, whose docstring says it sweeps the
+endpoint table "so a builder added later is covered the day it appears".
+
+It was not covered; it **errored**, with `KeyError: 'MDB_DB_ADMIN_PASS'`. The test synthesised its
+environment from a hardcoded list of the variable names the existing builders happened to read — a
+per-endpoint fact living in a fixture, which is the shape standing instruction 1 forbids in test
+fixtures as firmly as in shared code. Every password-bearing endpoint had silently extended that
+list; the four no-password endpoints exempted themselves through a `continue` and hid how much it had
+been growing.
+
+The list is removed rather than lengthened. The environment is now a `dict` whose `__missing__`
+answers **any** variable with the hostile password, so a builder reading a name nobody anticipated is
+covered instead of fatal — usernames and database names come back hostile too, which only widens the
+demand, since the assertion is that a credential survives the round trip as a *value* rather than as
+text. Proved still able to fail: an interpolating builder handed the same environment dies in
+`make_url` with `invalid literal for int() with base 10: 'w'`, because `p@ss:w/rd?x#y` re-parses as a
+host and a port.
+
+The failure was loud, so no dialect was ever tested against a credential rule it did not meet. What
+was wrong was the claim.
+
+### 18.5 The image demands a password before it will start, which is the good failure
+
+`monetdb/monetdb` creates no database unless `MDB_DB_ADMIN_PASS` is set — its entrypoint exits
+rather than coming up with an unreachable server. The database it then creates is named by
+`MDB_CREATE_DBS`, defaulting to `monetdb`, and the password is set on the `monetdb` user, so the
+dialect, the user and the database all carry the same name and only their positions distinguish them.
+
+The healthcheck runs a **real query** rather than asking `monetdbd` about itself. `monetdb status`
+answers over the farm's local socket and reports a database healthy before anything has proved the
+SQL layer will accept a statement; `mclient` authenticates and selects the way a client does.
+`mclient` takes its credentials from a file named by `DOTMONETDBFILE` rather than from an argument,
+which also keeps the password out of a process list. The container reaches healthy in **~9 s** —
+the fastest endpoint in this harness.
+
+Default schema is `sys`, which is also where user tables land, and `get_table_names()` returns **only
+user tables** — 0 on a fresh database — so nothing has to filter system objects out.
+
+### 18.6 What this did not test
+
+A column store's interesting properties are all about scale: MonetDB's advantage is vectorised
+execution over columns, and every table here is a handful of rows written one statement at a time.
+Nothing measured says how it behaves under the sizes §9 and §10 put through DuckDB and SQLite, and it
+is the one endpoint where that comparison would mean something — it and DuckDB are the two columnar
+engines in this project, one remote and one local. Unmeasured, and worth measuring if the load half
+of task 21 is taken up.
+
+Its concurrency story is equally untouched: `SERIALIZABLE` with no other level available says a
+single-statement harness will never see a conflict, not that conflicts resolve well.

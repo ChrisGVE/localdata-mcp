@@ -1163,7 +1163,9 @@ all = [
     { name = "pymysql" },
     { name = "pyodbc" },
     { name = "pyyaml" },
+    { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
+    { name = "sqlalchemy-monetdb" },
     { name = "tabulate" },
     { name = "trino", extra = ["sqlalchemy"] },
     { name = "xlrd" },
@@ -1183,7 +1185,9 @@ databases = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pymysql" },
     { name = "pyodbc" },
+    { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
+    { name = "sqlalchemy-monetdb" },
     { name = "trino", extra = ["sqlalchemy"] },
 ]
 dev = [
@@ -1207,6 +1211,10 @@ formats = [
 ]
 markdown = [
     { name = "tabulate" },
+]
+monetdb = [
+    { name = "setuptools" },
+    { name = "sqlalchemy-monetdb" },
 ]
 mssql = [
     { name = "pyodbc" },
@@ -1245,7 +1253,7 @@ requires-dist = [
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.0" },
     { name = "duckdb-engine", marker = "extra == 'duckdb'", specifier = ">=0.13" },
     { name = "fastmcp", specifier = ">=3.0.0" },
-    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino"], marker = "extra == 'databases'" },
+    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb"], marker = "extra == 'databases'" },
     { name = "localdata-mcp", extras = ["formats", "databases"], marker = "extra == 'all'" },
     { name = "localdata-mcp", extras = ["yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet"], marker = "extra == 'formats'" },
     { name = "numbers-parser", marker = "extra == 'numbers'", specifier = ">=4.4" },
@@ -1260,14 +1268,16 @@ requires-dist = [
     { name = "pyodbc", marker = "extra == 'mssql'", specifier = ">=5.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6.0" },
+    { name = "setuptools", marker = "extra == 'monetdb'", specifier = "<82" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlalchemy-cockroachdb", marker = "extra == 'cockroachdb'", specifier = ">=2.0.4" },
+    { name = "sqlalchemy-monetdb", marker = "extra == 'monetdb'", specifier = ">=2.0" },
     { name = "tabulate", marker = "extra == 'markdown'", specifier = ">=0.9" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "trino", extras = ["sqlalchemy"], marker = "extra == 'trino'", specifier = ">=0.330" },
     { name = "xlrd", marker = "extra == 'xls'", specifier = ">=2.0" },
 ]
-provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "formats", "databases", "all"]
+provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "formats", "databases", "all"]
 
 [[package]]
 name = "lz4"
@@ -2261,6 +2271,15 @@ crypto = [
 ]
 
 [[package]]
+name = "pymonetdb"
+version = "1.9.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/f4/26d52dea5389d1b86de8d6e845c83302d89051b6de30bde194aad97bd63a/pymonetdb-1.9.1.tar.gz", hash = "sha256:b9d06b8411a35a118558a19fb4f4c3c1a1389ba6c26cc15ae363082cd2a5648c", size = 95879, upload-time = "2026-07-09T10:50:14.797Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/21/dd/83134c98891df4959736e9064d48718095e3536818850109d78efa19447c/pymonetdb-1.9.1-py2.py3-none-any.whl", hash = "sha256:5937acd255337188ae51f4e0e5bf7bae29f4389d4ff4c4045de9f9c7b7ec14c6", size = 119093, upload-time = "2026-07-09T10:50:13.495Z" },
+]
+
+[[package]]
 name = "pymysql"
 version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2696,11 +2715,11 @@ wheels = [
 
 [[package]]
 name = "setuptools"
-version = "83.0.0"
+version = "81.0.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/34/26/f5d29e25ffdb535afef2d35cdb55b325298f96debd670da4c325e08d70f4/setuptools-83.0.0.tar.gz", hash = "sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef", size = 1154254, upload-time = "2026-07-04T15:31:22.699Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/1c/73e719955c59b8e424d015ab450f51c0af856ae46ea2da83eba51cc88de1/setuptools-81.0.0.tar.gz", hash = "sha256:487b53915f52501f0a79ccfd0c02c165ffe06631443a886740b91af4b7a5845a", size = 1198299, upload-time = "2026-02-06T21:10:39.601Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/40/e1e72872c6354b306daef1703549e8e83b4d43cfea356311bf722a043752/setuptools-83.0.0-py3-none-any.whl", hash = "sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3", size = 1008090, upload-time = "2026-07-04T15:31:20.885Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/e3/c164c88b2e5ce7b24d667b9bd83589cf4f3520d97cad01534cd3c4f55fdb/setuptools-81.0.0-py3-none-any.whl", hash = "sha256:fdd925d5c5d9f62e4b74b30d6dd7828ce236fd6ed998a08d81de62ce5a6310d6", size = 1062021, upload-time = "2026-02-06T21:10:37.175Z" },
 ]
 
 [[package]]
@@ -2798,6 +2817,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c0/46/1462dd4734c58e04b754db71a9607de6d748dedea86e30007b5ae7b4e3db/sqlalchemy_cockroachdb-2.0.4.tar.gz", hash = "sha256:f66354d2b93da89cb4524c5b78a44d0cf5a8943d328b7f0aee4aa1dfc6178b65", size = 31803, upload-time = "2026-04-23T18:12:28.147Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f2/f1/e08ec3fc57b6f890e8f6eb16734c4865626635f4863cc2fe7d259699ce7b/sqlalchemy_cockroachdb-2.0.4-py3-none-any.whl", hash = "sha256:0804306a733a1fe09b2d496eadf8bf35d878862b6138e69175136fa2ca0ce5d0", size = 22726, upload-time = "2026-04-23T18:12:26.936Z" },
+]
+
+[[package]]
+name = "sqlalchemy-monetdb"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pymonetdb" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2c/ec/25339826232a864f3b5ef447fef5bca9edeb56eac8d7665dc601dd5fb506/sqlalchemy_monetdb-2.0.0.tar.gz", hash = "sha256:0a0e9ebfb4ab5b2a748a92f2a536aa88c77384b84d573c4c9035b05c5b6a32eb", size = 28372, upload-time = "2024-09-17T09:26:23.017Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/79/6dee44f561eca80699741ce8ed1aac0899f0b645622f7b794a927dc1ddba/sqlalchemy_monetdb-2.0.0-py2.py3-none-any.whl", hash = "sha256:3fcd816fb596c8ffa1ea9970ca98c084dcb1ed27de75d760192bc44f52607d9c", size = 30190, upload-time = "2024-09-17T09:26:21.817Z" },
 ]
 
 [[package]]

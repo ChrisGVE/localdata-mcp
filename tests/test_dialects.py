@@ -241,6 +241,13 @@ def test_a_backend_with_nothing_to_say_leaves_the_url_alone(tmp_path):
         engines.dispose()
 
 
+#: The password the Postgres container really carries, and the one both tests
+#: below build with. Every character in it moves a URL boundary — ``@`` starts
+#: the host, ``/`` the path, ``?`` the query, ``#`` the fragment — so a builder
+#: that interpolates rather than passing values cannot survive it.
+HOSTILE_PASSWORD = "p@ss:w/rd?x#y"
+
+
 def test_an_endpoint_url_survives_a_hostile_password():
     """The harness may not interpolate a credential into a URL. See issue #43.
 
@@ -256,7 +263,7 @@ def test_an_endpoint_url_survives_a_hostile_password():
     """
     import endpoints
 
-    hostile = "p@ss:w/rd?x#y"
+    hostile = HOSTILE_PASSWORD
     built = endpoints._url(
         "postgresql+psycopg",
         username="us@r",
@@ -273,6 +280,27 @@ def test_an_endpoint_url_survives_a_hostile_password():
     assert parsed.database == "testdb"
 
 
+class _EveryValueHostile(dict):
+    """An environment that answers *any* variable with the same hostile value.
+
+    What this replaces was a list of the variable names the builders happened to
+    read — which is a per-endpoint fact living in a fixture, and it decayed the
+    way those do. A builder added for a database whose image names its password
+    something new raised :class:`KeyError` out of the sweep rather than being
+    covered by it, so the test that advertises "a builder added later is covered
+    the day it appears" instead broke on the day it appeared. MonetDB, whose
+    image asks for ``MDB_DB_ADMIN_PASS``, is the one that proved it.
+
+    Answering every key removes the list rather than lengthening it. Usernames
+    and database names come back hostile too, which costs nothing: the assertion
+    is that a credential survives the round trip as a *value*, and a name full of
+    URL delimiters is the same demand made of one more field.
+    """
+
+    def __missing__(self, key: str) -> str:
+        return HOSTILE_PASSWORD
+
+
 def test_every_endpoint_builder_round_trips_its_own_credentials():
     """The rule holds for all of them, so a new endpoint cannot quietly opt out.
 
@@ -283,33 +311,9 @@ def test_every_endpoint_builder_round_trips_its_own_credentials():
     """
     import endpoints
 
-    hostile = "p@ss:w/rd?x#y"
+    hostile = HOSTILE_PASSWORD
     for endpoint in endpoints.ENDPOINTS:
-        environment = {
-            key: hostile
-            for key in (
-                "POSTGRES_PASSWORD",
-                "MYSQL_PASSWORD",
-                "MARIADB_PASSWORD",
-                "MSSQL_SA_PASSWORD",
-                "APP_USER_PASSWORD",
-                "CLICKHOUSE_PASSWORD",
-            )
-        }
-        environment.update(
-            {
-                key: "testuser"
-                for key in ("POSTGRES_USER", "MYSQL_USER", "MARIADB_USER", "APP_USER")
-            }
-        )
-        environment["CLICKHOUSE_USER"] = "testuser"
-        environment.update(
-            {
-                key: "testdb"
-                for key in ("POSTGRES_DB", "MYSQL_DATABASE", "MARIADB_DATABASE")
-            }
-        )
-        environment["CLICKHOUSE_DB"] = "testdb"
+        environment = _EveryValueHostile()
 
         try:
             built = endpoint.url(environment, 15432)

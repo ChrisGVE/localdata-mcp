@@ -96,13 +96,26 @@ cockroachdb = ["sqlalchemy-cockroachdb>=2.0.4", "psycopg[binary]>=3.1"]
 # different project, last released in 2022 and deprecated by its own author in
 # favour of this one — see docs/CONSTRAINTS.md §16.1.
 trino = ["trino[sqlalchemy]>=0.330"]
+# `sqlalchemy-monetdb` is MonetDB's own — it lives under the github.com/MonetDB
+# organisation — and is the only dialect for this database; `pymonetdb`, which it
+# requires and which is the actively maintained half (1.9.1, 2026-07), is a DB-API
+# driver and registers no dialect of its own.
+#
+# The upper-bounded `setuptools` is a *defect in the dialect*, carried here
+# because the alternative is that it cannot be imported at all. Its package
+# `__init__` imports `pkg_resources` — only to read its own version — and declares
+# no dependency that would provide it. `pkg_resources` shipped inside setuptools
+# until **82.0.0**, which removed it, so the bound is measured rather than
+# guessed. This is the only version ceiling in this file; see
+# docs/CONSTRAINTS.md §18.1 before relaxing it.
+monetdb = ["sqlalchemy-monetdb>=2.0", "setuptools<82"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb]",
 ]
 all = [
   "localdata-mcp[formats,databases]",

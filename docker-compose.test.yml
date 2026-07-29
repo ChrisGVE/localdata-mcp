@@ -181,6 +181,38 @@ services:
       retries: 15
       start_period: 20s
 
+  # A column store, and the vendor's own image — `monetdb/monetdb` is the
+  # MonetDB B.V. organisation on Docker Hub, not a third-party rebuild.
+  #
+  # The image creates no database unless it is given an admin password: with
+  # `MDB_DB_ADMIN_PASS` unset its entrypoint refuses to start at all rather than
+  # coming up empty, which is the good failure. The database it creates is named
+  # by `MDB_CREATE_DBS`, defaulting to `monetdb`, and the password is set on the
+  # `monetdb` user — so the user, the database and the image all carry the same
+  # name here and only their positions tell them apart.
+  localdata-test-monetdb:
+    image: monetdb/monetdb:latest
+    environment:
+      MDB_DB_ADMIN_PASS: testpass
+    ports:
+      - "15000:50000"
+    healthcheck:
+      # A real query, not `monetdbd`'s own view of itself. `monetdb status`
+      # answers over the farm's local socket and reports a database healthy
+      # while nothing has yet proved the SQL layer will accept a statement, so
+      # this authenticates and selects like a client would. mclient takes its
+      # credentials from a file rather than an argument — `DOTMONETDBFILE` names
+      # it — which is also why the password never reaches a process list.
+      test:
+        [
+          "CMD-SHELL",
+          "printf 'user=monetdb\\npassword=testpass\\n' > /tmp/.mdbhealth && DOTMONETDBFILE=/tmp/.mdbhealth mclient -d monetdb -s 'SELECT 1' >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+
 networks:
   default:
     name: localdata-test-net
