@@ -77,6 +77,16 @@ class Endpoint:
     extra: str
     #: Builds the URL from the service's own environment and published port.
     url: Callable[[dict[str, str], int], str]
+    #: What :class:`localdata_mcp.dialects.Backend` should end up *called* for
+    #: this endpoint — the engine actually answering, which is only sometimes
+    #: what the dialect is named. ``None`` means the two agree, the ordinary
+    #: case; YugabyteDB is reached as ``postgresql`` and is not PostgreSQL.
+    #:
+    #: Stated rather than derived, and it is the assertion that would have
+    #: caught issue #45 the day YugabyteDB landed: keyed by dialect it was
+    #: handed ``Backend(name="postgresql")``, and every test still passed,
+    #: because nothing anywhere asked the backend what it thought it was.
+    engine: str | None = None
     #: How long to keep trying the handshake once the port is open. A container
     #: publishes its port before it finishes initialising, and Oracle takes a
     #: minute and a half to come up; below this the answer is "still starting",
@@ -97,6 +107,15 @@ class Endpoint:
         the test ids harder to read.
         """
         return self.service.removeprefix("localdata-test-")
+
+    @property
+    def engine_name(self) -> str:
+        """What the backend answering for this endpoint should call itself.
+
+        The dialect's own name unless this endpoint borrowed it from another
+        engine, in which case :attr:`engine` says whose it really is.
+        """
+        return self.engine or self.dialect
 
 
 #: Driver libraries to fall back on when the driver manager has nothing
@@ -442,6 +461,7 @@ ENDPOINTS = (
         driver="psycopg",
         extra="postgres",
         url=_yugabytedb,
+        engine="yugabytedb",
         warmup=60.0,
     ),
     Endpoint(

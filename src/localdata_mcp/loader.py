@@ -73,7 +73,7 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 from . import binding, temporal
-from .dialects import Backend, Engines, backend_for
+from .dialects import Backend, Engines, backend_for, backend_for_url
 from .paths import resolve_read_path
 
 __all__ = [
@@ -1339,10 +1339,15 @@ class Workspace:
         """Open any datasource SQLAlchemy can reach, under ``tag``.
 
         **The URL is the abstraction.** It carries which database this is,
-        SQLAlchemy parses it, and :func:`dialects.backend_for` looks up whatever
-        that dialect adds — finding nothing, most of the time, which is the
-        ordinary case and not a failure. Nothing in this method knows or asks
-        what is on the other end.
+        SQLAlchemy parses it, and :func:`dialects.backend_for_url` looks up
+        whatever that dialect adds — finding nothing, most of the time, which is
+        the ordinary case and not a failure.
+
+        What this method does *not* assume is that the dialect names the engine.
+        Several do not: YugabyteDB, Greenplum and OpenGauss all answer on
+        PostgreSQL's, TiDB and OceanBase on MySQL's. So the lookup goes through
+        ``backend_for_url``, which asks the server which it is — and asks only
+        where the dialect is one somebody else borrows. See issue #45.
 
         A tag opened this way is a tag like any other: the same ``query``, the
         same ``describe``, the same ``insert_frame``. There is deliberately no
@@ -1351,7 +1356,7 @@ class Workspace:
         """
         parsed = make_url(url)
         safe = parsed.render_as_string(hide_password=True)
-        backend = backend_for(parsed.get_backend_name())
+        backend = backend_for_url(parsed)
         self._install(
             tag,
             uri=safe,

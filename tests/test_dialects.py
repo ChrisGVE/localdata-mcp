@@ -26,6 +26,7 @@ from endpoints import Unavailable
 from localdata_mcp.dialects import (
     BACKENDS,
     Backend,
+    MySQLBackend,
     SQLiteBackend,
     UnsupportedOperation,
     backend_for,
@@ -350,3 +351,109 @@ def test_every_endpoint_has_its_own_identity_even_when_it_shares_a_dialect():
 
     services = [endpoint.service for endpoint in endpoints.ENDPOINTS]
     assert len(services) == len(set(services)), f"duplicate services: {services}"
+
+
+# ---------------------------------------------------------------------------
+# A dialect names a wire protocol, not the engine answering on it
+# ---------------------------------------------------------------------------
+
+
+#: Real banners, read from the live containers rather than composed here. A
+#: fragment guessed from documentation is exactly the thing this table exists to
+#: stop, so nothing goes in it that has not been measured.
+POSTGRESQL_BANNER = (
+    "PostgreSQL 16.14 on x86_64-pc-linux-musl, compiled by gcc "
+    "(Alpine 15.2.0) 15.2.0, 64-bit"
+)
+YUGABYTEDB_BANNER = (
+    "PostgreSQL 15.12-YB-2.25.2.0-b0 on x86_64-pc-linux-gnu, compiled by clang "
+    "version 19.1.0 (https://github.com/yugabyte/llvm-project.git "
+    "a2a6b655e14e7fa1fcf1011a6cb29cb8575249c0), 64-bit"
+)
+
+
+def test_a_banner_that_names_another_engine_resolves_to_that_engine():
+    """The whole point: YugabyteDB answers on PostgreSQL's dialect and is not it.
+
+    Reached as ``postgresql``, it used to get ``Backend(name="postgresql")`` —
+    so a refusal named PostgreSQL to somebody who opened YugabyteDB, and there
+    was nowhere to put an answer of its own that would not also change real
+    PostgreSQL's. See issue #45.
+    """
+    resolved = backend_for("postgresql").named_by(YUGABYTEDB_BANNER)
+
+    assert resolved.name == "yugabytedb"
+
+
+def test_the_engine_whose_dialect_it_is_keeps_it():
+    """The ordinary case, and the one a loose fragment would break.
+
+    YugabyteDB's banner mentions ``yugabyte`` twice — once in the version and
+    once in a compiler URL — so a fragment chosen carelessly is easy. What must
+    never happen is the reverse: real PostgreSQL matching one of its impostors
+    and being handed somebody else's answers.
+    """
+    postgresql = backend_for("postgresql")
+
+    assert postgresql.named_by(POSTGRESQL_BANNER) is postgresql
+
+
+@pytest.mark.parametrize("banner", [None, "", "something else entirely"])
+def test_an_unrecognised_banner_changes_nothing(banner):
+    """Including when the probe failed and there is no banner to read.
+
+    Falling back to the dialect's own backend is exactly the behaviour before
+    any of this existed, so a datasource that cannot answer ``SELECT version()``
+    is no worse off than it was — and refusing to attach it because an identity
+    probe failed would be very much worse.
+    """
+    postgresql = backend_for("postgresql")
+
+    assert postgresql.named_by(banner) is postgresql
+
+
+def test_a_dialect_nobody_shares_is_never_asked():
+    """No impostors means no probe, so the ordinary datasource pays nothing."""
+    sqlite = backend_for("sqlite")
+
+    assert sqlite.impostors == {}
+    assert sqlite.named_by(YUGABYTEDB_BANNER) is sqlite
+
+
+def test_a_resolved_engine_keeps_whatever_answers_it_has_of_its_own():
+    """Resolution hands back the *registered* backend where the engine has one.
+
+    The two halves of #45 need different things. An engine with nothing to say
+    of its own needs only its own name, so a refusal stops naming somebody
+    else's database. An engine that has earned a subclass — Greenplum, whose
+    every ``CREATE TABLE`` needs a ``DISTRIBUTED BY`` clause — needs that
+    subclass to actually arrive, or resolution would have replaced one wrong
+    answer with another.
+
+    Built here rather than waiting for that entry, so the guarantee is pinned
+    before something depends on it.
+    """
+    real = MySQLBackend(name="pretend")
+    BACKENDS["pretend"] = real
+    try:
+        sharer = Backend(name="shared")
+        object.__setattr__(sharer, "impostors", {"PRETEND": "pretend"})
+        assert sharer.named_by("Server 1.0 PRETEND build") is real
+    finally:
+        del BACKENDS["pretend"]
+
+
+def test_an_impostor_with_no_entry_of_its_own_still_gets_its_own_name():
+    """The user-facing half of #45, and all YugabyteDB actually needs.
+
+    ``Backend.name`` is printed at the caller: "A {name} datasource is reached
+    over its own connection…". Reached as ``postgresql``, YugabyteDB put
+    PostgreSQL's name in front of somebody who never opened PostgreSQL.
+    """
+    resolved = backend_for("postgresql").named_by(YUGABYTEDB_BANNER)
+
+    assert resolved.name == "yugabytedb"
+    assert "yugabytedb" not in BACKENDS, (
+        "this asserts the no-entry path; give YugabyteDB a subclass and it "
+        "belongs in the test above instead"
+    )

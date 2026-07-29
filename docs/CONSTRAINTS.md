@@ -2371,3 +2371,80 @@ happens to be the one that refuses transactional writes, so §16.2's *other* bra
 accepts the write and has it rolled back — is reasoned from the transaction semantics rather than
 measured. Measuring it needs a catalog with a real system behind it, which is a much larger fixture
 than one container.
+
+## §17 — A dialect names a wire protocol, never an engine (2026-07-29)
+
+Issue #45, opened when TiDB could not be attached at all, closed here. The assumption it named:
+
+> a dialect name identifies the engine on the other end
+
+It does not, and the catalogue is where that stops being academic. Five of sixteen entries answer on
+a dialect another engine wrote:
+
+| Engine | Reached as | Was handed |
+|---|---|---|
+| TiDB | `mysql` | `MySQLBackend` — a posture it rejects outright |
+| OceanBase | `mysql` | `MySQLBackend` — overrides written for MySQL |
+| YugabyteDB | `postgresql` | `Backend(name="postgresql")` — **the wrong name, to the caller** |
+| Greenplum | `postgresql` | same, and no way to answer `DISTRIBUTED BY` without changing PostgreSQL's |
+| OpenGauss | `postgresql` | same |
+
+§15.4 recorded YugabyteDB dodging this rather than solving it — its finding (`40001` wants a retry)
+turned out to be generic and belonged in the generic path anyway. **That was luck.** Greenplum has no
+such escape, and it is the next entry on the worklist.
+
+### 17.1 The resolution, and where it does not happen
+
+`backend_for_url` asks the server what it is, and asks **only where the question can have a second
+answer**. A backend declares `impostors` — banner fragments mapped to the name each engine should be
+known by — and a dialect with none returns immediately, connecting to nothing. Eight of the nine
+endpoints in the harness take that path and are bit-for-bit unchanged.
+
+Where a probe does happen it costs one short-lived connection on a path that is about to open two
+engines and reflect a table list, so it is not a round trip the caller would otherwise have avoided.
+
+`Backend.named_by(banner)` — the matching — is pure and separate from reading the banner, because
+which engine a version string names is the part worth pinning and it needs no database to pin.
+
+**Every failure resolves to the dialect's own backend.** A refused `SELECT version()`, a permission
+the credentials lack, a driver raising something unrelated: none is a reason to refuse a datasource
+that would otherwise open, and all land on exactly the behaviour that preceded this. That is the one
+place in this codebase where a bare `except Exception` is the correct width — the question is
+optional, so nothing it can raise may propagate. It is the opposite of the fail-open shape recorded
+elsewhere: nothing is *guessed*, the answer simply stays what it already was.
+
+### 17.2 The fragment is measured, and tighter than the obvious one
+
+Read from the live containers:
+
+| Engine | Banner |
+|---|---|
+| PostgreSQL 16 | `PostgreSQL 16.14 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0)…` |
+| YugabyteDB | `PostgreSQL 15.12-YB-2.25.2.0-b0 on x86_64-pc-linux-gnu, compiled by clang version 19.1.0 (https://github.com/yugabyte/llvm-project.git …)` |
+
+The fragment is **`-YB-`**, not `yugabyte`. Both match — YugabyteDB's banner says `yugabyte` in the
+compiler's source URL — but the *version* is what identifies the engine, and a fragment leaning on a
+build detail is one waiting to stop matching. `-YB-` is the part real PostgreSQL can never carry.
+
+A guessed fragment fails in both directions: too loose and the real engine matches its own impostor,
+too tight and nothing does. So **Greenplum and OpenGauss are deliberately absent** — neither has a
+container, so neither has a measured banner, and an entry taken from documentation is precisely what
+the table exists to prevent. TiDB and OceanBase are absent for the same reason; TiDB is out of the
+catalogue anyway under the §13 eligibility rule, since no SQLAlchemy adapter for it exists.
+
+### 17.3 What was actually wrong, and how it passed for a whole session
+
+YugabyteDB shipped in §15 with all 18 endpoint tests green while carrying PostgreSQL's name. Nothing
+was wrong with the tests except what they did not ask: **no assertion anywhere named the backend the
+server had chosen.** The endpoint table now states it — `Endpoint.engine`, `None` where the dialect
+and the engine agree — and one test compares it against what `backend_for_url` resolves. Proved able
+to fail: emptying `impostors` reddens `[yugabytedb]` with `postgresql`, and leaves the other four
+endpoints in that batch passing.
+
+The test helpers were resolving by dialect too, so they were consulting a *different* backend than
+the code under test used — harmless while the two agreed and exactly the shape of #44. They now go
+through `backend_for_url` like the server does.
+
+`PostgreSQLBackend` exists solely to hold that table. Every answer in it is the generic one, and five
+sessions of endpoint work have not turned up anything PostgreSQL needs said for it — it is registered
+for the *other* reason a dialect earns an entry: three engines borrow it.

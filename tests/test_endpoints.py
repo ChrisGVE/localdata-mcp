@@ -36,7 +36,7 @@ from sqlalchemy.engine import make_url
 from localdata_mcp import config as config_module
 from localdata_mcp import server as server_module
 from localdata_mcp.config import Config
-from localdata_mcp.dialects import backend_for
+from localdata_mcp.dialects import backend_for_url
 from endpoints import ENDPOINTS, Endpoint, Unavailable, url_for
 
 pytestmark = pytest.mark.endpoint
@@ -222,6 +222,21 @@ def _password(live: Live) -> str | None:
     return make_url(live.url).password
 
 
+def test_the_backend_is_chosen_by_the_engine_answering_not_by_its_dialect(live):
+    """Issue #45: a dialect names a wire protocol and a driver, never an engine.
+
+    Reached by dialect alone, YugabyteDB was handed ``Backend(name="postgresql")``
+    — so a refusal named PostgreSQL to somebody who had opened YugabyteDB, and
+    an answer of its own could not have been given without also changing real
+    PostgreSQL's. The whole endpoint suite passed throughout, because nothing
+    asked the backend what it thought it was. This asks.
+
+    Meaningful for every entry and not only the one that shares: the resolution
+    must leave the eight that own their dialect exactly where they were.
+    """
+    assert backend_for_url(live.url).name == live.endpoint.engine_name
+
+
 def test_residency_does_not_apply_to_a_server_side_database(live):
     """``None``, not ``0`` — the difference decides whether it gets spilled.
 
@@ -232,7 +247,7 @@ def test_residency_does_not_apply_to_a_server_side_database(live):
     """
     engine = create_engine(live.url)
     try:
-        assert backend_for(live.endpoint.dialect).resident_bytes(engine) is None
+        assert backend_for_url(live.url).resident_bytes(engine) is None
     finally:
         engine.dispose()
 
@@ -310,7 +325,7 @@ def _build_typed_table(live: Live) -> str:
     # to say — Oracle has no time-of-day type, and ClickHouse's driver cannot
     # bind bytes — because a dialect fact stated in a fixture is the same defect
     # as one stated in shared code.
-    unstorable = backend_for(live.endpoint.dialect).unstorable_column_types()
+    unstorable = backend_for_url(live.url).unstorable_column_types()
     for column in [c for c in columns if type(c.type).__name__ in unstorable]:
         columns.remove(column)
         values.pop(column.name)
@@ -319,7 +334,7 @@ def _build_typed_table(live: Live) -> str:
     # the backend rather than branched on here, because a dialect fact stated in
     # a fixture is the same defect as one stated in shared code.
     defined = Table(
-        table, metadata, *columns, **backend_for(live.endpoint.dialect).table_options()
+        table, metadata, *columns, **backend_for_url(live.url).table_options()
     )
     engine = create_engine(live.url)
     try:
@@ -405,7 +420,7 @@ def test_an_index_can_be_created_and_dropped(live):
         "create", nickname="endpoint", type="index", table=table, columns=["department"]
     )
 
-    backend = backend_for(live.endpoint.dialect)
+    backend = backend_for_url(live.url)
     if not backend.builds_indexes():
         # ClickHouse, whose secondary indexes are data-skipping indexes that
         # cannot be reflected and do not answer a lookup; and Trino, which holds
@@ -468,7 +483,7 @@ def test_a_rename_onto_a_name_that_needs_quoting_keeps_the_case(live):
     answer = call("update", nickname="endpoint", type="table", name=table, to=mixed)
 
     assert answer["ok"] is True, answer
-    if backend_for(live.endpoint.dialect).folds_identifiers():
+    if backend_for_url(live.url).folds_identifiers():
         assert answer["table"] == mixed.lower()
     else:
         assert answer["table"] == mixed
@@ -552,7 +567,7 @@ def test_ddl_through_query_never_reaches_the_database(live):
     finally:
         engine.dispose()
 
-    if backend_for(live.endpoint.dialect).ddl_survives_refusal():
+    if backend_for_url(live.url).ddl_survives_refusal():
         assert landed, "the caveat is only honest if the statement really ran"
         assert "already taken effect" in made["error"]
     else:

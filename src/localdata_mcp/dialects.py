@@ -73,11 +73,13 @@ __all__ = [
     "DuckDBBackend",
     "Engines",
     "MySQLBackend",
+    "PostgreSQLBackend",
     "Refusal",
     "SQLiteBackend",
     "TrinoBackend",
     "UnsupportedOperation",
     "backend_for",
+    "backend_for_url",
 ]
 
 
@@ -173,6 +175,55 @@ class Backend:
     #: (see :meth:`read_posture`). A ``ClassVar`` because it is a property of the
     #: dialect, not of an instance.
     read_only_query: ClassVar[Mapping[str, str]] = {}
+
+    #: Engines that answer on this dialect but are not the one it is named for,
+    #: as a fragment of the version banner they carry mapped to the name each
+    #: should be known by. Empty for a dialect only its own engine speaks.
+    #:
+    #: **A dialect name identifies a wire protocol and a driver, never an
+    #: engine.** TiDB and OceanBase answer on MySQL's; YugabyteDB, Greenplum and
+    #: OpenGauss on PostgreSQL's. Keyed by dialect alone, every one of them is
+    #: handed the answers written for the engine whose dialect it borrowed —
+    #: which is at best the wrong name in a refusal and at worst, where that
+    #: engine has a subclass, behaviour it never asked for. Issue #45.
+    #:
+    #: **Every fragment here is read from a live server, never taken from
+    #: documentation.** A guessed fragment fails in both directions: too loose
+    #: and the real engine matches its own impostor, too tight and nothing does.
+    #: An entry arrives when its container does.
+    impostors: ClassVar[Mapping[str, str]] = {}
+
+    #: What to ask for the version banner, where reading one can tell two
+    #: engines apart. Empty alongside an empty :attr:`impostors`, and read only
+    #: when that is not — so a dialect nobody shares is never asked anything,
+    #: and no claim is made here about how the rest spell it.
+    banner_query: ClassVar[str] = ""
+
+    def named_by(self, banner: str | None) -> Backend:
+        """This backend, or the one the server's own banner says is answering.
+
+        Pure, and separate from reading the banner on purpose: which engine a
+        version string names is the part worth pinning in a test, and it needs
+        no database to pin. :func:`backend_for_url` does the connecting.
+
+        ``None`` — the probe failed, or was never made — resolves to ``self``,
+        which is precisely the behaviour before any of this existed. A
+        datasource that will not answer its banner query is therefore no worse
+        off than it was; refusing to open it because an *identity* probe failed
+        would be very much worse than naming its dialect and carrying on.
+
+        An impostor with an entry in :data:`BACKENDS` gets that entry, so an
+        engine that has earned its own answers actually receives them. One
+        without gets a plain :class:`Backend` carrying its own name, which is
+        the whole of what an engine with nothing extra to say needs.
+        """
+        if not banner:
+            return self
+        folded = banner.lower()
+        for fragment, name in self.impostors.items():
+            if fragment.lower() in folded:
+                return BACKENDS.get(name) or Backend(name=name)
+        return self
 
     def open(self, url: str | URL, *, writable: bool) -> Engines:
         """Two engines onto one datasource — one reading, one writing.
@@ -768,6 +819,41 @@ class DuckDBBackend(Backend):
 
 
 # ---------------------------------------------------------------------------
+# PostgreSQL
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PostgreSQLBackend(Backend):
+    """PostgreSQL, which adds nothing — and is registered to say who borrows it.
+
+    Every answer here is the generic one, and that is the finding rather than an
+    omission: five sessions of endpoint work have not turned up a single thing
+    PostgreSQL needs said for it. This class exists for the *other* reason a
+    dialect earns an entry — several engines answer on it and are not it.
+
+    ``-YB-`` is read from a live YugabyteDB, not from its documentation:
+
+    * YugabyteDB — ``PostgreSQL 15.12-YB-2.25.2.0-b0 on x86_64-pc-linux-gnu…``
+    * PostgreSQL — ``PostgreSQL 16.14 on x86_64-pc-linux-musl…``
+
+    The fragment is deliberately tighter than the obvious one. YugabyteDB's
+    banner says ``yugabyte`` twice, once in the compiler's source URL, so
+    matching that would work — but it is the *version* that identifies the
+    engine, and a fragment that leans on a build detail is a fragment waiting to
+    stop matching. ``-YB-`` is the part PostgreSQL itself can never carry.
+
+    Greenplum and OpenGauss belong here too and are absent on purpose: neither
+    has a container yet, so neither has a measured banner, and an entry guessed
+    from documentation is the failure mode the whole table is written to avoid.
+    """
+
+    name: str = "postgresql"
+    banner_query: ClassVar[str] = "SELECT version()"
+    impostors: ClassVar[Mapping[str, str]] = {"-YB-": "yugabytedb"}
+
+
+# ---------------------------------------------------------------------------
 # MySQL and MariaDB
 # ---------------------------------------------------------------------------
 
@@ -1297,6 +1383,9 @@ _SQLITE = SQLiteBackend()
 BACKENDS: dict[str, Backend] = {
     "sqlite": _SQLITE,
     "duckdb": DuckDBBackend(),
+    # Nothing extra to say, and registered anyway: it is the dialect three other
+    # engines answer on, and `impostors` is where that is written down.
+    "postgresql": PostgreSQLBackend(),
     "mysql": MySQLBackend(),
     "mariadb": MySQLBackend(name="mariadb"),
     "oracle": OracleBackend(),
@@ -1328,3 +1417,47 @@ def backend_for(dialect: str) -> Backend:
     """
     known = BACKENDS.get(dialect)
     return known if known is not None else Backend(name=dialect)
+
+
+def backend_for_url(url: str | URL) -> Backend:
+    """The backend for the engine actually answering, not merely for its dialect.
+
+    :func:`backend_for` resolves from the URL alone, which is right for every
+    dialect one engine speaks and wrong for the several that more than one does.
+    This asks the server which it is, and asks **only** where the question can
+    have a second answer: a dialect with no :attr:`Backend.impostors` returns
+    immediately and no connection is made.
+
+    Where a probe does happen it costs one short-lived connection, on a path
+    that is about to open two engines and reflect a table list — so it is not a
+    round trip the caller would otherwise have avoided.
+
+    **Every failure resolves to the dialect's own backend**, deliberately and
+    with the guard as wide as it is. A refused ``SELECT version()``, a permission
+    the credentials lack, a driver that raises something unrelated — none of
+    them is a reason to refuse a datasource that would otherwise open, and all
+    of them land on exactly the behaviour that preceded this function. This is
+    the one place a bare ``except Exception`` is the correct width: the question
+    is optional, so *nothing* it can raise may propagate.
+    """
+    known = backend_for(make_url(url).get_backend_name())
+    if not known.impostors or not known.banner_query:
+        return known
+    return known.named_by(_server_banner(url, known.banner_query))
+
+
+def _server_banner(url: str | URL, query: str) -> str | None:
+    """What the server calls itself, or ``None`` if it would not say.
+
+    Read through a throwaway engine rather than the datasource's own, because
+    the datasource's do not exist yet — which engine to build is what this
+    answers. Disposed immediately: it exists for one row.
+    """
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            return str(conn.execute(text(query)).scalar())
+    except Exception:  # noqa: BLE001 - see backend_for_url; the question is optional
+        return None
+    finally:
+        engine.dispose()
