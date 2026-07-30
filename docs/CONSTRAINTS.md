@@ -1746,6 +1746,9 @@ Neither is a ClickHouse limitation.
   was expected, and the insert fails to parse. A column that exists and refuses every value is worse
   than one that does not exist.
 
+Both are reported upstream as one issue, since both are the same omission of the DBAPI's binding
+surface: [ClickHouse/clickhouse-connect#919](https://github.com/ClickHouse/clickhouse-connect/issues/919).
+
 Both are recorded on the backend as `unstorable_column_types()`. That axis also absorbed Oracle's
 "no time-of-day type", which had been a literal dialect-name branch in a test fixture — the one place
 standing instruction 1 says a dialect fact may never be stated.
@@ -2289,6 +2292,11 @@ becomes reachable and is the better choice.
 `AUTOCOMMIT`), which is why the posture is set on the engine rather than carried in the URL the way
 `read_only_query` carries ClickHouse's and DuckDB's.
 
+Reported upstream on the issue that already existed for it —
+[trinodb/trino-python-client#481](https://github.com/trinodb/trino-python-client/issues/481), open
+since 2024 — as a comment carrying the mechanism, the table above, and the URL-parameter half, which
+nobody there had mentioned.
+
 ### 16.4 Trino folds every identifier, and quoting does not stop it
 
 Every other dialect here keeps a *quoted* identifier verbatim — that is precisely why
@@ -2337,7 +2345,9 @@ Trino has `VARBINARY` and stores binary perfectly well. `trino.dbapi` does not: 
 calls `.encode` on the value it was handed, which is what one does to a `str`, so a `bytes` raises
 `AttributeError: 'bytes' object has no attribute 'encode'` before any statement is sent. The column
 is created and cannot be written to, which is worse than not having it — the same shape as
-ClickHouse's missing PEP 249 `Binary` constructor (§11.4), and recorded the same way.
+ClickHouse's missing PEP 249 `Binary` constructor (§11.4), and recorded the same way. Reported
+upstream as
+[trinodb/trino-python-client#626](https://github.com/trinodb/trino-python-client/issues/626).
 
 Everything else in the typed-value round trip works, including `Time`, which both Oracle and
 ClickHouse could not hold: `Numeric`, `Date`, `DateTime`, `Time` and `Boolean` all came back as the
@@ -2463,7 +2473,8 @@ assertion needed generalising.** Measured against `monetdb/monetdb:latest`, serv
 ### 18.1 The adapter cannot be imported without `setuptools`, and says so nowhere
 
 This is the cost, and it is a defect in the dialect rather than in the database — recorded so nobody
-later "fixes" MonetDB for it. Issue #50.
+later "fixes" MonetDB for it. Issue #50, reported upstream as
+[MonetDB/sqlalchemy-monetdb#61](https://github.com/MonetDB/sqlalchemy-monetdb/issues/61).
 
 `sqlalchemy_monetdb/__init__.py` imports `pkg_resources` at package import, unconditionally, **only
 to read its own version string**:
@@ -2739,7 +2750,8 @@ way out, which is what makes the loss invisible. Measured three ways:
 
 `SHOW CREATE TABLE` confirms it directly: the column SQLAlchemy declared `Numeric(10,2)` is created as
 `"c" BIGINT`. **The database supports the type; the dialect does not use it.** Recorded as the
-dialect's defect so nobody later fixes CrateDB for it — issue #52.
+dialect's defect so nobody later fixes CrateDB for it — issue #52, reported upstream as
+[crate/sqlalchemy-cratedb#292](https://github.com/crate/sqlalchemy-cratedb/issues/292).
 
 Nothing this server writes reaches it: `_declared_type` emits only `INTEGER`, `REAL` and `TEXT`, so
 the exposure is a caller's own table. `Numeric` therefore joins `unstorable_column_types()`, alongside
@@ -2921,6 +2933,14 @@ engine.
 Beyond the ceiling it falls back to `Text`: the grouping is lost, which is bad, and the values are kept
 whole, which matters more than truncating them to fit.
 
+**This one was deliberately NOT reported upstream, and the reasoning is recorded here so it is not
+revisited as an oversight.** Every other client defect in this document went upstream; this is not
+one. `BLOB SUB_TYPE TEXT` is Firebird's only unbounded text type, so a dialect asked to render Core's
+`Text` has nothing else to map it onto, and a BLOB comparing by identity under `GROUP BY`, `DISTINCT`
+and `ORDER BY` is long-standing Firebird engine behaviour rather than something the dialect
+introduces. The choice that produced the corruption was **ours** — `_PORTABLE_TYPES` reaching for
+`Text` — and the fix is the sized `VARCHAR` above. A report would have been a non-bug report.
+
 ### 20.4 The dialect cannot spell a 64-bit float (issue #55)
 
 `_PORTABLE_TYPES` maps a loaded float64 column to Core's `Double`, which both Firebird dialects render
@@ -2944,6 +2964,11 @@ Compiled against both dialects, so this is the shared `base.py` lineage rather t
 `DOUBLE_PRECISION` is used over `Float(53)`: both land in the same Firebird column, and only one says
 what it means. **A client-library defect, not a database limit** — Firebird holds an 8-byte float
 perfectly well once asked in its own words. Recorded so nobody later "fixes" Firebird for it.
+
+Reported upstream **on both ports**, because the table above shows the fault is in the `base.py`
+lineage they share rather than in either one:
+[fdcastel/sqlalchemy-firebird#93](https://github.com/fdcastel/sqlalchemy-firebird/issues/93) and
+[nakagami/sqlalchemy_firebirdsql#1](https://github.com/nakagami/sqlalchemy_firebirdsql/issues/1).
 
 ### 20.5 There is no way to rename a table
 
@@ -3214,6 +3239,10 @@ the advertised one, so it is 2136 on both sides.
 The measured fact underneath: `SELECT * FROM \`.sys/nodes\`` reports the node's host as `localhost`
 once the container is given that hostname, which is what makes the address reachable.
 
+The first route's failure is a defect of its own — a connect keyword the driver neither honours nor
+rejects is indistinguishable from one it applied — and is reported upstream as
+[ydb-platform/ydb-python-dbapi#40](https://github.com/ydb-platform/ydb-python-dbapi/issues/40).
+
 ### 22.2 A rollback that reports success over a write that stands (issue #61)
 
 **The transactional floor does not exist on YDB as SQLAlchemy drives it.** An uncommitted write
@@ -3256,6 +3285,14 @@ Driving the DBAPI directly, varying only the order:
 **This is a client-library defect, not a property of YDB.** YDB's transactions work; the driver
 exposes them; the cursor binds them at the wrong moment. Mark it as such before anybody "fixes" the
 database for it.
+
+A YDB maintainer had opened
+[ydb-platform/ydb-python-dbapi#34](https://github.com/ydb-platform/ydb-python-dbapi/issues/34) in
+April 2026 with this exact diagnosis, three months before it was reached here independently — which
+is worth recording as a check on how novel any of this is. It went there as a comment adding the
+SQLAlchemy angle: SQLAlchemy *always* builds the cursor before `do_begin`, so their "scenario 1" is
+not avoidable by ordering through the ORM, and the `ProgrammingError` fallback proposed in the thread
+would turn silent-no-transaction into every-transaction-raises.
 
 Unreachable from here, so the posture is **raised rather than restored** — see 22.3.
 
@@ -3381,6 +3418,12 @@ by profile id`.
 This harness rotates its containers in batches by stopping and starting them, so the variable is a
 trap laid for the next session rather than a saving. It is dropped, and the disk-backed default costs
 **6.17 MB** of container writable layer (`docker ps --size`) — so what it was saving was not disk.
+
+Reported on the issue that already existed for it,
+[ydb-platform/ydb#17760](https://github.com/ydb-platform/ydb/issues/17760), opened April 2025 against
+24.4.4.2 on Colima / Apple Silicon. The comment confirms it on **26.1.1.22, Docker Desktop, x86_64** —
+so it is neither platform-specific nor fixed — and carries the 6.17 MB measurement showing the
+variable saves nothing worth the trap.
 
 ### 22.8 Everything else, and it really was almost everything
 
@@ -3551,6 +3594,11 @@ are **unreachable through this adapter** rather than absent from the database.
 
 `get_isolation_level` raises `NotImplementedError`, so Trino's remedy (§16.2) has nothing to name.
 
+Reported upstream as
+[databendlabs/databend-sqlalchemy#77](https://github.com/databendlabs/databend-sqlalchemy/issues/77):
+a `do_rollback` that swallows the `NotSupportedError` its own DBAPI raises is the one shape a caller
+cannot detect, since the exception was the only signal.
+
 ### 23.3 A write that looks exactly like a read (issue #64)
 
 **This is the finding.** The not-a-read floor in `Workspace.query_stream` refuses a statement that
@@ -3684,6 +3732,10 @@ Neither is reflectable, which is why neither is created through the verb. This i
 ClickHouse's version of the same axis (§11.5): there `CREATE INDEX` is refused outright and only the
 *usefulness* of the alternative was in question.
 
+Reported upstream as
+[databendlabs/databend-sqlalchemy#78](https://github.com/databendlabs/databend-sqlalchemy/issues/78),
+with the two statements above as the note that the database does have something to compile to.
+
 ### 23.6 Two column types declined, for two different reasons (issues #66, #67)
 
 **`Time` — the database has no such type.** Its parser says so by listing every type it accepts:
@@ -3717,6 +3769,12 @@ left to fail per value. The database is not the problem: a `BINARY` column given
 back as `b'\x00\xff'`. Trino fails identically from the identical cause (§16.6) — interpolating
 parameters into SQL is what gets `bytes` wrong, whoever does it.
 
+Reported upstream separately, because they are two faults that happen to land in one subsection:
+[databendlabs/databend-sqlalchemy#79](https://github.com/databendlabs/databend-sqlalchemy/issues/79)
+for `Time` rendering as `DATETIME` rather than being declined, and
+[databendlabs/databend-sqlalchemy#80](https://github.com/databendlabs/databend-sqlalchemy/issues/80)
+for a `bytes` bind whose success depends on whether the bytes happen to be valid UTF-8.
+
 ### 23.7 The write signal the server sends and the driver drops (issue #69)
 
 Every response carries `stats.write_progress`, and it separates reads from writes exactly — including
@@ -3738,6 +3796,10 @@ there is no working value being hidden.
 
 Had it been reachable, the refusal could have been made on the server's own report after the fact.
 It is not, which is what left 23.4's pre-execution proof as the only sound option.
+
+Reported upstream as [databendlabs/bendsql#790](https://github.com/databendlabs/bendsql/issues/790) —
+the driver rather than the dialect, because the field exists on `ServerStats` and simply has no path
+to the blocking cursor.
 
 ### 23.8 Everything else, and the rest was generic
 
@@ -3802,3 +3864,73 @@ The `EXPLAIN`-executes-nothing property in 23.4 is measured on this version. It 
 future release ever executed a plan it produced, the posture would become the write it exists to
 prevent. The endpoint suite would catch that — the refusal tests assert the row count afterwards — and
 this sentence is here so the next reader knows to look.
+
+## §24 — Db2, eligible on the rule and unreachable on the machine (2026-07-30)
+
+Db2 is the first catalogue entry dropped for **reachability** rather than eligibility, and the two are
+separate questions. Standing instruction 10 says a database is eligible iff an open-source SQLAlchemy
+adapter exists. `ibm-db-sa` 0.4.4 exists and is Apache-2.0, so Db2 passes that test outright. What
+failed is the native stack underneath the adapter, on this host, before a single statement was
+composed — and nothing in the eligibility test looks there.
+
+No compose entry was written, no extra was added, and `.venv` was never touched: the whole measurement
+ran in throwaway virtualenvs under the scratchpad, which is the cheap form of this question.
+
+### 24.1 The measurement
+
+| Step | Result |
+|---|---|
+| `pip install ibm-db` (on 3.12.13 and on 3.14) | **succeeds**, wheel plus a bundled `clidriver/` unpacked |
+| `import ibm_db` | **fails**, both versions, identically |
+| `file …/clidriver/lib/libdb2.dylib` | `Mach-O 64-bit dynamically linked shared library x86_64` |
+| `file /usr/lib/libstdc++.6.dylib` | **No such file or directory** |
+| `nm -gU /usr/lib/libstdc++.6.dylib \| wc -l` | `1` — a dyld-shared-cache stub, not a library |
+| Host | macOS 26.6 build 25G72, x86_64, Python 3.12.9 |
+
+The missing symbol demangles to
+`std::__detail::_Prime_rehash_policy::_M_need_rehash(unsigned long, unsigned long, unsigned long) const`
+— GNU libstdc++, which macOS stopped shipping. `libdb2.dylib` is IBM's prebuilt binary and links
+against it.
+
+**A clean `pip install` is not evidence the adapter works.** That is the transferable part: the
+install resolved, downloaded, unpacked and reported success, and the package cannot be imported. The
+probe that answers the real question is one throwaway venv and one `import`, and it costs five
+minutes:
+
+```bash
+python3.12 -m venv /tmp/probe && /tmp/probe/bin/pip -q install <driver>
+/tmp/probe/bin/python -c "import <module>; print('OK', <module>.__file__)"
+```
+
+### 24.2 The dependency chain, because the answer is not where one looks first
+
+`ibm-db-sa` 0.4.4 (Apache-2.0) is the SQLAlchemy dialect. It requires `ibm-db` 3.2.9 (Apache-2.0), a C
+extension. That links against **clidriver**, IBM's native ODBC/CLI client, which is downloaded during
+install and is **not on PyPI**.
+
+clidriver is **client-side**. It must exist where Python runs — the host — not in the Db2 container.
+Standing up a Db2 server would therefore have changed nothing; the failure is on this side of the
+wire. That is Firebird's shape exactly (§20.1: `libfbclient` was missing on this machine, not in
+Firebird's image), with one difference that decided the outcome: Firebird had a pure-Python adapter to
+swap to, and Db2 has none.
+
+### 24.3 The routes not taken
+
+| Route | Why not |
+|---|---|
+| Install GNU libstdc++ (Homebrew `gcc`) and force it onto the dylib's load path | Makes the harness depend on a hand-patched system library that no user of this server would have; the defect would still be there, hidden |
+| Run the client inside a container and talk to it over a socket | Puts a containerised client between this server and a database for one entry only — the harness would stop testing what users run |
+| Wait for an arm64 or a re-linked wheel | Not a measurement; the machine is x86_64 and the blocker is IBM's link line, not the architecture |
+
+Reported upstream as
+[ibmdb/python-ibmdb#1066](https://github.com/ibmdb/python-ibmdb/issues/1066).
+
+**Disposition: dropped** (Chris, 2026-07-30), alongside Greenplum and HyperSQL. Not deferred. The
+catalogue stays closed at its 16 entries.
+
+### 24.4 What this did not test
+
+Everything about Db2 itself. No server was started, no dialect was loaded, and no SQL was sent, so
+nothing here says anything about Db2's transactions, types, identifier folding or isolation levels.
+The finding is about a client library on one host, and it should not be read as a statement about the
+database.

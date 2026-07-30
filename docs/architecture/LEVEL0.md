@@ -6,11 +6,19 @@ pointed at more kinds of source, so a block that is wrong here is wrong everywhe
 
 The surface is built, and the gate has since opened onto its own breadth: more formats
 and more backends are **still level 0**, because they are nothing new — the same verbs
-pointed at more kinds of source. Formats are done. The backends are an open catalogue
-being worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
+pointed at more kinds of source. Formats are done. The backends are a **closed** catalogue
+worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
 Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB, Firebird,
 openGauss, YDB and Databend each run every verb, each against a container of its own —
 except SQLite and DuckDB, which are files and need none.
+
+Four candidates are **out**, and for two different reasons. **TiDB** and **HyperSQL** fail
+the eligibility rule — a database is in scope iff an open-source SQLAlchemy adapter exists,
+and TiDB has none while HyperSQL's reaches it only through a JVM and a JDBC jar that have
+to be on the host. **Greenplum** was dropped as scope. **Db2** is the one that passes the
+rule and still cannot be reached: its adapter installs and cannot be imported, because the
+native client beneath it links against a C++ runtime macOS no longer ships (`CONSTRAINTS.md`
+§24). **OceanBase and Exasol are what remain**, and the list ends there.
 
 Fifteen of those are containers, and this machine will run six at a time before the Docker
 VM starves them, so **no single test run covers the catalogue** — it takes three, and each
@@ -367,19 +375,24 @@ correct against each other.
 
 ## What comes after
 
-Still level 0, and in this order: the format catalogue above (**done**), then more
-backends (**done** — the seven in the table above, each against a container of its own).
+Still level 0, and in this order: the format catalogue above (**done**), then the backend
+catalogue (**nearly** — every row of the table above is landed, and OceanBase and Exasol
+are the two that remain).
 
 The expectation going into the backends was that they would need a test harness rather
 than a code path, and that was half right: nothing about *reaching* a dialect needed
 writing, and the two that needed nothing at all — DuckDB and PostgreSQL — are the proof.
-What the harness found instead was four defects the file-backed dialects could not have
-shown, each of them a wrong answer rather than an error: a number arriving as text, a
-write reported as a success, a `CREATE TABLE` that was permanent despite being refused,
-and a type name that no other database has.
+What the harness found instead was defect after defect the file-backed dialects could not
+have shown, most of them a wrong answer rather than an error: a number arriving as text, a
+write reported as a success, a `CREATE TABLE` that was permanent despite being refused, a
+rollback that returned normally over a write that stood, and a write no examination of its
+result could tell from a read. They are measured one section at a time in
+`docs/CONSTRAINTS.md`, and the client-library half of them is reported upstream.
 
-What is left: measuring `CONSTRAINTS.md` against the formats added since it was written,
-and whether SQLAlchemy needs extending for anything after that.
+What is left before level 0 closes: those two backends; the authentication matrix, which is
+the one part of reaching a database that no endpoint here exercises beyond a password in a
+URL; the load half of the volume work; and a pass driving the live server through a real
+client, since every verb has changed since the last one.
 
 Building blocks first: **simple, composable, multi-faceted, and where possible
 transparent even to the LLM.**
