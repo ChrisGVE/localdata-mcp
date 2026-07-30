@@ -679,10 +679,125 @@ services:
       timeout: 5s
       retries: 10
 
+  # A Kerberos realm, so that one endpoint can be reached with no credential in
+  # the connection at all — the client proves who it is to a third party first
+  # and presents the result. It is the only service here that is not a database
+  # and not a one-shot: the client needs it answering for the whole run, because
+  # a ticket is obtained at connect time.
+  #
+  # The service principal is `postgres/127.0.0.1`, an address rather than a
+  # name, and that is the finding this service was built around. Asked for
+  # `localhost`, the client library canonicalises through DNS first and derives
+  # the realm from whatever domain the machine happens to be in — on this one, a
+  # Tailscale domain — and then asks for a cross-realm ticket into a realm that
+  # does not exist. A literal address is not canonicalised, so the principal is
+  # exactly what the URL asked for, and the harness stops depending on the DNS
+  # suffix of the machine it runs on.
+  localdata-test-kdc:
+    image: alpine:3
+    environment:
+      KRB5_REALM: LOCALDATA.TEST
+      KRB5_PRINCIPAL: krbuser
+      KRB5_PASSWORD: "kerb:p@ss/word?x#y"
+    volumes:
+      - localdata-test-krb:/krb
+    ports:
+      # Kerberos answers on both transports and a client will try either, so
+      # both are published. 88 is offset like every other port here.
+      - "1088:88/tcp"
+      - "1088:88/udp"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache krb5-server krb5 >/dev/null 2>&1
+        cat > /etc/krb5.conf <<EOF
+        [libdefaults]
+          default_realm = $$KRB5_REALM
+          dns_lookup_realm = false
+          dns_lookup_kdc = false
+          rdns = false
+        [realms]
+          $$KRB5_REALM = {
+            kdc = 127.0.0.1:88
+          }
+        EOF
+        if [ ! -f /krb/.made ]; then
+          kdb5_util create -s -P "$$KRB5_PASSWORD" -r "$$KRB5_REALM"
+          kadmin.local -q "addprinc -pw $$KRB5_PASSWORD $$KRB5_PRINCIPAL@$$KRB5_REALM"
+          kadmin.local -q "addprinc -randkey postgres/127.0.0.1@$$KRB5_REALM"
+          rm -f /krb/postgres.keytab
+          kadmin.local -q "ktadd -k /krb/postgres.keytab postgres/127.0.0.1@$$KRB5_REALM"
+          cat > /krb/pg_hba.conf <<'HBA'
+        local   all all             trust
+        # `include_realm=0` is what makes the database user `krbuser` rather than
+        # `krbuser@LOCALDATA.TEST`, which is not a role and would be refused
+        # after a successful authentication — the confusing kind of failure.
+        host    all all 0.0.0.0/0   gss include_realm=0
+        host    all all ::/0        gss include_realm=0
+        HBA
+          cat > /krb/krbuser.sql <<'SQL'
+        CREATE ROLE krbuser LOGIN;
+        GRANT ALL ON SCHEMA public TO krbuser;
+        SQL
+          chown 70:70 /krb/postgres.keytab /krb/pg_hba.conf /krb/krbuser.sql
+          chmod 640 /krb/postgres.keytab
+          chmod 644 /krb/pg_hba.conf /krb/krbuser.sql
+          touch /krb/.made
+        fi
+        exec krb5kdc -n
+    healthcheck:
+      # Asks the KDC for a real ticket using the keytab it just wrote, over the
+      # port it actually serves — a process check would report healthy while the
+      # database was unbuilt.
+      test:
+        [
+          "CMD-SHELL",
+          "kinit -k -t /krb/postgres.keytab postgres/127.0.0.1@$$KRB5_REALM && kdestroy",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # PostgreSQL that accepts a Kerberos ticket and nothing else over TCP.
+  localdata-test-postgres-krb:
+    image: postgres:16-alpine
+    depends_on:
+      localdata-test-kdc:
+        condition: service_healthy
+    environment:
+      # These credentials reach nothing over the network: the hba file this
+      # service runs with has no password method on any `host` line, so the
+      # superuser exists for `initdb` and the healthcheck's local socket only.
+      POSTGRES_USER: krbadmin
+      POSTGRES_PASSWORD: krbadminpass
+      POSTGRES_DB: krbdb
+    volumes:
+      - localdata-test-krb:/krb:ro
+      - localdata-test-krb:/docker-entrypoint-initdb.d:ro
+    command:
+      - -c
+      - krb_server_keyfile=/krb/postgres.keytab
+      - -c
+      - hba_file=/krb/pg_hba.conf
+    ports:
+      - "15437:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U krbadmin -d krbdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   # Server-side TLS material, in a volume rather than a bind mount so that
   # ownership and mode are Linux's and PostgreSQL will accept the key.
   localdata-test-tls:
+  # The Kerberos database, the service keytab and the hba file that names the
+  # method. Same reason: a keytab PostgreSQL cannot read is a keytab it will not
+  # start with.
+  localdata-test-krb:
 
 networks:
   default:

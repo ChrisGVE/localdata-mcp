@@ -495,8 +495,15 @@ def test_every_auth_mode_builder_round_trips_its_own_credentials():
             swept += 1
 
             parsed = make_url(reached.url)
-            assert parsed.host == endpoints.HOST, mode.mode
-            assert parsed.port == 15432, mode.mode
+            if parsed.port is None:
+                # A URL with no port is naming a **data source** rather than an
+                # address — the ODBC DSN shape — and the host position holds
+                # that name. There is no address in it to check, so what is
+                # asserted is that something is there to look up.
+                assert parsed.host, mode.mode
+            else:
+                assert parsed.host == endpoints.HOST, mode.mode
+                assert parsed.port == 15432, mode.mode
             if parsed.password is not None and parsed.password != "":
                 assert parsed.password == HOSTILE_PASSWORD, mode.mode
             # The URL never carries the credential as text — including for the
@@ -522,19 +529,22 @@ def test_every_auth_mode_builder_round_trips_its_own_credentials():
             # An environment variable is a value the way a URL component is not:
             # nothing re-reads it as syntax, so a mode that carries a credential
             # there must hand it over verbatim rather than escaping it for a
-            # format it is not going into. `PASSWORD` and not `PASS`, because
-            # `PGPASSFILE` names a path and holding it to this would be asserting
-            # that a filename is a password.
+            # format it is not going into.
             for name, value in reached.environ.items():
                 if name.endswith("PASSWORD"):
                     assert value == HOSTILE_PASSWORD, f"{mode.mode}:{name}"
-                elif Path(value).is_file():
-                    # A mode that keeps the credential in a file is responsible
-                    # for the file. libpq refuses to read a `.pgpass` that others
-                    # can read; MySQL warns and reads it anyway, which is worse.
-                    assert (
-                        Path(value).stat().st_mode & 0o077 == 0
-                    ), f"{mode.mode}:{name} is readable by others"
+            # Everything a mode writes into its scratch directory is private to
+            # this process: a password file, an option file, a credential cache,
+            # a Kerberos configuration. Rather than deciding per file which of
+            # them holds a secret — a judgement that gets it wrong once and then
+            # leaks — the rule is that the whole directory is 0600. A file that
+            # is genuinely public does not belong in it, and none is: the
+            # certificates live where the CA service put them.
+            for written in sorted(scratch.rglob("*")):
+                if written.is_file():
+                    assert written.stat().st_mode & 0o077 == 0, (
+                        f"{mode.mode} wrote {written.name} readable by others"
+                    )
 
     assert swept, "no auth modes were swept, so this asserted nothing"
 

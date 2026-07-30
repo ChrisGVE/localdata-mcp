@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import socket
+import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
@@ -296,9 +298,10 @@ def _url(
     *,
     username: str | None,
     password: str | None,
-    port: int,
+    port: int | None,
     database: str | None = None,
     query: dict[str, str] | None = None,
+    host: str = HOST,
 ) -> str:
     """One endpoint URL, assembled from parts rather than formatted into text.
 
@@ -325,12 +328,19 @@ def _url(
     ``username=None`` is a third shape, and the modes are what need it: an
     option file may carry the user as well as the password, leaving the URL with
     no credential of any kind.
+
+    ``host`` defaults to the loopback address every container publishes on and is
+    named only by the ODBC DSN mode, where the host position holds **the name of
+    a data source** rather than an address, and ``port`` is then absent because
+    the file supplies it. It is a parameter rather than a second helper so that
+    the one rule this function exists for — no builder interpolates — still has
+    exactly one place it is enforced.
     """
     return URL.create(
         drivername,
         username=username,
         password=password,
-        host=HOST,
+        host=host,
         port=port,
         database=database,
         query=query or {},
@@ -935,6 +945,206 @@ def _postgres_client_cert(env: dict[str, str], port: int, scratch: Path) -> Reac
     )
 
 
+#: The one compose service that is not a database and not a one-shot. Named here
+#: because the Kerberos mode has to read *two* services — the endpoint it
+#: authenticates to, and the realm it authenticates against — which is the only
+#: place in this module a builder looks outside its own service.
+KDC = "localdata-test-kdc"
+
+
+def _other_service(name: str, container_port: int) -> tuple[dict[str, str], int]:
+    """Another service's environment and published port, by name.
+
+    The same reading every builder gets for its own service, reached through the
+    same helpers so a restated port cannot creep in here either.
+    """
+    services = _services()
+    try:
+        service = services[name]
+    except KeyError:
+        raise Unavailable(
+            f"{COMPOSE.name} has no service {name!r}, which this mode needs"
+        ) from None
+    for mapping in service.get("ports", ()):
+        published, _, inside = str(mapping).partition(":")
+        # A published port may carry a protocol suffix — `1088:88/udp` — which
+        # is part of the mapping and not of the number.
+        if inside.partition("/")[0] == str(container_port):
+            return _environment(service), int(published)
+    raise Unavailable(
+        f"{name} publishes {service.get('ports')}, none of which maps to "
+        f"{container_port} inside the container"
+    )
+
+
+def _postgres_kerberos(env: dict[str, str], port: int, scratch: Path) -> Reached:
+    """A ticket from a third party, and no credential in the connection at all.
+
+    The last of the six modes and the only one where the client authenticates
+    to something that is **not** the database: it gets a ticket from the KDC
+    first and presents that. The URL carries a username and nothing else — the
+    proof of it is in a credential cache this function fills.
+
+    Two measurements shaped it, and both were surprises worth writing down.
+
+    **The service principal names an address, not a host.** Asked for
+    ``localhost``, the client library canonicalises the name through DNS before
+    building the principal, lands on this machine's Tailscale domain, derives a
+    realm from it and asks for a **cross-realm** ticket:
+    ``Server krbtgt/<TAILNET>.TS.NET@LOCALDATA.TEST not found in Kerberos
+    database``. That failure is about the DNS suffix of the machine the suite
+    runs on, which no harness should depend on. A literal address is not
+    canonicalised — the principal requested is exactly ``postgres/127.0.0.1`` —
+    so that is what the KDC issues and the keytab holds.
+
+    **``include_realm=0`` in the server's rules is load-bearing.** Without it the
+    database user is ``krbuser@LOCALDATA.TEST``, which is not a role, so the
+    authentication succeeds and the login is refused immediately afterwards —
+    the confusing order of events.
+
+    ``gssencmode`` is stated rather than left to the default because psycopg
+    warns, in as many words, that the libpq it bundles may default it to
+    ``disable``; a mode whose whole subject is GSSAPI should not be one build
+    away from silently not using it.
+    """
+    if not shutil.which("kinit"):
+        raise Unavailable(
+            "Kerberos needs a `kinit` on PATH to obtain a ticket. macOS ships "
+            "one at /usr/bin/kinit; on Debian it is in krb5-user."
+        )
+    realm_env, kdc_port = _other_service(KDC, 88)
+    realm = realm_env["KRB5_REALM"]
+    principal = f"{realm_env['KRB5_PRINCIPAL']}@{realm}"
+
+    config = scratch / "krb5.conf"
+    config.write_text(
+        "[libdefaults]\n"
+        f"  default_realm = {realm}\n"
+        "  dns_lookup_realm = false\n"
+        "  dns_lookup_kdc = false\n"
+        "  rdns = false\n"
+        "[realms]\n"
+        f"  {realm} = {{\n"
+        f"    kdc = {HOST}:{kdc_port}\n"
+        "  }\n"
+    )
+    # Nothing in this file is a secret, and it is still 0600: everything written
+    # into the scratch directory is private to this process, so that no file
+    # there has to be judged individually — which is the judgement that gets a
+    # credential left readable one day.
+    config.chmod(0o600)
+    ccache = scratch / "krb5cc"
+    _kinit(principal, realm_env["KRB5_PASSWORD"], config, ccache, scratch)
+
+    return Reached(
+        url=_url(
+            "postgresql+psycopg",
+            username=realm_env["KRB5_PRINCIPAL"],
+            password=None,
+            port=port,
+            database=env["POSTGRES_DB"],
+            query={"krbsrvname": "postgres", "gssencmode": "prefer"},
+        ),
+        environ={"KRB5_CONFIG": str(config), "KRB5CCNAME": f"FILE:{ccache}"},
+    )
+
+
+def _kinit(
+    principal: str, password: str, config: Path, ccache: Path, scratch: Path
+) -> None:
+    """Fill a credential cache, or say why the ticket could not be had.
+
+    The password goes in through a file rather than an argument, because an
+    argument is visible in the process list to everyone on the machine. Two
+    spellings are tried because the two Kerberos families disagree: macOS ships
+    Heimdal, whose ``kinit`` takes ``--password-file``, and MIT's reads standard
+    input instead.
+    """
+    passfile = scratch / "krbpw"
+    passfile.write_text(password)
+    passfile.chmod(0o600)
+    environment = {
+        **os.environ,
+        "KRB5_CONFIG": str(config),
+        "KRB5CCNAME": f"FILE:{ccache}",
+    }
+    attempts = (
+        (["kinit", f"--password-file={passfile}", principal], None),
+        (["kinit", principal], password + "\n"),
+    )
+    complaints = []
+    for command, stdin in attempts:
+        done = subprocess.run(
+            command,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=30,
+        )
+        if done.returncode == 0:
+            return
+        complaints.append(
+            f"{' '.join(command[:2])}: {(done.stderr or done.stdout).strip()[:200]}"
+        )
+    raise Unavailable(
+        "kinit could not get a ticket for "
+        f"{principal}, so the Kerberos mode cannot run. " + "; ".join(complaints)
+    )
+
+
+def _mssql_dsn(env: dict[str, str], port: int, scratch: Path) -> Reached:
+    """SQL Server named by a **DSN** rather than by an address.
+
+    The oldest way to address an ODBC database and still the common one in
+    places that have an ODBC estate: the URL names an entry in a file, and the
+    file says where the server is and which driver reaches it. It is the one
+    URL shape here with no host, no port and no database — ``mssql+pyodbc``
+    reads the host position as the data-source name — so it exercises a branch
+    of SQLAlchemy's own dialect that the ordinary form never touches.
+
+    The file is written here rather than installed, and pointed at with
+    ``ODBCINI``, because registering a DSN is a change to the machine and a test
+    harness has no business making one. That is the same judgement the driver
+    lookup above already records for ``odbcinst.ini``.
+
+    The driver goes in by **path**, from the same lookup the TCP builder uses, so
+    the two forms cannot disagree about which driver is meant — and on this
+    machine there is no registered driver at all, which is exactly the case a
+    hard-coded driver name would get wrong. ``TrustServerCertificate`` is carried
+    over from the TCP builder for the same reason it is there: Microsoft's driver
+    18 encrypts by default and would refuse a self-signed container. FreeTDS
+    ignores it.
+
+    A wrong password through this DSN is refused by the server, measured, so the
+    mode is a real authentication and not a file that happens to open.
+    """
+    driver = _odbc_driver()
+    dsn = "localdata-test-mssql-dsn"
+    odbcini = scratch / "odbc.ini"
+    odbcini.write_text(
+        f"[{dsn}]\n"
+        f"Driver = {driver}\n"
+        f"Server = {HOST}\n"
+        f"Port = {port}\n"
+        f"Database = master\n"
+        f"TrustServerCertificate = yes\n"
+    )
+    odbcini.chmod(0o600)
+    return Reached(
+        # `host=` is the DSN name: this is the one URL here whose host component
+        # is not an address.
+        url=_url(
+            "mssql+pyodbc",
+            username="sa",
+            password=env["MSSQL_SA_PASSWORD"],
+            port=None,
+            host=dsn,
+        ),
+        environ={"ODBCINI": str(odbcini)},
+    )
+
+
 def _clickhouse_empty_password(
     env: dict[str, str], port: int, scratch: Path
 ) -> Reached:
@@ -1051,6 +1261,12 @@ ENDPOINTS = (
                 service="localdata-test-postgres-tls",
                 container_port=5432,
             ),
+            AuthMode(
+                mode="kerberos",
+                reach=_postgres_kerberos,
+                service="localdata-test-postgres-krb",
+                container_port=5432,
+            ),
         ),
     ),
     Endpoint(
@@ -1079,6 +1295,10 @@ ENDPOINTS = (
         url=_mssql,
         warmup=60.0,
         precondition=_odbc_driver,
+        # Same container, same credentials, addressed through a data-source name
+        # instead of an address. No `service` override: what changes is the URL,
+        # not the server.
+        auth=(AuthMode(mode="odbc-dsn", reach=_mssql_dsn),),
     ),
     Endpoint(
         dialect="oracle",

@@ -3934,3 +3934,138 @@ Everything about Db2 itself. No server was started, no dialect was loaded, and n
 nothing here says anything about Db2's transactions, types, identifier folding or isolation levels.
 The finding is about a client library on one host, and it should not be read as a statement about the
 database.
+
+## §25 — Six ways into one database, and the two that this machine cannot take (2026-07-30)
+
+Every endpoint in this harness was reached exactly one way until now: a username and a password in
+the URL, in plaintext, over TCP to the loopback interface. That is one of the ways a caller reaches a
+database, and the others were code paths the server had never run — which is what task 23 was about
+and what this section measures.
+
+The axis is on the endpoint descriptor rather than in the tests: an `AuthMode` hangs off the
+`Endpoint` it varies, `TARGETS` is the product, and all nineteen endpoint tests run against every
+mode without one being written for them. A mode is **not** a new `Endpoint`, because an `Endpoint` is
+identified by its compose service and two rows sharing one collide in the probe cache exactly the way
+§ on issue #44 records — the same defect, one axis further out.
+
+### 25.1 What is now exercised
+
+| Mode | Endpoint | Where the credential is | New shape it proves |
+|---|---|---|---|
+| credentialed URL | all sixteen | in the URL | the original, unchanged |
+| `trust` | PostgreSQL | nowhere — the server does not ask | a server that *has* authentication and is told not to use it |
+| `env-password` | PostgreSQL | `PGPASSWORD` | a passwordless URL that still authenticates |
+| `pgpass-file` | PostgreSQL | a file libpq reads | a credential in a colon-separated file |
+| `tls-verify-full` | PostgreSQL | in the URL, over verified TLS | the certificate is checked, and the name on it |
+| `client-cert` | PostgreSQL | a certificate | **no** credential sent; the CN *is* the user |
+| `kerberos` | PostgreSQL | a ticket from a third party | authentication to something other than the database |
+| `option-file` | MySQL | `~/.my.cnf`-style file | a URL carrying neither user nor password |
+| `empty-password` | ClickHouse | in the URL, and empty | `user:@host`, which is not `user@host` |
+| `odbc-dsn` | SQL Server | in the URL; the *address* is in a file | a URL with no host and no port |
+
+Five endpoints were already reached with no password — CockroachDB, YugabyteDB, Trino, CrateDB and
+YDB — and none of them is the same case: those databases have **no authentication to configure**, so
+a passwordless URL is the only URL they have. `trust` is a server that could ask and does not.
+
+### 25.2 Three failures that named the wrong cause
+
+Each of these reports something true about a layer that is not the one at fault, and each cost a
+probe to see through.
+
+| What was wrong | What it said |
+|---|---|
+| A `.pgpass` password containing a colon, unescaped | `FATAL: password authentication failed` — the credential, not the file that split it |
+| A `.pgpass` file readable by others | `fe_sendauth: no password supplied` — as if the file were not named at all (the "ignoring" warning goes to stderr, not to the client) |
+| ClickHouse's `default` user, restricted to the container's own loopback | `password is incorrect, or there is no user with such name` — a network rule reported as a credential |
+
+The `.pgpass` one is the same defect this project already records for URLs — a value re-read as
+syntax — arriving through a different file format, and it is only visible because the Postgres
+container's password is deliberately `p@ss:w/rd?x#y`. A harness whose password held no delimiters
+would pass either way. **Every** field of the line is escaped rather than only the password's: the
+separator is the same in all five, so a database or a user holding a colon splits the line as badly.
+
+### 25.3 Kerberos names an address, because a name is not a name
+
+The service principal is `postgres/127.0.0.1@LOCALDATA.TEST`. Asked for `localhost` instead, the
+client library canonicalises the host through DNS *before* building the principal, lands on whatever
+domain this machine happens to be in — a Tailscale one — derives a realm from it, and asks for a
+cross-realm ticket:
+
+```
+Server krbtgt/<TAILNET>.TS.NET@LOCALDATA.TEST not found in Kerberos database
+```
+
+That failure is a fact about the DNS suffix of the machine the suite runs on, which no harness should
+depend on. A literal address is **not** canonicalised — the principal requested is exactly the one
+asked for — so the realm is built around the address every other endpoint here already uses.
+
+`include_realm=0` on the server's rule is the other load-bearing detail: without it the database user
+is `krbuser@LOCALDATA.TEST`, which is not a role, so authentication *succeeds* and the login is
+refused immediately afterwards.
+
+### 25.4 A certificate says who you are, not what you may do
+
+`cert` authentication takes the common name out of the client certificate and logs that role in — so
+the username in the URL is not something the client asserts but something the certificate must agree
+with. Measured: the same certificate offered as `tlsuser` falls through to the password rule and is
+refused with `fe_sendauth: no password supplied`.
+
+And the role still needs privileges. PostgreSQL 15 and later give a fresh role nothing in `public`,
+so the mode connected perfectly and then could not create a table. It reads like a broken endpoint
+and is an unprivileged one.
+
+### 25.5 What makes the TLS mode a test rather than a connection
+
+Two refusals, both measured, and without them `verify-full` would prove only that a connection
+happened:
+
+| Asked for | Result |
+|---|---|
+| `sslmode=disable` | **refused** — the server's rules have no plain `host` line at all |
+| `sslmode=verify-full` with no `sslrootcert` | **refused**, looking for `~/.postgresql/root.crt` |
+| `sslmode=verify-full` with the CA | connects, TLSv1.3 |
+
+The certificate's SAN carries `IP:127.0.0.1` and not only `DNS:localhost`, because `verify-full`
+compares against the name the client *asked for* and every URL here asks for an address. A
+certificate naming only `localhost` verifies under `verify-ca` and fails under `verify-full` — which
+would leave the stricter of the two, the one worth testing, quietly untested.
+
+**The SQL Server endpoint still passes `TrustServerCertificate=yes`, and that is now the exception
+rather than the norm.** It is not an oversight: the image serves a self-signed certificate this
+harness has no way to sign, and Microsoft's driver 18 encrypts by default and would refuse the
+container outright. It is recorded here so nobody reads it as the pattern.
+
+### 25.6 Two modes this host cannot take
+
+Both are the shape §24 records for Db2 — the mode is real, the machine cannot reach it — and both are
+measurements rather than gaps.
+
+**Unix domain socket / peer authentication.** A socket bind-mounted out of a container appears on the
+host as a genuine socket:
+
+| Check | Result |
+|---|---|
+| `stat.S_ISSOCK` on the host | **True** |
+| `connect()` from the host, raw syscall | `ConnectionRefusedError [Errno 61]` |
+| `psql -h /var/run/postgresql` **inside** the container | works, over the same file |
+| the same, with a scratch path 100 characters long | `Unix-domain socket path … is too long` (107 bytes is the limit) |
+
+The file sharing reproduces the socket's *inode* and not its *endpoint*. Since it works inside the
+container over the same path, the cause is the virtual-machine boundary rather than PostgreSQL, and
+there is no route round it that does not either change the machine (a natively-installed server) or
+move the client into a container, which would stop testing the thing users run.
+
+**Windows integrated authentication.** There is no Windows host here to integrate with, and SSPI has
+no meaning on this one. Out of reach by the same rule and not worth a probe.
+
+### 25.7 What this did not test
+
+Authentication *rotation* and expiry: a Kerberos ticket that runs out mid-session, a certificate that
+expires while a slot is attached, a password changed under a live engine — every mode here is
+measured at connect time only. Nothing about LDAP, PAM, RADIUS or SCRAM channel binding. No mode is
+exercised against any endpoint but the four that carry one, so what a Firebird or a YDB would do with
+a credential in the environment is unmeasured — the modes are a statement about *coverage of the
+mechanisms*, not about every dialect's handling of them.
+
+Nor is any of this a statement about the server's own security posture. It measures that the paths
+work; it does not measure what happens when one of them is attacked.

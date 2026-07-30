@@ -389,10 +389,19 @@ rollback that returned normally over a write that stood, and a write no examinat
 result could tell from a read. They are measured one section at a time in
 `docs/CONSTRAINTS.md`, and the client-library half of them is reported upstream.
 
-What is left before level 0 closes: those two backends; the authentication matrix, which is
-the one part of reaching a database that no endpoint here exercises beyond a password in a
-URL; the load half of the volume work; and a pass driving the live server through a real
-client, since every verb has changed since the last one.
+The authentication matrix is **done**, and it was the item whose shape was unknown. A
+database is reached one of several ways and only one of them was ever exercised: a password
+in the URL. There are now ten, across four endpoints — a server that authenticates nobody, a
+password read from the environment, a password read from a file, TLS actually verified, a
+client certificate, a Kerberos ticket, an option file, an empty password, and a data-source
+name in place of an address. They run as a second axis on the endpoint table, so all
+nineteen endpoint tests exercise every one of them. Two more are real and unreachable from
+this machine rather than skipped — a Unix socket does not cross the container boundary, and
+there is no Windows host to integrate with. `docs/CONSTRAINTS.md` §25 has the measurements.
+
+What is left before level 0 closes: those two backends; the load half of the volume work;
+and a pass driving the live server through a real client, since every verb has changed since
+the last one.
 
 Building blocks first: **simple, composable, multi-faceted, and where possible
 transparent even to the LLM.**
