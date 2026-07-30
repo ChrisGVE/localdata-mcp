@@ -15,6 +15,8 @@ told about it.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import foreign
@@ -257,6 +259,38 @@ def test_a_backend_with_nothing_to_say_leaves_the_url_alone(tmp_path):
 #: that interpolates rather than passing values cannot survive it.
 HOSTILE_PASSWORD = "p@ss:w/rd?x#y"
 
+#: What every *non*-credential field is made in the sweeps below — a name, a
+#: database, a path. Hostile in the same way and for the same reason, and short
+#: of two characters, which is the finding rather than a concession.
+#:
+#: ``URL.create`` quotes the username, the password and every query value, and
+#: renders the **database raw**; ``make_url`` unquotes the first two and leaves
+#: the database alone as well. Measured, that makes two characters unusable in a
+#: database name whatever a caller does: a ``?`` ends the database and starts the
+#: query, always, and an ``@`` is read as the userinfo separator whenever no
+#: password precedes it. ``#``, ``:``, ``/``, a space and a literal ``%`` all
+#: survive intact.
+#:
+#: Using the hostile *password* in every field, which is what these sweeps used
+#: to do, therefore produced URLs that could not be parsed back at all — and the
+#: sweep passed anyway, because it asserted the host, the port and the password
+#: and never the database. The database was silently arriving truncated. Two
+#: values rather than one is what lets the database be asserted at all.
+HOSTILE_NAME = "n#me:with/parts"
+
+
+def _hostile(key: str) -> str:
+    """The hostile value for a variable, by what kind of thing it names.
+
+    A rule about kinds of secret rather than a list of variable names: the list
+    is what decayed before (see :class:`_EveryValueHostile`), and every image in
+    this harness spells its password with ``PASS`` in the variable's name —
+    ``POSTGRES_PASSWORD``, ``MSSQL_SA_PASSWORD``, ``MDB_DB_ADMIN_PASS``,
+    ``QUERY_DEFAULT_PASSWORD``. A new image that does not can only fail towards
+    the safer of the two values.
+    """
+    return HOSTILE_PASSWORD if ("PASS" in key or "PWD" in key) else HOSTILE_NAME
+
 
 def test_an_endpoint_url_survives_a_hostile_password():
     """The harness may not interpolate a credential into a URL. See issue #43.
@@ -302,13 +336,19 @@ class _EveryValueHostile(dict):
     image asks for ``MDB_DB_ADMIN_PASS``, is the one that proved it.
 
     Answering every key removes the list rather than lengthening it. Usernames
-    and database names come back hostile too, which costs nothing: the assertion
-    is that a credential survives the round trip as a *value*, and a name full of
-    URL delimiters is the same demand made of one more field.
+    and database names come back hostile too: the assertion is that a value
+    survives the round trip as a *value*, and a name full of URL delimiters is
+    the same demand made of one more field.
+
+    What it does **not** do any more is answer every key with the same string.
+    That version said the uniformity "costs nothing", and it cost the whole
+    database assertion — see :data:`HOSTILE_NAME`. A password may hold a ``?``;
+    a database name that holds one cannot be expressed in a URL at all, so a
+    sweep that put one there had to give up on parsing the URL back.
     """
 
     def __missing__(self, key: str) -> str:
-        return HOSTILE_PASSWORD
+        return _hostile(key)
 
 
 def test_every_endpoint_builder_round_trips_its_own_credentials():
@@ -338,12 +378,23 @@ def test_every_endpoint_builder_round_trips_its_own_credentials():
         # does not survive make_url, it raises.
         assert parsed.host == endpoints.HOST, endpoint.dialect
         assert parsed.port == 15432, endpoint.dialect
+        # The database survives too, which this could not assert while every
+        # field carried the same `?`-bearing string. Several builders wrap the
+        # value — Firebird prefixes a directory, Trino names a fixed catalog — so
+        # what is asserted is that the hostile name is not *mangled*, not that it
+        # is the whole component.
+        if parsed.database is not None and HOSTILE_NAME[:4] in parsed.database:
+            assert HOSTILE_NAME in parsed.database, endpoint.dialect
         if parsed.password is None:
             # CockroachDB runs --insecure and takes no password, so there is no
             # credential to make hostile. Its builder is covered by the host and
             # port above — an interpolated URL would have lost both.
             continue
         assert parsed.password == hostile, endpoint.dialect
+        # Directly, and not only through the parse: a credential that reached the
+        # URL as text would appear in it as text. Nothing else in the environment
+        # carries this value any more, so its absence is about the password.
+        assert hostile not in built, endpoint.dialect
 
 
 def test_every_endpoint_has_its_own_identity_even_when_it_shares_a_dialect():
@@ -365,6 +416,251 @@ def test_every_endpoint_has_its_own_identity_even_when_it_shares_a_dialect():
 
     services = [endpoint.service for endpoint in endpoints.ENDPOINTS]
     assert len(services) == len(set(services)), f"duplicate services: {services}"
+
+
+# ---------------------------------------------------------------------------
+# The authentication axis — the same databases, reached other ways
+# ---------------------------------------------------------------------------
+
+
+def test_every_target_has_its_own_identity_including_its_auth_mode():
+    """The same defect as #44, one axis further out, and the same assertion.
+
+    A target's name keys the probe cache. Two targets sharing one would mean the
+    second reading the first's ``Reached`` out of it and running its whole suite
+    against a mode it never used — reporting an authentication path as covered
+    when the connection was made another way. That is exactly issue #44's shape
+    with ``mode`` in place of ``dialect``, and it is worth asserting separately
+    because the endpoint-level test above passes while it is broken.
+    """
+    import endpoints
+
+    names = [target.name for target in endpoints.TARGETS]
+    assert len(names) == len(set(names)), f"duplicate target names: {names}"
+
+    # Every endpoint's own credentialed mode is a target, and it is the first of
+    # that endpoint's. A mode list that replaced it rather than adding to it
+    # would leave the ordinary path untested while looking like more coverage.
+    for endpoint in endpoints.ENDPOINTS:
+        mine = [t for t in endpoints.TARGETS if t.endpoint is endpoint]
+        assert mine, endpoint.name
+        assert mine[0].auth is None, endpoint.name
+        assert len(mine) == 1 + len(endpoint.auth), endpoint.name
+
+
+def test_every_target_names_a_service_the_compose_file_defines():
+    """A mode may redirect to its own container, and that container must exist.
+
+    A mode needs a service of its own whenever the authentication method is a
+    property of the *server* — PostgreSQL's ``trust``, ClickHouse's user with an
+    empty password. Naming one the compose file does not define fails at probe
+    time with a clear message, but only on a machine where the rest of the
+    container is up; here it fails everywhere, including a laptop with no Docker
+    at all, which is where a typo is actually made.
+    """
+    import yaml
+
+    import endpoints
+
+    defined = set(yaml.safe_load(endpoints.COMPOSE.read_text())["services"])
+    for target in endpoints.TARGETS:
+        assert target.service in defined, (
+            f"{target.name} names service {target.service!r}, which "
+            f"{endpoints.COMPOSE.name} does not define"
+        )
+
+
+def test_every_auth_mode_builder_round_trips_its_own_credentials():
+    """The sweep the endpoint builders get, applied to the modes as well.
+
+    A mode builds a URL the same way an endpoint's does and can get it wrong the
+    same way, so it is swept the same way rather than trusted for being newer.
+    What differs is the assertion about the password: half these modes exist
+    precisely because the credential is **not** in the URL, so "the password
+    survives" becomes "if there is one, it survives" — and the modes with none
+    are still held to the host and the port, which an interpolated URL loses
+    first.
+    """
+    import endpoints
+
+    swept = 0
+    for endpoint in endpoints.ENDPOINTS:
+        for mode in endpoint.auth:
+            environment = _EveryValueHostile()
+            scratch = Path(tempfile.mkdtemp(prefix="localdata-auth-sweep-"))
+            try:
+                reached = mode.reach(environment, 15432, scratch)
+            except Unavailable:
+                continue
+            swept += 1
+
+            parsed = make_url(reached.url)
+            assert parsed.host == endpoints.HOST, mode.mode
+            assert parsed.port == 15432, mode.mode
+            if parsed.password is not None and parsed.password != "":
+                assert parsed.password == HOSTILE_PASSWORD, mode.mode
+            # The URL never carries the credential as text — including for the
+            # modes whose whole point is that it carries it not at all, where
+            # this is what says so.
+            assert HOSTILE_PASSWORD not in reached.url, mode.mode
+            # A mode may name its credential file in the URL rather than in the
+            # environment — MySQL's option file is `read_default_file`, a client
+            # key is `sslkey` — and the file is its responsibility either way.
+            #
+            # Certificates are the exception and not an oversight: a CA
+            # certificate and a client certificate are *published* halves, and
+            # holding them to 0600 would be asserting that a public key is a
+            # secret. The parameter's name is what says which kind it is.
+            for parameter, value in parsed.query.items():
+                if "cert" in parameter or not isinstance(value, str):
+                    continue
+                if Path(value).is_file():
+                    assert Path(value).stat().st_mode & 0o077 == 0, (
+                        f"{mode.mode} names {value} as {parameter}, "
+                        f"and others can read it"
+                    )
+            # An environment variable is a value the way a URL component is not:
+            # nothing re-reads it as syntax, so a mode that carries a credential
+            # there must hand it over verbatim rather than escaping it for a
+            # format it is not going into. `PASSWORD` and not `PASS`, because
+            # `PGPASSFILE` names a path and holding it to this would be asserting
+            # that a filename is a password.
+            for name, value in reached.environ.items():
+                if name.endswith("PASSWORD"):
+                    assert value == HOSTILE_PASSWORD, f"{mode.mode}:{name}"
+                elif Path(value).is_file():
+                    # A mode that keeps the credential in a file is responsible
+                    # for the file. libpq refuses to read a `.pgpass` that others
+                    # can read; MySQL warns and reads it anyway, which is worse.
+                    assert (
+                        Path(value).stat().st_mode & 0o077 == 0
+                    ), f"{mode.mode}:{name} is readable by others"
+
+    assert swept, "no auth modes were swept, so this asserted nothing"
+
+
+def test_the_pgpass_mode_escapes_a_password_that_holds_the_field_separator():
+    """``.pgpass`` is colon-separated and this endpoint's password holds a colon.
+
+    The same defect as a credential formatted into a URL — a value re-read as
+    syntax — arriving through a different file format, and the reason the mode
+    exists in a harness whose password is deliberately hostile. Unescaped, libpq
+    reads the password as everything up to the first colon and the connection
+    fails naming the credential rather than the file that mangled it.
+
+    The reverse parser below is written from libpq's rule rather than shared with
+    the builder, so this compares two independent readings of the format instead
+    of comparing the builder with itself. It is still only a model of libpq —
+    what proves the escaping against the real one is the endpoint suite
+    connecting through this mode to a live server.
+    """
+    import endpoints
+
+    scratch = Path(tempfile.mkdtemp(prefix="localdata-pgpass-"))
+    reached = endpoints._postgres_pgpassfile(_EveryValueHostile(), 15432, scratch)
+
+    passfile = Path(reached.environ["PGPASSFILE"])
+    assert passfile.stat().st_mode & 0o077 == 0, (
+        "libpq ignores a pgpass file that is group- or world-readable, and then "
+        "reports 'no password supplied' rather than saying so"
+    )
+    fields = _unescaped_fields(passfile.read_text().rstrip("\n"))
+    assert len(fields) == 5, fields
+    assert fields[4] == HOSTILE_PASSWORD
+
+
+def _unescaped_fields(line: str) -> list[str]:
+    """Split a ``.pgpass`` line on its *unescaped* colons, undoing the escapes.
+
+    libpq's rule, stated in its own documentation: a colon or a backslash inside
+    a field is written with a leading backslash, and nothing else is special.
+    """
+    fields: list[str] = [""]
+    escaped = False
+    for character in line:
+        if escaped:
+            fields[-1] += character
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == ":":
+            fields.append("")
+        else:
+            fields[-1] += character
+    return fields
+
+
+def test_a_url_carries_a_database_name_that_two_characters_can_still_break():
+    """The limit :data:`HOSTILE_NAME` exists for, pinned so it cannot widen quietly.
+
+    ``URL.create`` quotes the username, the password and the query values and
+    renders the database **raw**; ``make_url`` unquotes the first two and leaves
+    the database alone in turn. The pair is self-consistent and it means two
+    characters cannot appear in a database name in any SQLAlchemy URL string,
+    however carefully it is built:
+
+    * a ``?`` ends the database and begins the query — the name arrives
+      **truncated**, with no error anywhere;
+    * an ``@`` is read as the userinfo separator, so with no password before it
+      the host becomes whatever followed the ``@``.
+
+    Percent-encoding is not a way round it, because nothing decodes the database
+    on the way back — an encoded name reaches the driver encoded.
+
+    This bounds the server rather than the harness, and it bounds it in one place
+    for real: Firebird's database component is a **filesystem path**, and a path
+    may hold either character. Recorded here as measurement so that a SQLAlchemy
+    release which starts quoting the component makes this test fail rather than
+    passing unnoticed.
+    """
+    from sqlalchemy.engine import URL
+
+    def round_trip(database: str, password: str | None = "pw"):
+        url = URL.create(
+            "postgresql+psycopg",
+            username="u",
+            password=password,
+            host="127.0.0.1",
+            port=15432,
+            database=database,
+        )
+        return make_url(url.render_as_string(hide_password=False))
+
+    # Survive: a fragment marker, the field separator, a path separator, a space
+    # and a literal percent. This is what makes HOSTILE_NAME usable.
+    for benign in ("plain", "a#b", "a:b", "a/b", "a b", "a%2Fb", HOSTILE_NAME):
+        assert round_trip(benign).database == benign, benign
+
+    # Do not, and silently.
+    assert round_trip("a?b").database == "a"
+    assert round_trip("a@b", password=None).database is None
+    assert round_trip("a@b", password=None).host == "b"
+
+
+def test_applying_a_mode_environment_puts_the_machine_back_as_it_was():
+    """A credential left in the environment makes the *next* target pass wrongly.
+
+    The quietest failure this axis can have: ``PGPASSWORD`` still set after the
+    mode that needed it would let a passwordless URL connect for a reason that
+    has nothing to do with the mode under test, and the suite would report
+    coverage it does not have. Both directions matter — a variable the machine
+    already had must come back, not be deleted.
+    """
+    import endpoints
+
+    already = "LOCALDATA_TEST_ALREADY_SET"
+    fresh = "LOCALDATA_TEST_NOT_SET_BEFORE"
+    os.environ[already] = "the machine's own value"
+    os.environ.pop(fresh, None)
+    try:
+        with endpoints.applied({already: "the mode's value", fresh: "borrowed"}):
+            assert os.environ[already] == "the mode's value"
+            assert os.environ[fresh] == "borrowed"
+        assert os.environ[already] == "the machine's own value"
+        assert fresh not in os.environ
+    finally:
+        os.environ.pop(already, None)
+        os.environ.pop(fresh, None)
 
 
 # ---------------------------------------------------------------------------

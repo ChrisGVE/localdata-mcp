@@ -476,6 +476,214 @@ services:
       retries: 12
       start_period: 5s
 
+  # -------------------------------------------------------------------------
+  # Authentication variants
+  #
+  # These are not new dialects. Each is an engine already covered above, run a
+  # second time under a *different way of authenticating*, because until now
+  # every endpoint here was reached exactly one way: a username and a password
+  # in the URL, plaintext, over TCP to the loopback interface. A mode that is
+  # never exercised is a code path the server has never run.
+  #
+  # A variant gets its own service only when the mode and the credentialed mode
+  # cannot both be configured on one server. Where they can — PostgreSQL reading
+  # `PGPASSWORD`, MySQL reading an option file — the mode reuses the container
+  # above and adds nothing here.
+  # -------------------------------------------------------------------------
+
+  localdata-test-postgres-trust:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: trustuser
+      POSTGRES_DB: trustdb
+      # No `POSTGRES_PASSWORD`, and its absence is the subject. `trust` tells
+      # PostgreSQL to authenticate nobody: the username is taken at its word and
+      # no password is asked for or accepted. It needs its own container because
+      # the authentication method is a property of the *server*, so one instance
+      # cannot answer both this way and the credentialed way above.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "15435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trustuser"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  localdata-test-clickhouse-noauth:
+    image: clickhouse/clickhouse-server:25.3
+    environment:
+      # An **empty** password, which is a third thing: not the credentialed
+      # service above, and not the five endpoints reached with no password at
+      # all. A URL carrying an empty password renders `user:@host` where an
+      # absent one renders `user@host`, and until now nothing here sent the
+      # first form at a server that checks it.
+      #
+      # It needs its own container because the entrypoint's response to
+      # `CLICKHOUSE_USER` is to write `<default remove="remove">` into
+      # `users.d/default-user.xml` — read out of the running container rather
+      # than assumed. One instance cannot hold both users.
+      #
+      # `default` with no variables at all was the obvious way to get here and
+      # does not work, which is worth recording rather than quietly not doing:
+      # with `CLICKHOUSE_USER` unset the entrypoint writes a `default` limited to
+      # `::1` and `127.0.0.1` — the *container's* loopback — so from the host it
+      # is refused, and refused as `password is incorrect, or there is no user
+      # with such name`, which names the wrong cause. Naming a user explicitly
+      # is what gets `<ip>::/0</ip>` written alongside the empty password.
+      CLICKHOUSE_USER: emptypassuser
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DB: testdb
+    ports:
+      - "18124:8123"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # A certificate authority, one server certificate and one client certificate,
+  # made fresh on every `up` and never committed. It exits when it is done and
+  # the TLS service below waits for that exit rather than for a port.
+  #
+  # Generated rather than checked in for the obvious reason — a private key in a
+  # public history is a private key, whatever it was made for — and for a less
+  # obvious one: a committed certificate expires, and a harness that starts
+  # failing on a date nobody chose is worse than one that makes its own.
+  #
+  # Two destinations, because the two halves have different owners. The server's
+  # key and certificate go into a named volume, where this container can `chown`
+  # them to PostgreSQL's uid and `chmod` them to 0600 — PostgreSQL refuses to
+  # start on a key anybody else can read. The CA certificate and the *client*
+  # key go to a bind mount, because the thing that needs them is the test
+  # process on the host.
+  localdata-test-tls-ca:
+    image: alpine:3
+    volumes:
+      - localdata-test-tls:/tls
+      - ./tests/tls:/public
+    # `IP:127.0.0.1` in the SAN is the part that matters and the part most
+    # easily left out: `sslmode=verify-full` checks the name the client *asked
+    # for* against the certificate, and every URL in this harness asks for
+    # 127.0.0.1. A certificate naming only `localhost` verifies under
+    # `verify-ca` and fails under `verify-full`, which would leave the stricter
+    # of the two modes — the one worth testing — quietly untested.
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache openssl >/dev/null 2>&1
+        cd /tls
+        openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+          -keyout ca.key -out ca.crt -subj "/CN=localdata-test-ca"
+        openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr \
+          -subj "/CN=localhost"
+        openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+          -out server.crt -days 3650 \
+          -extfile /dev/stdin <<'EXT'
+        subjectAltName = DNS:localhost, IP:127.0.0.1
+        EXT
+        # The client certificate's CN *is* the database user it authenticates
+        # as. That is what `cert` authentication means: no password is sent and
+        # the name in the certificate is the name PostgreSQL logs in.
+        openssl req -newkey rsa:2048 -nodes -keyout client.key -out client.csr \
+          -subj "/CN=certuser"
+        openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+          -out client.crt -days 3650
+        cat > pg_hba.conf <<'HBA'
+        # The local socket stays trusting so that `initdb` and the healthcheck
+        # can work while every TCP connection is held to TLS.
+        local   all all                 trust
+        # Ordered, and the order is the point: `certuser` is matched first and
+        # must present a certificate, everyone else may send a password — over
+        # TLS either way, since there is no plain `host` line at all.
+        hostssl all certuser 0.0.0.0/0  cert
+        hostssl all certuser ::/0       cert
+        hostssl all all      0.0.0.0/0  scram-sha-256
+        hostssl all all      ::/0       scram-sha-256
+        HBA
+        # Authenticating is not the same as being allowed to do anything, and
+        # this is where the difference shows: a certificate says who the
+        # connection is, and PostgreSQL 15 and later give a fresh role no rights
+        # in `public` at all. Without the grant the mode connects perfectly and
+        # then cannot create a table, which reads like a broken endpoint rather
+        # than an unprivileged one. The entrypoint runs this against
+        # `POSTGRES_DB`, so the grant lands where the tests work.
+        cat > /tls/certuser.sql <<'SQL'
+        CREATE ROLE certuser LOGIN;
+        GRANT ALL ON SCHEMA public TO certuser;
+        SQL
+        chown 70:70 server.key server.crt ca.crt pg_hba.conf certuser.sql
+        chmod 600 server.key
+        chmod 644 server.crt ca.crt pg_hba.conf certuser.sql
+        cp ca.crt client.crt client.key /public/
+        chmod 600 /public/client.key
+        chmod 644 /public/ca.crt /public/client.crt
+
+  # PostgreSQL that will not accept a connection over anything but TLS, and that
+  # accepts two different proofs of identity over it — a password from one user
+  # and a certificate from another. Both are modes no other endpoint here
+  # exercises, and one of them (`verify-full`) is the *opposite* of what the SQL
+  # Server endpoint does with `TrustServerCertificate=yes`.
+  localdata-test-postgres-tls:
+    image: postgres:16-alpine
+    depends_on:
+      localdata-test-tls-ca:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_USER: tlsuser
+      # The hostile password again, because a mode is not an excuse to make one
+      # endpoint easier than the rest.
+      POSTGRES_PASSWORD: "p@ss:w/rd?x#y"
+      POSTGRES_DB: tlsdb
+    volumes:
+      - localdata-test-tls:/tls:ro
+      # The same volume again, where the image runs what it finds: `certuser`
+      # has to exist as a role before a certificate naming it can log in, and
+      # `cert` authentication sends no password to create one with. The
+      # entrypoint runs the `.sql` and ignores the certificates beside it.
+      - localdata-test-tls:/docker-entrypoint-initdb.d:ro
+    # `hba_file` points outside PGDATA on purpose: the image's own
+    # `POSTGRES_HOST_AUTH_METHOD` writes a `host` line, and `cert` is only legal
+    # on a `hostssl` one, so the method this service exists to test cannot be
+    # reached through that variable at all.
+    command:
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/tls/server.crt
+      - -c
+      - ssl_key_file=/tls/server.key
+      - -c
+      - ssl_ca_file=/tls/ca.crt
+      - -c
+      - hba_file=/tls/pg_hba.conf
+    ports:
+      - "15436:5432"
+    healthcheck:
+      # Over the local socket, which the hba file leaves trusting — a TCP probe
+      # would need the certificate material this container deliberately does not
+      # keep for clients.
+      # `-d` is not decoration: without it `pg_isready` asks for a database named
+      # after the user, the server answers `FATAL: database "tlsuser" does not
+      # exist`, and the probe reports healthy anyway — correctly, since a server
+      # that refuses a connection is a server that is up, but it fills the log
+      # with a failure that is the probe's own.
+      test: ["CMD-SHELL", "pg_isready -U tlsuser -d tlsdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  # Server-side TLS material, in a volume rather than a bind mount so that
+  # ownership and mode are Linux's and PostgreSQL will accept the key.
+  localdata-test-tls:
+
 networks:
   default:
     name: localdata-test-net

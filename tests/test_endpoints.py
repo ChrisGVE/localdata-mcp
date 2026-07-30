@@ -37,7 +37,7 @@ from localdata_mcp import config as config_module
 from localdata_mcp import server as server_module
 from localdata_mcp.config import Config
 from localdata_mcp.dialects import backend_for_url
-from endpoints import ENDPOINTS, Endpoint, Unavailable, url_for
+from endpoints import TARGETS, Target, Unavailable, applied, reach
 
 pytestmark = pytest.mark.endpoint
 
@@ -83,10 +83,15 @@ def call(tool: str, **arguments):
 class Live:
     """A dialect that is answering, and a name prefix nothing else will use."""
 
-    endpoint: Endpoint
+    target: Target
     url: str
     root: Path
     prefix: str
+
+    @property
+    def endpoint(self):
+        """The database behind this target, whichever way it was reached."""
+        return self.target.endpoint
 
     def table(self, name: str = "people") -> str:
         """A table name unique to this test, so a leftover cannot confuse it."""
@@ -97,18 +102,28 @@ class Live:
         return str(self.root / "people.csv")
 
 
-@pytest.fixture(params=ENDPOINTS, ids=lambda endpoint: endpoint.name)
+@pytest.fixture(params=TARGETS, ids=lambda target: target.name)
 def live(request, tmp_path):
     """A reachable endpoint, a fresh session, and no tables left behind.
+
+    Parametrised over **targets** rather than endpoints: an endpoint reached a
+    second way is the same database and the same verbs, so every test here runs
+    against every authentication mode without one being written for it. Ids are
+    unchanged for the credentialed mode — ``postgres`` is still ``postgres`` —
+    and a variant reads as ``postgres[env-password]``.
+
+    A mode that keeps its credential outside the URL needs its environment held
+    for the whole test and not a moment longer, so it is applied here and undone
+    with the rest of the teardown.
 
     Cleanup drops every table carrying this test's prefix, and it goes through
     SQLAlchemy directly rather than through ``drop``: the test may have detached
     the slot, renamed the table or left the datasource read-only, and cleanup
     that depended on the state under test would leak exactly when a test failed.
     """
-    endpoint: Endpoint = request.param
+    target: Target = request.param
     try:
-        url = url_for(endpoint)
+        reached = reach(target)
     except Unavailable as exc:
         pytest.skip(str(exc))
 
@@ -121,11 +136,16 @@ def live(request, tmp_path):
     server_module._reset()
 
     prefix = f"t{uuid.uuid4().hex[:8]}"
-    try:
-        yield Live(endpoint=endpoint, url=url, root=root, prefix=prefix)
-    finally:
-        server_module._reset()
-        _drop_everything_named(url, prefix)
+    with applied(reached.environ):
+        try:
+            yield Live(target=target, url=reached.url, root=root, prefix=prefix)
+        finally:
+            server_module._reset()
+            # Inside `applied`, deliberately: for a mode whose credential lives
+            # in the environment, cleanup is a connection like any other and
+            # would fail to authenticate outside it — leaving every table behind
+            # and reddening the *next* test instead of this one.
+            _drop_everything_named(reached.url, prefix)
 
 
 def _drop_everything_named(url: str, prefix: str) -> None:
@@ -191,25 +211,32 @@ def test_an_endpoint_attaches_as_an_engine_and_keeps_its_password(live):
 
     secret = _password(live)
     if secret is None:
-        # CockroachDB runs --insecure and is reached with no password at all.
-        # There is nothing to redact, and inventing a `***` for an absent
-        # credential would tell the caller a secret was carried when none was.
+        # Several endpoints take no password at all, and so does every mode that
+        # keeps the credential outside the URL. There is nothing to redact, and
+        # inventing a `***` for an absent credential would tell the caller a
+        # secret was carried when none was.
         assert "***" not in attached["source"]
         return
     assert "***" in attached["source"]
+    if secret == "":
+        # An empty password is supplied and checked, so it is redacted like any
+        # other — but "the secret does not appear in the payload" cannot be asked
+        # of it: `"" in anything` is true, so the assertion below would fail on a
+        # payload that is perfectly clean. Stated rather than skipped, because
+        # the redaction above is the half that can be asserted and is asserted.
+        return
     assert secret not in json.dumps(attached)
 
 
 def test_a_failed_open_does_not_echo_the_password(live):
     """The driver's own complaint frequently quotes the whole URL back."""
-    if _password(live) is None:
+    secret = _password(live)
+    if secret is None:
         pytest.skip(
-            "reached with no password, so there is no wrong one to send and no "
-            "failed open to inspect. Four endpoints are, each for its own "
-            "reason: CockroachDB's --insecure mode accepts any password for "
-            "root, YugabyteDB authenticates a fresh cluster by trust, Trino "
-            "with no authenticator configured takes whoever the client says it "
-            "is, and a fresh CrateDB node has no users to authenticate against"
+            "reached with no password in the URL, so there is no wrong one to "
+            "send and no failed open to inspect. Either the database has no "
+            "authentication to configure, or the mode keeps the credential "
+            "somewhere the URL does not carry"
         )
     wrong = make_url(live.url).set(password="definitely-not-the-password")
 
@@ -225,6 +252,10 @@ def _password(live: Live) -> str | None:
     ``None`` rather than the string ``"None"``, which is what ``str()`` of an
     absent password gives and which would then be searched for in the payload —
     an assertion that passes for the wrong reason.
+
+    ``""`` is a third answer and a real one: an empty password was supplied and
+    is checked, which is neither "no password" nor a password that can be
+    searched for. Callers here distinguish all three.
     """
     return make_url(live.url).password
 

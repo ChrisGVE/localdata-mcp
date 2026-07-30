@@ -27,11 +27,14 @@ Three outcomes, and the difference between them is the whole point:
 from __future__ import annotations
 
 import importlib
+import os
 import socket
+import tempfile
 import time
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 from sqlalchemy.engine import URL
 
@@ -96,6 +99,10 @@ class Endpoint:
     #: :class:`Unavailable` when it does not. pyodbc needs a *system* ODBC
     #: driver, which importing it says nothing about.
     precondition: Callable[[], None] | None = None
+    #: Ways of reaching this same database *other* than the credentialed URL
+    #: above — see :class:`AuthMode`. Empty for an endpoint whose one mode is
+    #: the only one it has, which is most of them.
+    auth: tuple[AuthMode, ...] = ()
 
     @property
     def name(self) -> str:
@@ -116,6 +123,136 @@ class Endpoint:
         engine, in which case :attr:`engine` says whose it really is.
         """
         return self.engine or self.dialect
+
+
+@dataclass(frozen=True)
+class Reached:
+    """How one authentication mode gets to a database: a URL, and a context.
+
+    A mode is not always expressible as a URL. ``PGPASSWORD`` and ``PGPASSFILE``
+    are read by libpq out of the process environment, and the URL that goes with
+    them carries **no** password at all — so a builder that could only return a
+    string would have nothing to say about half the modes here. Both halves come
+    back together because they are one answer to one question, and reading them
+    apart would let a mode set an environment its URL does not need or need one
+    it does not set.
+    """
+
+    #: The URL to attach, credentials and all — or credentials absent, when the
+    #: point of the mode is that they are somewhere else.
+    url: str
+    #: Process environment this mode needs while the connection is made. Empty
+    #: for a mode that says everything in its URL.
+    environ: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AuthMode:
+    """A second way of *reaching* an endpoint that is already covered.
+
+    Every endpoint above is addressed one way: a username and a password in the
+    URL, in plaintext, over TCP to the loopback interface. That is one code path
+    out of several a real caller uses, and the others had never run — which is
+    what task 23 is about.
+
+    **A mode varies the addressing, never the database.** It is not a new
+    :class:`Endpoint`, and deliberately so: an ``Endpoint`` is identified by its
+    compose service, and two entries sharing one would collide in the probe
+    cache and run one container's suite while reporting the other's name — the
+    defect issue #44 records. A mode hangs off the endpoint it varies, so the
+    identity stays derived and stays unique.
+
+    The credentialed mode is **not** listed here. It is the endpoint's own
+    :attr:`Endpoint.url`, it stays exactly as it was, and every mode below is in
+    addition to it. Weakening the ordinary path to add an unusual one would
+    trade coverage rather than add it.
+    """
+
+    #: Short id for the mode, unique within its endpoint. Appears in the test id
+    #: as ``postgres[env-password]``, so it says what ran rather than which
+    #: number it was.
+    mode: str
+    #: Everything needed to reach the endpoint this way, built from the compose
+    #: service's own environment, its published port, and a scratch directory
+    #: for the credential files some modes keep outside the URL.
+    reach: Callable[[dict[str, str], int, Path], Reached]
+    #: The compose service configured for this mode, when the mode and the
+    #: credentialed one cannot both hold on one server — an authentication
+    #: method is a property of the server, not of the connection. ``None`` means
+    #: this mode reuses the endpoint's own container, which is the cheaper and
+    #: commoner case.
+    service: str | None = None
+    #: The port that service listens on inside itself. Only meaningful with
+    #: :attr:`service`; ``None`` reuses the endpoint's.
+    container_port: int | None = None
+    #: Anything that must hold before this mode can be tried at all, raising
+    #: :class:`Unavailable` when it does not — a driver feature, a file on the
+    #: machine, an ODBC entry.
+    precondition: Callable[[], None] | None = None
+    #: Overrides the endpoint's warmup where a variant container starts at a
+    #: different speed. ``None`` keeps the endpoint's.
+    warmup: float | None = None
+
+
+@dataclass(frozen=True)
+class Target:
+    """An endpoint reached one particular way — what a test actually runs against.
+
+    The pair, rather than either half, because everything the harness does with
+    an endpoint has to know which mode is meant: which service to read out of
+    the compose file, which port it publishes, what to call the test, and which
+    entry of the probe cache is this one's.
+
+    ``auth is None`` is the endpoint's own credentialed mode, and it is the
+    common case: every endpoint has one and most have nothing else.
+    """
+
+    endpoint: Endpoint
+    auth: AuthMode | None = None
+
+    @property
+    def name(self) -> str:
+        """Unique across every target, and readable as a test id.
+
+        The endpoint's own name where the mode is the credentialed one, so the
+        ids that existed before this axis are unchanged and a failure that was
+        reported as ``postgres`` still is.
+        """
+        if self.auth is None:
+            return self.endpoint.name
+        return f"{self.endpoint.name}[{self.auth.mode}]"
+
+    @property
+    def service(self) -> str:
+        """The compose service to read, which the mode may redirect."""
+        if self.auth is not None and self.auth.service is not None:
+            return self.auth.service
+        return self.endpoint.service
+
+    @property
+    def container_port(self) -> int:
+        """The port that service listens on inside the container."""
+        if self.auth is not None and self.auth.container_port is not None:
+            return self.auth.container_port
+        return self.endpoint.container_port
+
+    @property
+    def warmup(self) -> float:
+        if self.auth is not None and self.auth.warmup is not None:
+            return self.auth.warmup
+        return self.endpoint.warmup
+
+    def build(self, environment: dict[str, str], port: int, scratch: Path) -> Reached:
+        """How this target is reached, whichever half of the axis answers.
+
+        The endpoint's own builder returns a bare URL and needs no scratch
+        directory, so it is lifted into a :class:`Reached` here rather than every
+        one of the sixteen builders being rewritten to return one. A mode that
+        needed nothing but a URL would look identical from outside.
+        """
+        if self.auth is None:
+            return Reached(url=self.endpoint.url(environment, port))
+        return self.auth.reach(environment, port, scratch)
 
 
 #: Driver libraries to fall back on when the driver manager has nothing
@@ -157,7 +294,7 @@ def _odbc_driver() -> str:
 def _url(
     drivername: str,
     *,
-    username: str,
+    username: str | None,
     password: str | None,
     port: int,
     database: str | None = None,
@@ -180,7 +317,14 @@ def _url(
     ``password=None`` means **no password at all**, which is not the same as an
     empty one: ``URL.create`` omits the ``:`` entirely, and that is the form a
     trust-authenticated server expects. CockroachDB in insecure mode is the one
-    endpoint here reached that way.
+    endpoint here reached that way. The difference is rendered, measured:
+    ``None`` gives ``user@host`` and ``""`` gives ``user:@host``, and both parse
+    back to what they were. ClickHouse's empty-password mode is the one place
+    the second form is exercised.
+
+    ``username=None`` is a third shape, and the modes are what need it: an
+    option file may carry the user as well as the password, leaving the URL with
+    no credential of any kind.
     """
     return URL.create(
         drivername,
@@ -575,6 +719,300 @@ def _databend(env: dict[str, str], port: int) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Authentication modes — the same databases, reached other ways
+# ---------------------------------------------------------------------------
+
+
+def _postgres_trust(env: dict[str, str], port: int, scratch: Path) -> Reached:
+    """A server that authenticates nobody, reached with a username and nothing else.
+
+    Five endpoints here already pass ``password=None``, and none of them is this
+    case: CockroachDB, YugabyteDB, Trino, CrateDB and YDB have **no
+    authentication to configure**, so a passwordless URL is the only URL they
+    have. PostgreSQL has authentication and is told not to use it, which is the
+    posture a developer's own machine is usually in and the one a caller most
+    easily reaches by accident.
+
+    The user is real and the database is real; only the check is absent. That
+    makes it the one mode where a wrong password cannot be sent — there is no
+    password for it to be wrong against — which is why the failed-open test skips
+    here rather than being weakened to accommodate it.
+    """
+    return Reached(
+        url=_url(
+            "postgresql+psycopg",
+            username=env["POSTGRES_USER"],
+            password=None,
+            port=port,
+            database=env["POSTGRES_DB"],
+        )
+    )
+
+
+def _postgres_pgpassword(env: dict[str, str], port: int, scratch: Path) -> Reached:
+    """The password in the environment, and the URL carrying none.
+
+    An everyday case rather than an exotic one: a caller who has exported
+    ``PGPASSWORD`` — or inherited it from a shell profile, or a CI secret — and
+    attaches a URL that names only the user. Everything in this server's path
+    then has to keep working while the credential is somewhere it never sees.
+
+    libpq reads the variable itself, beneath psycopg and beneath SQLAlchemy, so
+    nothing here passes it on. **That is the point**: the URL is genuinely
+    passwordless, and the bare URL with no variable set is refused —
+    ``fe_sendauth: no password supplied``, measured — which is what makes this a
+    test of the environment rather than of a server that was not asking.
+    """
+    return Reached(
+        url=_url(
+            "postgresql+psycopg",
+            username=env["POSTGRES_USER"],
+            password=None,
+            port=port,
+            database=env["POSTGRES_DB"],
+        ),
+        environ={"PGPASSWORD": env["POSTGRES_PASSWORD"]},
+    )
+
+
+def _pgpass_field(value: str) -> str:
+    """One ``.pgpass`` field, with the two characters libpq treats as syntax escaped.
+
+    Its rule, and only its rule: a colon separates fields and a backslash escapes
+    the next character, so both are written with a leading backslash and nothing
+    else is special. The backslash goes first — doing it second would escape the
+    backslashes the colon rule had just added.
+    """
+    return value.replace("\\", "\\\\").replace(":", "\\:")
+
+
+def _postgres_pgpassfile(env: dict[str, str], port: int, scratch: Path) -> Reached:
+    """The password in a file libpq reads, which this endpoint's password breaks.
+
+    ``.pgpass`` is five colon-separated fields — host, port, database, user,
+    password — so a password **containing a colon** has to escape it, and this
+    endpoint's password is ``p@ss:w/rd?x#y``. Unescaped, libpq reads the
+    password as ``p@ss`` and takes ``w/rd?x#y`` as a sixth field it ignores; the
+    connection then fails with ``password authentication failed``, which points
+    at the credential rather than at the file that mangled it. Measured both
+    ways round.
+
+    That is the same defect as a password formatted into a URL and re-read as
+    syntax — the one ``_url`` above exists to prevent — arriving through a
+    different file format. A harness whose password held no delimiters would
+    pass either way and prove nothing.
+
+    **Every** field is escaped, not only the password, and that is not
+    defensiveness: the separator is the same one in all five, so a database or a
+    user whose name holds a colon splits the line exactly as badly. Escaping only
+    the field whose value happened to be hostile would be fixing the instance
+    rather than the format.
+
+    The mode is also refused for a reason that has nothing to do with the
+    password: libpq **ignores the file entirely** if it is group- or
+    world-readable, warns on stderr, and then reports ``fe_sendauth: no password
+    supplied`` to the client. Hence the explicit ``chmod`` — measured, at 0644
+    this mode does not connect.
+    """
+    passfile = scratch / "pgpass"
+    passfile.write_text(
+        ":".join(
+            _pgpass_field(field)
+            for field in (
+                HOST,
+                str(port),
+                env["POSTGRES_DB"],
+                env["POSTGRES_USER"],
+                env["POSTGRES_PASSWORD"],
+            )
+        )
+        + "\n"
+    )
+    passfile.chmod(0o600)
+    return Reached(
+        url=_url(
+            "postgresql+psycopg",
+            username=env["POSTGRES_USER"],
+            password=None,
+            port=port,
+            database=env["POSTGRES_DB"],
+        ),
+        environ={"PGPASSFILE": str(passfile)},
+    )
+
+
+#: Where the compose CA service leaves the material a *client* needs. The server
+#: half lives in a named volume where this process cannot read it and does not
+#: need to.
+TLS = COMPOSE.parent / "tests" / "tls"
+
+
+def _tls_material(*names: str) -> None:
+    """Refuse the TLS modes with a route out when the CA has not run.
+
+    A skip rather than a failure: an absent certificate means the compose
+    service that makes them has not been brought up, which is the same kind of
+    absence as a container that is not running.
+    """
+    missing = [name for name in names if not (TLS / name).is_file()]
+    if missing:
+        raise Unavailable(
+            f"{', '.join(missing)} missing from {TLS}. They are made by the CA "
+            f"service, which runs as a dependency of the TLS endpoint: "
+            f"docker compose -f {COMPOSE.name} up -d localdata-test-postgres-tls"
+        )
+
+
+def _postgres_tls_verify_full(env: dict[str, str], port: int, scratch: Path) -> Reached:
+    """TLS actually verified, which no other endpoint here does.
+
+    ``sslmode=verify-full`` is the only mode that checks both halves: that the
+    certificate chains to a CA the client trusts, **and** that the name on it is
+    the name the client asked for. Everything weaker is decoration —
+    ``sslmode=require`` encrypts against an eavesdropper and not against the
+    server being someone else, which is the property people believe they are
+    getting.
+
+    The contrast worth naming is inside this harness: the SQL Server endpoint
+    passes ``TrustServerCertificate=yes``, which is the *opposite* of this, and
+    until this mode existed no endpoint here verified anything at all.
+
+    Both refusals were measured, and they are what make this a test rather than a
+    connection: ``sslmode=disable`` against this server is refused outright —
+    there is no plain ``host`` line in its ``pg_hba.conf``, so TLS is not an
+    option it offers — and ``verify-full`` *without* ``sslrootcert`` fails
+    looking for ``~/.postgresql/root.crt``, so the CA named here is genuinely the
+    one doing the verifying.
+
+    The certificate's SAN carries ``IP:127.0.0.1`` for the same reason: the URL
+    asks for an address, so an address is what ``verify-full`` compares.
+    """
+    _tls_material("ca.crt")
+    return Reached(
+        url=_url(
+            "postgresql+psycopg",
+            username=env["POSTGRES_USER"],
+            password=env["POSTGRES_PASSWORD"],
+            port=port,
+            database=env["POSTGRES_DB"],
+            query={"sslmode": "verify-full", "sslrootcert": str(TLS / "ca.crt")},
+        )
+    )
+
+
+def _postgres_client_cert(env: dict[str, str], port: int, scratch: Path) -> Reached:
+    """A certificate instead of a password, and the username it may claim.
+
+    The first mode here that sends **no** credential at all: PostgreSQL's
+    ``cert`` method takes the common name out of the client certificate and logs
+    that role in. So the username in the URL is not something the client
+    asserts, it is something the certificate has to agree with — measured, the
+    same certificate offered as ``tlsuser`` falls through to the password line
+    and is refused with ``fe_sendauth: no password supplied``.
+
+    ``certuser`` is therefore read from neither the compose environment nor this
+    file but from the certificate's subject, which is where it is decided. It is
+    named in the CA service that makes the certificate and in the ``pg_hba.conf``
+    that same service writes, and the role is created by a ``.sql`` the image
+    runs — three places, one name, and the connection is what proves they agree.
+    """
+    _tls_material("ca.crt", "client.crt", "client.key")
+    return Reached(
+        url=_url(
+            "postgresql+psycopg",
+            username="certuser",
+            password=None,
+            port=port,
+            database=env["POSTGRES_DB"],
+            query={
+                "sslmode": "verify-full",
+                "sslrootcert": str(TLS / "ca.crt"),
+                "sslcert": str(TLS / "client.crt"),
+                "sslkey": str(TLS / "client.key"),
+            },
+        )
+    )
+
+
+def _clickhouse_empty_password(
+    env: dict[str, str], port: int, scratch: Path
+) -> Reached:
+    """A user whose password is the **empty string**, which is not the same as none.
+
+    A third URL shape rather than a repeat of the second: an absent password
+    renders ``user@host``, an empty one renders ``user:@host``, and both parse
+    back to what they were. A server that accepts the first would not
+    necessarily accept the second, and until now nothing here sent the second at
+    a database that checks. It *is* checked — a wrong password on this same user
+    is refused, measured — so this mode is not quietly a no-auth endpoint under
+    another name.
+
+    The obvious route to it does not work, and that is why the compose entry
+    names a user rather than leaving the image alone. With ``CLICKHOUSE_USER``
+    unset, the entrypoint leaves a ``default`` user restricted to ``::1`` and
+    ``127.0.0.1`` — the **container's** loopback, not the host's — so from here
+    it is refused, and refused as ``password is incorrect, or there is no user
+    with such name``, which names the wrong cause entirely. Naming a user with
+    an empty password is what gets ``<ip>::/0</ip>`` written alongside
+    ``<password><![CDATA[]]></password>``.
+
+    Its own container, because the entrypoint's answer to ``CLICKHOUSE_USER`` is
+    ``<default remove="remove">`` — read out of the running container rather than
+    assumed. One instance holds one of these users.
+
+    An empty password is also the boundary of the redaction rule. It is a secret
+    that was supplied, so it is rendered as ``***`` like any other; it is also
+    the empty string, so "the password does not appear in the payload" is not a
+    question that can be asked of it. The test says so rather than asserting
+    something that is true of every string.
+    """
+    return Reached(
+        url=_url(
+            "clickhousedb",
+            username=env["CLICKHOUSE_USER"],
+            password=env["CLICKHOUSE_PASSWORD"],
+            port=port,
+            database=env["CLICKHOUSE_DB"],
+        )
+    )
+
+
+def _mysql_option_file(env: dict[str, str], port: int, scratch: Path) -> Reached:
+    """Both credentials in an option file, and a URL with neither.
+
+    MySQL's ``~/.my.cnf`` is the oldest of these conventions and the one a
+    long-lived installation is most likely to be leaning on. PyMySQL reads it
+    when handed ``read_default_file``, so unlike ``PGPASSWORD`` the mode *is*
+    expressible in the URL — as the **path to** the credentials rather than the
+    credentials themselves.
+
+    That makes this the only mode here whose URL carries no username either, and
+    it is worth having one: ``URL.create`` renders an absent user by omitting the
+    whole userinfo section, and nothing else in this harness exercises that.
+    Measured, the same URL without the option file is refused — ``Access denied
+    for user 'testuser'`` — so the file is doing the work.
+
+    The path goes in as a query *value*, never as text: it is a temporary
+    directory whose name this harness does not choose.
+    """
+    optionfile = scratch / "my.cnf"
+    optionfile.write_text(
+        f"[client]\nuser={env['MYSQL_USER']}\npassword={env['MYSQL_PASSWORD']}\n"
+    )
+    optionfile.chmod(0o600)
+    return Reached(
+        url=_url(
+            "mysql+pymysql",
+            username=None,
+            password=None,
+            port=port,
+            database=env["MYSQL_DATABASE"],
+            query={"read_default_file": str(optionfile)},
+        )
+    )
+
+
 #: Every endpoint dialect this server is tested against, in the order they were
 #: taken on. A dialect is here because it has a container; nothing about the
 #: server enumerates dialects, so this list is a statement about *coverage*, not
@@ -587,6 +1025,33 @@ ENDPOINTS = (
         driver="psycopg",
         extra="postgres",
         url=_postgres,
+        # PostgreSQL carries three of the modes because it is the endpoint that
+        # can: libpq is the richest credential-resolution path any driver here
+        # has, and this container's password is the hostile one, so a mode that
+        # mangles a credential is caught here rather than somewhere it would
+        # look like the server's fault.
+        auth=(
+            AuthMode(
+                mode="trust",
+                reach=_postgres_trust,
+                service="localdata-test-postgres-trust",
+                container_port=5432,
+            ),
+            AuthMode(mode="env-password", reach=_postgres_pgpassword),
+            AuthMode(mode="pgpass-file", reach=_postgres_pgpassfile),
+            AuthMode(
+                mode="tls-verify-full",
+                reach=_postgres_tls_verify_full,
+                service="localdata-test-postgres-tls",
+                container_port=5432,
+            ),
+            AuthMode(
+                mode="client-cert",
+                reach=_postgres_client_cert,
+                service="localdata-test-postgres-tls",
+                container_port=5432,
+            ),
+        ),
     ),
     Endpoint(
         dialect="mysql",
@@ -595,6 +1060,7 @@ ENDPOINTS = (
         driver="pymysql",
         extra="mysql",
         url=_mysql,
+        auth=(AuthMode(mode="option-file", reach=_mysql_option_file),),
     ),
     Endpoint(
         dialect="mariadb",
@@ -630,6 +1096,14 @@ ENDPOINTS = (
         driver="clickhouse_connect",
         extra="clickhouse",
         url=_clickhouse,
+        auth=(
+            AuthMode(
+                mode="empty-password",
+                reach=_clickhouse_empty_password,
+                service="localdata-test-clickhouse-noauth",
+                container_port=8123,
+            ),
+        ),
     ),
     Endpoint(
         dialect="cockroachdb",
@@ -737,6 +1211,20 @@ ENDPOINTS = (
 )
 
 
+#: Every endpoint, once per way of reaching it. This is what the endpoint suite
+#: runs over, so a mode added above is exercised by all of it without a test
+#: being written — and a mode that breaks a verb reddens that verb rather than a
+#: connection test somebody has to remember to read.
+#:
+#: The credentialed mode comes first for each endpoint, so a run that is
+#: interrupted has covered the ordinary path before the unusual ones.
+TARGETS = tuple(
+    target
+    for endpoint in ENDPOINTS
+    for target in (Target(endpoint), *(Target(endpoint, m) for m in endpoint.auth))
+)
+
+
 # ---------------------------------------------------------------------------
 # Reading the compose file
 # ---------------------------------------------------------------------------
@@ -753,7 +1241,7 @@ def _services() -> dict:
     return yaml.safe_load(COMPOSE.read_text())["services"]
 
 
-def _service(endpoint: Endpoint) -> dict:
+def _service(target: Target) -> dict:
     """One service's compose entry, or a failure naming the drift.
 
     A missing service is not a skip. It means this table and the compose file
@@ -762,24 +1250,24 @@ def _service(endpoint: Endpoint) -> dict:
     """
     services = _services()
     try:
-        return services[endpoint.service]
+        return services[target.service]
     except KeyError:
         raise RuntimeError(
-            f"{COMPOSE.name} has no service {endpoint.service!r}. Known: "
+            f"{COMPOSE.name} has no service {target.service!r}. Known: "
             f"{', '.join(sorted(services))}. The endpoint table in "
             f"{Path(__file__).name} and the compose file have drifted apart."
         ) from None
 
 
-def _published_port(endpoint: Endpoint, service: dict) -> int:
+def _published_port(target: Target, service: dict) -> int:
     """The host-side port this service publishes for its database."""
     for mapping in service.get("ports", ()):
         host, _, container = str(mapping).partition(":")
-        if container == str(endpoint.container_port):
+        if container == str(target.container_port):
             return int(host)
     raise RuntimeError(
-        f"{endpoint.service} publishes {service.get('ports')}, none of which "
-        f"maps to port {endpoint.container_port} inside the container."
+        f"{target.service} publishes {service.get('ports')}, none of which "
+        f"maps to port {target.container_port} inside the container."
     )
 
 
@@ -852,33 +1340,92 @@ def _handshake(url: str, warmup: float) -> None:
         time.sleep(1.0)
 
 
-#: One probe per *endpoint* per session: either the URL it answered on, or the
-#: reason it was skipped. Eighteen tests against one database must not pay
-#: Oracle's warmup eighteen times, and must not each print a different reason for
-#: the same absence.
+@contextmanager
+def applied(environ: dict[str, str]) -> Iterator[None]:
+    """Hold an authentication mode's environment for the length of a block.
+
+    Modes that put the credential outside the URL need it in the process
+    environment at the moment the driver connects, and **not** afterwards: a
+    ``PGPASSWORD`` left set would make the next target's passwordless URL work
+    for a reason that has nothing to do with the mode under test, which is the
+    quietest way a suite can report coverage it does not have.
+
+    Restores rather than deletes, because a variable this sets may already have
+    a value on the machine the suite is running on.
+    """
+    before = {name: os.environ.get(name) for name in environ}
+    os.environ.update(environ)
+    try:
+        yield
+    finally:
+        for name, value in before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+#: Where modes that keep a credential in a file put it. One directory for the
+#: whole session, because the probe below is cached for the session and the file
+#: has to outlive the connection that proved it works.
 #:
-#: **Keyed by :attr:`Endpoint.name`, not by dialect.** Keyed by dialect, a second
-#: endpoint sharing one — TiDB on MySQL's, YugabyteDB on PostgreSQL's — would
-#: read the first's URL out of this cache and run its whole suite against a
-#: container it never named, reporting green for a database that was never
-#: reached. See issue #44.
-_probed: dict[str, str | Unavailable] = {}
+#: Created on demand rather than at import, so a run that never reaches an
+#: endpoint — no Docker, or ``-k`` selecting something else — leaves nothing
+#: behind at all.
+_scratch: Path | None = None
 
 
-def url_for(endpoint: Endpoint) -> str:
-    """The URL this endpoint answers on, or :class:`Unavailable` saying why not."""
-    if endpoint.name not in _probed:
+def _scratch_dir() -> Path:
+    global _scratch
+    if _scratch is None:
+        _scratch = Path(tempfile.mkdtemp(prefix="localdata-endpoint-auth-"))
+    return _scratch
+
+
+#: One probe per *target* per session: either how it answered, or the reason it
+#: was skipped. Eighteen tests against one database must not pay Oracle's warmup
+#: eighteen times, and must not each print a different reason for the same
+#: absence.
+#:
+#: **Keyed by :attr:`Target.name`, not by dialect and not by endpoint.** Keyed by
+#: dialect, a second endpoint sharing one — TiDB on MySQL's, YugabyteDB on
+#: PostgreSQL's — would read the first's URL out of this cache and run its whole
+#: suite against a container it never named, reporting green for a database that
+#: was never reached (issue #44). Keyed by endpoint, every authentication mode
+#: would do the same to the mode before it, which is the same defect one axis
+#: further out.
+_probed: dict[str, Reached | Exception] = {}
+
+
+def reach(target: Target) -> Reached:
+    """How this target answers, or the reason it does not.
+
+    **Both outcomes are cached, not only the skip.** A misconfigured target
+    fails its handshake by waiting out the whole warmup, and until this cached
+    it did that once per test — nineteen times thirty seconds for one endpoint
+    whose credentials were wrong, which is ten minutes of a run spent
+    rediscovering a single fact. The authentication axis multiplies the number of
+    targets, so it multiplied that cost too, which is how it was noticed.
+
+    Nothing is quieter for it: the same complaint is raised for every test that
+    asked, so the failure is still reported against each one. What is lost is the
+    chance for a container that becomes healthy mid-run to be picked up
+    half-way through, and a run whose result depends on when a container
+    finished starting is not one to want.
+    """
+    if target.name not in _probed:
         try:
-            _probed[endpoint.name] = _probe(endpoint)
-        except Unavailable as exc:
-            _probed[endpoint.name] = exc
-    answer = _probed[endpoint.name]
-    if isinstance(answer, Unavailable):
+            _probed[target.name] = _probe(target)
+        except Exception as exc:  # noqa: BLE001 - a skip and a failure alike
+            _probed[target.name] = exc
+    answer = _probed[target.name]
+    if isinstance(answer, Exception):
         raise answer
     return answer
 
 
-def _probe(endpoint: Endpoint) -> str:
+def _probe(target: Target) -> Reached:
+    endpoint = target.endpoint
     try:
         importlib.import_module(endpoint.driver)
     except ModuleNotFoundError as exc:
@@ -888,15 +1435,22 @@ def _probe(endpoint: Endpoint) -> str:
         ) from exc
     if endpoint.precondition is not None:
         endpoint.precondition()
+    if target.auth is not None and target.auth.precondition is not None:
+        target.auth.precondition()
 
-    service = _service(endpoint)
-    port = _published_port(endpoint, service)
+    service = _service(target)
+    port = _published_port(target, service)
     if not _listening(port):
         raise Unavailable(
             f"Nothing is listening on {HOST}:{port}. Start it with: "
-            f"docker compose -f {COMPOSE.name} up -d {endpoint.service}"
+            f"docker compose -f {COMPOSE.name} up -d {target.service}"
         )
 
-    url = endpoint.url(_environment(service), port)
-    _handshake(url, endpoint.warmup)
-    return url
+    reached = target.build(_environment(service), port, _scratch_dir())
+    # The handshake runs under the mode's own environment for the same reason
+    # the tests do: for half these modes the credential is *only* there, so a
+    # probe that connected without it would be proving the server was not
+    # asking.
+    with applied(reached.environ):
+        _handshake(reached.url, target.warmup)
+    return reached
