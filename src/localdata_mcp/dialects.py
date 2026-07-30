@@ -13,7 +13,11 @@ mean something different, or nothing at all, on another backend"**:
   the same way. SQLite sets ``query_only`` on the connection, MySQL opens a
   read-only session. The *guarantee* is portable, the mechanism is not — and on
   MySQL the generic guarantee is not even available, because DDL there commits
-  implicitly and there is nothing left to roll back.
+  implicitly and there is nothing left to roll back. Databend has neither a
+  posture nor a transaction *nor* a result its writes can be recognised by, so
+  there the mechanism is to ask the server to plan the statement as a subquery
+  before running it — which is the same axis, answered by an unusual means,
+  rather than a new one.
 * **Residency.** How much a database is holding in *this process* is a question
   that only means anything for an in-process, memory-backed database. For a file
   or a server it is either unobservable or somebody else's memory, and the honest
@@ -85,11 +89,13 @@ __all__ = [
     "Backend",
     "ClickHouseBackend",
     "CrateDBBackend",
+    "DatabendBackend",
     "DuckDBBackend",
     "Engines",
     "FirebirdBackend",
     "MySQLBackend",
     "PostgreSQLBackend",
+    "ReadRefused",
     "Refusal",
     "SQLiteBackend",
     "TrinoBackend",
@@ -2040,6 +2046,243 @@ class YDBBackend(Backend):
         return frozenset({"Time"})
 
 
+#: What a Databend read connection says it refused, in the words
+#: :meth:`Workspace._explain` puts after "This statement asks to". It cannot name
+#: the action — nothing here parses the SQL — so it names the *test* the statement
+#: failed, and it names ``info`` because a ``SHOW`` or a ``DESCRIBE`` fails that
+#: test too and the caller needs somewhere to go.
+_DATABEND_NOT_A_QUERY = (
+    "run something Databend will not accept as a query — a write, or a SHOW or "
+    "DESCRIBE, which info answers"
+)
+
+
+class ReadRefused(Exception):
+    """A read connection refused a statement before the database ran it.
+
+    Raised only by a :meth:`Backend.read_posture` that proves each statement is a
+    read before letting it through, and named in that backend's
+    :meth:`Backend.driver_errors` so shared code catches it with everything else
+    a statement can fail with. It carries no message worth reading: what the
+    caller is told comes from :class:`Refusal`, which the posture fills in first.
+
+    Deliberately not a subclass of any driver's error class. It is not a driver
+    failure, and pretending otherwise would mean importing a driver here at module
+    import time for a class that exists to be caught by identity.
+    """
+
+
+@dataclass(frozen=True)
+class DatabendBackend(Backend):
+    """Databend, where nothing about a statement's *result* says it was a write.
+
+    The catalogue's second engine with no transactions at all — CrateDB was the
+    first — and the first where that leaves the read guarantee with nothing
+    underneath it whatsoever. Three mechanisms could supply one and all three were
+    measured absent:
+
+    **No transactions.** The DBAPI says so outright: ``Connection.rollback``
+    raises ``NotSupportedError("Transactions are not supported")`` and the dialect
+    overrides ``do_rollback`` to a no-op, so SQLAlchemy's rollback is silently
+    nothing. Measured end to end — an ``INSERT`` on a connection that never
+    commits was still there afterwards, and so was one followed by an explicit
+    ``rollback()``. The server *does* have multi-statement transactions; reaching
+    them needs a sticky session the driver does not keep, so they are unreachable
+    from here rather than missing.
+
+    **No read-only posture in the URL or the session.** ClickHouse answers
+    ``readonly=1`` and YDB a read-only isolation level. Databend has neither: all
+    219 settings ``SHOW SETTINGS`` lists were read and none gates writes, and the
+    driver exposes no isolation level at all (``get_isolation_level`` raises
+    ``NotImplementedError``).
+
+    **And the not-a-read floor cannot see the write.** This is the part with no
+    precedent. The floor refuses a statement that returns no rows, or rows of no
+    columns — which caught CrateDB's ``INSERT`` (one row, zero columns) and is
+    what every other backend here needs. Databend answers an ``INSERT`` with a
+    genuine one-column result set named ``number of rows inserted``, and answers
+    ``REPLACE INTO`` with **the table's own columns**, so no examination of the
+    result can distinguish a write from a read. Not the driver inventing a result
+    either: the HTTP handler sets ``has_result_set: true`` and sends that schema.
+
+    So the posture is obtained from the only thing that knows: **the server is
+    asked whether the statement is a query, before the statement runs.** See
+    :meth:`read_posture`. That makes this the strongest posture in the catalogue
+    rather than the weakest — the write never happens — which is why
+    :meth:`dml_survives_refusal` and :meth:`ddl_survives_refusal` are both the
+    generic ``False`` here despite there being no transaction to withhold.
+
+    Everything else was measured generic: ``Numeric`` round-trips exactly,
+    ``Date``, ``DateTime``, ``Time`` and ``Boolean`` all store and read back as
+    Python objects, ``Text`` groups by value, a rename is an ordinary
+    ``ALTER TABLE``, and reflection answers over ``information_schema``.
+    """
+
+    name: str = "databend"
+
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        """Let a statement through only once the server has called it a query.
+
+        There is no posture to set and no transaction to withhold — see the class
+        docstring — so what is left is to ask the database. A statement is
+        offered to it twice, and **neither offer executes anything**:
+
+        1. ``EXPLAIN SELECT * FROM (<statement>)``. A subquery may only be a query
+           expression, so Databend's own parser refuses every write there. If this
+           plans, the statement is a read and it is run *unmodified* — the wrap is
+           only ever explained, never executed, so nothing about the caller's
+           result can be changed by it.
+        2. Otherwise ``EXPLAIN <statement>``. If *that* plans, the statement is
+           valid and is not a query: a write, or a ``SHOW``/``DESCRIBE``, and it is
+           refused before it runs.
+        3. If neither plans, the statement is broken rather than forbidden, and the
+           server's own diagnosis is raised. This is what keeps
+           ``SELECT * FROM nowhere`` reported as an unknown table instead of as a
+           write — the wrong-explanation-attached-to-a-right-outcome failure, which
+           the first draft of this method had.
+
+        ``EXPLAIN`` executes nothing, measured rather than assumed: every DDL and
+        DML form in the catalogue plans without touching the data
+        (``write_progress: 0`` rows, the table absent afterwards), and
+        ``EXPLAIN ANALYZE`` — which would have run it — is refused by this server
+        as unsupported.
+
+        **The cost, stated because it is real.** Every read pays one extra
+        round trip, including each statement reflection issues (those are
+        ``information_schema`` selects and pass). And ``SHOW`` and ``DESCRIBE``
+        cannot be sent through ``query`` on this backend at all: they read, but
+        they are not queries, so step 2 refuses them. ``info`` answers what they
+        were for, which is why the refusal names it.
+
+        The closing parenthesis goes on its own line so a statement ending in a
+        ``--`` comment does not comment it out and turn a legitimate read into a
+        refusal.
+        """
+
+        @event.listens_for(engine, "before_cursor_execute")
+        def _prove_read(  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            conn, cursor, statement, parameters, context, executemany
+        ):
+            # One parameter set is enough: what is being proved is a property of
+            # the statement, and every set carries the same statement.
+            bound = parameters[0] if executemany and parameters else parameters
+            sql = cursor.mogrify(statement, bound).replace("%%", "%").rstrip()
+            sql = sql.rstrip(";")
+            probe = conn.connection.cursor()
+            try:
+                try:
+                    probe.execute(f"EXPLAIN SELECT * FROM (\n{sql}\n)")
+                    return
+                except Exception:
+                    probe.execute(f"EXPLAIN {sql}")
+            finally:
+                probe.close()
+            refusal.what = _DATABEND_NOT_A_QUERY
+            raise ReadRefused(_DATABEND_NOT_A_QUERY)
+
+    def driver_errors(self) -> tuple[type[BaseException], ...]:
+        """Both things :meth:`read_posture` can raise, neither of them wrapped.
+
+        SQLAlchemy wraps what a *statement* raises; it does not wrap what a
+        ``before_cursor_execute`` handler raises. This posture runs inside one, so
+        both of its outcomes would otherwise pass straight through every
+        ``except SQLAlchemyError`` written to explain a failed statement and reach
+        the caller as a bare traceback.
+
+        :class:`ReadRefused` is the refusal, and it arrives with
+        :class:`Refusal` already filled in. The driver's own ``Error`` is the other
+        one: when a statement can be neither wrapped nor explained it is *broken*,
+        and the server's diagnosis of it is raised as-is so the caller is told
+        about the unknown table rather than about a write they did not attempt.
+
+        Imported inside the method, as CrateDB's ``connect_args`` is, so this
+        module does not need a driver installed to be imported.
+        """
+        from databend_sqlalchemy import errors
+
+        return (ReadRefused, errors.Error)
+
+    def builds_indexes(self) -> bool:
+        """``False``, and the way it fails is the reason it has to be declared.
+
+        Databend has no ``CREATE INDEX`` of the kind this verb means. What is
+        alarming is what the dialect does with one anyway: it compiles the
+        statement to the **empty string**, and the connector's ``execute`` returns
+        early for a falsy statement — so ``Index.create()`` raises nothing,
+        reports success, and creates nothing. Measured: the statement reaching the
+        driver is ``''``, and afterwards both reflection and ``SHOW INDEXES`` are
+        empty.
+
+        That is the exact shape this server exists not to pass on, and it is worse
+        than ClickHouse's version of this axis: there ``CREATE INDEX`` is refused
+        outright and only the *usefulness* of the alternative was in question. See
+        :meth:`build_index` for what is said instead.
+        """
+        return False
+
+    def build_index(
+        self, name: str, table: Table, columns: Sequence[str]
+    ) -> tuple[Index, tuple[str, ...]]:
+        """Refused, and it names the two things Databend really does offer.
+
+        Both were measured on a live server rather than read out of
+        documentation: ``ALTER TABLE … CLUSTER BY (b)`` is accepted and shows up
+        in ``SHOW CREATE TABLE`` as ``CLUSTER BY linear(b)``, and
+        ``CREATE INVERTED INDEX … ON t(b)`` is accepted on a string column — and
+        refused on an integer one, which is why the wording confines it to text.
+
+        Neither is reachable through this verb, because neither can afterwards be
+        found by reflection: ``info`` could not list it and ``drop`` could not
+        remove it. So the honest answer is that the verb does not apply here, with
+        the statement a caller can run in Databend itself.
+        """
+        raise UnsupportedOperation(
+            f"{self.name} has no index of this kind, and the statement for one "
+            f"succeeds while creating nothing — so this verb refuses rather than "
+            f"report an index that is not there. What it has instead is "
+            f"clustering: run ALTER TABLE {table.name} CLUSTER BY "
+            f"({', '.join(columns)}) in {self.name} itself to make those columns "
+            f"fast to filter on, or CREATE INVERTED INDEX for text search on a "
+            f"string column. Neither can be listed or dropped through this "
+            f"interface, which is why neither is made here."
+        )
+
+    def unstorable_column_types(self) -> frozenset[str]:
+        """Two, and neither is a gap in the database in the same way.
+
+        ``Time`` is the database's own absence: Databend has **no
+        time-of-day type**, and its parser says so by listing every type it will
+        take — ``unexpected TIME, expecting TIMESTAMP, TIMESTAMP_TZ, …``. The
+        dialect papers over that by rendering ``Time`` as ``DATETIME``, and the
+        substitution is invisible from Core: a typed ``select()`` hands back
+        ``time(14, 30)``, because SQLAlchemy's own ``Time`` re-derives it. Read the
+        same column as text — which is what ``query`` does — and it is
+        ``datetime(1970, 1, 1, 14, 30, tzinfo=utc)``. So what the column holds is
+        a timestamp on the epoch, ``info`` reports it as ``DATETIME``, and only the
+        typed path hides that. Excluded for CrateDB's reason rather than Oracle's:
+        not because the column cannot be made, but because it can be made and
+        holds something else.
+
+        ``LargeBinary`` is the **driver**, and it fails in the worst available
+        way: **it depends on the bytes.** This driver renders parameters into the
+        statement text, so a value is decoded as UTF-8 on the way in. Measured one
+        value at a time — ``b'\\x00\\x01'``, ``b'abc'`` and ``b'\\xc3\\xa9'`` bind
+        and round-trip identically; ``b'\\x00\\xff'``, ``b'\\xff'`` and
+        ``b'\\x80'`` raise ``'utf-8' codec can't decode byte 0xff in position 1``.
+        Valid UTF-8 is not a property binary data has, so the column works until
+        the day the bytes have a high one in them — which is why it is declared
+        unstorable rather than left to fail per value.
+
+        The database is not the problem: a ``BINARY`` column given
+        ``unhex('00ff')`` reads back as ``b'\\x00\\xff'``. Stated as the driver's
+        defect so nobody later goes looking for a missing type in Databend. Trino
+        fails identically from the identical cause, which is a second observation
+        rather than a confirmation: interpolating parameters into SQL is what gets
+        ``bytes`` wrong, whoever does it.
+        """
+        return frozenset({"LargeBinary", "Time"})
+
+
 _SQLITE = SQLiteBackend()
 
 #: Dialect name to the backend that has something *extra* to say about it. An
@@ -2072,6 +2315,7 @@ BACKENDS: dict[str, Backend] = {
     # YDB's query language. Firebird's key is a driver's name, YugabyteDB's
     # problem was another engine's name, and this is neither.
     "yql": YDBBackend(),
+    "databend": DatabendBackend(),
 }
 
 

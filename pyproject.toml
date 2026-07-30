@@ -160,13 +160,29 @@ opengauss = ["opengauss-sqlalchemy>=2.4", "psycopg2-binary>=2.9"]
 # Neither `ydb` nor `ydb-dbapi` is named here: the dialect requires both, and
 # naming them again would let the three drift.
 ydb = ["ydb-sqlalchemy>=0.1.22"]
+# Databend, through Databend's own dialect. `databend-sqlalchemy` is the only
+# SQLAlchemy dialect for this engine — `sqlalchemy-databend` does not exist on
+# PyPI, and `databend-py` is a DB-API driver that registers no dialect — so
+# step 1's shim question has no second candidate to weigh.
+#
+# The driver it rides on, `databend-driver`, is a Rust extension and therefore
+# the first *native* dependency here since Firebird's `libfbclient` sent that
+# entry to a pure-Python dialect. It is not the same cost: it publishes
+# `cp39-abi3` wheels for macOS x86_64 and arm64 and for both manylinux
+# architectures, so nothing is compiled and no system library is needed. The
+# `local` extra — which would pull in an embedded `databend` engine — is
+# deliberately not requested; this endpoint is reached over the wire.
+#
+# The driver is not named here: the dialect requires it, and naming it again
+# would let the two drift.
+databend = ["databend-sqlalchemy>=0.5.5"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird,opengauss,ydb]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird,opengauss,ydb,databend]",
 ]
 all = [
   "localdata-mcp[formats,databases]",

@@ -26,12 +26,16 @@ from endpoints import Unavailable
 from localdata_mcp.dialects import (
     BACKENDS,
     Backend,
+    DatabendBackend,
     FirebirdBackend,
     MySQLBackend,
+    ReadRefused,
+    Refusal,
     SQLiteBackend,
     UnsupportedOperation,
     YDBBackend,
     backend_for,
+    _DATABEND_NOT_A_QUERY,
     _FIREBIRD_VARCHAR_MAX,
     _YDB_ISOLATION,
     _YDB_READ_ONLY,
@@ -762,3 +766,326 @@ def test_a_rename_is_issued_as_schema_rather_than_as_an_opaque_statement():
     assert len(executed) == 1
     assert isinstance(executed[0], ExecutableDDLElement)
     assert str(executed[0]) == 'ALTER TABLE "orders" RENAME TO "sales"'
+
+
+# ---------------------------------------------------------------------------
+# Databend
+# ---------------------------------------------------------------------------
+
+
+class _Cursor:
+    """A DBAPI cursor that records what it was asked to explain.
+
+    ``accepts`` decides which statements it will take, which is how a test says
+    what the *server* thinks of a statement without needing a server. Its
+    ``mogrify`` is the real one's contract — substitute the parameters, leave the
+    text alone otherwise.
+    """
+
+    def __init__(self, accepts) -> None:
+        self.accepts = accepts
+        self.asked: list[str] = []
+
+    @staticmethod
+    def mogrify(statement, parameters):
+        return statement % parameters if parameters else statement
+
+    def execute(self, statement):
+        self.asked.append(statement)
+        if not self.accepts(statement):
+            raise RuntimeError(f"the server would not take: {statement}")
+
+    def close(self) -> None:
+        return None
+
+
+class _Connection:
+    """The SQLAlchemy ``Connection`` the posture is handed, and one raw cursor."""
+
+    def __init__(self, cursor) -> None:
+        self.connection = self
+        self._cursor = cursor
+
+    def cursor(self):
+        return self._cursor
+
+
+class _Engine:
+    """Just enough engine to catch the listener the posture registers."""
+
+    def __init__(self) -> None:
+        self.listeners: dict[str, list] = {}
+
+
+def _posture(accepts):
+    """Install Databend's read posture on a fake engine and return what to drive it.
+
+    Returns the hook itself, the cursor it will interrogate, and the
+    :class:`Refusal` it fills in — which together are the whole of what the
+    posture does, with no container and no driver.
+    """
+    import sqlalchemy
+
+    engine = _Engine()
+    hooks: list = []
+    original = sqlalchemy.event.listens_for
+
+    def capture(target, identifier, **kw):
+        def decorate(fn):
+            assert target is engine
+            assert identifier == "before_cursor_execute"
+            hooks.append(fn)
+            return fn
+
+        return decorate
+
+    sqlalchemy.event.listens_for = capture
+    try:
+        refusal = Refusal()
+        backend_for("databend").read_posture(engine, refusal)
+    finally:
+        sqlalchemy.event.listens_for = original
+
+    assert len(hooks) == 1
+    cursor = _Cursor(accepts)
+    return hooks[0], cursor, refusal
+
+
+def _offer(hook, cursor, sql, parameters=None, executemany=False):
+    hook(_Connection(cursor), cursor, sql, parameters, None, executemany)
+
+
+def test_the_databend_dialect_answers_as_itself():
+    """Four consecutive entries needed the engine spelled out; this one does not.
+
+    Worth an assertion rather than a shrug: the *reason* the previous three
+    diverged — a borrowed dialect, a dialect named after its driver, a dialect
+    named after a query language — is absent here, and what proves it is the
+    backend agreeing with its own key.
+    """
+    backend = backend_for("databend")
+
+    assert isinstance(backend, DatabendBackend)
+    assert backend.name == "databend"
+
+
+def test_a_statement_the_server_calls_a_query_runs_unmodified():
+    """The wrap is explained, never executed, so the caller's SQL is untouched.
+
+    This is the property that makes the posture safe to put in front of every
+    read: what the database is asked about is a wrapped copy, and what runs is
+    the statement as written. A posture that rewrote the statement could change
+    the result — column names, ordering, duplicate labels — and nothing about a
+    passing read would show it.
+    """
+    hook, cursor, refusal = _posture(lambda sql: True)
+
+    _offer(hook, cursor, "SELECT a FROM orders")
+
+    assert cursor.asked == ["EXPLAIN SELECT * FROM (\nSELECT a FROM orders\n)"]
+    assert refusal.what is None
+
+
+def test_a_write_is_refused_before_the_database_runs_it():
+    """The whole finding: on this backend nothing *after* the statement can tell.
+
+    An ``INSERT`` here answers with a one-column result set named ``number of
+    rows inserted``, and a ``REPLACE INTO`` answers with the table's own columns —
+    so the not-a-read floor, which asks whether rows with columns came back, is
+    satisfied by both. The refusal therefore has to happen before the statement
+    runs, and this asserts that order: the statement is never offered to the
+    cursor for execution, only for explanation.
+    """
+    # The server takes the statement itself but not the statement as a subquery,
+    # which is exactly what it does with every write.
+    hook, cursor, refusal = _posture(lambda sql: not sql.startswith("EXPLAIN SELECT *"))
+
+    with pytest.raises(ReadRefused):
+        _offer(hook, cursor, "INSERT INTO orders (a) VALUES (1)")
+
+    assert refusal.what == _DATABEND_NOT_A_QUERY
+    # Two questions, both of them explanations. Nothing was run.
+    assert [sql.split()[0] for sql in cursor.asked] == ["EXPLAIN", "EXPLAIN"]
+    assert len(cursor.asked) == 2
+
+
+def test_the_refusal_names_a_verb_that_does_the_job_and_a_verb_for_schema():
+    """A caller told only "no" sends the same statement again.
+
+    ``Refusal`` is what :meth:`Workspace._explain` puts after "This statement
+    asks to", so this has to read as a phrase in that sentence *and* point
+    somewhere. Both halves are asserted because a ``SHOW`` fails this posture too
+    — it reads, but it is not a query — and ``info`` is where that caller has to
+    be sent.
+    """
+    assert "write" in _DATABEND_NOT_A_QUERY
+    assert "info" in _DATABEND_NOT_A_QUERY
+    assert "SHOW" in _DATABEND_NOT_A_QUERY
+
+
+def test_a_broken_statement_is_diagnosed_by_the_server_not_called_a_write():
+    """The wrong-explanation failure this posture nearly shipped with.
+
+    ``SELECT * FROM nowhere`` fails the wrap — but because the table does not
+    exist, not because it writes. Its first draft reported it as a statement that
+    was not a read, which sends an agent looking for a verb when what it has is a
+    typo. So a statement the server cannot explain *either way* is broken, and its
+    own diagnosis is what reaches the caller.
+    """
+    hook, cursor, refusal = _posture(lambda sql: False)
+
+    with pytest.raises(RuntimeError) as failure:
+        _offer(hook, cursor, "SELECT * FROM nowhere")
+
+    assert not isinstance(failure.value, ReadRefused)
+    assert "the server would not take" in str(failure.value)
+    # And no refusal is claimed, so the explainer falls through to the message.
+    assert refusal.what is None
+
+
+def test_the_posture_proves_the_statement_it_is_given_parameters_and_all():
+    """Reflection's statements carry placeholders, and they must still be provable.
+
+    ``information_schema`` selects are how this dialect reflects, they arrive with
+    pyformat parameters, and they are reads — so the proof has to be made of the
+    statement as the driver will send it. A posture that asked about the unbound
+    text would be asking about SQL the server never sees.
+    """
+    hook, cursor, refusal = _posture(lambda sql: "information_schema" in sql)
+
+    _offer(
+        hook,
+        cursor,
+        "select table_name from information_schema.tables where table_schema = %(s)s",
+        {"s": "default"},
+    )
+
+    assert cursor.asked[0].endswith("table_schema = default\n)")
+    assert refusal.what is None
+
+
+def test_one_parameter_set_is_enough_to_prove_a_repeated_statement():
+    """``executemany`` hands a sequence of sets; the statement is the same in each.
+
+    Proving it with the first is proof about the statement, which is what is
+    being asked. Reaching into the sequence as though it were one set would
+    interpolate a tuple into the text and fail on a statement that is a perfectly
+    good read.
+    """
+    hook, cursor, refusal = _posture(lambda sql: True)
+
+    _offer(hook, cursor, "SELECT %(a)s", [{"a": "1"}, {"a": "2"}], executemany=True)
+
+    assert cursor.asked == ["EXPLAIN SELECT * FROM (\nSELECT 1\n)"]
+    assert refusal.what is None
+
+
+def test_a_read_ending_in_a_comment_is_still_a_read():
+    """The closing parenthesis goes on its own line, and this is why.
+
+    A statement ending in a ``--`` comment would comment out a parenthesis put on
+    the same line, so the wrap would not parse and a legitimate read would be
+    refused — a refusal produced by the posture's own formatting rather than by
+    anything the caller wrote.
+
+    The fake server here has to model the comment to be worth anything: it
+    discards what follows ``--`` on each line, exactly as a parser does, and then
+    asks whether the subquery was ever closed. Asserting only that the wrap ends
+    in ``)`` would pass with the parenthesis commented out, which is the bug.
+    """
+
+    def parses(sql):
+        uncommented = "\n".join(line.split("--")[0] for line in sql.splitlines())
+        return uncommented.strip().endswith(")")
+
+    hook, cursor, refusal = _posture(parses)
+
+    _offer(hook, cursor, "SELECT a FROM orders -- only the first column")
+
+    assert refusal.what is None
+
+
+def test_the_posture_refusal_is_caught_with_everything_else_a_statement_raises():
+    """SQLAlchemy wraps what a statement raises, not what a hook raises.
+
+    Without this the refusal would pass through every ``except SQLAlchemyError``
+    written to explain a failed statement and reach the caller as a traceback,
+    with the sentence :class:`Refusal` prepared for it never read. The driver's
+    own error is named for the same reason — it is what a broken statement raises
+    out of the same hook.
+    """
+    errors = backend_for("databend").driver_errors()
+
+    assert ReadRefused in errors
+    assert Backend().driver_errors() == ()
+
+
+def test_an_index_this_backend_cannot_make_is_refused_rather_than_reported():
+    """The dialect compiles ``CREATE INDEX`` to the empty string and succeeds.
+
+    Measured: the statement reaching the driver is ``''``, the connector returns
+    early for a falsy statement, and afterwards reflection and ``SHOW INDEXES``
+    are both empty. So an index reported as created here would be a name the
+    caller could neither find nor drop — the shape ClickHouse's entry refuses for
+    a different reason, which is why one axis carries both.
+
+    The refusal names the database, because a caller told "no" by "a generic
+    datasource" has been told nothing, and it names the statement that does work
+    in Databend itself.
+    """
+    from sqlalchemy import Column, Integer, MetaData, Table
+
+    backend = backend_for("databend")
+    assert backend.builds_indexes() is False
+
+    table = Table("orders", MetaData(), Column("region", Integer))
+    with pytest.raises(UnsupportedOperation) as refused:
+        backend.build_index("ix_orders_region", table, ["region"])
+
+    message = str(refused.value)
+    assert "databend" in message
+    assert "CLUSTER BY (region)" in message
+    # And it says the failure mode, so nobody reads the refusal as pedantry.
+    assert "creating nothing" in message
+
+
+def test_databend_declines_two_column_types_for_two_different_reasons():
+    """One absent from the database, one the driver cannot carry.
+
+    ``Time`` does not exist in Databend at all — its parser lists every type it
+    accepts and TIME is not among them — and the dialect renders it as
+    ``DATETIME``, so the column is *made* and holds a timestamp on the epoch. A
+    typed ``select()`` hides that by re-deriving the time; ``query`` reads the
+    column as text and sees ``1970-01-01T14:30:00Z``.
+
+    ``LargeBinary`` is the opposite way round and worse than a flat refusal: the
+    database stores binary fine, and the driver renders parameters into the
+    statement text, so whether a value binds depends on **whether those bytes
+    happen to be valid UTF-8**. ``b'\\x00\\x01'`` lands; ``b'\\x00\\xff'`` raises.
+
+    Asserted as membership rather than equality with anyone else's set: Oracle
+    and YDB also lack a time type, Trino has the same bytes defect, and none of
+    those three shares the other half.
+    """
+    unstorable = backend_for("databend").unstorable_column_types()
+
+    assert unstorable == {"Time", "LargeBinary"}
+    # What it does hold, measured rather than assumed by omission.
+    assert not {"Numeric", "Date", "DateTime", "Boolean", "Text"} & unstorable
+
+
+def test_the_transactionless_backends_do_not_all_answer_the_same_way():
+    """Databend has no transactions and still refuses before the write happens.
+
+    CrateDB, the other transactionless entry, declares both survivals because it
+    has no posture to put in their place. Databend obtains one from the server, so
+    the generic ``False`` is the truthful answer here — and asserting the two
+    apart is what keeps "no transactions" from being read as an excuse.
+    """
+    databend = backend_for("databend")
+    crate = backend_for("crate")
+
+    assert databend.dml_survives_refusal() is False
+    assert databend.ddl_survives_refusal() is False
+    assert crate.dml_survives_refusal() is True
+    assert crate.ddl_survives_refusal() is True

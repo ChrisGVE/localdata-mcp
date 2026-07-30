@@ -9,10 +9,10 @@ and more backends are **still level 0**, because they are nothing new — the sa
 pointed at more kinds of source. Formats are done. The backends are an open catalogue
 being worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
 Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB, Firebird,
-openGauss and YDB each run every verb, each against a container of its own — except SQLite
-and DuckDB, which are files and need none.
+openGauss, YDB and Databend each run every verb, each against a container of its own —
+except SQLite and DuckDB, which are files and need none.
 
-Fourteen of those are containers, and this machine will run six at a time before the Docker
+Fifteen of those are containers, and this machine will run six at a time before the Docker
 VM starves them, so **no single test run covers the catalogue** — it takes three, and each
 one reports a green suite while the dialects it never reached stay silent (issue #46).
 
@@ -260,6 +260,7 @@ where the generic answer means something different here, or nothing at all:
 | openGauss | URL | nothing — but it is the first PostgreSQL fork here that cannot be *addressed* as PostgreSQL, since its version banner does not parse and SQLAlchemy's own PGDialect raises while initialising the connection; it ships its own dialect, so there is no impostor to resolve either |
 | Firebird | URL | that rows cannot be written in the transaction that created the table, since DDL is transactional *and* prepared against committed metadata; the refusal of `update(type='table', to=…)`, since no statement renames a table here; `DOUBLE PRECISION`, since the dialect renders `Double` as a keyword Firebird lacks; and `VARCHAR` sized from the data, since `Text` becomes a `BLOB` that groups by identity rather than by value |
 | YDB | URL | a **primary key on every loaded table**, since it has no heap tables and a file has no key to offer — so one holding the row's position is added and reported; a **read-only isolation level**, since an uncommitted write here is not rolled back at all and the floor has to be a refusal rather than an undo; the two codes that refusal arrives under, one for rows and one for schema; and `Time`, which it does not have |
+| Databend | URL | that a statement is **a read before it runs**, since it has no transaction, no read-only session, and a write that answers with a named result set no examination of the result can tell from a query — so the server itself is asked to plan the statement as a subquery first; `Time`, which it does not have and its dialect renders `DATETIME`; `LargeBinary`, which binds or not depending on whether the bytes are valid UTF-8; and the refusal of `create(type='index')`, since the statement for one compiles to nothing and succeeds
 
 Two things generalised out of that table and became generic rather than per-dialect. **A
 declared type is named by the backend**, because the portable spellings are what make one

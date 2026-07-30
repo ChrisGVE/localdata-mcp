@@ -3436,3 +3436,369 @@ while everything here goes over plaintext 2136.
 The transaction findings in 22.2 are measured **through SQLAlchemy**, which is how this server reaches
 every database. The DBAPI-direct measurements are there to locate the defect, not to describe a
 supported path — nothing here uses the driver directly.
+
+## §23 — Databend, and a write that looks exactly like a read (2026-07-30)
+
+Fifteenth endpoint dialect, twelfth from the backend catalogue (task 22, worklist item 14). A
+cloud-native columnar warehouse, written in Rust, reached over its own HTTP query handler.
+
+Measured against `datafuselabs/databend:v1.2.925-patch-4`, server version
+**`Databend Query v1.2.925-patch-4-4b032c73cc(rust-1.94.0-nightly-2026-07-27…)`** (`SELECT
+version()`), through `databend-sqlalchemy` 0.5.5 on `databend-driver` 0.34.2 — both Databend's own,
+Apache-2.0. There is no rival dialect: `sqlalchemy-databend` does not exist on PyPI, and `databend-py`
+is a DB-API driver that registers none. The driver is a Rust extension and therefore the first native
+dependency here since Firebird's `libfbclient` sent that entry to a pure-Python dialect (§20.1), but
+it is not the same cost: it publishes `cp39-abi3` wheels for macOS x86_64 and arm64 and both manylinux
+architectures, so nothing compiles and no system library is needed.
+
+**One measurement explains this section: on Databend a write answers with a result set.** Not a status,
+not an empty result — a genuine, named, row-bearing result set, and for `REPLACE INTO` one that carries
+*the table's own columns*. Everything below is either that fact or a consequence of it, because the
+not-a-read floor this server relies on asks the result whether a read happened, and here the result
+cannot say.
+
+Three of the six findings are third-party defects, one is in shared code, and one is the strongest
+read posture in the catalogue arriving by an unusual route.
+
+### 23.1 Reaching it: one port of four, and a user that only exists in pairs
+
+The image is all-in-one: `dumb-init -- /bootstrap.sh` starts `databend-meta --single` and
+`databend-query` side by side. Storage defaults to `fs` under `/var/lib/databend/query`; setting
+`MINIO_ENABLED` would make the entrypoint **download a MinIO binary at boot** and switch storage to
+S3, so it is deliberately left unset — a test harness has no business acquiring a network dependency
+and an object store to reach a local file.
+
+Four ports are exposed and one is published: **8000**, Databend's own HTTP query handler, which is
+what `databend-driver` speaks. 3307 is a MySQL-wire compatibility layer and 8124 a ClickHouse one;
+publishing either would test another engine's dialect against Databend's behaviour, the mistake §12
+records for CockroachDB and §19 for CrateDB.
+
+**`QUERY_DEFAULT_USER` and `QUERY_DEFAULT_PASSWORD` only take effect together**, and what happens
+without them is not a weaker endpoint but a different one. Read out of `bootstrap.sh`:
+
+```bash
+if [ -n "$QUERY_DEFAULT_USER" ] && [ -n "$QUERY_DEFAULT_PASSWORD" ]; then
+    DOUBLE_SHA1_PASSWORD=$(echo -n "$QUERY_DEFAULT_PASSWORD" | sha1sum | ... )
+    # [[query.users]] name = "$QUERY_DEFAULT_USER", auth_type = "double_sha1_password"
+else
+    # [[query.users]] name = "root", auth_type = "no_password"
+fi
+```
+
+Given one variable and not the other, the user a URL names does not exist:
+
+| Container environment | `root` with no password | `localdata` with password |
+|---|---|---|
+| neither variable set | works | — |
+| both set | **`User 'root'@'%' does not exist.`** | works |
+
+So both are set, and this endpoint is reached **with a credential** rather than becoming the sixth
+that is not — the coverage hole task 23's first item keeps being filled by accident. That the HTTP
+handler accepts a `double_sha1_password` user at all was measured rather than assumed: the scheme is
+MySQL's, and it is the MySQL-wire port that would obviously honour it.
+
+The password carries `:` and `@` on purpose. Unlike openGauss (§21.1) this image enforces no
+complexity rule, so nothing forces a delimiter in — which is exactly why one is put there. Measured
+end to end: `URL.create` renders it `l0cal%3Adata%40test` and the driver authenticates.
+
+`sslmode=disable` is required rather than tidy — the driver defaults to TLS and this container serves
+plaintext.
+
+**No healthcheck ships with the image**, so one is written, and `--fail` alone would not do: this
+handler answers **200 with an error body** for a statement it rejects, so a curl checking only the
+status code would report a database ready while every query fails. The probe greps for
+`"state":"Succeeded"`. It reads its credentials out of the container's own environment (`$$` is
+compose's escape) so it cannot drift from the user the entrypoint made.
+
+**It survives a restart**, checked deliberately because YDB did not (§22.7): a table created and
+populated before `docker stop`/`start` was still readable afterwards, and a fresh `CREATE TABLE`
+succeeded. Healthy in ~15 s from a cold create.
+
+### 23.2 There are no transactions, and the rollback says otherwise (issue #68)
+
+The DBAPI is honest and the dialect suppresses it:
+
+```python
+class Connection:                       # databend_sqlalchemy.connector
+    def commit(self): pass
+    def rollback(self):
+        raise NotSupportedError("Transactions are not supported")
+
+class DatabendDialect:                  # databend_sqlalchemy.databend_dialect
+    def do_rollback(self, dbapi_connection):
+        # No transactions
+        pass
+```
+
+So `Connection.rollback()` through SQLAlchemy **returns normally** over a write that stands. Measured,
+one variable changed:
+
+| Sequence | Rows afterwards |
+|---|---|
+| `INSERT`, connection closed without committing | 1 |
+| `INSERT`, then an explicit `Connection.rollback()` | 1 |
+| `BEGIN`, `INSERT`, `ROLLBACK` sent as statements | 1 |
+
+Same *symptom* as §22.2 with a different cause. There the driver bound a cursor's transaction before
+the transaction existed, accidentally; here the dialect deliberately swallows an exception the layer
+beneath it raises to say the operation is impossible.
+
+**The server does have transactions**, and the summary "Databend has no transactions" is wrong in a way
+worth stating precisely: `BEGIN`/`COMMIT` are real statements, and every response carries a
+`txn_state` (`AutoCommit` here). Reaching them requires the client to carry the session back between
+requests — the response fields `session_id` and `need_sticky` are how — and this driver does not. They
+are **unreachable through this adapter** rather than absent from the database.
+
+`get_isolation_level` raises `NotImplementedError`, so Trino's remedy (§16.2) has nothing to name.
+
+### 23.3 A write that looks exactly like a read (issue #64)
+
+**This is the finding.** The not-a-read floor in `Workspace.query_stream` refuses a statement that
+returns no rows, or rows of no columns — the second half added for CrateDB, which answers an `INSERT`
+with one row of *zero* columns (§19.4, issue #51). Databend defeats both halves:
+
+| Statement | `has_result_set` | Columns | Rows |
+|---|---|---|---|
+| `INSERT INTO t VALUES (1,'x'),(2,'y')` | true | `['number of rows inserted']` | `[['2']]` |
+| `INSERT INTO t SELECT * FROM t2` | true | `['number of rows inserted']` | `[['4']]` |
+| `UPDATE t SET b='u'` | true | `['number of rows updated']` | `[['8']]` |
+| `DELETE FROM t WHERE a=3` | true | `['number of rows deleted']` | `[['2']]` |
+| `MERGE INTO …` | true | `['number of rows inserted', 'number of rows updated']` | `[['1','1']]` |
+| `REPLACE INTO t ON (a) VALUES (1,'r')` | true | **`['a', 'b']`** — the table's own | `[]` |
+| `SELECT * FROM t` | true | `['a', 'b']` | `[['1','z']]` |
+| `CREATE TABLE` / `DROP` / `TRUNCATE` / `ALTER` / `OPTIMIZE` | false | `[]` | `[]` |
+
+Two things follow. **A write passes the floor** — one row, one named column, indistinguishable from
+`SELECT count(*)`. And **no result-shape test could be written that works**: `REPLACE INTO` returns
+the table's columns and zero rows, which is precisely what a `SELECT` matching nothing returns, while
+`SELECT count(*) AS "number of rows inserted"` is legal SQL that a column-name test would refuse.
+
+Not the driver inventing a result, either: the handler sets `has_result_set: true` and sends that
+schema.
+
+Before the posture below, `query` returned this for an `INSERT` through a read connection:
+
+```
+{'ok': True, 'columns': ['number of rows inserted'], 'row_count': 1, 'rows': [[1]]}
+```
+
+and the table went 5 → 6 rows. DDL was refused (zero columns) **and still landed**, because the
+refusal came after the statement.
+
+The general statement, which outlives the Databend-specific remedy: **the shape of a result is not
+evidence that a read happened.** The floor is a backstop; the guarantee has to come from the posture.
+
+### 23.4 The posture: asking the server before the statement runs
+
+With no transaction (23.2), no read-only session or URL flag — all 219 settings `SHOW SETTINGS` lists
+were read and none gates writes — and no usable signal in the result (23.3), the only place left is
+*before* the statement. So the server is asked to classify it, twice at worst, and **neither question
+executes anything**:
+
+1. `EXPLAIN SELECT * FROM (<statement>)`. A subquery may only be a query expression, so Databend's own
+   parser refuses every write there. If this plans, the statement is a read and it is then run
+   **unmodified** — the wrap is only ever explained.
+2. Otherwise `EXPLAIN <statement>`. If *that* plans, the statement is valid and is not a query: a
+   write, or a `SHOW`/`DESCRIBE`. Refused before it runs.
+3. If neither plans, the statement is **broken rather than forbidden**, and the server's own diagnosis
+   is what reaches the caller.
+
+Step 3 exists because of a defect the first draft had: `SELECT * FROM nowhere` fails step 1 — for the
+table, not for writing — and was reported as "not a read", which sends an agent hunting for a verb
+when what it has is a typo. That is the wrong-explanation-attached-to-a-right-outcome class again
+(§22.5, standing instruction 14).
+
+What each statement does, measured:
+
+| Statement | step 1 | step 2 | Outcome |
+|---|---|---|---|
+| `SELECT a, b FROM t ORDER BY a` | plans | — | runs, result identical to unguarded |
+| `SELECT 1` | plans | — | runs |
+| `SELECT a FROM t;` (trailing `;`) | plans | — | runs |
+| `SELECT a FROM t -- comment` | plans | — | runs (see below) |
+| `INSERT` / `UPDATE` / `DELETE` / `REPLACE INTO` | refused | plans | **refused, nothing written** |
+| `WITH s AS (…) INSERT INTO t …` | refused | plans | **refused** — and it is accepted by Databend, so a leading-keyword test would have let it through |
+| `CREATE TABLE` / `DROP TABLE` | refused | plans | **refused, nothing created** |
+| `SHOW TABLES` / `DESCRIBE t` | refused | plans | refused — reads, but not queries |
+| `SELECT * FROM nowhere` | refused | refused | the server's own "unknown table" |
+
+Verified afterwards on the live table: rows unchanged, and no orphan table from the refused `CREATE`.
+
+**`EXPLAIN` executes nothing**, measured rather than assumed — every DDL and DML form above plans with
+`write_progress: {"rows": 0}` and leaves the data untouched — and `EXPLAIN ANALYZE`, which *would* run
+it, is refused by this server outright (`Unsupported EXPLAIN ANALYZE statement`).
+
+The wrap closes its parenthesis **on its own line**. On the same line, a statement ending in a `--`
+comment would comment the parenthesis out, and a legitimate read would be refused by the posture's own
+formatting.
+
+**Reflection is unaffected**, which is what makes a connection-level posture viable: this dialect
+reflects over `information_schema` (`select table_name from information_schema.tables where
+table_schema = %(schema_name)s`, and two more like it), all table-valued and all provable. Statements
+are proved *as the driver will send them* — parameters substituted through the cursor's own `mogrify` —
+because the unbound text is SQL the server never sees.
+
+**Two costs, both real.** `SHOW` and `DESCRIBE` cannot be sent through `query` on this backend; `info`
+answers what they were for, and the refusal says so. And every read pays a planning round trip:
+
+| Read | No posture | With posture | Repeat (no posture / posture) |
+|---|---|---|---|
+| `SELECT count(*) … WHERE b='x'`, 10k rows | median **21.2 ms** (19.4–31.9) | median **47.5 ms** (39.3–56.5) | 22.7 / 48.8 |
+| `GROUP BY` + `ORDER BY` over **2M rows** | median **52.1 ms** (48.0–80.1) | median **89.2 ms** (69.6–105.4) | 49.6 / 68.2 |
+
+Within-condition spread is ×1.3–1.7 across 25 samples, so the small-read difference (≈ ×2.2, and
+repeated) is well outside the noise while the heavy-read one (≈ ×1.4–1.7) is only marginally so. In
+absolute terms both are consistent with one plan: **≈ 20–30 ms added**, whose *share* falls as the
+read gets heavier. The read guarantee costs a plan per query on this backend, and that is the trade
+recorded rather than hidden.
+
+Because the write never happens, `dml_survives_refusal` and `ddl_survives_refusal` are both the
+generic `False` here — where CrateDB, the other transactionless entry, declares `True` for both
+(§19.4). "No transactions" is not by itself a reason to give up the guarantee.
+
+### 23.5 An index that reports success and creates nothing (issue #65)
+
+`Index("ix_t_b", table.c.b).create(conn)` raises nothing and creates nothing. The statement reaching
+the driver is the **empty string**, and the connector returns early for a falsy one — with a comment
+saying why:
+
+```python
+# ToDo - Fix this, which is preventing the execution of blank DDL such as CREATE INDEX
+# statements which aren't currently supported
+if not operation:
+    return
+```
+
+Afterwards `inspect(conn).get_indexes(t)` and `SHOW INDEXES` are both empty. An index reported under a
+name the caller is handed, which `info` cannot list and `drop` cannot remove, is the fail-open shape
+this server refuses to pass on — so `builds_indexes()` is `False` and the verb refuses, naming what
+Databend really offers. Both measured on the live server:
+
+| Statement | Result |
+|---|---|
+| `ALTER TABLE t CLUSTER BY (b)` | accepted; `SHOW CREATE TABLE` then reads `… ENGINE=FUSE CLUSTER BY linear(b)` |
+| `CREATE INVERTED INDEX iv ON t(b)` (`STRING` column) | accepted; appears as `SYNC INVERTED INDEX iv (b)` |
+| `CREATE INVERTED INDEX iv ON t(a)` (`INT` column) | refused — `Inverted index currently only support String and Variant type` |
+
+Neither is reflectable, which is why neither is created through the verb. This is a worse form of
+ClickHouse's version of the same axis (§11.5): there `CREATE INDEX` is refused outright and only the
+*usefulness* of the alternative was in question.
+
+### 23.6 Two column types declined, for two different reasons (issues #66, #67)
+
+**`Time` — the database has no such type.** Its parser says so by listing every type it accepts:
+
+```
+CREATE TABLE probe (clock TIME)
+-> unexpected `TIME`, expecting `TIMESTAMP`, `TIMESTAMP_TZ`, `TEXT`, … `DATE`, … `DATETIME`, …
+```
+
+The dialect renders `Time` as `DATETIME`, and the substitution is **invisible from Core**: a typed
+`select()` hands back `time(14, 30)`, because SQLAlchemy's own `Time` re-derives it. Read as text —
+which is what `query` does — the same column is `datetime(1970, 1, 1, 14, 30, tzinfo=utc)`, and `info`
+reports the column as `DATETIME`. CrateDB's shape (§19.5), not Oracle's: the column *is* made, and
+holds something else.
+
+**`LargeBinary` — the driver, and it depends on the bytes.** This driver renders parameters into the
+statement text, so a value is decoded as UTF-8 on the way in. One value at a time:
+
+| Value | Valid UTF-8 | Result |
+|---|---|---|
+| `b'\x00\x01'` | yes | binds, round-trips identically |
+| `b'abc'` | yes | binds, round-trips identically |
+| `b'\xc3\xa9'` | yes | binds, round-trips identically |
+| `b'\x00\xff'` | no | `'utf-8' codec can't decode byte 0xff in position 1` |
+| `b'\xff'` | no | same |
+| `b'\x80'` | no | same |
+
+Valid UTF-8 is not a property binary data has, so this column works until the day the bytes have a
+high one in them — which is worse than a flat refusal and is why it is declared unstorable rather than
+left to fail per value. The database is not the problem: a `BINARY` column given `unhex('00ff')` reads
+back as `b'\x00\xff'`. Trino fails identically from the identical cause (§16.6) — interpolating
+parameters into SQL is what gets `bytes` wrong, whoever does it.
+
+### 23.7 The write signal the server sends and the driver drops (issue #69)
+
+Every response carries `stats.write_progress`, and it separates reads from writes exactly — including
+the `REPLACE INTO` case no result-shape test can reach:
+
+| Statement | `write_progress` |
+|---|---|
+| `SELECT * FROM t` | `{"rows": 0, "bytes": 0}` |
+| `INSERT INTO t VALUES (2,'q')` | `{"rows": 1, "bytes": 23}` |
+| `UPDATE t SET b='u'` | `{"rows": 2, "bytes": 46}` |
+| `REPLACE INTO t ON (a) VALUES (1,'r')` | `{"rows": 1, "bytes": 23}` |
+
+The driver does not expose it. `databend_driver.ServerStats` has `write_rows`/`write_bytes`, but
+nothing on the blocking cursor path reaches one: `BlockingDatabendCursor` offers only `close,
+description, execute, executemany, fetchall, fetchmany, fetchone, next, rowcount, set_schema`, and
+`RowIterator` only `close, schema`. And `rowcount` is hardcoded to `-1` in the wrapper *and* returns
+`-1` from the Rust cursor after `CREATE`, `INSERT`, `REPLACE`, `SELECT`, `UPDATE` and `DROP` alike, so
+there is no working value being hidden.
+
+Had it been reachable, the refusal could have been made on the server's own report after the fact.
+It is not, which is what left 23.4's pre-execution proof as the only sound option.
+
+### 23.8 Everything else, and the rest was generic
+
+| Axis | Databend |
+|---|---|
+| `read_posture` | **the server is asked before the statement runs** (23.4) — no isolation level, no URL flag |
+| `driver_errors` | **`(ReadRefused, databend_sqlalchemy.errors.Error)`** — SQLAlchemy does not wrap what a `before_cursor_execute` handler raises |
+| `builds_indexes` / `build_index` | **`False`** / refuses (23.5) |
+| `unstorable_column_types` | **`{"Time", "LargeBinary"}`** (23.6) |
+| `ddl_survives_refusal` / `dml_survives_refusal` | generic `False` — refused before anything ran, despite no transaction (23.4) |
+| `denies_write` | generic `False` — the refusal is ours, and `Refusal` carries its words |
+| `sees_new_tables_in_transaction` | generic `True` — every statement autocommits, so a new table is addressable at once |
+| `rename_table` / `renames_tables` | generic — `ALTER TABLE … RENAME TO`, rows kept (2 before, 2 after) |
+| `folds_identifiers` | generic `False` — `ProbeCD91` created and reflected verbatim, no lowered twin |
+| `requires_primary_key` | generic `False` — a bare column list makes a table |
+| `table_options` | generic — empty; the `FUSE` engine is the default |
+| `connect_args` | generic — empty; the driver returns typed objects |
+| `settle` | generic — a write is immediately readable |
+| `impostors` / `banner_query` | none; it ships its own dialect, named after itself |
+| `column_type` | generic — the portable types render usably (below) |
+
+The dialect, the driver and the engine are all called `databend`, measured (`dialect.name`,
+`dialect.driver`) rather than read off the entry points — which is exactly the reading that got YDB
+wrong (§22.1). So **no `engine=` override**, the first entry in four that needs none.
+
+Types measured one column at a time, so one failure could not hide the rest:
+
+| Core type | Rendered | Reflects as | Round trip |
+|---|---|---|---|
+| `Integer` | `INTEGER` | `INTEGER` | `7` → `7` |
+| `String(50)` | `VARCHAR(50)` | `VARCHAR` | `'abc'` → `'abc'` |
+| `Text` | `TEXT` | `VARCHAR` | `'abc'` → `'abc'`, and **groups by value** (`[('abc', 2)]`) |
+| `Numeric(12,2)` | `DECIMAL(12, 2)` | `DECIMAL(12, 2)` | `Decimal('12.34')` → exact |
+| `Double` | `DOUBLE` | `DOUBLE` | `0.1` → `0.1` |
+| `Date` | `DATE` | `DATE` | exact |
+| `DateTime` | `DATETIME` | `DATETIME` | exact |
+| `Boolean` | `BOOLEAN` | `BOOLEAN` | `True` → `True` |
+| `LargeBinary` | `BLOB` | `BINARY` | **depends on the bytes** (23.6) |
+| `Time` | `DATETIME` | `DATETIME` | **a timestamp on the epoch** (23.6) |
+
+`Numeric` round-trips exactly, which CrateDB did not (§19.5), and `Text` groups by value, which
+Firebird did not (§20.3).
+
+### 23.9 What this did not test
+
+Everything that makes Databend a cloud warehouse. This is a single container with `fs` storage: no
+object store (S3 is what it is designed for, and `MINIO_ENABLED` is deliberately unset — 23.1), no
+separated compute, no warehouses (`use warehouse`), no multi-node anything, and therefore nothing
+about write contention or the `40001`-style retry §15.3 and issue #47 leave open.
+
+Also untried: multi-statement transactions, which the server has and this driver cannot reach (23.2) —
+so what a working `BEGIN`/`ROLLBACK` would do to the read posture is unmeasured, and if a future
+driver carries the session, 23.4's proof becomes a belt over a working brace rather than the only
+guard; the MySQL-wire (3307) and ClickHouse (8124) compatibility layers, deliberately unpublished;
+`REPLACE INTO` and `MERGE INTO` as *supported* paths rather than as things the posture must refuse;
+aggregating indexes, inverted indexes and clustering as features rather than as refusal text (23.5);
+streams, stages, `COPY INTO` and the whole ingestion surface; and authentication beyond
+`double_sha1_password` — no TLS, no JWT, no RBAC roles, and in particular no read-only *user*, which
+is the one thing that would make 23.4's posture unnecessary.
+
+The `EXPLAIN`-executes-nothing property in 23.4 is measured on this version. It is load-bearing: if a
+future release ever executed a plan it produced, the posture would become the write it exists to
+prevent. The endpoint suite would catch that — the refusal tests assert the row count afterwards — and
+this sentence is here so the next reader knows to look.

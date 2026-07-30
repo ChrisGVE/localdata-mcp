@@ -410,6 +410,72 @@ services:
       retries: 24
       start_period: 15s
 
+  # Databend, through the project's own all-in-one image: `bootstrap.sh` starts
+  # `databend-meta --single` and `databend-query` side by side in this container.
+  # Storage defaults to `fs` under `/var/lib/databend/query`, and that default is
+  # left alone deliberately — setting `MINIO_ENABLED` would make the entrypoint
+  # *download* a MinIO binary at boot and switch storage to S3, so a test harness
+  # would acquire a network dependency and an object store to reach a local file.
+  #
+  # Only the release-shaped tag is used. This project publishes mostly nightlies;
+  # `v1.2.925-patch-4` is the newest tag that is not one, and the organisation is
+  # `datafuselabs` — `databendlabs/databend`, which the company's current name
+  # suggests, does not exist on Docker Hub.
+  #
+  # Four ports are exposed and one is published. 8000 carries Databend's own HTTP
+  # query handler, which is what `databend-driver` speaks; 3307 is a MySQL-wire
+  # compatibility layer and 8124 a ClickHouse one. Publishing either of those
+  # would test another engine's dialect against Databend's behaviour, which is
+  # the mistake §12 records for CockroachDB and §19 for CrateDB.
+  #
+  # **`QUERY_DEFAULT_USER` and `QUERY_DEFAULT_PASSWORD` only take effect
+  # together**, and what happens without them is not "no password" but a
+  # different user: the entrypoint writes a `root` user with
+  # `auth_type = "no_password"` when either is missing, and a `localdata` user
+  # with `auth_type = "double_sha1_password"` when both are present — at which
+  # point `root` does not exist at all (measured: `User 'root'@'%' does not
+  # exist.`). Both are set here so this endpoint is reached with a credential
+  # rather than becoming the sixth that is not, which is the coverage hole task 23
+  # keeps finding. That the HTTP handler accepts a `double_sha1_password` user at
+  # all was measured rather than assumed — the scheme is MySQL's, and it is the
+  # MySQL-wire port that would obviously honour it.
+  #
+  # The password carries `:` and `@` on purpose. Unlike openGauss, this image
+  # enforces no complexity rule, so nothing forces a delimiter into it — which is
+  # exactly why one is put there: it keeps this endpoint proving that credentials
+  # reach the driver as values and not as URL syntax. Measured end to end,
+  # `URL.create` renders it `l0cal%3Adata%40test` and the driver authenticates.
+  localdata-test-databend:
+    image: datafuselabs/databend:v1.2.925-patch-4
+    environment:
+      QUERY_DEFAULT_USER: localdata
+      QUERY_DEFAULT_PASSWORD: "l0cal:data@test"
+    ports:
+      - "18000:8000"
+    healthcheck:
+      # The image ships no healthcheck, so this is the startup banner's own
+      # suggested probe: a real statement over the published port's real
+      # transport, authenticated as the only user that exists.
+      #
+      # `--fail` is not enough on its own and is why the output is grepped. This
+      # handler answers **200 with an error body** for a statement it rejects, so
+      # a curl that only checks the status code reports a database ready while
+      # every query fails. The state field is the thing that actually says the
+      # statement ran.
+      #
+      # The credentials come from the container's own environment rather than
+      # being restated here, so this probe cannot drift from the user the
+      # entrypoint created. `$$` is compose's escape for a shell `$`.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s -u \"$$QUERY_DEFAULT_USER:$$QUERY_DEFAULT_PASSWORD\" -XPOST http://127.0.0.1:8000/v1/query/ -H 'Content-Type: application/json' -d '{\"sql\":\"SELECT 1\"}' | grep -q '\"state\":\"Succeeded\"' || exit 1",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 5s
+
 networks:
   default:
     name: localdata-test-net

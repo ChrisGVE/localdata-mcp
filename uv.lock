@@ -881,6 +881,30 @@ wheels = [
 ]
 
 [[package]]
+name = "databend-driver"
+version = "0.34.2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e9/7a/8f6905a6a608e870227408cae922b69ee3e156c8a90cbe4159d59798fee4/databend_driver-0.34.2-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:9607aa13226f4f437c69f6c3c1a34a094909ea5bc5a27ddf0538cdb2e7805ece", size = 8862076, upload-time = "2026-07-16T01:26:15.137Z" },
+    { url = "https://files.pythonhosted.org/packages/81/4d/992c5401ca87f5c501cd43958e9922c98bce0767328971aaecfc1b3ee980/databend_driver-0.34.2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:b6cf832e35e9e273e35d12b872b31f6b5ff7185e2a562454147526c9a86c14a9", size = 8279626, upload-time = "2026-07-16T01:26:16.938Z" },
+    { url = "https://files.pythonhosted.org/packages/72/da/b82ae6f161cfeb913b1bae0406e425d5be85cc66b777f17e92bacdc2e9b9/databend_driver-0.34.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4f918bad08ab985473b622c16eaa9bf51a4861dfe8912757ef6cfb347365242c", size = 9336557, upload-time = "2026-07-16T01:26:18.648Z" },
+    { url = "https://files.pythonhosted.org/packages/92/1d/c68eceb1e9fea8a285664045cf9a3139839109ed8a89b5b0321d28adc7b3/databend_driver-0.34.2-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:18197d37bd5e976fe7aa8c064b8a9ce7ab81e4515568f383f1bd12b1e595f787", size = 8735176, upload-time = "2026-07-16T01:26:20.693Z" },
+]
+
+[[package]]
+name = "databend-sqlalchemy"
+version = "0.5.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "databend-driver" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0b/1d/acbd3d21a98d2f95179558ae8c7c362e70150598f8d254ea3cfdf2498855/databend_sqlalchemy-0.5.5.tar.gz", hash = "sha256:6a3f745afd8f1d3aaf184a2d9cd2b3269a5f9718d6c17e0bb15de05a39b1839e", size = 41361, upload-time = "2026-02-28T04:02:12.088Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/64/4cd4908ae1c558d97f29558f24a446036990c39e86e6c37e5c8ee3c86786/databend_sqlalchemy-0.5.5-py3-none-any.whl", hash = "sha256:d601ea6994a366921f5f5db4944e8faa851aadaec85718390a2515c21563067e", size = 33494, upload-time = "2026-02-28T04:02:10.645Z" },
+]
+
+[[package]]
 name = "defusedxml"
 version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1531,6 +1555,7 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "clickhouse-connect", extra = ["sqlalchemy"] },
+    { name = "databend-sqlalchemy" },
     { name = "duckdb" },
     { name = "duckdb-engine" },
     { name = "numbers-parser" },
@@ -1566,6 +1591,7 @@ cratedb = [
 ]
 databases = [
     { name = "clickhouse-connect", extra = ["sqlalchemy"] },
+    { name = "databend-sqlalchemy" },
     { name = "duckdb" },
     { name = "duckdb-engine" },
     { name = "opengauss-sqlalchemy" },
@@ -1581,6 +1607,9 @@ databases = [
     { name = "sqlalchemy-monetdb" },
     { name = "trino", extra = ["sqlalchemy"] },
     { name = "ydb-sqlalchemy" },
+]
+databend = [
+    { name = "databend-sqlalchemy" },
 ]
 dev = [
     { name = "pytest" },
@@ -1652,10 +1681,11 @@ ydb = [
 [package.metadata]
 requires-dist = [
     { name = "clickhouse-connect", extras = ["sqlalchemy"], marker = "extra == 'clickhouse'", specifier = ">=1.6" },
+    { name = "databend-sqlalchemy", marker = "extra == 'databend'", specifier = ">=0.5.5" },
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.0" },
     { name = "duckdb-engine", marker = "extra == 'duckdb'", specifier = ">=0.13" },
     { name = "fastmcp", specifier = ">=3.0.0" },
-    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "opengauss", "ydb"], marker = "extra == 'databases'" },
+    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "opengauss", "ydb", "databend"], marker = "extra == 'databases'" },
     { name = "localdata-mcp", extras = ["formats", "databases"], marker = "extra == 'all'" },
     { name = "localdata-mcp", extras = ["yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet"], marker = "extra == 'formats'" },
     { name = "numbers-parser", marker = "extra == 'numbers'", specifier = ">=4.4" },
@@ -1684,7 +1714,7 @@ requires-dist = [
     { name = "xlrd", marker = "extra == 'xls'", specifier = ">=2.0" },
     { name = "ydb-sqlalchemy", marker = "extra == 'ydb'", specifier = ">=0.1.22" },
 ]
-provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "opengauss", "ydb", "formats", "databases", "all"]
+provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "opengauss", "ydb", "databend", "formats", "databases", "all"]
 
 [[package]]
 name = "lz4"
