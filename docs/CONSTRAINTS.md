@@ -4058,7 +4058,59 @@ move the client into a container, which would stop testing the thing users run.
 **Windows integrated authentication.** There is no Windows host here to integrate with, and SSPI has
 no meaning on this one. Out of reach by the same rule and not worth a probe.
 
-### 25.7 What this did not test
+### 25.7 A URL cannot carry every database name, on the version this pins
+
+Found while extending the credential sweep to this axis, and it is not about authentication — it is
+about the URL that carries it, so it is recorded where the sweep is.
+
+`URL.create(...).render_as_string()` quotes the username, the password and every query value and
+renders the **database raw**; `make_url` unquotes the first two and leaves the database alone in
+turn. The pair is self-consistent, and it makes two characters unusable in a database name however
+carefully the URL is built:
+
+| Database name | With a password | With none |
+|---|---|---|
+| `plain`, `a#b`, `a:b`, `a/b`, `a b`, `a%2Fb` | survives | survives |
+| `a?b` | **truncated to `a`** | **truncated to `a`** |
+| `a@b` | survives | **database `None`, host becomes `b`** |
+
+Percent-encoding is not a route round it: nothing decodes the component on the way back, so an
+encoded name reaches the driver encoded.
+
+**It bounds one path through this server and not the other, and the difference is worth stating
+because the wider claim is the tempting one.**
+
+It does **not** touch a local file. `Backend.open_file` builds a `URL` *object* and hands it to
+`create_engine` without ever rendering it, so a DuckDB database called `why? not.duckdb` opens
+perfectly — there is a test that says so, and it passes on the pinned version. Nothing in `src/`
+round-trips a URL at all: the three `render_as_string` calls there are all `hide_password=True` and
+exist to *show* a URL, never to re-parse one.
+
+What it bounds is a URL **string a caller hands to `attach`**, which is the only place a URL is
+parsed rather than constructed. That reaches one endpoint for real: **Firebird's database component is
+a filesystem path** (§20), so a Firebird database at a path containing `?` or `@` cannot be attached,
+and on the pinned version there is no escaping that would let it be — percent-encoding is not decoded
+back.
+
+**Already reported and already fixed upstream, and not in any release this project can pin.**
+sqlalchemy/sqlalchemy#11234 (April 2024) reports exactly this, with a reproducer that is a SQLite
+*filename* — `database="a?b=c"` — and it was fixed in commit `feb17832f`, milestone **2.1**: the
+component is quoted on the way out and unquoted on the way back, symmetrically. The newest stable
+release is **2.0.51**, which is what is pinned here. 2.1 exists as betas only, and **2.1.0b3 was
+measured in a throwaway virtualenv to round-trip every row of the table above**, including both
+failing cases.
+
+So nothing was filed and nothing is to be worked around. `test_a_url_carries_a_database_name_that_
+two_characters_can_still_break` pins the behaviour of the pinned version; it is *expected* to fail on
+the day this project moves to 2.1, and its docstring says what to delete when it does.
+
+The half that was ours is worth separating from the half that was SQLAlchemy's: the sweep fed one
+hostile value into every field and asserted the host, the port and the password — never the database —
+so the truncation had been happening on every case while the suite was green. That is issue #70, and
+its lesson is that maximal hostility in every field makes a round-trip test *weaker*, because a field
+that cannot represent the input can no longer be asserted at all.
+
+### 25.8 What this did not test
 
 Authentication *rotation* and expiry: a Kerberos ticket that runs out mid-session, a certificate that
 expires while a slot is attached, a password changed under a live engine — every mode here is

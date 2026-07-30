@@ -276,6 +276,11 @@ HOSTILE_PASSWORD = "p@ss:w/rd?x#y"
 #: sweep passed anyway, because it asserted the host, the port and the password
 #: and never the database. The database was silently arriving truncated. Two
 #: values rather than one is what lets the database be asserted at all.
+#:
+#: **Both characters are fixed upstream in SQLAlchemy 2.1** (issue #11234), which
+#: has not reached a stable release — this project pins 2.0.51. When it moves,
+#: this constant can go back to being the hostile password; see
+#: :func:`test_a_url_carries_a_database_name_that_two_characters_can_still_break`.
 HOSTILE_NAME = "n#me:with/parts"
 
 
@@ -542,9 +547,9 @@ def test_every_auth_mode_builder_round_trips_its_own_credentials():
             # certificates live where the CA service put them.
             for written in sorted(scratch.rglob("*")):
                 if written.is_file():
-                    assert written.stat().st_mode & 0o077 == 0, (
-                        f"{mode.mode} wrote {written.name} readable by others"
-                    )
+                    assert (
+                        written.stat().st_mode & 0o077 == 0
+                    ), f"{mode.mode} wrote {written.name} readable by others"
 
     assert swept, "no auth modes were swept, so this asserted nothing"
 
@@ -617,11 +622,29 @@ def test_a_url_carries_a_database_name_that_two_characters_can_still_break():
     Percent-encoding is not a way round it, because nothing decodes the database
     on the way back — an encoded name reaches the driver encoded.
 
-    This bounds the server rather than the harness, and it bounds it in one place
-    for real: Firebird's database component is a **filesystem path**, and a path
-    may hold either character. Recorded here as measurement so that a SQLAlchemy
-    release which starts quoting the component makes this test fail rather than
-    passing unnoticed.
+    It bounds the URL strings a caller may hand to ``attach`` — the only place a
+    URL is parsed rather than built — and **not** the local-file path:
+    ``Backend.open_file`` passes a ``URL`` *object* to ``create_engine`` and never
+    renders it, which is why
+    :func:`test_a_question_mark_in_a_filename_survives_the_generic_file_open`
+    passes on this same version. Where it reaches for real is Firebird, whose
+    database component is a **filesystem path**.
+
+    **It is a fact about the version, and the version is the one that ships.**
+    Upstream reported it as sqlalchemy/sqlalchemy#11234 — whose reproducer is
+    this exact case, on a SQLite *filename* — and fixed it in commit
+    ``feb17832f``, milestone **2.1**: the database is quoted on the way out and
+    unquoted on the way back, symmetrically. That has not reached a stable
+    release. The newest stable is **2.0.51**, which is what this project pins and
+    what these assertions describe; 2.1 exists as betas only, and **2.1.0b3 was
+    measured in a throwaway virtualenv to round-trip every case below**,
+    including the two that fail here.
+
+    So this test is expected to **fail on the day this project moves to 2.1**,
+    and that failure is the signal rather than a regression: delete the two
+    assertions at the bottom, move their cases up into the surviving list, and
+    drop the Firebird caveat from ``CONSTRAINTS.md`` §25 and from
+    :data:`HOSTILE_NAME`.
     """
     from sqlalchemy.engine import URL
 
@@ -641,7 +664,8 @@ def test_a_url_carries_a_database_name_that_two_characters_can_still_break():
     for benign in ("plain", "a#b", "a:b", "a/b", "a b", "a%2Fb", HOSTILE_NAME):
         assert round_trip(benign).database == benign, benign
 
-    # Do not, and silently.
+    # Do not, and silently. Both are fixed in 2.1 and neither is fixed in any
+    # release this project can pin — see the docstring before changing them.
     assert round_trip("a?b").database == "a"
     assert round_trip("a@b", password=None).database is None
     assert round_trip("a@b", password=None).host == "b"
