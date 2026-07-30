@@ -357,6 +357,59 @@ services:
       retries: 24
       start_period: 40s
 
+  # YDB, through the platform's own single-node image. Anonymous — the image
+  # configures no authentication at all, so this is the second endpoint after
+  # CockroachDB reached with no password rather than with an empty one.
+  #
+  # **The one service here whose published port may not be offset**, and the
+  # reason is worth stating because it looks like carelessness otherwise. A YDB
+  # client does not talk to the endpoint it was given: it asks that endpoint for
+  # the cluster's node list and connects to what comes back. What comes back is
+  # each node's *own* advertised address, and inside Docker that is the
+  # container's hostname on its internal port — `d7e126e4eca8:2136`, measured,
+  # which resolves nowhere on this machine. Publishing 12136 would leave the
+  # handshake succeeding and every statement after it failing to resolve a host.
+  #
+  # So the advertised address is made true instead of worked around: `hostname:
+  # localhost` makes the node advertise `localhost:2136`, and mapping 2136 to
+  # 2136 makes that address reach this container. Discovery then works exactly as
+  # it does against a real cluster, which is the point — the alternative was to
+  # pass `disable_discovery` from the client, and that would put a fact about
+  # this compose file into the code path every YDB user runs.
+  localdata-test-ydb:
+    image: ydbplatform/local-ydb:26.1.1.22
+    hostname: localhost
+    # No `YDB_USE_IN_MEMORY_PDISKS`, and that is deliberate rather than an
+    # omission. It works, and it works exactly once: the cluster configuration is
+    # written into the container's filesystem and survives a restart, while the
+    # RAM-backed disks it names do not — so a *stopped and started* container
+    # comes back with a schemeshard that answers every `CREATE TABLE` with
+    # `database doesn't have storage pools at all`, and reports itself unhealthy
+    # forever. Measured: healthy on first boot, permanently unhealthy after
+    # `docker compose stop` and `up`.
+    #
+    # This harness runs its containers in batches and rotates between them by
+    # stopping and starting, so a service that only survives being created is a
+    # trap laid for the next session rather than a saving. The default
+    # disk-backed pdisk lives inside the container, is deleted with it, and comes
+    # back after a restart — and it costs almost nothing: the container's
+    # writable layer measures **6.17 MB** with the pdisk in it (`docker ps
+    # --size`), so what the RAM-backed option was saving was not disk.
+    ports:
+      - "2136:2136"
+    healthcheck:
+      # The image ships its own `/health_check`, and it is a better probe than
+      # anything worth writing here: it runs `select 1`, lists the schema root,
+      # then creates and drops a real table — so it answers for DDL as well as
+      # for the listener. It is repeated rather than inherited because the
+      # image's own settings give it a 10s start period and no retry count, and
+      # this cluster takes ~15s to come up on a cold start.
+      test: ["CMD-SHELL", "sh /health_check"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 15s
+
 networks:
   default:
     name: localdata-test-net

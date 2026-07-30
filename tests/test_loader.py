@@ -1399,3 +1399,93 @@ def test_an_error_that_is_not_about_a_cursor_declaration_is_left_alone():
         )
         is False
     )
+
+
+# ---------------------------------------------------------------------------
+# A backend that will not make a table without a primary key
+# ---------------------------------------------------------------------------
+
+
+def _demanding_sqlite(monkeypatch):
+    """SQLite, but answering ``requires_primary_key()`` the way YDB does.
+
+    Substituted rather than reached for over the network, because what is under
+    test is the *loader's* response to the axis and not the database that made
+    the axis necessary. Driving it through SQLite means this runs with no
+    container, and means a regression is caught by the fast suite rather than
+    only by the batch that happens to include YDB.
+    """
+    from localdata_mcp import dialects as dialects_module
+
+    class Demanding(dialects_module.SQLiteBackend):
+        def requires_primary_key(self) -> bool:
+            return True
+
+    monkeypatch.setitem(dialects_module.BACKENDS, "sqlite", Demanding())
+
+
+def test_a_backend_that_demands_a_key_gets_a_surrogate_holding_the_row_order(
+    workspace, root, monkeypatch
+):
+    """The file's own columns are untouched; one column is added in front.
+
+    The values matter as much as the column: a key that was present but constant
+    would satisfy the database and lose the file's order, and a key derived from
+    the data would be a uniqueness constraint this server invented. It is the
+    row's position, and it is asserted against the order the file is in.
+    """
+    _demanding_sqlite(monkeypatch)
+    workspace.attach_memory("scratch")
+
+    # ``load_file`` answers with one entry per table the file produced, and a
+    # CSV produces exactly one.
+    (info,) = workspace.load_file(str(root / "simple.csv"), "scratch")
+
+    names = [column.name for column in info.columns]
+    assert names[0] == "_row"
+    # Everything after the key is the file's own header, in the file's order —
+    # read from the file rather than restated here, so this cannot pass by
+    # agreeing with a stale copy of it.
+    header = (root / "simple.csv").read_text().splitlines()[0].split(",")
+    assert names[1:] == [name.lower() for name in header]
+
+    _, rows = workspace.query("scratch", "SELECT _row FROM simple ORDER BY _row")
+    keys = [row[0] for row in rows]
+    assert keys == list(range(len(keys)))
+    assert len(keys) == info.row_count
+
+
+def test_the_added_key_is_explained_rather_than_merely_present(
+    workspace, root, monkeypatch
+):
+    """A column the caller did not ask for and cannot account for is a defect.
+
+    ``info`` lists it either way, so the outcome looks identical whether or not
+    anything explains it — the class of failure that passes every test asserting
+    on the outcome. The note is therefore asserted, and asserted to name both the
+    column and the reason.
+    """
+    _demanding_sqlite(monkeypatch)
+    workspace.attach_memory("scratch")
+
+    (info,) = workspace.load_file(str(root / "simple.csv"), "scratch")
+
+    assert any("_row" in note and "primary key" in note for note in info.notes), (
+        info.notes
+    )
+
+
+def test_nothing_is_added_where_the_backend_does_not_demand_it(workspace, root):
+    """The default path, asserted so the surrogate cannot leak into it.
+
+    The same file through the same verb on an ordinary backend: no extra column,
+    and no note about one. Without this the axis could default the wrong way and
+    every other dialect would silently gain a column.
+    """
+    workspace.attach_memory("scratch")
+
+    (info,) = workspace.load_file(str(root / "simple.csv"), "scratch")
+
+    header = (root / "simple.csv").read_text().splitlines()[0].split(",")
+    assert [column.name for column in info.columns] == [n.lower() for n in header]
+    assert not any("_row" in note for note in info.notes)

@@ -30,8 +30,12 @@ from localdata_mcp.dialects import (
     MySQLBackend,
     SQLiteBackend,
     UnsupportedOperation,
+    YDBBackend,
     backend_for,
     _FIREBIRD_VARCHAR_MAX,
+    _YDB_ISOLATION,
+    _YDB_READ_ONLY,
+    _YDB_SCHEME_IN_TRANSACTION,
 )
 
 
@@ -606,3 +610,155 @@ def test_text_too_wide_for_a_varchar_keeps_the_values_and_loses_the_grouping():
     # would pass whichever one came back. The distinction is the assertion.
     beyond = backend.column_type("TEXT", longest=_FIREBIRD_VARCHAR_MAX + 1)
     assert type(beyond) is Text
+
+
+# ---------------------------------------------------------------------------
+# YDB
+# ---------------------------------------------------------------------------
+
+
+def test_the_dialect_named_after_a_query_language_answers_as_the_database():
+    """``yql`` is the dialect's name; ``ydb`` is the engine's, and that is what shows.
+
+    The third distinct way a dialect name has failed to be an identity here, and
+    each one breaks differently. YugabyteDB borrowed *another engine's* dialect,
+    so it was handed that engine's answers. Firebird's dialect is named after the
+    Python **driver**, so a refusal named a library. This one is named after the
+    **query language**, so a refusal would name a syntax. All three end at the
+    same assertion: whatever the key is, the backend knows which database it is.
+    """
+    backend = backend_for("yql")
+
+    assert isinstance(backend, YDBBackend)
+    assert backend.name == "ydb"
+    # And the engine's own name is *not* a key, so nothing resolves by accident.
+    assert "ydb" not in BACKENDS
+    assert backend_for("ydb").name == "ydb"
+    assert not isinstance(backend_for("ydb"), YDBBackend)
+
+
+def test_the_backend_that_demands_a_primary_key_says_so_and_stands_alone():
+    """One axis, one backend, and the default is what every other dialect uses.
+
+    The axis is a bare fact — this engine refuses a keyless table — and the
+    *response* to it lives in the loader, so a second engine that ever states it
+    inherits the whole answer without writing any of it.
+    """
+    assert backend_for("yql").requires_primary_key() is True
+    assert Backend().requires_primary_key() is False
+    for dialect in BACKENDS:
+        if dialect != "yql":
+            assert backend_for(dialect).requires_primary_key() is False, dialect
+
+
+def test_ydb_has_no_time_of_day_type_and_says_which_type_that_is():
+    """The same gap Oracle has, reached independently — hence a set, not a flag.
+
+    Asserted as a set membership rather than as equality with Oracle's so that
+    the two can diverge: they share exactly one entry today and nothing says they
+    must tomorrow.
+    """
+    unstorable = backend_for("yql").unstorable_column_types()
+
+    assert "Time" in unstorable
+    # Everything else a table somebody else made can hold, this holds — measured.
+    assert not {"Numeric", "Date", "DateTime", "LargeBinary", "Boolean"} & unstorable
+
+
+def test_the_read_posture_asks_for_a_read_only_level_rather_than_a_strict_one():
+    """The floor here is a refusal, because there is no rollback to build one on.
+
+    The distinction this pins is the whole finding: Trino's remedy names a
+    *transactional* level to take the driver out of autocommit, and that does not
+    work here — the level is honoured and the write still lands, because the
+    client library binds a cursor's transaction before the transaction exists.
+    So the level named must be a **read-only** one, which makes the server refuse
+    the statement instead of the client failing to undo it.
+    """
+    assert "READONLY" in _YDB_ISOLATION.replace(" ", "")
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.options: dict = {}
+
+        def update_execution_options(self, **options) -> None:
+            self.options.update(options)
+
+    engine = Recorder()
+    backend_for("yql").read_posture(engine, None)
+    assert engine.options == {"isolation_level": _YDB_ISOLATION}
+
+
+def test_both_of_ydbs_refusals_are_recognised_and_nothing_else_is():
+    """Rows and schema are refused by different codes, in different places.
+
+    A row refusal carries its code on a *nested issue*; a schema refusal carries
+    it on the *status* and leaves the issue code at zero. Recognising only the
+    first leaves ``CREATE`` through ``query`` explained by the driver rather than
+    by the verb that does it — a right outcome with a wrong explanation, which is
+    exactly the class that passes every test asserting on the outcome.
+    """
+    backend = backend_for("yql")
+
+    class Issue:
+        def __init__(self, code):
+            self.issue_code = code
+
+    class Status:
+        def __init__(self, value):
+            self.value = value
+
+    class Failure(Exception):
+        def __init__(self, status=None, issues=()):
+            self.status = Status(status) if status is not None else None
+            self.issues = issues
+
+    # Rows: the code is on the nested issue.
+    assert backend.denies_write(Failure(status=400080, issues=[Issue(_YDB_READ_ONLY)]))
+    # Schema: the code is on the status, and the issue carries zero.
+    assert backend.denies_write(
+        Failure(status=_YDB_SCHEME_IN_TRANSACTION, issues=[Issue(0)])
+    )
+    # Anything else is not a refusal, and must not be dressed up as one.
+    assert not backend.denies_write(Failure(status=400080, issues=[Issue(1020)]))
+    assert not backend.denies_write(Failure())
+    # An exception carrying none of this structure must not raise on the way past.
+    assert not backend.denies_write(ValueError("nothing structured here"))
+
+
+def test_a_rename_is_issued_as_schema_rather_than_as_an_opaque_statement():
+    """``DDL``, not ``text``, and the difference is which path the statement takes.
+
+    Both render the same string. Only ``DDL`` is an ``ExecutableDDLElement``, and
+    only that carries the "this is schema" signal a dialect can route on — which
+    is the difference between accepted and ``Scheme operations cannot be executed
+    inside transaction`` on YDB. Eleven dialects could not tell the two apart,
+    which is why it stood as ``text``.
+
+    Asserted on the *type* of what is executed rather than on the SQL, because
+    the SQL was never wrong.
+    """
+    from sqlalchemy.schema import ExecutableDDLElement
+
+    executed = []
+
+    class Preparer:
+        @staticmethod
+        def quote(name):
+            return f'"{name}"'
+
+    class Dialect:
+        identifier_preparer = Preparer()
+
+    class Conn:
+        dialect = Dialect()
+
+        @staticmethod
+        def execute(statement):
+            executed.append(statement)
+
+    Backend().rename_table(Conn(), "orders", "sales")
+
+    assert len(executed) == 1
+    assert isinstance(executed[0], ExecutableDDLElement)
+    assert str(executed[0]) == 'ALTER TABLE "orders" RENAME TO "sales"'

@@ -30,11 +30,23 @@ mean something different, or nothing at all, on another backend"**:
   of an index on every backend whose indexes can afterwards be found by
   reflection. ClickHouse's cannot, and its secondary indexes answer a different
   question, so the truthful answer there is that the verb does not apply.
+* **Whether a table may exist without a key.** Every backend here makes a heap
+  table from a bare column list; YDB refuses one outright. A file has no key to
+  offer, so what the loader does about it has to be decided once — and the axis
+  carries only the *fact*, so the decision stays in one place.
 
 Everything else — creating tables, inserting, introspection via ``inspect()``,
 streaming reads — is Core and lives in :mod:`loader`. When something new turns out
-to need a per-backend answer, it earns an entry here; wrapping a statement in
-``text()`` to change its transport is not that, and does not belong.
+to need a per-backend answer, it earns an entry here.
+
+Two things that look like they belong and do not. **Changing a statement's
+transport is not an axis** — wrapping SQL in ``text()`` to move it somewhere else
+does not become a per-backend fact by being awkward. And **choosing the right Core
+construct is not an axis either, it is just correctness**: a schema statement
+issued as ``DDL`` rather than as ``text`` travels the DDL execution path on every
+dialect, which is where a backend gets to route it. Thirteen dialects could not
+tell those two apart and YDB could, and the fix was to stop stating a schema
+statement as an opaque one rather than to give YDB an override for it (#59).
 """
 
 from __future__ import annotations
@@ -46,6 +58,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from sqlalchemy import (
+    DDL,
     DOUBLE_PRECISION,
     INTEGER,
     REAL,
@@ -500,9 +513,26 @@ class Backend:
         than into an f-string, so a name needing quoting is quoted the way
         *this* database quotes it, and a name arriving from outside cannot
         become syntax.
+
+        **Through ``DDL`` rather than through ``text``, and the difference is not
+        cosmetic** (#59). Both render the same string; only one of them tells
+        SQLAlchemy that the string is *schema*. ``DDL`` is an
+        ``ExecutableDDLElement``, so it travels the DDL execution path — which is
+        where a dialect gets to say that a schema statement does not belong
+        inside the surrounding transaction. ``text`` is an opaque statement and
+        stays wherever the connection already is.
+
+        Eleven dialects cannot tell the two apart, and that agreement is the
+        reason this stood as ``text`` for so long. YDB can: every schema
+        operation there is refused outright with ``Scheme operations cannot be
+        executed inside transaction`` when it arrives as ``text``, and accepted
+        when it arrives as ``DDL`` — measured, one variable changed, on the same
+        connection. Every other schema statement this server issues was already a
+        Core construct (``Table.create``, ``Table.drop``, ``Index.create``), so
+        this was the one place the signal was being dropped.
         """
         prepare = conn.dialect.identifier_preparer.quote
-        conn.execute(text(f"ALTER TABLE {prepare(table)} RENAME TO {prepare(to)}"))
+        conn.execute(DDL(f"ALTER TABLE {prepare(table)} RENAME TO {prepare(to)}"))
 
     def folds_identifiers(self) -> bool:
         """Whether this backend renames a table to a case it chose itself.
@@ -565,6 +595,34 @@ class Backend:
         is what keeps this from being a dispatch on dialect name.
         """
         return {}
+
+    def requires_primary_key(self) -> bool:
+        """Whether a table here is refused unless it declares a primary key.
+
+        ``False`` everywhere but YDB, which rejects a keyless ``CREATE TABLE``
+        outright — ``Primary key is required for ydb tables.`` — rather than
+        making a heap the way every other backend does.
+
+        This is a question about **loading a file**, which is the only place this
+        server creates a table it did not receive a definition for. A file's rows
+        have an order and no key: nothing in a CSV is guaranteed unique, so there
+        is no column that could be nominated without the loader inventing a
+        constraint the data does not have. Where this answers ``True``,
+        :meth:`loader.Workspace.insert_frame` adds a surrogate key holding each
+        row's ordinal, and **says so in the table's notes** — the column is real,
+        it will show up in ``info`` and in ``SELECT *``, and a caller told
+        nothing would rightly call that a lie.
+
+        The alternative shapes were measured and rejected. Nominating *every*
+        column as the key makes duplicate rows collide, and YDB resolves a
+        primary-key collision by merging rather than by failing — so two
+        identical rows in a CSV would land as one, silently. Refusing the load
+        entirely was the other option, and it fails this project's rule that an
+        unknown backend answers honestly and usefully rather than
+        "unsupported": the rows can be stored, exactly, and only the shape of
+        the table has to give.
+        """
+        return False
 
     def driver_errors(self) -> tuple[type[BaseException], ...]:
         """Failures from this driver that SQLAlchemy will not have wrapped.
@@ -1798,6 +1856,190 @@ class FirebirdBackend(Backend):
         return super().column_type(declared, longest=longest)
 
 
+# ---------------------------------------------------------------------------
+# YDB
+# ---------------------------------------------------------------------------
+
+
+#: The isolation level that gives YDB's read connection a floor at all.
+#:
+#: Named rather than inlined for the reason :data:`_TRINO_ISOLATION` is: it is a
+#: measurement, not a preference, and the measurement is recorded beside it.
+#:
+#: Unlike Trino, every level this dialect declares survives SQLAlchemy's
+#: normalisation — the driver's enum *values* carry the spaces SQLAlchemy puts
+#: in, so the two-word names round-trip where Trino's raised ``KeyError``. So
+#: this is a free choice among four read-only levels, and a snapshot is the one
+#: that means what a read connection should mean: the latest committed state,
+#: consistent for as long as the connection holds it. See docs/CONSTRAINTS.md
+#: §22.3.
+_YDB_ISOLATION = "SNAPSHOT READONLY"
+
+#: YDB's own code for "this operation cannot be performed in a read only
+#: transaction", carried on the nested issue rather than on the status. Matched
+#: on the code for the reason MySQL's and ClickHouse's are: a sentence carries a
+#: locale and a version and a code carries neither.
+_YDB_READ_ONLY = 2008
+
+#: The status YDB answers a **schema** statement with when it arrives inside a
+#: transaction — ``PRECONDITION_FAILED``, carrying
+#: ``Scheme operations cannot be executed inside transaction``.
+#:
+#: Broader than :data:`_YDB_READ_ONLY` and knowingly so: the nested issue carries
+#: ``issue_code: 0``, so the status is the only machine-readable part of this
+#: refusal and it is a general "not in this state" code rather than a specific
+#: one. What bounds it is where it is consulted — :meth:`Backend.denies_write` is
+#: asked only about a statement that failed on the *read* connection, and the
+#: only statement this server sends there that a transaction can be the wrong
+#: place for is a schema statement. A false positive would replace a driver
+#: message with an accurate sentence about which verb to use instead, which is
+#: the cost worth taking.
+_YDB_SCHEME_IN_TRANSACTION = 400120
+
+#: The name YDB gives a column that a loaded file did not bring. Prefixed with an
+#: underscore so it cannot collide with a sanitised CSV header — ``_sanitize``
+#: never produces a leading underscore — and named for what it holds rather than
+#: for why it exists, because the caller reading ``info`` sees the column and not
+#: this comment.
+_YDB_SURROGATE_KEY = "_row"
+
+
+@dataclass(frozen=True)
+class YDBBackend(Backend):
+    """YDB, whose one rule about transactions explains almost everything else.
+
+    Registered under ``yql`` because that is what the dialect calls itself —
+    after YDB's **query language**, not after the engine and not after the
+    driver. The third distinct way a dialect name has failed to be an identity
+    here: YugabyteDB borrows another engine's dialect, Firebird's is named after
+    the Python package that speaks the wire, and this one is named after the SQL.
+    A refusal that said ``yql`` would name a syntax to somebody who opened a
+    database. Issue #45's family, third variant.
+
+    **The rule: a schema operation may not be inside a transaction.** Everything
+    below follows from it, and it is why the shared :meth:`Backend.rename_table`
+    changed rather than being overridden (#59) — the rename was the one schema
+    statement this server stated as ``text``, and ``text`` keeps a statement
+    inside the transaction the connection is already in.
+
+    **A table must declare a primary key** — see :meth:`requires_primary_key`,
+    the one axis this backend adds.
+
+    **There is no rollback to be had.** Not because YDB lacks transactions: it
+    has them, the driver exposes them, and they work when driven directly. The
+    client library binds a cursor's transaction context *at cursor construction*,
+    and SQLAlchemy constructs the cursor before it opens the transaction — so
+    every statement runs in implicit autocommit and the transaction opened a
+    moment later is empty. ``rollback()`` then rolls that empty transaction back
+    and **returns normally**, reporting success over a write that stands. This is
+    a defect in ``ydb-dbapi`` rather than in YDB, it is unreachable from here, and
+    it is why :meth:`read_posture` refuses rather than relying on the
+    transactional floor. See docs/CONSTRAINTS.md §22.2 for the ordering
+    measurement that located it.
+
+    **It has no time-of-day type**, which is Oracle's gap arrived at
+    independently — see :meth:`unstorable_column_types`.
+
+    Everything else is generic and was measured to be: ``Numeric`` round-trips
+    exactly, ``Double`` holds a float64, ``Text`` groups by value, ``Date``,
+    ``DateTime``, ``LargeBinary`` and ``Boolean`` all store and read back,
+    indexes build and reflect and drop, a quoted mixed-case name survives
+    verbatim, and the driver's errors arrive properly wrapped as
+    ``SQLAlchemyError`` so :meth:`driver_errors` stays empty.
+    """
+
+    name: str = "ydb"
+
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        """Refuse the write outright, because there is no rollback underneath.
+
+        The generic guarantee is that a read connection never commits, so
+        anything it changed is rolled back. Here that guarantee is not weakened
+        but **absent**: an ``INSERT`` sent through a read connection was applied,
+        survived an explicit ``rollback()`` that raised nothing, and was still
+        there on the next connection — measured three ways (close without commit,
+        explicit rollback, aborted ``begin()`` block), all three the same.
+
+        Trino's remedy was tried first and does not work here. There, naming a
+        real isolation level takes the driver out of autocommit and the floor
+        comes back; here ``SERIALIZABLE`` *is* honoured — the level reads back as
+        set — and the write still lands, because the defect is the cursor's
+        binding time rather than the level.
+
+        So the posture is raised instead of restored, which is the shape SQLite
+        and ClickHouse already have: a **read-only** isolation level makes the
+        server refuse the statement before it reaches the data.
+        ``Operation 'InsertAbort' can't be performed in read only transaction``,
+        and the row count is unchanged. That is a stronger guarantee than the one
+        it replaces, not a weaker one — the write never happens rather than
+        happening and being undone.
+
+        Set on the engine rather than per statement, for the reason SQLite's
+        ``query_only`` and MySQL's read-only session are: a posture toggled
+        around a statement has a window in which it is something else.
+        """
+        engine.update_execution_options(isolation_level=_YDB_ISOLATION)
+
+    def denies_write(self, exc: Exception) -> bool:
+        """Recognise both of the refusals a read connection here produces.
+
+        **Rows** come back as ``issue_code: 2008`` on a *nested* issue rather
+        than on the exception's status: ``status`` is ``GENERIC_ERROR`` (400080)
+        for a missing primary key and an unknown column type as well, so the
+        status identifies nothing and the nested code identifies exactly this.
+
+        **Schema** comes back the other way round — ``PRECONDITION_FAILED``
+        (400120) on the status, with ``issue_code: 0`` on the issue, because a
+        schema statement is not refused for being a *write* but for being inside
+        a transaction at all. Two refusals, two codes, one meaning as far as the
+        caller is concerned: this statement will not happen here, and there is a
+        verb that does it.
+
+        Both are needed and the second was nearly missed, because without it the
+        outcome was already right — the ``CREATE`` was refused and nothing was
+        created — and only the *explanation* was wrong. A wrong explanation
+        attached to a right outcome passes every test that asserts on the
+        outcome, which is why the endpoint test asserts on the text.
+
+        Read defensively — ``getattr`` and a guarded loop — because this walks a
+        driver's internal error structure rather than a documented API, and a
+        backend whose refusal-recogniser raised would turn a clean refusal into a
+        crash.
+        """
+        origin = getattr(exc, "orig", exc)
+        if getattr(getattr(origin, "status", None), "value", None) == (
+            _YDB_SCHEME_IN_TRANSACTION
+        ):
+            return True
+        for issue in getattr(origin, "issues", ()) or ():
+            if getattr(issue, "issue_code", None) == _YDB_READ_ONLY:
+                return True
+        return False
+
+    def requires_primary_key(self) -> bool:
+        """``True``. YDB has no heap tables; a keyless ``CREATE TABLE`` is refused.
+
+        Measured, one variable changed: the same statement with a primary key
+        declared is accepted and the rows land, and without one it fails at
+        parse time with ``"Primary key is required for ydb tables."``
+        (``issue_code: 1020``). Nothing is created either way, so this is a loud
+        failure rather than a silent one — which is the only reason it was cheap
+        to find.
+        """
+        return True
+
+    def unstorable_column_types(self) -> frozenset[str]:
+        """YDB has no time-of-day type.
+
+        ``Unknown simple type 'TIME'``, raised while compiling the column, so
+        there is no column for a value to go into. The same gap Oracle has,
+        reached independently — and the reason this axis is a set of names rather
+        than a flag, since the two backends share exactly one entry and nothing
+        else.
+        """
+        return frozenset({"Time"})
+
+
 _SQLITE = SQLiteBackend()
 
 #: Dialect name to the backend that has something *extra* to say about it. An
@@ -1825,6 +2067,11 @@ BACKENDS: dict[str, Backend] = {
     # resolves to, while the backend it maps to calls itself `firebird` — which is
     # what a refusal has to say.
     "firebirdsql": FirebirdBackend(),
+    # The second key here that is not the name of an engine, and for a third
+    # distinct reason: `ydb-sqlalchemy` registers its dialect as `yql`, after
+    # YDB's query language. Firebird's key is a driver's name, YugabyteDB's
+    # problem was another engine's name, and this is neither.
+    "yql": YDBBackend(),
 }
 
 

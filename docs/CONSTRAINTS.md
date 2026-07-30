@@ -3157,3 +3157,282 @@ replication, the `dcf` consensus mode, column-store tables, and the in-place upd
 registers are untried — only the synchronous psycopg2 one is exercised. Nothing here touches its
 compatibility modes: an openGauss database can be created in `A` (Oracle), `B` (MySQL) or `PG` mode,
 and the container's default is the only one measured.
+
+## §22 — YDB, and a rollback that reports success over a write that stands (2026-07-30)
+
+Fourteenth endpoint dialect, eleventh from the backend catalogue (task 22, worklist item 16 — taken
+ahead of Db2, OceanBase, Exasol, Databend and HyperSQL, which step 4 of the procedure permits). A
+distributed OLTP store from Yandex, and the first backend here reached through a dialect named after
+neither its engine nor its driver.
+
+Measured against `ydbplatform/local-ydb:26.1.1.22`, server version **26.1.1.22** (`SELECT version()`,
+returned as `b'26.1.1.22'` — bytes, since YDB's `String` is a byte string), through `ydb-sqlalchemy`
+0.1.22 on `ydb-dbapi` 0.1.22 and the `ydb` SDK 3.31.1. All three are Yandex's own, Apache-2.0, and
+pure Python: there is no rival package and nothing native to install, which after Firebird's
+`libfbclient` (§20.1) is worth noticing rather than assuming.
+
+**One rule about transactions explains almost every measurement below: a schema operation may not be
+inside a transaction.** It accounts for the rename, the drop, the index, the harness's own teardown,
+and the shape of the refusal `query` produces for DDL. The findings that are *not* downstream of it
+are the missing primary key, the absent time-of-day type, and the rollback that does not roll back.
+
+Three findings are in **our** code or the harness's, one is a client-library defect, and one is a
+property of the test image rather than of YDB.
+
+### 22.1 Reaching it at all: the client does not talk to the endpoint it was given
+
+A YDB client resolves the endpoint it is handed into the cluster's *own* node list and connects to
+what comes back. Inside Docker that is the container's hostname on its internal port, which resolves
+nowhere on the host:
+
+```
+InterfaceError: Resolved endpoints for database /local: DiscoveryResult
+  <self_location: 1, endpoints [<Endpoint d7e126e4eca8:2136, location 1, ssl: False>]>
+```
+
+The handshake to the published port succeeds; discovery is what fails, immediately after.
+
+Three routes were measured, and the choice between them is a design decision rather than a
+workaround, so it is recorded as one:
+
+| Route | Result | Why not |
+|---|---|---|
+| URL query `?disable_discovery=true` | **ignored**, original error unchanged | the driver swallows unknown connect keywords (#62) |
+| `connect_args={"driver_config_kwargs": {"disable_discovery": True}}` | works | puts a fact about *this compose file* into the code path every YDB user runs |
+| compose `hostname: localhost` + port mapped 2136→2136 | works | **chosen** |
+
+The third makes the advertised address *true* rather than routing around it: the node advertises
+`localhost:2136`, and on the host that address reaches the container. Discovery then behaves exactly
+as it does against a real cluster, which is the point — the second route would have disabled a
+production code path in order to fix a test harness.
+
+Its cost is real and is the reason this is written down: **YDB is the only service in this harness
+whose published port may not be offset.** Every other one publishes well away from its engine's
+default so a locally-installed copy cannot be reached by accident. Here the published port must equal
+the advertised one, so it is 2136 on both sides.
+
+The measured fact underneath: `SELECT * FROM \`.sys/nodes\`` reports the node's host as `localhost`
+once the container is given that hostname, which is what makes the address reachable.
+
+### 22.2 A rollback that reports success over a write that stands (issue #61)
+
+**The transactional floor does not exist on YDB as SQLAlchemy drives it.** An uncommitted write
+survives. Measured three ways, one variable changed:
+
+| Sequence | Rows afterwards |
+|---|---|
+| `INSERT`, connection closed without committing | 1 |
+| `INSERT`, then an explicit `Connection.rollback()` | 1 |
+| `INSERT` inside a `begin()` block that raises | 1 |
+
+`rollback()` raises nothing in any of them. It returns normally.
+
+**Trino's remedy was tried first and does not work here**, and the difference matters because the
+two look identical from outside. In §16.2 the driver defaults to autocommit and naming a real
+isolation level restores the floor. Here `SERIALIZABLE` is genuinely in force —
+`get_isolation_level` reads back `IsolationLevel.SERIALIZABLE`, `interactive_transaction` is `True` —
+and the write still lands.
+
+The cause is **call order inside the client library**, not the isolation level.
+`ydb_dbapi.Connection.cursor()` captures the connection's current `_tx_context` into the cursor it
+builds. SQLAlchemy creates the cursor *before* it calls `do_begin`. Traced with both methods
+instrumented:
+
+```
+call order: ['cursor(tx_context=None)', 'begin()']
+rows after SQLAlchemy rollback: 1
+```
+
+So the cursor captures "no transaction", the statement runs in implicit autocommit, and the
+transaction opened a moment later is empty — which is what `rollback()` then dutifully rolls back.
+
+Driving the DBAPI directly, varying only the order:
+
+| Order | Rows after `rollback()` |
+|---|---|
+| `begin()` → `cursor()` → `execute` → `rollback()` | **0** |
+| `cursor()` → `begin()` → `execute` → `rollback()` | 1 |
+
+**This is a client-library defect, not a property of YDB.** YDB's transactions work; the driver
+exposes them; the cursor binds them at the wrong moment. Mark it as such before anybody "fixes" the
+database for it.
+
+Unreachable from here, so the posture is **raised rather than restored** — see 22.3.
+
+### 22.3 A read-only isolation level, which refuses instead of undoing
+
+Since there is no rollback to build a floor on, the read connection is given a read-only isolation
+level and the server refuses the write before it reaches the data. Measured across every level the
+dialect declares, same table, same statement:
+
+| Isolation level | `SELECT` | write | rows before → after |
+|---|---|---|---|
+| `ONLINE READONLY` | works | refused | 1 → 1 |
+| `SNAPSHOT READONLY` | works | refused | 1 → 1 |
+| `STALE READONLY` | works | refused | 1 → 1 |
+| `ONLINE READONLY INCONSISTENT` | works | refused | 1 → 1 |
+| `SERIALIZABLE` | works | **accepted** | 1 → 2 |
+| `AUTOCOMMIT` (the default) | works | **accepted** | 1 → 2 |
+
+The refusal: `Operation 'InsertAbort' can't be performed in read only transaction`, carrying
+`issue_code: 2008` on a nested issue. That is the shape SQLite and ClickHouse already have, and it is
+a **stronger** guarantee than the transactional floor it replaces — the write never happens, rather
+than happening and being undone.
+
+`SNAPSHOT READONLY` is the one chosen, from four that all work. It is the level whose *meaning*
+matches what a read connection should be: the latest committed state, consistent for as long as the
+connection holds it. Picking one of the others for its behaviour under #61 would bake that defect
+into the choice.
+
+**Unlike Trino, the choice was free.** §16.2 records that SQLAlchemy normalises an isolation level to
+spaces while Trino's dialect looks it up in an enum keyed with underscores, so every two-word level
+raised `KeyError` and `SERIALIZABLE` was the only reachable one. This driver's enum *values* carry the
+spaces, so all six round-trip.
+
+### 22.4 A table must declare a primary key (the one new axis)
+
+YDB has no heap tables. A keyless `CREATE TABLE` is refused at parse time:
+
+```
+message: "Pre type annotation" issue_code: 1020
+  issues { message: "Primary key is required for ydb tables." }   (server_code: 400080)
+```
+
+Nothing is created, so this is a loud failure — which is the only reason it was cheap to find.
+
+A file has no key to offer: nothing in a CSV is guaranteed unique, so any column nominated would be a
+constraint this server invented on the caller's data. Three responses were considered and the choice
+is recorded because it changes the shape of a table the caller gets back:
+
+| Response | Why not |
+|---|---|
+| nominate every column as the key | YDB resolves a primary-key collision by **merging**, so two identical rows in a CSV would land as one, silently |
+| refuse to load the file at all | the rows *can* be stored exactly; only the table's shape has to give |
+| **add a surrogate key holding the row's position** | chosen |
+
+So `insert_frame` prepends `_row`, an integer key holding each row's position in the file, and
+**reports it**: the column appears in `info` like any other, and the table's notes say why it is
+there. A column the caller did not ask for and cannot account for would be a table shape they have to
+reverse-engineer.
+
+`_row` cannot collide with a column the file brought: `_sanitize` strips leading underscores from
+every header it cleans, and its fallback names are `column_N`.
+
+The axis is `Backend.requires_primary_key()` — a bare fact, `True` only here. The *response* lives in
+the loader, so a second engine that ever states the fact inherits the whole answer without writing
+any of it.
+
+**What this costs:** the write path has no protection at all here, per 22.2. A failure part-way
+through `insert_frame` leaves the rows that already landed, and the drop-and-create pair is not atomic
+either. Recorded as a known limit rather than worked around.
+
+### 22.5 A schema statement stated as text is a different statement (issue #59)
+
+`Backend.rename_table` is the one place this server must state SQL, because Core has no rename
+construct — and it stated it as `text(...)`. Every other schema statement it issues is a Core
+construct. On thirteen dialects the two are interchangeable. Here they are not:
+
+| How the statement was issued | Result |
+|---|---|
+| `conn.execute(text("ALTER TABLE a RENAME TO b"))` | `Scheme operations cannot be executed inside transaction` (400120) |
+| `conn.execute(DDL("ALTER TABLE a RENAME TO b"))` | renamed, rows kept |
+| `conn.execute(text("DROP TABLE a"))` | refused, same message |
+| `conn.execute(DropTable(a))` | dropped |
+| `conn.execute(text("CREATE TABLE …"))` | refused, same message |
+| `conn.execute(CreateTable(t))` | created |
+
+Both render the same string. Only `DDL` is an `ExecutableDDLElement`, so only that travels the DDL
+execution path where a dialect can say a schema statement does not belong inside the surrounding
+transaction.
+
+**The defect is in shared code and predates YDB.** Thirteen dialects agreeing that `text` and `DDL`
+are the same thing is one observation repeated thirteen times.
+
+The **harness's own teardown had it too** — `_drop_everything_named` dropped with `text`, was refused,
+and left every YDB test's tables behind. Fixed the same way, and noted here because a fixture stating
+a dialect fact is the same defect as shared code stating one.
+
+The refusal that reaches a caller who sends DDL through `query` is now recognised too. It arrives the
+opposite way round from the row refusal in 22.3 — `PRECONDITION_FAILED` (400120) on the *status*, with
+`issue_code: 0` on the issue — so `denies_write` matches both, and `query` answers a `CREATE` with the
+verb that does it rather than with the driver's sentence. Without that branch the outcome was already
+right and only the explanation was wrong, which is the class §21.3 named.
+
+### 22.6 No time-of-day type
+
+`Unknown simple type 'TIME'`, raised while compiling the column, so there is no column for a value to
+go into. Oracle's gap (§11-era, `OracleBackend.unstorable_column_types`) reached independently, and
+the reason that axis is a set of names rather than a flag: the two backends share exactly one entry.
+
+### 22.7 The test image survives being created but not being restarted (issue #63)
+
+`YDB_USE_IN_MEMORY_PDISKS=true` works, once. `local_ydb deploy` writes the cluster configuration into
+the container's filesystem, which survives a restart; the RAM-backed disks it names do not.
+
+| pdisk setting | first boot | after `stop` then `up` |
+|---|---|---|
+| `YDB_USE_IN_MEMORY_PDISKS=true` | healthy ~15s | **unhealthy, permanently** |
+| default (disk-backed) | healthy ~15s | healthy ~15s |
+
+The restarted cluster refuses every `CREATE TABLE`, including the one in the image's own health
+check: `database doesn't have storage pools at all to create tablet channels to storage pool binding
+by profile id`.
+
+This harness rotates its containers in batches by stopping and starting them, so the variable is a
+trap laid for the next session rather than a saving. It is dropped, and the disk-backed default costs
+**6.17 MB** of container writable layer (`docker ps --size`) — so what it was saving was not disk.
+
+### 22.8 Everything else, and it really was almost everything
+
+| Axis | YDB |
+|---|---|
+| `requires_primary_key` | **`True`** — the one new axis (22.4) |
+| `read_posture` | **read-only isolation level** — a refusal, not a rollback (22.3) |
+| `denies_write` | **two codes** — `issue_code 2008` for rows, status `400120` for schema (22.3, 22.5) |
+| `unstorable_column_types` | **`{"Time"}`** (22.6) |
+| `ddl_survives_refusal` / `dml_survives_refusal` | generic `False` — both refused before touching anything |
+| `sees_new_tables_in_transaction` | generic `True` — schema is committed as it runs, so a new table is addressable |
+| `rename_table` | generic, **once the generic one was fixed** (22.5); rows kept |
+| `renames_tables` / `builds_indexes` | generic `True` — index created, reflected by name, dropped |
+| `folds_identifiers` | generic `False` — `Probe9E9C` created and reflected verbatim |
+| `column_type` | generic — the portable types render usably |
+| `table_options` | generic — empty |
+| `driver_errors` | generic — the driver's errors arrive wrapped as `SQLAlchemyError` |
+| `impostors` / `banner_query` | none; it ships its own dialect |
+| `settle` | generic — a committed write is immediately readable |
+
+Types measured one column at a time, so one failure could not hide the rest:
+
+| Core type | Rendered | Round trip |
+|---|---|---|
+| `Integer` | `Int32` | `7` → `7` |
+| `String(50)` | `Utf8` | `'abc'` → `'abc'` |
+| `Text` | `Utf8` | `'abc'` → `'abc'`, and **groups by value** |
+| `Numeric(12,2)` | `Decimal(12,2)` | `Decimal('12.34')` → `Decimal('12.34')`, exact |
+| `Double` | `Double` | `0.1` → `0.1` |
+| `Date` | `Date` | exact |
+| `DateTime` | `Timestamp` | exact |
+| `LargeBinary` | `String` | `b'\x00\x01'` → `b'\x00\x01'` |
+| `Boolean` | `Bool` | `True` → `True` |
+| `Time` | — | **no such type** (22.6) |
+
+`Numeric` round-trips exactly, which CrateDB did not (§19.5), and `Text` groups by value, which
+Firebird did not (§20.3).
+
+### 22.9 What this did not test
+
+Everything distributed, which is most of why YDB exists. This is a single-node `local-ydb` container:
+no partitioning across nodes, no replication, no failover, and therefore nothing about the
+`40001`-style write-contention retry that §15.3 and issue #47 leave unmeasured — a single node cannot
+produce genuine contention any more than the other single-node endpoints here can.
+
+Also untried: the `ydb_async` dialect the same package registers (only the synchronous driver is
+exercised); YDB's column-oriented tables (`STORE = COLUMN`), where the primary-key requirement and the
+type mapping may both differ; secondary indexes beyond the plain global one, in particular
+`GLOBAL ASYNC` and covering indexes; topics and the Kafka proxy the image also exposes on 9092;
+authentication of any kind, since the image configures none; and TLS, which the image enables on 2135
+while everything here goes over plaintext 2136.
+
+The transaction findings in 22.2 are measured **through SQLAlchemy**, which is how this server reaches
+every database. The DBAPI-direct measurements are there to locate the defect, not to describe a
+supported path — nothing here uses the driver directly.

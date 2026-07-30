@@ -512,6 +512,39 @@ def _opengauss(env: dict[str, str], port: int) -> str:
     )
 
 
+def _ydb(env: dict[str, str], port: int) -> str:
+    """YDB, anonymous, on the database the image creates at ``/local``.
+
+    Two things here are not what the other builders do, and both were measured.
+
+    **No credentials at all.** The image configures no authentication, so this
+    passes ``password=None`` — which ``_url`` renders by omitting the ``:``
+    entirely — and a username that is never checked. CockroachDB's insecure mode
+    is the only other endpoint reached this way.
+
+    **The port is not offset.** Every other service here publishes on a port well
+    away from its engine's default so that a locally-installed copy cannot be
+    reached by accident. YDB's client resolves the endpoint it is given into the
+    cluster's *own* advertised node addresses and connects to those, so the
+    published port has to equal the advertised one or nothing after the handshake
+    can be reached. The compose entry carries the other half of this.
+
+    The dialect is ``yql+ydb``: ``yql`` is what the dialect calls itself — after
+    the query language — and ``ydb`` is the driver entry point. Both spellings
+    resolve to the same class, and ``yql`` alone would too, but naming the driver
+    keeps this URL saying which of the dialect's two drivers is meant, since the
+    package also registers an async one. Hence ``engine="ydb"`` on the entry
+    below: the backend must call itself after the database, not after its SQL.
+    """
+    return _url(
+        "yql+ydb",
+        username="root",
+        password=None,
+        port=port,
+        database="local",
+    )
+
+
 #: Every endpoint dialect this server is tested against, in the order they were
 #: taken on. A dialect is here because it has a container; nothing about the
 #: server enumerates dialects, so this list is a statement about *coverage*, not
@@ -643,6 +676,20 @@ ENDPOINTS = (
         extra="opengauss",
         url=_opengauss,
         warmup=60.0,
+    ),
+    # `engine` differs from `dialect` for the third time, and for a third distinct
+    # reason: YugabyteDB borrows another engine's dialect, Firebird's is named
+    # after its driver, and YDB's is named after its **query language**. A
+    # refusal that said `yql` would name a syntax to someone who opened a
+    # database.
+    Endpoint(
+        dialect="yql",
+        service="localdata-test-ydb",
+        container_port=2136,
+        driver="ydb_sqlalchemy",
+        extra="ydb",
+        url=_ydb,
+        engine="ydb",
     ),
 )
 

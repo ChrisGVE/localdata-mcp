@@ -145,13 +145,28 @@ firebird = ["sqlalchemy-firebirdsql>=0.1"]
 # cost here is a second driver family and nothing worse. See
 # docs/CONSTRAINTS.md §21.1.
 opengauss = ["opengauss-sqlalchemy>=2.4", "psycopg2-binary>=2.9"]
+# YDB, through the YDB platform's own dialect. Pure Python the whole way down —
+# the dialect requires `ydb-dbapi`, which requires the `ydb` SDK, and all three
+# are Yandex's own and Apache-2.0. There is no rival package and nothing native
+# to install, which after Firebird's `libfbclient` is worth noticing rather than
+# assuming.
+#
+# The dialect registers itself as **`yql`** — after YDB's query language, not
+# after the engine or the driver — while also registering `ydb` as a URL scheme
+# for the same class. So a URL says `yql+ydb://` and `Dialect.name` reads `yql`,
+# which is the third distinct way a dialect name has failed to be an identity in
+# this project. See docs/CONSTRAINTS.md §22.1.
+#
+# Neither `ydb` nor `ydb-dbapi` is named here: the dialect requires both, and
+# naming them again would let the three drift.
+ydb = ["ydb-sqlalchemy>=0.1.22"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird,opengauss]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird,opengauss,ydb]",
 ]
 all = [
   "localdata-mcp[formats,databases]",

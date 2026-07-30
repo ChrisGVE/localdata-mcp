@@ -63,6 +63,7 @@ from sqlalchemy import (
     Column,
     Connection,
     Engine,
+    Integer,
     MetaData,
     Table,
     func,
@@ -106,6 +107,18 @@ _INSERT_CHUNK = 1_000
 #: that a caller taking ten rows out of a million-row result never materialises
 #: the rest.
 _YIELD_PER = 1_000
+
+#: What to call the primary key added to a loaded table on a backend that will
+#: not make one without a key — see ``Backend.requires_primary_key``. Held here
+#: rather than in :mod:`dialects` because the backend states the *fact* and this
+#: module chooses the *response*, and the response must be the same for every
+#: backend that ever states it.
+#:
+#: The leading underscore is what keeps it from colliding with a column the file
+#: brought: :func:`_sanitize` strips leading underscores from every header it
+#: cleans, and its fallback names are ``column_N``, so no data column can be
+#: called this.
+_SURROGATE_KEY = "_row"
 
 #: What a caller is told when the statement they sent was not a query. Written
 #: out here because it has to name the verb to use instead: an agent that is only
@@ -1664,12 +1677,50 @@ class Workspace:
         notes: tuple[str, ...] = (),
     ) -> TableInfo:
         entry = self.entry(tag)
-        columns = _unique_columns(list(frame.columns))
-        declared = [_declared_type(frame[original]) for original in frame.columns]
+        # The file's own columns, and the type each one was measured to hold.
+        # Distinct from `columns`/`declared` below, which describe the *table* —
+        # the two differ by exactly the surrogate key, where one is added.
+        from_file = _unique_columns(list(frame.columns))
+        types_from_file = [
+            _declared_type(frame[original]) for original in frame.columns
+        ]
+
+        # A backend that will not make a table without a primary key gets a
+        # surrogate one, because a file has none to offer: nothing in a CSV is
+        # guaranteed unique, so any column nominated here would be a constraint
+        # this server invented on the caller's data. True only for YDB.
+        #
+        # The *fact* is the backend's and the *response* is this module's — one
+        # response, the same for any dialect that ever states the fact, which is
+        # what keeps the answer from being written twice. The added column is
+        # **reported**: it is described in `info` like any other column and the
+        # notes say why it is there, rather than surprising somebody who later
+        # runs `SELECT *`.
+        keyed = entry.backend.requires_primary_key()
+
+        # What the table holds, which is the file's columns and possibly one
+        # more. `originals` says which frame column each came from, or None for
+        # the one this server added — needed because `columns` are sanitised
+        # names while the frame's are the originals, so they match only by
+        # position.
+        columns = [_SURROGATE_KEY, *from_file] if keyed else from_file
+        declared = ["INTEGER", *types_from_file] if keyed else types_from_file
+        originals: list[Any] = [None, *frame.columns] if keyed else list(frame.columns)
+        if keyed:
+            notes = (
+                *notes,
+                f"A {entry.backend.name} table must declare a primary key and a "
+                f"file has none to offer, so the column {_SURROGATE_KEY} was "
+                f"added, holding each row's position in the file. The file's own "
+                f"columns and values are unchanged.",
+            )
 
         target = Table(
             table,
             MetaData(),
+            # The surrogate first, so a `SELECT *` reads as the file does with an
+            # ordinal in front of it rather than one tacked on the end.
+            *([Column(_SURROGATE_KEY, Integer, primary_key=True)] if keyed else []),
             *[
                 # What a declared type is *called* in SQL is the backend's to
                 # say: SQLite's affinity depends on the exact token, Oracle's
@@ -1681,7 +1732,9 @@ class Workspace:
                         sql_type, longest=_longest_value(frame[original], sql_type)
                     ),
                 )
-                for name, original, sql_type in zip(columns, frame.columns, declared)
+                for name, original, sql_type in zip(
+                    from_file, frame.columns, types_from_file
+                )
             ],
             # Anything this dialect's CREATE TABLE cannot be written without.
             # Empty for all but ClickHouse, which has no default table engine —
@@ -1709,10 +1762,10 @@ class Workspace:
                 target.drop(conn, checkfirst=True)
                 target.create(conn)
                 if together:
-                    self._fill(entry, conn, target, frame, columns, table)
+                    self._fill(entry, conn, target, frame, from_file, table, keyed)
             if not together:
                 with entry.engines.write.begin() as conn:
-                    self._fill(entry, conn, target, frame, columns, table)
+                    self._fill(entry, conn, target, frame, from_file, table, keyed)
         except Exception as exc:
             unrepresentable = _unrepresentable(exc)
             if unrepresentable is not None:
@@ -1732,7 +1785,9 @@ class Workspace:
             # next one, on the backend that folds.
             name=self.landed_as(tag, table),
             row_count=self._count(entry, table),
-            columns=self._describe_columns(entry, table, columns, declared, frame),
+            columns=self._describe_columns(
+                entry, table, columns, declared, frame, originals
+            ),
             source=source,
             tag=tag,
             notes=notes,
@@ -1748,6 +1803,7 @@ class Workspace:
         frame: pd.DataFrame,
         columns: list[str],
         table: str,
+        keyed: bool = False,
     ) -> None:
         """Put the frame's rows into a table that already exists, then settle it.
 
@@ -1757,11 +1813,18 @@ class Workspace:
         varies between them is which transaction this runs in; nothing about the
         writing itself does, and a second copy of this loop would be free to
         drift.
+
+        ``keyed`` says the table carries the surrogate key
+        :meth:`insert_frame` adds where a backend refuses a keyless table, and
+        the value it must be given is the row's position in the file. ``columns``
+        stays the file's own columns either way — the key is filled from the
+        chunk offset rather than from the frame, because the frame does not have
+        it.
         """
         statement = target.insert()
         # The frame is never materialised as rows — only one chunk of it exists
         # at a time. See the module docstring for the numbers.
-        for block in self._blocks(frame, columns):
+        for block in self._blocks(frame, columns, _SURROGATE_KEY if keyed else None):
             conn.execute(statement, block)
         # Nothing for every backend that makes a committed write readable, which
         # is all of them but the search-engine lineage. Inside this block on
@@ -1770,7 +1833,9 @@ class Workspace:
         entry.backend.settle(conn, table)
 
     @staticmethod
-    def _blocks(frame: pd.DataFrame, columns: list[str]) -> Iterator[list[dict]]:
+    def _blocks(
+        frame: pd.DataFrame, columns: list[str], key: str | None = None
+    ) -> Iterator[list[dict]]:
         """Frame rows as bind-parameter mappings, one insertable chunk at a time.
 
         A generator, not a list comprehension: the difference between the two is
@@ -1782,11 +1847,21 @@ class Workspace:
         list of Python natives in one numpy pass. Chunking before converting is
         what keeps the peak flat: converting the whole column first would
         materialise exactly what the generator exists to avoid.
+
+        ``key``, where given, names a surrogate primary-key column that is filled
+        with the row's position in the file. Counted from the chunk's own offset
+        rather than from a running total, so the ordinal is a property of the row
+        and not of how the reader happened to chunk it: the same file always
+        produces the same keys, whatever ``_INSERT_CHUNK`` is.
         """
         for start in range(0, len(frame), _INSERT_CHUNK):
             chunk = frame.iloc[start : start + _INSERT_CHUNK]
             adapted = [binding.adapt_column(chunk[name]) for name in chunk.columns]
-            yield [dict(zip(columns, values)) for values in zip(*adapted)]
+            rows = [dict(zip(columns, values)) for values in zip(*adapted)]
+            if key is not None:
+                for offset, row in enumerate(rows):
+                    row[key] = start + offset
+            yield rows
 
     # -- inspection --------------------------------------------------------
 
@@ -1849,7 +1924,17 @@ class Workspace:
         columns: list[str],
         declared: list[str],
         frame: pd.DataFrame | None,
+        originals: list[Any] | None = None,
     ) -> list[ColumnInfo]:
+        """Describe each column of the table, from the frame where there is one.
+
+        ``originals`` is parallel to ``columns`` and gives the frame label each
+        one came from, or ``None`` for a column this server added rather than
+        read — the surrogate primary key :meth:`insert_frame` supplies where a
+        backend demands one. Defaulting to positional lookup keeps every existing
+        caller unchanged; a column with no frame behind it is described from its
+        declared type alone, which is all there is to say about it truthfully.
+        """
         with entry.engines.read.connect() as conn:
             described = []
             for index, (name, sql_type) in enumerate(zip(columns, declared)):
@@ -1858,8 +1943,13 @@ class Workspace:
                 examples: tuple[str, ...] = ()
                 dates: tuple[str, ...] = ()
                 standard: str | None = None
-                if frame is not None:
-                    series = frame[frame.columns[index]]
+                label = (
+                    frame.columns[index]
+                    if originals is None and frame is not None
+                    else (originals[index] if originals is not None else None)
+                )
+                if frame is not None and label is not None:
+                    series = frame[label]
                     kind = binding.column_temporal_kind(series)
                     if sql_type == "TEXT":
                         if temporal.is_standard(series):

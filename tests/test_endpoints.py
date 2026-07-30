@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 from fastmcp import Client
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import DDL, create_engine, inspect
 from sqlalchemy.engine import make_url
 
 from localdata_mcp import config as config_module
@@ -144,7 +144,13 @@ def _drop_everything_named(url: str, prefix: str) -> None:
         with engine.begin() as conn:
             preparer = conn.dialect.identifier_preparer
             for name in names:
-                conn.execute(text(f"DROP TABLE {preparer.quote(name)}"))
+                # `DDL`, not `text`, for the reason `Backend.rename_table`
+                # records (#59): only the DDL construct carries the "this is
+                # schema" signal a dialect can route on, and YDB refuses any
+                # schema statement that arrives inside a transaction. As `text`
+                # this cleanup raised `Scheme operations cannot be executed
+                # inside transaction` and left every test's tables behind.
+                conn.execute(DDL(f"DROP TABLE {preparer.quote(name)}"))
     finally:
         engine.dispose()
 
@@ -331,13 +337,23 @@ def _build_typed_table(live: Live) -> str:
         columns.remove(column)
         values.pop(column.name)
 
+    backend = backend_for_url(live.url)
+
+    # A backend that will not make a table without a primary key gets one here
+    # too. `insert_frame` adds a surrogate for the same reason and does not cover
+    # this fixture, which writes below the verbs — and the key is declared on a
+    # column the table already has rather than added as a seventh, because this
+    # table holds exactly one row and any of its columns is unique across it.
+    # `amount` is nominated because it is the one column every backend in the
+    # catalogue can hold, so the choice cannot interact with
+    # `unstorable_column_types` above.
+    if backend.requires_primary_key():
+        columns[0].primary_key = True
+
     # Whatever this dialect's CREATE TABLE cannot be written without — asked of
     # the backend rather than branched on here, because a dialect fact stated in
     # a fixture is the same defect as one stated in shared code.
-    defined = Table(
-        table, metadata, *columns, **backend_for_url(live.url).table_options()
-    )
-    backend = backend_for_url(live.url)
+    defined = Table(table, metadata, *columns, **backend.table_options())
     # Whether the schema and the row may travel in one transaction. False only on
     # Firebird, which prepares statements against committed metadata and so
     # cannot address the table it has just made (issue #53). Asked of the seam for
@@ -432,6 +448,19 @@ def test_every_value_reaches_the_wire_as_something_json_can_hold(live):
 
 
 def test_info_describes_a_table_the_endpoint_holds(live):
+    """The file's columns, and anything the backend made this server add.
+
+    The list was once exactly the CSV's three columns, which was true of every
+    backend until one refused to make a table without a primary key. A file has
+    no key to offer, so ``create`` supplies a surrogate — a real column, which
+    ``SELECT *`` will return and which ``info`` must therefore name. Asked of the
+    seam rather than of the dialect, for the reason the other fixtures here are.
+
+    **The note is asserted, not just the column.** An added column that ``info``
+    lists but does not explain is a table shape the caller has to
+    reverse-engineer; a wrong explanation attached to a right outcome passes
+    every test that only checks the outcome.
+    """
     attach_writable(live)
     table = land_people(live)
 
@@ -439,11 +468,23 @@ def test_info_describes_a_table_the_endpoint_holds(live):
 
     assert described["ok"] is True, described
     assert described["rows"] == 5
-    assert [column["name"] for column in described["columns"]] == [
-        "name",
-        "department",
-        "salary",
-    ]
+
+    names = [column["name"] for column in described["columns"]]
+    from_file = ["name", "department", "salary"]
+
+    if backend_for_url(live.url).requires_primary_key():
+        assert names == ["_row", *from_file]
+        # The surrogate holds each row's position in the file, so over five rows
+        # it is 0..4 — the column is not merely present, it is populated.
+        keys = call("query", nickname="endpoint", sql=f"SELECT _row FROM {table}")
+        assert sorted(row[0] for row in keys["rows"]) == [0, 1, 2, 3, 4]
+        assert any(
+            "_row" in note and "primary key" in note
+            for note in described.get("warnings", ())
+        ), described.get("warnings")
+    else:
+        assert names == from_file
+        assert not any("_row" in note for note in described.get("warnings", ()))
 
 
 def test_the_slot_lists_the_table_that_was_added_to_it(live):
@@ -597,17 +638,42 @@ def test_query_refuses_a_write_even_where_the_datasource_permits_it(live):
     """
     attach_writable(live)
     table = land_people(live)
+    backend = backend_for_url(live.url)
 
+    # **The statement has to be one this database would otherwise accept**, or
+    # the refusal proves nothing: a statement the parser rejects never reaches
+    # the posture under test, and the assertions below then pass on a refusal
+    # that has nothing to do with the read connection. Both halves of this were
+    # measured on YDB, and each was a way for this test to pass while the posture
+    # it defends was absent.
+    #
+    # The columns are named rather than left to positional order — valid SQL
+    # everywhere, and required there: a bare `INSERT ... VALUES` is answered with
+    # `requires specification of table columns`.
+    #
+    # And a surrogate primary key, where the backend demanded one, must be given
+    # a value: an `INSERT` that omits the key column is refused for *that*, so
+    # the row could never land whatever the posture said. With `read_posture`
+    # removed the row did land, at 5 -> 6 rows, and this test still passed.
+    columns = ["name", "department", "salary"]
+    values = ["'x'", "'y'", "1"]
+    if backend.requires_primary_key():
+        columns.insert(0, "_row")
+        # Past the five the file landed, so it cannot collide with one of them
+        # and be refused as a duplicate key instead of as a write.
+        values.insert(0, "99")
     written = call(
-        "query", nickname="endpoint", sql=f"INSERT INTO {table} VALUES ('x', 'y', 1)"
+        "query",
+        nickname="endpoint",
+        sql=(
+            f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(values)})"
+        ),
     )
 
     assert written["ok"] is False, written
     # The refusal has to name where mutation lives, or the same statement is
     # simply sent again.
     assert "create" in written["error"]
-
-    backend = backend_for_url(live.url)
     if backend.dml_survives_refusal():
         # A database with no transactions and no read-only session applies the
         # write before there is anything to refuse it with — the same shape as
@@ -653,7 +719,14 @@ def test_ddl_through_query_never_reaches_the_database(live):
     attach_writable(live)
     orphan = live.table("nope")
 
-    made = call("query", nickname="endpoint", sql=f"CREATE TABLE {orphan} (a INT)")
+    # A key where the backend demands one, asked of the seam rather than branched
+    # on: YDB refuses a keyless `CREATE TABLE` at parse time, and a statement the
+    # parser rejects never reaches the read posture — so this would have asserted
+    # a refusal that had nothing to do with the connection it was sent through.
+    key = (
+        " , PRIMARY KEY (a)" if backend_for_url(live.url).requires_primary_key() else ""
+    )
+    made = call("query", nickname="endpoint", sql=f"CREATE TABLE {orphan} (a INT{key})")
 
     assert made["ok"] is False, made
     assert "create" in made["error"]
