@@ -19,17 +19,19 @@ from pathlib import Path
 
 import foreign
 import pytest
-from sqlalchemy import Text, text
+from sqlalchemy import DOUBLE_PRECISION, Integer, String, Text, text
 from sqlalchemy.engine import make_url
 
 from endpoints import Unavailable
 from localdata_mcp.dialects import (
     BACKENDS,
     Backend,
+    FirebirdBackend,
     MySQLBackend,
     SQLiteBackend,
     UnsupportedOperation,
     backend_for,
+    _FIREBIRD_VARCHAR_MAX,
 )
 
 
@@ -461,3 +463,146 @@ def test_an_impostor_with_no_entry_of_its_own_still_gets_its_own_name():
         "this asserts the no-entry path; give YugabyteDB a subclass and it "
         "belongs in the test above instead"
     )
+
+
+# ---------------------------------------------------------------------------
+# A dialect may be named after neither the engine nor another engine
+# ---------------------------------------------------------------------------
+
+
+def test_a_dialect_named_after_its_driver_still_names_its_engine():
+    """Firebird's dialect is called ``firebirdsql``, which is a Python package.
+
+    The quiet third form of #45. The loud ones are two engines sharing a dialect
+    — TiDB on MySQL's, YugabyteDB on PostgreSQL's — and ``impostors`` resolves
+    those by asking the server. This one needs no probe and no banner: only
+    Firebird speaks this dialect, and the dialect is simply named after the
+    driver that carries it, because ``sqlalchemy-firebirdsql`` registers itself
+    under the name of ``firebirdsql``.
+
+    Left alone, ``backend_for`` would hand back ``Backend(name="firebirdsql")``
+    and every refusal would name a library the caller has never installed
+    knowingly, let alone opened. So this is the one :data:`BACKENDS` key that is
+    deliberately not the name of an engine, and this test is what says the
+    difference is intended rather than a typo somebody should tidy up.
+    """
+    resolved = backend_for("firebirdsql")
+
+    assert resolved.name == "firebird"
+    assert isinstance(resolved, FirebirdBackend)
+    # No banner is involved, and asserting that is the point: this identity is
+    # known from the dialect alone, so it costs no connection.
+    assert not resolved.impostors
+    assert resolved.named_by(None) is resolved
+
+
+def test_a_refusal_names_the_engine_rather_than_the_driver():
+    """The user-facing half, the same way #45's is asserted for YugabyteDB."""
+    with pytest.raises(UnsupportedOperation) as refused:
+        backend_for("firebirdsql").snapshot(None, Path("/tmp/unused.db"))
+
+    assert "firebird datasource" in str(refused.value)
+    assert "firebirdsql" not in str(refused.value)
+
+
+# ---------------------------------------------------------------------------
+# The two axes Firebird added
+# ---------------------------------------------------------------------------
+
+
+def test_the_generic_backend_writes_rows_beside_the_schema_that_holds_them():
+    """Both new axes answer the permissive way generically.
+
+    Worth pinning rather than assuming: these are the defaults every dialect
+    nobody has subclassed relies on, and a default that flipped would split a
+    transaction on eleven backends that never needed it and would refuse a
+    rename that works everywhere.
+    """
+    generic = Backend()
+
+    assert generic.sees_new_tables_in_transaction() is True
+    assert generic.renames_tables() is True
+
+
+def test_a_backend_that_cannot_rename_refuses_rather_than_copying():
+    """Firebird has no rename-table statement, and the refusal has to be usable.
+
+    Two halves, and the second is the one that matters. That the axis says
+    ``False`` is bookkeeping; that :meth:`rename_table` *also* refuses is the
+    guarantee, because it is reached by anything that calls it without asking the
+    axis first — and a method that silently did nothing would report a rename
+    that never happened.
+
+    The refusal names the engine and says what to do instead, including what
+    that alternative costs. A caller told only "no" has been told nothing.
+    """
+    backend = backend_for("firebirdsql")
+
+    assert backend.renames_tables() is False
+    with pytest.raises(UnsupportedOperation) as refused:
+        backend.rename_table(None, "orders", "sales")
+
+    message = str(refused.value)
+    assert "firebird" in message
+    assert "orders" in message and "sales" in message
+    # The route that does work, and the cost of taking it.
+    assert "create" in message and "indexes" in message
+
+
+def test_the_backend_that_cannot_see_its_own_new_tables_says_so():
+    """Firebird's DDL is transactional *and* invisible to its own transaction.
+
+    Asserted next to ``ddl_survives_refusal`` on purpose. The two look adjacent
+    and are opposite here: the DDL does **not** survive a refusal, which is the
+    floor working, and it still cannot be used by the transaction that ran it.
+    A single axis carrying both would have to lie about one.
+    """
+    backend = backend_for("firebirdsql")
+
+    assert backend.sees_new_tables_in_transaction() is False
+    assert backend.ddl_survives_refusal() is False
+    assert backend.dml_survives_refusal() is False
+
+
+def test_firebird_respells_the_two_portable_types_its_dialect_renders_unusably():
+    """``Double`` and ``Text`` both need replacing, for opposite reasons (#55, #56).
+
+    ``Double`` renders ``DOUBLE``, which Firebird has no such keyword for, so the
+    ``CREATE TABLE`` fails and nothing is made — loud, and therefore harmless.
+    ``Text`` renders ``BLOB``, which is created, stores every byte, reads back
+    exactly, and then groups by handle instead of by value: five rows become five
+    groups with no error anywhere. The silent one is the dangerous one.
+    """
+    backend = backend_for("firebirdsql")
+
+    assert isinstance(backend.column_type("REAL"), DOUBLE_PRECISION)
+    # Sized from the data rather than guessed, so the column is comparable.
+    sized = backend.column_type("TEXT", longest=11)
+    assert isinstance(sized, String) and sized.length == 11
+    # A column with no text in it still has to be a legal width.
+    assert backend.column_type("TEXT", longest=None).length == 1
+    # Integers need no help, and saying so keeps the override honest about its
+    # own scope.
+    assert isinstance(backend.column_type("INTEGER"), Integer)
+
+
+def test_text_too_wide_for_a_varchar_keeps_the_values_and_loses_the_grouping():
+    """Beyond the ceiling there is nothing else to use, and truncating is worse.
+
+    The ceiling is in *characters* while Firebird's limit is in bytes, so it is
+    set to the widest width that fits under any character set — a database
+    created with UTF8 spends four bytes a character and would refuse a
+    declaration a single-byte one accepts. That is why the constant is not the
+    32,765 the test container happens to allow.
+    """
+    backend = backend_for("firebirdsql")
+
+    at_ceiling = backend.column_type("TEXT", longest=_FIREBIRD_VARCHAR_MAX)
+    assert type(at_ceiling) is String
+    assert at_ceiling.length == _FIREBIRD_VARCHAR_MAX
+
+    # ``type(...) is``, not ``isinstance``: Core's ``Text`` is a *subclass* of
+    # ``String``, so an isinstance check cannot tell the two answers apart and
+    # would pass whichever one came back. The distinction is the assertion.
+    beyond = backend.column_type("TEXT", longest=_FIREBIRD_VARCHAR_MAX + 1)
+    assert type(beyond) is Text

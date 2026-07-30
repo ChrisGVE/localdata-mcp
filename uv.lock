@@ -884,6 +884,12 @@ wheels = [
 ]
 
 [[package]]
+name = "firebirdsql"
+version = "1.4.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/27/ff/830819697518a9b0208d164e5340cffb69d0e54b689404a76bfb584923b3/firebirdsql-1.4.6.tar.gz", hash = "sha256:91a333dc9f026d20aae36c95952340de27d3dc8d25c5502af1ca92b7d193e59f", size = 94972, upload-time = "2026-05-02T02:31:07.797Z" }
+
+[[package]]
 name = "geojson"
 version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1189,6 +1195,7 @@ all = [
     { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
     { name = "sqlalchemy-cratedb" },
+    { name = "sqlalchemy-firebirdsql" },
     { name = "sqlalchemy-monetdb" },
     { name = "tabulate" },
     { name = "trino", extra = ["sqlalchemy"] },
@@ -1215,6 +1222,7 @@ databases = [
     { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
     { name = "sqlalchemy-cratedb" },
+    { name = "sqlalchemy-firebirdsql" },
     { name = "sqlalchemy-monetdb" },
     { name = "trino", extra = ["sqlalchemy"] },
 ]
@@ -1227,6 +1235,9 @@ duckdb = [
 ]
 excel = [
     { name = "openpyxl" },
+]
+firebird = [
+    { name = "sqlalchemy-firebirdsql" },
 ]
 formats = [
     { name = "numbers-parser" },
@@ -1281,7 +1292,7 @@ requires-dist = [
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.0" },
     { name = "duckdb-engine", marker = "extra == 'duckdb'", specifier = ">=0.13" },
     { name = "fastmcp", specifier = ">=3.0.0" },
-    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb"], marker = "extra == 'databases'" },
+    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird"], marker = "extra == 'databases'" },
     { name = "localdata-mcp", extras = ["formats", "databases"], marker = "extra == 'all'" },
     { name = "localdata-mcp", extras = ["yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet"], marker = "extra == 'formats'" },
     { name = "numbers-parser", marker = "extra == 'numbers'", specifier = ">=4.4" },
@@ -1300,13 +1311,14 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlalchemy-cockroachdb", marker = "extra == 'cockroachdb'", specifier = ">=2.0.4" },
     { name = "sqlalchemy-cratedb", marker = "extra == 'cratedb'", specifier = ">=0.43" },
+    { name = "sqlalchemy-firebirdsql", marker = "extra == 'firebird'", specifier = ">=0.1" },
     { name = "sqlalchemy-monetdb", marker = "extra == 'monetdb'", specifier = ">=2.0" },
     { name = "tabulate", marker = "extra == 'markdown'", specifier = ">=0.9" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "trino", extras = ["sqlalchemy"], marker = "extra == 'trino'", specifier = ">=0.330" },
     { name = "xlrd", marker = "extra == 'xls'", specifier = ">=2.0" },
 ]
-provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "formats", "databases", "all"]
+provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "formats", "databases", "all"]
 
 [[package]]
 name = "lz4"
@@ -2862,6 +2874,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/53/35/4fbea8c79f6df5d06
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6a/3c/946062f221bde60332ac175aeb40a7426a6e076056b4ad60c7bf5af7ece8/sqlalchemy_cratedb-0.43.1-py3-none-any.whl", hash = "sha256:1db7a30a7f76a023f63b0c4d396e4c32becd45c66c72c327f58720685335199b", size = 46774, upload-time = "2026-06-22T08:54:21.293Z" },
 ]
+
+[[package]]
+name = "sqlalchemy-firebirdsql"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "firebirdsql" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fa/1b/8bdd43a0dd8473501951f4e2be2286ff19f3f5329c47d348f81468a2c3ab/sqlalchemy_firebirdsql-0.1.0.tar.gz", hash = "sha256:f111817b080037b1f902b89c1b06a9e9cc0e84443869bacd8aa7ada58df07d1c", size = 53861, upload-time = "2026-05-23T01:03:39.766Z" }
 
 [[package]]
 name = "sqlalchemy-monetdb"

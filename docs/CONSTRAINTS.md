@@ -2784,3 +2784,234 @@ replication, or what a partial write looks like when a node is lost — and Crat
 the reason anyone chooses it. Its eventual-consistency window was measured at rest, with one writer;
 nothing here says what `settle` costs under load, or whether a refresh forced after every insert is
 the right trade at a million rows rather than at five.
+
+## §20 — Firebird, whose strictness costs more than any laxity here (2026-07-30)
+
+Twelfth endpoint dialect, ninth from the backend catalogue (task 22, worklist item 9), and the oldest
+engine in it — an InterBase descendant whose lineage predates everything else in this harness. It is
+also the first entry whose difficulties come from a database being **stricter** than its neighbours
+rather than looser, and the first whose dialect is named after neither its engine nor another
+engine's.
+
+Measured against the Firebird Project's own `firebirdsql/firebird:5` image, server **LI-V5.0.4.1812
+Firebird 5.0**, engine version `5.0.4` read from `RDB$GET_CONTEXT('SYSTEM','ENGINE_VERSION')`, through
+`sqlalchemy-firebirdsql` 0.1.0 on the pure-Python `firebirdsql` 1.4.6.
+
+Three of its four findings are defects in shared code or in the client library. Only one is a genuine
+capability limit of the database, and it is the least interesting of them.
+
+### 20.1 Two dialects, and the adapter that cannot be reached from here
+
+Firebird has two SQLAlchemy dialects on PyPI, and the eligibility rule (standing instruction 10) is
+satisfied twice over. Which one to use is a question about **addressing**, not eligibility, and it was
+decided by measurement rather than by maturity:
+
+| Distribution | Version | Registers | Driver | License | Published |
+|---|---|---|---|---|---|
+| `sqlalchemy-firebird` | 2.2.0 (2026-05-21) | `firebird` | `firebird-driver` 2.0.3 | MIT | fdcastel |
+| `sqlalchemy-firebirdsql` | 0.1.0 (2026-05-23) | `firebirdsql` | `firebirdsql` 1.4.6 | MIT | Nakagami / fdcastel |
+
+The first is the older and better-established, and **cannot be used on this machine**.
+`firebird-driver` is a ctypes binding to Firebird's own `libfbclient`, a native library with no wheel,
+no Homebrew formula (`brew info firebird` → `No available formula`), and nothing but a system-wide
+`.pkg` installer to supply it. Measured rather than inferred — with `firebird-driver` installed and
+nothing else:
+
+```
+Exception: The location of Firebird Client Library could not be determined.
+```
+
+The second needs no native library at all: `firebirdsql` speaks the wire protocol in Python. **It is
+not a shim** — step 1 of the adoption procedure exists to ask that question, and the answer here is
+that it is the same dialect base ported, co-authored by `sqlalchemy-firebird`'s own author and
+maintained by the driver's. The cost it carries instead is youth: version 0.1.0, sdist only, no wheel.
+
+**The server's own security defaults were not weakened to reach it, and that was checked rather than
+assumed.** Firebird 4+ defaults `WireCrypt` to `Required`, and the image's entrypoint offers
+`FIREBIRD_USE_LEGACY_AUTH`, which would reduce it to `Enabled` as a side effect — so the tempting move
+is to set it pre-emptively. Measured instead: the pure-Python driver completes `Srp256` authentication
+against `WireCrypt=Required` unmodified. The compose entry sets no crypto or auth configuration at all.
+
+### 20.2 DDL and DML cannot share a transaction (issue #53)
+
+The highest-value finding, and it was never about Firebird.
+
+`insert_frame` created its target table and inserted the rows in one `write.begin()` block. The single
+transaction is deliberate and its reason is in the code — a write and the visibility of that write must
+not be separable by a failure between them. The **assumption underneath** it was not deliberate: that
+a table this server just created is addressable by the next statement on the same connection.
+
+Firebird's DDL is genuinely transactional, and statements are prepared against *committed* metadata.
+So the new table is invisible to the very transaction that made it:
+
+```
+firebirdsql.err.OperationalError: Dynamic SQL Error
+SQL error code = -204
+Table unknown
+MIX_0A5C31
+[SQL: INSERT INTO mix_0a5c31 VALUES (1)]
+```
+
+One server, one variable — whether the DDL commits first:
+
+| Sequence | Result |
+|---|---|
+| `CREATE` then `INSERT`, one transaction | `-204 Table unknown` |
+| `CREATE`, commit, then `INSERT` | the rows land |
+| `DROP … checkfirst` then `CREATE`, one transaction | accepted |
+
+The third row is why the split is at the DDL→**DML** boundary and nowhere else: schema statements may
+share a transaction with each other, so the drop-and-create pair stays atomic.
+
+**Eleven dialects had agreed with the assumption, which is one observation repeated eleven times** —
+the same shape as §19.1, where ten dialects agreed that `returns_rows` meant a read. Note *why* they
+agreed, because it is not a point in their favour: Oracle, MySQL, MariaDB and SQL Server pass this
+test by committing DDL behind the caller's back. Firebird refuses to do that. **The backend that
+looks broken here is the only one keeping the promise the others quietly break.**
+
+The remedy is `Backend.sees_new_tables_in_transaction()`, and **it costs something that is worth
+stating rather than burying**: with the `CREATE` committed first, a failure part-way through the rows
+leaves an empty table behind where the single transaction would have left nothing at all. That is
+strictly worse, and it is accepted only because the alternative on this backend is that the write
+cannot happen.
+
+### 20.3 `Text` becomes a BLOB, and a BLOB groups by identity (issue #56)
+
+The dangerous one, because nothing fails.
+
+`_PORTABLE_TYPES` maps a loaded text column to Core's `Text`, which this dialect renders `BLOB`.
+Firebird accepts it, stores every byte, and reads each value back exactly — and then treats the column
+as an **opaque handle** for every set operation. The five-person fixture answers
+`GROUP BY department` with five groups:
+
+```
+[['engineering', 75000], ['sales', 65000], ['marketing', 70000], ['engineering', 80000], ['hr', 55000]]
+```
+
+Same rows, same server, one variable — the column type:
+
+| Column type | declared | `GROUP BY department` | `DISTINCT department` | `ORDER BY` sorts |
+|---|---|---|---|---|
+| `Text` | `BLOB` | 5 groups, engineering split | 5 rows for 4 values | **no** |
+| `String(11)` | `VARCHAR(11)` | 4 groups, engineering = 155000 | 4 rows | yes |
+
+A BLOB also cannot be indexed at all — `CREATE INDEX … ON t (dept)` fails with `unsuccessful metadata
+update`, which is what broke the index test here.
+
+This is Oracle's problem (§ on `column_type`) by a different mechanism and with the same remedy:
+there `CLOB` refuses to be grouped **out loud**, here `BLOB` agrees and gets it wrong. The fix is
+`VARCHAR` sized from the widest value the column actually holds.
+
+**A warning about how this was measured, because the first measurement was wrong.** An earlier probe
+of the same question returned the *correct* `[('engineering', 155000), ('sales', 65000)]` from a BLOB
+column — three rows, a different table — and that answer was luck rather than a result. Taken at face
+value it would have concluded that BLOB grouping works and shipped the silent corruption. An
+intermittently-correct answer is worse than a consistently wrong one, and **one observation of a set
+operation over opaque handles is not a measurement of it.** What made the truth visible was putting
+the two column types side by side over identical rows, rather than asking the same question twice.
+
+The ceiling is **8,191 characters, not the 32,765 this container accepts**, and the difference is the
+point. Firebird's limit is 32,765 **bytes**; a database created with charset `NONE` — which this
+container is, confirmed by `RDB$CHARACTER_SET_NAME` — spends one byte a character, while a UTF8
+database spends up to four. 8,191 is the widest width that fits under *any* character set, so the
+declaration cannot fail for a reason belonging to how somebody else created their database. Using the
+measured 32,765 would have been a measurement from one configuration presented as a property of the
+engine.
+
+Beyond the ceiling it falls back to `Text`: the grouping is lost, which is bad, and the values are kept
+whole, which matters more than truncating them to fit.
+
+### 20.4 The dialect cannot spell a 64-bit float (issue #55)
+
+`_PORTABLE_TYPES` maps a loaded float64 column to Core's `Double`, which both Firebird dialects render
+as bare `DOUBLE` — a keyword Firebird does not have. The parser is waiting for `PRECISION` and fails on
+whatever follows, so no table is made:
+
+```
+SQL error code = -104
+Token unknown - line 4, column 1
+)
+```
+
+Compiled against both dialects, so this is the shared `base.py` lineage rather than either port:
+
+| Type asked for | `sqlalchemy-firebirdsql` 0.1.0 | `sqlalchemy-firebird` 2.2.0 | stored/read back | reflected as |
+|---|---|---|---|---|
+| `Double` | `DOUBLE` | `DOUBLE` | *table not created* | — |
+| `DOUBLE_PRECISION` | `DOUBLE PRECISION` | — | `0.1` → `0.1`, exact | `DOUBLE PRECISION` |
+| `Float(53)` | `FLOAT(53)` | — | `0.1` → `0.1`, exact | `DOUBLE PRECISION` |
+
+`DOUBLE_PRECISION` is used over `Float(53)`: both land in the same Firebird column, and only one says
+what it means. **A client-library defect, not a database limit** — Firebird holds an 8-byte float
+perfectly well once asked in its own words. Recorded so nobody later "fixes" Firebird for it.
+
+### 20.5 There is no way to rename a table
+
+The one genuine capability limit, and the least consequential.
+
+`ALTER TABLE … RENAME TO` is not merely unsupported but unparseable — `-104 Token unknown - line 1,
+column 24 RENAME` — and unlike SQL Server, which needs `sp_rename`, Firebird has no vendor-specific
+alternative. A *column* can be renamed here; a table cannot, in any version.
+
+Faking it was considered and refused. Copying the rows into a table of the new name and dropping the
+old one reads like a rename and is not one: `rename_table` promises rows, types **and indexes**, and a
+copy keeps only the first. Handing back a name that is a table missing its indexes would be a lie the
+caller then builds on — the judgement `snapshot` already makes about a database this server does not
+hold. So `Backend.renames_tables()` answers `False` and the refusal says what the alternative costs.
+
+### 20.6 Everything else, and the measurements that found nothing wrong
+
+| Axis | Firebird |
+|---|---|
+| transactional floor, DML | generic — an `INSERT` on a connection that never commits leaves 0 rows |
+| transactional floor, DDL | generic — a `CREATE TABLE` that never commits leaves no table |
+| `ddl_survives_refusal` / `dml_survives_refusal` | both generic `False`. Worth noting beside 20.2: the DDL does **not** survive a refusal *and* cannot be used by its own transaction. The two axes look adjacent and are opposite here, which is why they are separate |
+| `folds_identifiers` | generic `False` — a quoted `ProbeEfaa` reflects back verbatim |
+| `Numeric(10,2)` | exact — `Decimal("1.25")` round-trips, where CrateDB truncated it to `BIGINT` (§19.5) |
+| `Date` / `DateTime` / `Time` / `LargeBinary` | all store and read back; `unstorable_column_types` is empty |
+| `builds_indexes` | generic `True` — create, reflect and drop all work on a `VARCHAR` column |
+| `driver_errors` | generic — `firebirdsql` errors arrive properly wrapped as `SQLAlchemyError` with `.orig` set |
+| `impostors` / `banner_query` | none; only Firebird speaks this dialect |
+| `resident_bytes` / `snapshot` / `storage_classes` / `table_options` / `connect_args` | generic |
+
+`server_version_info` reads **`None`** — the dialect never populates it. Harmless here, because
+nothing shares this dialect and so no identity probe is needed, but it would matter to any future
+`impostors` entry and is recorded for that reason.
+
+**A dialect named after a driver.** `sqlalchemy-firebirdsql` registers itself as `firebirdsql`, so a
+URL resolves to that and `backend_for` would hand back `Backend(name="firebirdsql")` — putting the name
+of a Python package in front of somebody who opened a database. This is issue #45 in a third form: the
+loud cases were two engines sharing one dialect (TiDB on MySQL's, YugabyteDB on PostgreSQL's), resolved
+by asking the server for its banner. This one needs no probe, because only Firebird speaks the dialect;
+it needs only the entry to be keyed on the dialect while *naming* the engine. Hence the one `BACKENDS`
+key that is deliberately not an engine's name.
+
+**Index key ceiling, for the record.** On the default 8,192-byte page: `VARCHAR(8100)` indexes,
+`VARCHAR(8191)` does not (`unsuccessful metadata update`). `VARCHAR(32765)` is the widest column the
+container accepts; `VARCHAR(32766)` is refused.
+
+**The healthcheck repeats a known gotcha in a new disguise.** `isql` against a bare path opens the
+database **in embedded mode**, inside the healthcheck's own process — which succeeds while the TCP
+listener is still starting, reporting a database ready that no client can reach. Prefixing
+`localhost:` forces the connection through the listener. This is the third form of "a healthcheck must
+probe the address the server actually binds", after `yugabyted` and CrateDB's `network.host=_site_`;
+the first two were the wrong *interface*, this one is the wrong *transport*. The image ships no
+healthcheck of its own and reaches healthy in ~10 s.
+
+### 20.7 The container ceiling is now exceeded by the catalogue (issue #46)
+
+Twelve dialects and a proven ceiling of six means **no two runs can cover the catalogue** any more.
+Batch A and batch B each held six with PostgreSQL in both, which covered eleven; the twelfth needs a
+third batch. This session ran three — 579, 576 and 502 passed with no failures — and every one of them
+reported a green suite while five or six dialects stayed silent. The live half of #46 is now
+arithmetic rather than a risk.
+
+### 20.8 What this did not test
+
+Firebird's own distinctive machinery, all of it. Multi-generational architecture means readers never
+block writers and a long transaction pins old record versions; nothing here says what that costs, and
+the single-statement harness cannot produce the sweep-and-garbage-collect behaviour that makes it
+interesting. `SuperServer` versus `Classic` versus `SuperClassic` — the image's `changeServerMode.sh`
+offers all three — was left at the default. Nothing exercised its embedded mode, which is the form
+most Firebird deployments actually use and which this server would reach as a *file* rather than as an
+endpoint. Events, external tables, and `PSQL` stored procedures are all untouched.

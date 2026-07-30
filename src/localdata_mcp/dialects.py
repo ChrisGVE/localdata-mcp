@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from sqlalchemy import (
+    DOUBLE_PRECISION,
     INTEGER,
     REAL,
     TEXT,
@@ -73,6 +74,7 @@ __all__ = [
     "CrateDBBackend",
     "DuckDBBackend",
     "Engines",
+    "FirebirdBackend",
     "MySQLBackend",
     "PostgreSQLBackend",
     "Refusal",
@@ -400,6 +402,40 @@ class Backend:
         """
         return None
 
+    def sees_new_tables_in_transaction(self) -> bool:
+        """Whether a table created here can be written to before the DDL commits.
+
+        ``True`` for every backend but one, and true for two different reasons
+        that happen to agree. Oracle, MySQL, MariaDB and SQL Server commit DDL as
+        they run it, so by the time the ``INSERT`` is prepared the table has been
+        committed whether anyone asked for that or not; the rest keep the DDL
+        inside the transaction *and* let the transaction see what it did.
+
+        Firebird does neither. Its DDL is genuinely transactional — a
+        ``CREATE TABLE`` on a connection that never commits leaves nothing behind,
+        which is the floor working exactly as intended — but statements are
+        prepared against *committed* metadata, so the table is invisible to the
+        very transaction that made it. Measured: ``INSERT`` straight after
+        ``CREATE`` on one connection fails with ``-204 Table unknown``, and the
+        identical pair succeeds when the DDL commits in between.
+
+        :meth:`loader.Workspace.insert_frame` asks this and splits its one write
+        block into two where the answer is ``False``. **The split has a cost, and
+        naming it here is the point of the docstring:** with the DDL committed
+        first, a failure part-way through the rows leaves an empty table behind
+        where the single transaction would have left no table at all. That is
+        strictly worse and is accepted only because the alternative on this
+        backend is that the write cannot happen at all.
+
+        Asked as a question about *this* fact rather than folded into
+        ``ddl_survives_refusal``: the two look adjacent and are opposites here.
+        Firebird's DDL does not survive a refusal (``False``) and still cannot be
+        used by its own transaction (``False`` here), so one axis carrying both
+        would have to lie about one of them — the same reason ``dml_`` and
+        ``ddl_survives_refusal`` are separate.
+        """
+        return True
+
     def resident_bytes(self, engine: Engine) -> int | None:
         """Bytes this database is holding in *our* process, or ``None``.
 
@@ -422,6 +458,32 @@ class Backend:
             f"held here, so there is no local database to write out. Copy the "
             f"rows you want into a slot of your own with create, and save that."
         )
+
+    def renames_tables(self) -> bool:
+        """Whether ``update(type='table', name=…, to=…)`` means anything here.
+
+        ``True`` for every backend with any way at all to give an existing table
+        a new name — by ``ALTER TABLE … RENAME TO``, or by whatever else it calls
+        that, which is what an override of :meth:`rename_table` is for.
+
+        ``False`` says the verb does not apply, and it exists for the same reason
+        :meth:`builds_indexes` does: Firebird has **no rename-table statement of
+        any kind**, in any version. Measured, not read — ``ALTER TABLE x RENAME TO
+        y`` is rejected at ``-104 Token unknown … RENAME``.
+
+        Faking it was the alternative and is refused. Copying the rows into a new
+        table and dropping the old one reads like a rename and is not one: this
+        method promises rows, types *and indexes*, and a copy keeps only the
+        first. Handing back a name that is a table missing its indexes would be a
+        lie the caller then builds on — the same judgement
+        :meth:`snapshot` makes about a database this server does not hold.
+
+        Nothing dispatches on this in shared code. It is here so that a *test*
+        can tell "this backend cannot rename" apart from "renaming is broken",
+        and because a dialect fact stated in a test fixture is the same defect as
+        one stated in shared code.
+        """
+        return True
 
     def rename_table(self, conn: Connection, table: str, to: str) -> None:
         """Rename a table in place, keeping its rows, types and indexes.
@@ -1587,6 +1649,155 @@ class CrateDBBackend(Backend):
         )
 
 
+#: The widest ``VARCHAR`` this backend asks Firebird for, in **characters**.
+#:
+#: Firebird's limit is 32,765 *bytes*, and the two only coincide on a single-byte
+#: character set. A database created with UTF8 spends up to four bytes a
+#: character, so the same declaration that fits one database is refused by
+#: another — and which one the caller has is not something this server chooses or
+#: can see cheaply. 8,191 is the widest width that fits the byte limit under
+#: *every* character set (8191 × 4 = 32,764), so the declaration cannot fail for a
+#: reason that depends on how somebody else created their database.
+#:
+#: Deliberately not the measured 32,765: that number is true of the test
+#: container, which is charset ``NONE``, and using it would be a measurement from
+#: one configuration presented as a property of the engine.
+_FIREBIRD_VARCHAR_MAX = 8191
+
+
+@dataclass(frozen=True)
+class FirebirdBackend(Backend):
+    """Firebird, whose transactions are stricter than anything else here.
+
+    The oldest engine in this catalogue and the only one registered under a
+    dialect named after a **driver**. ``sqlalchemy-firebirdsql`` registers itself
+    as ``firebirdsql``, which is the Python package speaking the wire; the engine
+    answering is Firebird. So this is :data:`BACKENDS`' first entry whose key and
+    :attr:`name` deliberately differ, and the reason ``name`` is a field rather
+    than a property of the class — a refusal here has to say *Firebird*, not the
+    name of a library the caller has never heard of. Issue #45 in its quieter
+    form: the earlier cases were two engines sharing one dialect, this is one
+    engine whose dialect is named after neither.
+
+    Three facts had to be measured, and each is an override below.
+
+    **DDL cannot be followed by DML in the same transaction** (#53). Firebird's
+    DDL is properly transactional — a ``CREATE TABLE`` that never commits leaves
+    nothing behind — but statements are prepared against committed metadata, so
+    the new table is invisible to the transaction that created it. See
+    :meth:`sees_new_tables_in_transaction`.
+
+    **There is no way to rename a table.** Not a missing convenience — no
+    statement exists, in any Firebird version. See :meth:`renames_tables`.
+
+    **Neither portable type a loaded file needs is usable as rendered** (#55, #56).
+    Core's ``Double`` becomes bare ``DOUBLE``, which Firebird's parser rejects
+    outright; Core's ``Text`` becomes ``BLOB``, which is accepted and then groups
+    by identity rather than by value. See :meth:`column_type` for both.
+
+    Everything else is generic and was measured to be: the transactional floor
+    holds for rows and for schema alike, a quoted mixed-case name survives,
+    ``Numeric`` round-trips exactly where CrateDB truncated it, ``Time``,
+    ``Date``, ``TIMESTAMP`` and ``LargeBinary`` all store and read back, indexes
+    build and reflect and drop, and the driver's errors arrive properly wrapped as
+    ``SQLAlchemyError`` so :meth:`driver_errors` stays empty.
+    """
+
+    name: str = "firebird"
+
+    def sees_new_tables_in_transaction(self) -> bool:
+        """``False`` — and the transactional floor is *why*, not a casualty of it.
+
+        Worth stating in that order, because the tempting reading is that
+        Firebird is somehow lax here. The opposite: every other backend that
+        would fail this test avoids it by committing DDL behind the caller's
+        back. Firebird refuses to do that, keeps the ``CREATE TABLE`` inside the
+        transaction where it belongs, and consequently cannot let the same
+        transaction address a table that is not yet committed.
+
+        Measured both ways round, on one server, one variable changed:
+
+        ==========================================  ========================
+        Sequence                                    Result
+        ==========================================  ========================
+        ``CREATE`` then ``INSERT``, one transaction  ``-204 Table unknown``
+        ``CREATE``, commit, then ``INSERT``          the rows land
+        ``DROP … checkfirst`` then ``CREATE``        accepted together
+        ==========================================  ========================
+
+        The third row is why :meth:`loader.Workspace.insert_frame` splits at the
+        DDL→DML boundary and not before it: schema statements are free to share a
+        transaction with each other, so the drop-and-create pair stays atomic.
+        """
+        return False
+
+    def renames_tables(self) -> bool:
+        """``False``. Firebird has no rename-table statement, and never has.
+
+        ``ALTER TABLE … RENAME TO …`` is not unsupported so much as unparseable —
+        ``-104 Token unknown - line 1, column 24 RENAME`` — and there is no
+        vendor-specific alternative in the way SQL Server has ``sp_rename``. A
+        column can be renamed here; a table cannot.
+        """
+        return False
+
+    def rename_table(self, conn: Connection, table: str, to: str) -> None:
+        """Refused, with the route that does work.
+
+        Reached only if something calls this without asking
+        :meth:`renames_tables` first, which is why it refuses rather than
+        assuming the guard held.
+        """
+        raise UnsupportedOperation(
+            f"A {self.name} datasource has no statement that renames a table, so "
+            f"{table} cannot become {to}. Copy the rows into a table of the new "
+            f"name with create, then drop the old one — that is two tables and "
+            f"loses the indexes on the first, which is why it is not done for you."
+        )
+
+    def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:
+        """Two of the three portable types have to be respelled here.
+
+        ``REAL`` → **``DOUBLE PRECISION``** (#55). Core's ``Double`` is the
+        portable 64-bit float and every other backend renders it usably. Both
+        Firebird dialects render it ``DOUBLE``, a keyword Firebird does not have —
+        the parser waits for ``PRECISION`` and fails on whatever follows, so the
+        ``CREATE TABLE`` dies with ``-104 Token unknown`` and no table is made.
+        ``DOUBLE_PRECISION`` holds a float64 exactly: ``0.1`` reads back as
+        ``0.1``. ``Float(53)`` lands in the same column and was rejected in favour
+        of this — both work, and only one says what it means.
+
+        ``TEXT`` → **``VARCHAR`` sized from the data** (#56), and this is the
+        dangerous one, because nothing fails. Core's ``Text`` renders ``BLOB``,
+        which Firebird accepts, stores and reads back perfectly — and then treats
+        as an *opaque handle* for every set operation. ``GROUP BY`` puts each row
+        in its own group, ``DISTINCT`` counts five values where there are four,
+        and ``ORDER BY`` does not sort. No error, no warning: a five-row table
+        answers a ``GROUP BY department`` with five rows and correct-looking sums
+        that are each one row's salary. The first backend here whose wrong answer
+        arrives dressed as a right one.
+
+        This is Oracle's problem with a different mechanism and the same remedy —
+        there ``CLOB`` cannot be grouped and is refused outright, here ``BLOB``
+        can be and lies. ``longest`` is the widest value the column actually
+        holds, measured from the frame, so the ``VARCHAR`` is sized to the data
+        rather than guessed at. Beyond :data:`_FIREBIRD_VARCHAR_MAX` there is
+        nothing else to use and it falls back to ``Text``: the grouping is lost,
+        which is bad, and the values are kept whole, which matters more than
+        truncating them to fit.
+
+        Integers need no help. Both respellings are *client-library* defects
+        rather than database limits — Firebird holds a float and a comparable
+        string quite happily once asked in its own words.
+        """
+        if declared == "REAL":
+            return DOUBLE_PRECISION()
+        if declared == "TEXT":
+            width = max(1, longest or 1)
+            return String(width) if width <= _FIREBIRD_VARCHAR_MAX else Text()
+        return super().column_type(declared, longest=longest)
+
+
 _SQLITE = SQLiteBackend()
 
 #: Dialect name to the backend that has something *extra* to say about it. An
@@ -1609,6 +1820,11 @@ BACKENDS: dict[str, Backend] = {
     "clickhousedb": ClickHouseBackend(),
     "trino": TrinoBackend(),
     "crate": CrateDBBackend(),
+    # The one key here that is not the name of an engine. `sqlalchemy-firebirdsql`
+    # registers the dialect under its *driver's* name, so this is what a URL
+    # resolves to, while the backend it maps to calls itself `firebird` — which is
+    # what a refusal has to say.
+    "firebirdsql": FirebirdBackend(),
 }
 
 

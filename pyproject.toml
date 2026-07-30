@@ -113,13 +113,30 @@ monetdb = ["sqlalchemy-monetdb>=2.0", "setuptools<82"]
 # HTTP endpoint on 4200 rather than the PostgreSQL wire the same server also
 # offers on 5432, so no PostgreSQL driver is involved and none is pulled in.
 cratedb = ["sqlalchemy-cratedb>=0.43"]
+# Two dialects exist for Firebird and this is the one that can be reached from
+# here. `sqlalchemy-firebird` is the older and more established of the two, but
+# it rides on `firebird-driver`, which is a ctypes binding to Firebird's own
+# `libfbclient` — a native library with no wheel, no Homebrew formula, and only a
+# system-wide installer to supply it. Measured rather than assumed: with
+# `firebird-driver` installed and nothing else, a connection raises `The location
+# of Firebird Client Library could not be determined.`
+#
+# `sqlalchemy-firebirdsql` rides on `firebirdsql` instead, which speaks the wire
+# protocol in pure Python and needs no native library at all. It is not a shim:
+# it is the same dialect base, ported, co-authored by `sqlalchemy-firebird`'s
+# author and maintained by the driver's. Younger, though — 0.1.0, sdist only —
+# and that is the cost this choice carries. See docs/CONSTRAINTS.md §20.1.
+#
+# The driver is not named here: the dialect requires it, and naming it again
+# would let the two drift.
+firebird = ["sqlalchemy-firebirdsql>=0.1"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird]",
 ]
 all = [
   "localdata-mcp[formats,databases]",

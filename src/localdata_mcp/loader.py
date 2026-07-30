@@ -61,6 +61,7 @@ from xml.etree import ElementTree
 import pandas as pd
 from sqlalchemy import (
     Column,
+    Connection,
     Engine,
     MetaData,
     Table,
@@ -1678,20 +1679,29 @@ class Workspace:
             **entry.backend.table_options(),
         )
 
+        # Whether the schema and the rows may travel together. True everywhere
+        # but Firebird, which keeps DDL transactional *and* prepares statements
+        # against committed metadata — so the table it has just made is invisible
+        # to the transaction that made it, and the insert fails with `-204 Table
+        # unknown` (issue #53). Asked once and named, because the two branches
+        # below have to agree about the answer.
+        #
+        # Splitting is the worse shape and is used only where the alternative is
+        # that the write cannot happen: with the CREATE committed first, a failure
+        # part-way through the rows leaves an empty table where a single
+        # transaction would have left nothing. The drop-and-create pair stays
+        # together either way — it is only the DDL→DML boundary that has to give.
+        together = entry.backend.sees_new_tables_in_transaction()
+
         try:
             with entry.engines.write.begin() as conn:
                 target.drop(conn, checkfirst=True)
                 target.create(conn)
-                statement = target.insert()
-                # The frame is never materialised as rows — only one chunk of it
-                # exists at a time. See the module docstring for the numbers.
-                for block in self._blocks(frame, columns):
-                    conn.execute(statement, block)
-                # Nothing for every backend that makes a committed write
-                # readable, which is all of them but the search-engine lineage.
-                # Inside the block on purpose: a write and the visibility of
-                # that write must not be separable by a failure between them.
-                entry.backend.settle(conn, table)
+                if together:
+                    self._fill(entry, conn, target, frame, columns, table)
+            if not together:
+                with entry.engines.write.begin() as conn:
+                    self._fill(entry, conn, target, frame, columns, table)
         except Exception as exc:
             unrepresentable = _unrepresentable(exc)
             if unrepresentable is not None:
@@ -1718,6 +1728,35 @@ class Workspace:
         )
         self._tables[info.qualified] = info
         return info
+
+    def _fill(
+        self,
+        entry: Tagged,
+        conn: Connection,
+        target: Table,
+        frame: pd.DataFrame,
+        columns: list[str],
+        table: str,
+    ) -> None:
+        """Put the frame's rows into a table that already exists, then settle it.
+
+        Extracted from :meth:`insert_frame` when Firebird made the transaction
+        boundary a per-backend question (#53), and extracted rather than
+        duplicated so that both answers write rows the *same* way. The thing that
+        varies between them is which transaction this runs in; nothing about the
+        writing itself does, and a second copy of this loop would be free to
+        drift.
+        """
+        statement = target.insert()
+        # The frame is never materialised as rows — only one chunk of it exists
+        # at a time. See the module docstring for the numbers.
+        for block in self._blocks(frame, columns):
+            conn.execute(statement, block)
+        # Nothing for every backend that makes a committed write readable, which
+        # is all of them but the search-engine lineage. Inside this block on
+        # purpose: a write and the visibility of that write must not be separable
+        # by a failure between them.
+        entry.backend.settle(conn, table)
 
     @staticmethod
     def _blocks(frame: pd.DataFrame, columns: list[str]) -> Iterator[list[dict]]:

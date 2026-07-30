@@ -256,6 +256,55 @@ services:
       retries: 20
       start_period: 20s
 
+  # The Firebird Project's own image — `firebirdsql/firebird` is the organisation
+  # that publishes the server, not a third-party rebuild.
+  #
+  # The only endpoint here whose database is a **file the server opens** rather
+  # than a name it looks up. `FIREBIRD_DATABASE` is resolved against
+  # `FIREBIRD_DATA` (`/var/lib/firebird/data`) and a database is created there on
+  # first start, so the URL in tests/endpoints.py has to carry that whole path.
+  # `FIREBIRD_USER` without `FIREBIRD_PASSWORD` is refused by the entrypoint
+  # rather than silently creating an unreachable user, which is the good failure.
+  #
+  # Nothing sets `WireCrypt`, and that is deliberate. Firebird 4+ defaults it to
+  # `Required`, and the entrypoint offers `FIREBIRD_USE_LEGACY_AUTH` which would
+  # reduce it to `Enabled` as a side effect — so the tempting move is to weaken
+  # the handshake pre-emptively. Measured instead: the pure-Python driver
+  # completes `Srp256` authentication and `WireCrypt=Required` unmodified, so the
+  # endpoint is exercised against the server's own defaults and this file makes no
+  # security concession to reach it.
+  localdata-test-firebird:
+    image: firebirdsql/firebird:5
+    environment:
+      FIREBIRD_ROOT_PASSWORD: testpass
+      FIREBIRD_USER: testuser
+      FIREBIRD_PASSWORD: testpass
+      FIREBIRD_DATABASE: testdb.fdb
+    ports:
+      - "13050:3050"
+    healthcheck:
+      # `isql` against `localhost:<path>`, not against the bare path. The path
+      # alone opens the file **in embedded mode**, inside the healthcheck's own
+      # process, which succeeds while the listening server is still starting and
+      # would report a database ready that no client can reach. Prefixing the
+      # host forces the connection through the TCP listener, so this probes the
+      # thing the published port exposes — the same lesson `$(hostname -i)`
+      # records for CrateDB and YugabyteDB, in its other form.
+      #
+      # `RDB$$DATABASE` carries a doubled `$` because compose interpolates a
+      # single one; the statement Firebird receives is `SELECT 1 FROM
+      # RDB$DATABASE`, and a constant select without that FROM clause is a syntax
+      # error here rather than a shortcut.
+      test:
+        [
+          "CMD-SHELL",
+          "echo 'SELECT 1 FROM RDB$$DATABASE;' | isql -b -q -u testuser -p testpass localhost:/var/lib/firebird/data/testdb.fdb >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 10s
+
 networks:
   default:
     name: localdata-test-net

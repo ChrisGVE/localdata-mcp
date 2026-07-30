@@ -433,6 +433,40 @@ def _cratedb(env: dict[str, str], port: int) -> str:
     )
 
 
+def _firebird(env: dict[str, str], port: int) -> str:
+    """Firebird, whose database component is a **path on the server's filesystem**.
+
+    Every other endpoint here names a database the server looks up in a catalogue.
+    Firebird opens a file: the container's entrypoint resolves
+    ``FIREBIRD_DATABASE`` against ``FIREBIRD_DATA`` and creates it there, so what
+    a URL has to carry is that whole absolute path, rendered by ``URL.create`` as
+    a second slash after the port. The directory is the image's own and is not
+    something the compose file sets, so it is the one part of this URL not read
+    from the environment.
+
+    The dialect is ``firebirdsql``, which is the name of the **driver** — the pure
+    Python one, from ``sqlalchemy-firebirdsql``. The mature ``sqlalchemy-firebird``
+    registers ``firebird`` and rides on ``libfbclient``, a native library this
+    machine has no way to obtain: measured, ``firebird-driver`` raises ``The
+    location of Firebird Client Library could not be determined.`` Adapter
+    *quality* would have argued for the older dialect; adapter *reach* decided it,
+    and under standing instruction 10 that is a question about addressing rather
+    than eligibility — the same distinction YugabyteDB's entry above turns on.
+
+    Hence ``engine="firebird"`` on the entry below. This is the first endpoint
+    whose dialect is named after neither the engine nor another engine, and the
+    identity assertion is what keeps a refusal from naming a Python package to
+    someone who opened a database.
+    """
+    return _url(
+        "firebirdsql",
+        username=env["FIREBIRD_USER"],
+        password=env["FIREBIRD_PASSWORD"],
+        port=port,
+        database=f"/var/lib/firebird/data/{env['FIREBIRD_DATABASE']}",
+    )
+
+
 #: Every endpoint dialect this server is tested against, in the order they were
 #: taken on. A dialect is here because it has a container; nothing about the
 #: server enumerates dialects, so this list is a statement about *coverage*, not
@@ -538,6 +572,19 @@ ENDPOINTS = (
         url=_cratedb,
         warmup=60.0,
     ),
+    # `engine` differs from `dialect` for the second time here, and for a new
+    # reason: YugabyteDB borrows PostgreSQL's dialect, whereas Firebird's own
+    # dialect is named after the driver that speaks to it. Both end up asserting
+    # the same thing — that the backend answering knows which engine it is.
+    Endpoint(
+        dialect="firebirdsql",
+        service="localdata-test-firebird",
+        container_port=3050,
+        driver="firebirdsql",
+        extra="firebird",
+        url=_firebird,
+        engine="firebird",
+    ),
 )
 
 
@@ -618,18 +665,30 @@ def _handshake(url: str, warmup: float) -> None:
     open, so a container is there and this harness could not use it. Treating
     that as "not running" would hide a wrong password or a missing schema behind
     the same green run as a machine with no Docker at all.
-    """
-    from sqlalchemy import create_engine, text
 
+    **The probe is a Core expression, not a string** (issue #54). It used to be
+    ``SELECT 1`` with a branch for Oracle, which needs a FROM clause — and that
+    branch was two defects at once: a dialect fact stated in a test fixture, which
+    standing instruction 1 forbids as firmly as one in shared code, and a dialect
+    sniffed out of a URL, which #45 established is not an identity. Firebird needs
+    ``FROM RDB$DATABASE`` and would have been the second entry.
+
+    None was needed. ``select(literal(1))`` compiles per dialect and already
+    emits ``FROM DUAL`` on Oracle and ``FROM rdb$database`` on Firebird, so the
+    fix deleted the special case rather than joining it. A per-dialect table whose
+    every row is a *spelling* of one operation is usually a portable expression
+    somebody has not looked for yet.
+    """
+    from sqlalchemy import create_engine, literal, select
+
+    probe = select(literal(1))
     deadline = time.monotonic() + warmup
     last: Exception | None = None
     while True:
         engine = create_engine(url)
         try:
             with engine.connect() as conn:
-                conn.execute(
-                    text("SELECT 1 FROM dual" if ":oracle" in url else "SELECT 1")
-                )
+                conn.execute(probe)
             return
         except Exception as exc:  # noqa: BLE001 - every driver has its own
             last = exc

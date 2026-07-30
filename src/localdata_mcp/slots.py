@@ -751,6 +751,15 @@ class Registry:
             # rather than what was asked for, or the slot's list and the
             # description would disagree with the database and with each other.
             landed = self._workspace.rename_table(nickname, table, to)
+        except UnsupportedOperation as exc:
+            # Not a failed rename — a datasource with no statement that renames a
+            # table at all. Firebird is the one, and it is the third user of this
+            # shape after create(type='index') and save: nothing happened, so
+            # there is nothing to undo, and the backend's own words say what to do
+            # instead. Distinguished from the LoadError below on purpose: that one
+            # means the rename was attempted and refused, this one means it was
+            # never a thing this database can do.
+            raise SlotError(str(exc)) from exc
         except LoadError as exc:
             raise SlotError(str(exc)) from exc
 

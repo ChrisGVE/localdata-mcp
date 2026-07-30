@@ -337,18 +337,33 @@ def _build_typed_table(live: Live) -> str:
     defined = Table(
         table, metadata, *columns, **backend_for_url(live.url).table_options()
     )
+    backend = backend_for_url(live.url)
+    # Whether the schema and the row may travel in one transaction. False only on
+    # Firebird, which prepares statements against committed metadata and so
+    # cannot address the table it has just made (issue #53). Asked of the seam for
+    # the same reason the three lines above are: a fixture that branched on the
+    # dialect name would be the defect standing instruction 1 forbids, and this
+    # fixture writes below the verbs so `insert_frame`'s own split does not cover
+    # it.
+    together = backend.sees_new_tables_in_transaction()
+
+    def _fill(conn) -> None:
+        conn.execute(defined.insert(), values)
+        # This fixture writes below the verbs, so nothing has asked the backend
+        # to make the row readable. On every transactional database the commit
+        # does it; on CrateDB the row is durable and invisible until the index
+        # refreshes, and the test would read an empty table.
+        backend.settle(conn, table)
+
     engine = create_engine(live.url)
     try:
         with engine.begin() as conn:
             metadata.create_all(conn)
-            conn.execute(defined.insert(), values)
-            # This fixture writes below the verbs, so nothing has asked the
-            # backend to make the row readable. On every transactional database
-            # the commit does it; on CrateDB the row is durable and invisible
-            # until the index refreshes, and the test would read an empty table.
-            # Asked of the seam rather than of the dialect name — the same way
-            # `unstorable_column_types` is consulted a few lines above.
-            backend_for_url(live.url).settle(conn, table)
+            if together:
+                _fill(conn)
+        if not together:
+            with engine.begin() as conn:
+                _fill(conn)
     finally:
         engine.dispose()
     return table
@@ -490,6 +505,24 @@ def test_a_table_can_be_renamed_and_keeps_its_rows(live):
 
     answer = call("update", nickname="endpoint", type="table", name=table, to=renamed)
 
+    backend = backend_for_url(live.url)
+    if not backend.renames_tables():
+        # Firebird, which has no rename-table statement in any version. The verb
+        # does not apply, and the same three things have to hold as for an index
+        # a backend cannot build: it says no, it names the database that declined
+        # rather than "a generic datasource", and — the part that makes this a
+        # test rather than a formality — the table it would not rename is still
+        # there under its original name with its rows intact. A refusal that had
+        # half-renamed something would pass the first two assertions.
+        assert answer["ok"] is False, answer
+        assert backend.name in answer["error"]
+        listed = call("info", nickname="endpoint")["tables"]
+        assert table in listed and renamed not in listed
+        assert call(
+            "query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}"
+        )["rows"] == [[5]]
+        return
+
     assert answer["ok"] is True, answer
     assert answer["rows"] == 5
     assert renamed in answer["tables"] and table not in answer["tables"]
@@ -512,12 +545,19 @@ def test_a_rename_onto_a_name_that_needs_quoting_keeps_the_case(live):
     other one — that the name reported back is the name the database actually
     has. Both halves are asserted for every dialect, and which one applies is
     the backend's to say rather than this fixture's.
+
+    Firebird cannot rename at all, so there is no case for its case to survive;
+    the sibling test above is where that refusal is asserted.
     """
     attach_writable(live)
     table = land_people(live)
     mixed = live.table("Mixed")
 
     answer = call("update", nickname="endpoint", type="table", name=table, to=mixed)
+
+    if not backend_for_url(live.url).renames_tables():
+        assert answer["ok"] is False, answer
+        return
 
     assert answer["ok"] is True, answer
     if backend_for_url(live.url).folds_identifiers():
