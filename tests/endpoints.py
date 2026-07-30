@@ -467,6 +467,51 @@ def _firebird(env: dict[str, str], port: int) -> str:
     )
 
 
+def _opengauss(env: dict[str, str], port: int) -> str:
+    """openGauss, on PostgreSQL's wire and reached through its **own** dialect.
+
+    The third engine here speaking that wire, and the first that cannot be
+    addressed as PostgreSQL at all — which is the opposite of what its lineage
+    suggests and was settled by measurement rather than by expectation.
+
+    psycopg connects and authenticates perfectly well. What fails is SQLAlchemy's
+    own ``PGDialect`` immediately afterwards, because openGauss answers
+    ``version()`` with ``(openGauss 7.0.0-RC3 build 01b7e318) compiled at …`` — a
+    banner that does not begin with ``PostgreSQL x.y``. ``PGDialect`` asserts on
+    that pattern while *initialising the connection*, so
+    ``AssertionError: Could not determine version from string`` arrives before any
+    statement runs. YugabyteDB's banner parses (``PostgreSQL 15.12-YB-…``) and is
+    why that endpoint could take the cheap route; this one has no cheap route.
+
+    So the cost YugabyteDB's entry above declined is paid here, and it is paid
+    because there is no alternative rather than because it got cheaper:
+    ``opengauss-sqlalchemy`` — the openGauss project's own, MIT — registers
+    psycopg2 drivers only, making this the second PostgreSQL driver family in the
+    project. It is a milder cost than the one that decided YugabyteDB:
+    ``psycopg2-binary`` publishes ordinary wheels, where ``psycopg2-yugabytedb``
+    was a fork pinned at 2.9.3 with wheels for one platform.
+
+    No ``engine=`` is needed, and that is worth stating because the lineage
+    predicts otherwise. The dialect registers under **its own** name, so the
+    backend answering already calls itself ``opengauss`` and there is no impostor
+    to resolve — the identity problem #45 describes simply does not arise when a
+    database ships its own dialect.
+
+    The password is read from the environment like every other, and here it
+    carries an ``@`` for a reason that is not stylistic: the image's entrypoint
+    enforces a complexity rule that *requires* one of ``#?!@$%^&*-``, so every
+    password this database will accept contains a URL delimiter. An endpoint that
+    formatted credentials into a URL could not reach openGauss at all.
+    """
+    return _url(
+        "opengauss+psycopg2",
+        username=env["GS_USERNAME"],
+        password=env["GS_PASSWORD"],
+        port=port,
+        database=env["GS_DB"],
+    )
+
+
 #: Every endpoint dialect this server is tested against, in the order they were
 #: taken on. A dialect is here because it has a container; nothing about the
 #: server enumerates dialects, so this list is a statement about *coverage*, not
@@ -584,6 +629,20 @@ ENDPOINTS = (
         extra="firebird",
         url=_firebird,
         engine="firebird",
+    ),
+    # No `engine` override: openGauss ships its own dialect, so the name the
+    # backend answers to is already the engine's. `opengauss_sqlalchemy` rather
+    # than `psycopg2` as the driver to import — both arrive with the same extra, so
+    # either would skip correctly, and naming the dialect says which distribution
+    # is missing rather than which library.
+    Endpoint(
+        dialect="opengauss",
+        service="localdata-test-opengauss",
+        container_port=5432,
+        driver="opengauss_sqlalchemy",
+        extra="opengauss",
+        url=_opengauss,
+        warmup=60.0,
     ),
 )
 

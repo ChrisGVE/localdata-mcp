@@ -3015,3 +3015,145 @@ interesting. `SuperServer` versus `Classic` versus `SuperClassic` — the image'
 offers all three — was left at the default. Nothing exercised its embedded mode, which is the form
 most Firebird deployments actually use and which this server would reach as a *file* rather than as an
 endpoint. Events, external tables, and `PSQL` stored procedures are all untouched.
+
+## §21 — openGauss, and a banner that stopped the dialect before the query (2026-07-30)
+
+Thirteenth endpoint dialect, tenth from the backend catalogue (task 22, worklist item 11 — taken
+ahead of Db2, which the procedure permits). A PostgreSQL fork, and the **third** engine here on that
+wire after CockroachDB and YugabyteDB — but the first that cannot be addressed as PostgreSQL at all.
+
+Measured against the openGauss project's own `opengauss/opengauss-server:7.0.0-RC3.B025`, server
+**openGauss 7.0.0-RC3 build 01b7e318**, through `opengauss-sqlalchemy` 2.4.0 on `psycopg2-binary`
+2.9.12. The widely-cited `enmotech/opengauss` was passed over: its newest tag is from 2024, and a
+vendor image exists.
+
+Its own behaviour turned out to be almost entirely generic. Both findings are in **our** code, and
+both were invisible rather than loud.
+
+### 21.1 Authentication succeeds and the dialect kills the connection anyway
+
+The expectation going in — from YugabyteDB, §15 — was that a PostgreSQL fork is reached as
+`postgresql+psycopg` and the only question is what it calls itself. That is wrong here, and the
+measurement is unambiguous:
+
+```
+FAIL testuser@testdb -> AssertionError: Could not determine version from string
+  '(openGauss 7.0.0-RC3 build 01b7e318) compiled at 2026-03-25 18:12:24 commit 0 last mr 9114 ...'
+```
+
+**psycopg connects and authenticates perfectly well.** What fails is SQLAlchemy's own `PGDialect`
+immediately afterwards: it asserts that `version()` matches `PostgreSQL x.y`, and openGauss's banner
+begins with a parenthesis. The failure lands during connection *initialisation*, so it is not a
+degraded read or a wrong name — no statement ever runs.
+
+This is the distinction §15 drew and could not yet demonstrate. YugabyteDB's banner is
+`PostgreSQL 15.12-YB-2.25.2.0-b0`, which parses to `(15, 12)`, so plain PostgreSQL reaches it;
+CockroachDB's does not parse, which is why it has its own dialect. openGauss is a second instance of
+the CockroachDB case, and the two together retire the idea that PostgreSQL-lineage implies
+PostgreSQL-addressable.
+
+| Engine | Banner starts | `postgresql+psycopg` reaches it | Addressed as |
+|---|---|---|---|
+| YugabyteDB | `PostgreSQL 15.12-YB-…` | yes | `postgresql+psycopg`, with an `impostors` entry |
+| CockroachDB | `CockroachDB CCL v…` | no | `cockroachdb+psycopg` |
+| openGauss | `(openGauss 7.0.0-RC3 …` | **no — AssertionError on connect** | `opengauss+psycopg2` |
+
+**So the cost YugabyteDB declined is paid here, and paid because there is no alternative.**
+`opengauss-sqlalchemy` is the openGauss project's own (MIT) and registers psycopg2 drivers only,
+making psycopg2 the **second PostgreSQL driver family** in this project. It is a milder cost than the
+one that decided YugabyteDB's addressing: `psycopg2-binary` publishes ordinary wheels, where
+`psycopg2-yugabytedb` was a fork pinned at 2.9.3 publishing wheels for one platform. A second driver
+family with real wheels is a cost to record; a second driver family that must be compiled is a reason
+to choose differently.
+
+**No `impostors` entry, and that is the point of shipping a dialect.** The identity problem #45
+describes does not arise: the dialect registers under its own name, so the backend already calls
+itself `opengauss` and there is nothing to resolve from a banner. Firebird (§20) is the mirror image —
+its dialect is named after the *driver*, so the entry is keyed on the dialect while naming the engine.
+
+Two container facts, both from the entrypoint rather than from documentation. `GS_PASSWORD` is checked
+against a complexity rule — eight characters, a lower, an upper, a digit and one of `#?!@$%^&*-` —
+and initialisation is refused without one that passes, **so every password this database accepts
+contains a URL delimiter.** An endpoint that formatted credentials into a URL could not reach
+openGauss at all; the `@` in the compose file is load-bearing, not decorative. And the initial user
+`omm` is refused over TCP outright — `FATAL: Forbid remote connection with initial user` — so
+`GS_USERNAME` must create a normal user or nothing connects.
+
+### 21.2 A BYTEA that arrived as a process address (issue #57)
+
+`_ON_THE_WIRE` spells binary for JSON by exact type and named two of the three spellings, `bytes` and
+`bytearray`. **psycopg2 returns a `BYTEA` as `memoryview`**, where psycopg 3 returns `bytes` — so
+which type arrives is a property of the *driver*, and this project now carries two drivers for one
+wire protocol.
+
+```
+AssertionError: assert '<memory at 0x1192c7640>' == '0x00ff'
+```
+
+Worth separating from an ordinary missing spelling. `_wire_value`'s fallback is `str(value)`, and that
+fallback is a good decision — it beats refusing a whole result over one unrecognised column, and for a
+PostGIS geometry it produces something readable. `memoryview` is where the reasoning breaks: its
+`repr` is **not a lossy rendering of the value** but a process address. None of the bytes are in it, it
+differs every run so it cannot even be compared, and it looks like data. That is the fail-open shape
+the table exists to prevent, arriving *through* the escape hatch rather than around it.
+
+The general note, recorded because `memoryview` is unlikely to be the only one: a type whose `repr`
+carries an address rather than its contents is silently unserialisable, so the `str()` fallback cannot
+be assumed harmless.
+
+### 21.3 A refused write reported as a syntax error (issue #58)
+
+The second invisible one, and it is the same class as #45 reached through a string match instead of a
+dialect name.
+
+No PostgreSQL-lineage engine will declare a server-side cursor over anything but a query, so a
+streamed write comes back as a syntax error naming the statement's own first word.
+`_objected_to_the_leading_verb` exists to recognise that shape and replace the diagnosis. Its guard
+required the literal `cursor for`:
+
+| Engine | Cursor declaration in the error | contains `cursor for` |
+|---|---|---|
+| PostgreSQL | `DECLARE "c_1" CURSOR FOR INSERT INTO …` | yes |
+| openGauss | `DECLARE "c_1" CURSOR WITHOUT HOLD FOR INSERT INTO …` | **no** |
+
+So openGauss's refusal reached the caller as `syntax error at or near "INSERT"`, sending an agent to
+hunt for a typo in a statement that has none. **The write was still refused** — nothing reached the
+data, so this was a diagnosis defect and not a safety one, which is exactly why it could sit there
+unnoticed: the test that caught it asserts the message names `create`, not that the write failed.
+
+The helper's docstring calls itself "narrow on purpose", and it was right about *which* narrowness
+matters — that the objected-to token is the statement's own first word, which is what separates
+"wrong kind of statement" from "malformed query". The `cursor for` literal was not that. It pinned one
+engine's phrasing of a construct the whole lineage emits differently. Requiring `declare` **and**
+`cursor` keeps the context without pinning the words between them, and the leading-word check, which
+is the real guard, is unchanged.
+
+Only openGauss exercises this path today: CockroachDB and YugabyteDB are reached through psycopg 3,
+which streams without declaring a server-side cursor at all.
+
+### 21.4 Everything else, and it really was everything
+
+| Axis | openGauss |
+|---|---|
+| transactional floor, DML and DDL | generic — both roll back on a connection that never commits |
+| `rename_table` | generic — `ALTER TABLE … RENAME TO` accepted verbatim |
+| `folds_identifiers` | generic `False` |
+| `column_type` | generic — the portable types render usably |
+| `builds_indexes` | generic `True` — create, reflect, drop |
+| `unstorable_column_types` | empty — `Numeric`, `Date`, `DateTime`, `Time` and `LargeBinary` all round-trip |
+| `driver_errors` | generic — psycopg2's errors arrive wrapped |
+| `impostors` / `banner_query` | none; it ships its own dialect |
+| everything else | generic |
+
+**No `BACKENDS` entry.** Like MonetDB (§18), openGauss answers every axis the generic way, and the
+work it cost was entirely in code shared by every dialect. `server_version_info` reads `(9, 2, 4)` —
+the PostgreSQL version openGauss reports compatibility with, not its own 7.0.0.
+
+### 21.5 What this did not test
+
+Its distributed and enterprise halves, which are most of why openGauss exists: primary/standby
+replication, the `dcf` consensus mode, column-store tables, and the in-place update storage engine
+(`ustore`) were all left at their defaults. The `dc_psycopg2` and `asyncpg` drivers its dialect also
+registers are untried — only the synchronous psycopg2 one is exercised. Nothing here touches its
+compatibility modes: an openGauss database can be created in `A` (Oracle), `B` (MySQL) or `PG` mode,
+and the container's default is the only one measured.

@@ -305,6 +305,58 @@ services:
       retries: 12
       start_period: 10s
 
+  # openGauss, and the openGauss project's own image rather than the widely-cited
+  # `enmotech/opengauss` third-party rebuild, whose last tag is from 2024.
+  #
+  # A PostgreSQL fork, and the third engine here on that wire after CockroachDB
+  # and YugabyteDB — but the only one that cannot be addressed as PostgreSQL at
+  # all. Its version banner does not begin with `PostgreSQL`, so SQLAlchemy's own
+  # PGDialect raises while initialising the connection. It is reached through its
+  # own dialect on psycopg2; see tests/endpoints.py and docs/CONSTRAINTS.md §21.1.
+  #
+  # `GS_PASSWORD` is checked by the entrypoint against a complexity rule — eight
+  # characters with a lower, an upper, a digit and one of `#?!@$%^&*-` — and the
+  # container refuses to initialise without one that passes. The `@` is therefore
+  # not decoration: the only passwords this image accepts are ones that contain a
+  # URL delimiter, so this endpoint cannot be reached at all by a harness that
+  # formats credentials into a URL instead of passing them as values.
+  #
+  # `GS_USERNAME` matters as much. The initial user `omm` is refused over TCP
+  # outright — `FATAL: Forbid remote connection with initial user` — so a normal
+  # user has to be created for anything to connect.
+  localdata-test-opengauss:
+    image: opengauss/opengauss-server:7.0.0-RC3.B025
+    environment:
+      GS_PASSWORD: "Testpass1@"
+      GS_USERNAME: testuser
+      GS_DB: testdb
+    ports:
+      - "15434:5432"
+    healthcheck:
+      # Over TCP as `testuser`, not over the local socket as `omm`. The socket
+      # probe is the shorter command and proves the wrong thing: it succeeds from
+      # inside the container while the listener is still starting and while the
+      # only user a client could use may not exist yet. This is the Firebird
+      # lesson in its second form — there a bare path opened the database in
+      # embedded mode, here a local socket bypasses the listener — and both come
+      # to the same rule, that a healthcheck must probe what the published port
+      # exposes.
+      #
+      # `-W` puts the password in the container's process list. Accepted here,
+      # unlike the MonetDB entry above which routes around it, because openGauss's
+      # `gsql` does **not** honour `PGPASSWORD` — measured: it prompts, reads
+      # nothing, and fails with `Invalid username/password`. The password is in
+      # this file in plaintext regardless.
+      test:
+        [
+          "CMD-SHELL",
+          "su - omm -c \"gsql -h 127.0.0.1 -p 5432 -d testdb -U testuser -W 'Testpass1@' -t -A -c 'select 1'\" | grep -q 1 || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 24
+      start_period: 40s
+
 networks:
   default:
     name: localdata-test-net

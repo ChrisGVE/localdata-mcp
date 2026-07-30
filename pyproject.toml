@@ -130,13 +130,28 @@ cratedb = ["sqlalchemy-cratedb>=0.43"]
 # The driver is not named here: the dialect requires it, and naming it again
 # would let the two drift.
 firebird = ["sqlalchemy-firebirdsql>=0.1"]
+# The **second PostgreSQL driver family** in this project, and the only extra that
+# adds one. YugabyteDB's entry in tests/endpoints.py declined exactly this cost
+# and was addressed as plain PostgreSQL instead; openGauss cannot be, and the
+# difference is measured rather than argued. Its version banner is
+# `(openGauss 7.0.0-RC3 build …)` — it does not begin with `PostgreSQL x.y`, so
+# SQLAlchemy's own PGDialect raises `AssertionError: Could not determine version
+# from string` while *initialising the connection*. Authentication succeeds; the
+# dialect kills it afterwards. There is no plain-PostgreSQL route to this database.
+#
+# `opengauss-sqlalchemy` is the openGauss project's own and registers psycopg2
+# drivers only. Unlike `psycopg2-yugabytedb` — the pinned fork that decided
+# YugabyteDB's addressing — `psycopg2-binary` publishes ordinary wheels, so the
+# cost here is a second driver family and nothing worse. See
+# docs/CONSTRAINTS.md §21.1.
+opengauss = ["opengauss-sqlalchemy>=2.4", "psycopg2-binary>=2.9"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird,opengauss]",
 ]
 all = [
   "localdata-mcp[formats,databases]",

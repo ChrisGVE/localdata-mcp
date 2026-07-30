@@ -456,11 +456,22 @@ def _objected_to_the_leading_verb(message: str, sql: str) -> bool:
     statement it is. A malformed query objects at whichever token is actually
     wrong — never at its leading ``SELECT`` — so it falls through to the
     driver's message, exactly as an unrecognised phrasing does.
+
+    **The cursor marker is two words that must both appear, not one phrase**
+    (issue #58). This used to look for the literal ``cursor for``, which is
+    PostgreSQL's exact wording and nobody else's: openGauss declares the same
+    cursor as ``DECLARE "c_1" CURSOR WITHOUT HOLD FOR INSERT INTO …``, where the
+    two words are separated by modifiers, so the test missed it and a refused
+    write was reported as a syntax error the caller could not act on. Requiring
+    ``declare`` *and* ``cursor`` keeps the context this needs — it is still only
+    ever a cursor declaration being described — without pinning one engine's
+    phrasing of the words in between.
     """
     words = sql.strip().split(None, 1)
-    if not words or "cursor for" not in message.lower():
+    folded = message.lower()
+    if not words or "declare" not in folded or "cursor" not in folded:
         return False
-    return f'"{words[0].lower()}"' in message.lower()
+    return f'"{words[0].lower()}"' in folded
 
 
 def _missing_table(message: str) -> str | None:

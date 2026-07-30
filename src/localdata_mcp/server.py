@@ -198,6 +198,14 @@ _ON_THE_WIRE: dict[type, Any] = {
     # and the prefix is what stops it reading as ordinary text.
     bytes: lambda value: f"0x{value.hex()}",
     bytearray: lambda value: f"0x{bytes(value).hex()}",
+    # The third spelling of "binary", and the one the fallback below handles worst
+    # (issue #57). psycopg2 returns a ``BYTEA`` as ``memoryview`` where psycopg 3
+    # returns ``bytes``, so which of these three arrives is a property of the
+    # *driver* rather than of the database — and this project now carries two
+    # PostgreSQL drivers, so both answers turn up. Unspelled, a memoryview reaches
+    # the caller as ``<memory at 0x1192c7640>``: not a lossy rendering of the value
+    # but a process address, carrying none of the bytes and differing every run.
+    memoryview: lambda value: f"0x{bytes(value).hex()}",
     UUID: str,
 }
 

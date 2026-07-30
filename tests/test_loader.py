@@ -1313,3 +1313,89 @@ def test_the_code_is_read_from_whichever_attribute_the_driver_publishes():
     assert loader_module._asks_to_be_retried(_refused("40001", "pgcode"))
     assert loader_module._asks_to_be_retried(_refused("40001", "sqlstate"))
     assert not loader_module._asks_to_be_retried(_refused("40001", "errno"))
+
+
+# ---------------------------------------------------------------------------
+# A refused write, diagnosed across engines that word the refusal differently
+# ---------------------------------------------------------------------------
+
+
+#: Real cursor-declaration errors, one per engine, copied from live containers
+#: rather than composed here — the phrasing *is* the thing under test, so an
+#: invented message would test the invention. PostgreSQL's is the wording the
+#: helper was written against; openGauss's is the one it used to miss (#58).
+_POSTGRES_REFUSAL = (
+    'syntax error at or near "INSERT"\n'
+    'LINE 1: DECLARE "c_7f9a_1" CURSOR FOR INSERT INTO people VALUES (1)\n'
+    "                                      ^\n"
+)
+_OPENGAUSS_REFUSAL = (
+    'syntax error at or near "INSERT"\n'
+    'LINE 1: DECLARE "c_119d8e8d0_4" CURSOR WITHOUT HOLD FOR INSERT INTO ...\n'
+    "                                                        ^\n"
+)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [_POSTGRES_REFUSAL, _OPENGAUSS_REFUSAL],
+    ids=["postgresql", "opengauss"],
+)
+@pytest.mark.parametrize(
+    "sql",
+    ["INSERT INTO people VALUES (1)", "  insert into people values (1)"],
+    ids=["plain", "lowercase-and-indented"],
+)
+def test_a_write_refused_by_the_cursor_declaration_is_recognised(message, sql):
+    """The refusal is real; only the diagnosis was wrong, and per-engine.
+
+    No PostgreSQL-lineage engine will declare a cursor over anything but a
+    query, so a streamed write comes back as a syntax error naming the
+    statement's own first word. Both messages describe the same refusal and word
+    it differently — ``CURSOR FOR`` against ``CURSOR WITHOUT HOLD FOR`` — and the
+    helper used to match the first literally, so openGauss's refusal reached the
+    caller as a syntax error in a statement that had none.
+    """
+    assert loader_module._objected_to_the_leading_verb(message, sql) is True
+
+
+def test_a_genuinely_malformed_query_is_not_mistaken_for_a_refused_write():
+    """The narrowness that matters, and the reason this is not a keyword search.
+
+    A broken query objects at whichever token is actually wrong — never at its
+    leading ``SELECT`` — so it must fall through to the driver's own message.
+    Rewriting it as "query reads; it does not write" would tell somebody with a
+    typo that they had attempted a write.
+    """
+    message = (
+        'syntax error at or near "FROM"\n'
+        'LINE 1: DECLARE "c_7f9a_1" CURSOR FOR SELECT , FROM people\n'
+        "                                                ^\n"
+    )
+
+    assert (
+        loader_module._objected_to_the_leading_verb(message, "SELECT , FROM people")
+        is False
+    )
+
+
+def test_an_error_that_is_not_about_a_cursor_declaration_is_left_alone():
+    """Both marker words are required, so an unrelated complaint is not rewritten.
+
+    ``declare`` and ``cursor`` replaced the single adjacent phrase ``cursor for``
+    (#58). Loosening a marker risks the opposite failure — matching messages that
+    are nothing to do with a refused write — so the pair is asserted to still be
+    a pair.
+    """
+    assert (
+        loader_module._objected_to_the_leading_verb(
+            'syntax error at or near "INSERT"', "INSERT INTO people VALUES (1)"
+        )
+        is False
+    )
+    assert (
+        loader_module._objected_to_the_leading_verb(
+            'relation "cursor" does not exist', "INSERT INTO people VALUES (1)"
+        )
+        is False
+    )
