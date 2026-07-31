@@ -547,9 +547,9 @@ def test_every_auth_mode_builder_round_trips_its_own_credentials():
             # certificates live where the CA service put them.
             for written in sorted(scratch.rglob("*")):
                 if written.is_file():
-                    assert (
-                        written.stat().st_mode & 0o077 == 0
-                    ), f"{mode.mode} wrote {written.name} readable by others"
+                    assert written.stat().st_mode & 0o077 == 0, (
+                        f"{mode.mode} wrote {written.name} readable by others"
+                    )
 
     assert swept, "no auth modes were swept, so this asserted nothing"
 
