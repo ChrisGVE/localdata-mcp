@@ -80,12 +80,18 @@ from .paths import resolve_read_path
 
 __all__ = [
     "ColumnInfo",
+    "ColumnMeasurement",
     "IndexInfo",
     "ReadResult",
+    "SourceRead",
+    "SourceTable",
     "TableInfo",
     "Tagged",
     "Workspace",
     "LoadError",
+    "measure_frame",
+    "read_file",
+    "read_source",
 ]
 
 #: What a retried read gives back, whatever that happens to be. Only
@@ -107,6 +113,13 @@ _INSERT_CHUNK = 1_000
 #: that a caller taking ten rows out of a million-row result never materialises
 #: the rest.
 _YIELD_PER = 1_000
+
+#: Rows pulled out of a *file* at a time, while measuring it and again while
+#: inserting it. Distinct from :data:`_INSERT_CHUNK`, which bounds what one
+#: ``execute`` hands the driver: this bounds what one chunk of the file costs to
+#: hold. Matched to :data:`_SCAN_BLOCK` so the numeric scan sees one block per
+#: chunk rather than blocking a block.
+_READ_CHUNK = 50_000
 
 #: What to call the primary key added to a loaded table on a backend that will
 #: not make one without a key — see ``Backend.requires_primary_key``. Held here
@@ -1128,9 +1141,9 @@ def _frame_of_records(records: list[dict], notes: tuple[str, ...]) -> ReadResult
         if not series.map(lambda value: isinstance(value, (dict, list))).any():
             continue
         frame[name] = series.map(
-            lambda value: json.dumps(value)
-            if isinstance(value, (dict, list))
-            else value
+            lambda value: (
+                json.dumps(value) if isinstance(value, (dict, list)) else value
+            )
         )
         encoded.append(str(name))
 
@@ -1186,6 +1199,33 @@ READERS: dict[str, Reader] = {
 DELIMITED = {".csv", ".tsv", ".txt"}
 
 
+def _readable_suffix(path: Path) -> str:
+    """The suffix, if anything here reads it."""
+    suffix = path.suffix.lower()
+    if suffix not in READERS:
+        supported = ", ".join(sorted(READERS))
+        raise LoadError(f"No reader for {path.suffix!r}. Supported: {supported}")
+    return suffix
+
+
+def _check_delimiter(path: Path, suffix: str, delimiter: str | None) -> None:
+    """Refuse a delimiter that cannot mean anything for this file.
+
+    Refused rather than ignored: a caller who set it believes it did something.
+    """
+    if delimiter is None:
+        return
+    if suffix not in DELIMITED:
+        listed = ", ".join(sorted(DELIMITED))
+        raise LoadError(
+            f"delimiter does not apply to {suffix} — only to character-"
+            f"separated text ({listed}). {path.name} has its own structure "
+            f"and nothing here needs to be told how to split it."
+        )
+    if len(delimiter) != 1:
+        raise LoadError(f"delimiter must be a single character, not {delimiter!r}.")
+
+
 def read_file(path: Path, *, delimiter: str | None = None) -> ReadResult:
     """Read a tabular file into frames, touching no database state.
 
@@ -1197,23 +1237,9 @@ def read_file(path: Path, *, delimiter: str | None = None) -> ReadResult:
     to the delimited formats. Passing it for a format that has no separator is
     refused rather than ignored: a caller who set it believes it did something.
     """
-    suffix = path.suffix.lower()
-    reader = READERS.get(suffix)
-    if reader is None:
-        supported = ", ".join(sorted(READERS))
-        raise LoadError(f"No reader for {path.suffix!r}. Supported: {supported}")
-
-    if delimiter is not None:
-        if suffix not in DELIMITED:
-            listed = ", ".join(sorted(DELIMITED))
-            raise LoadError(
-                f"delimiter does not apply to {suffix} — only to character-"
-                f"separated text ({listed}). {path.name} has its own structure "
-                f"and nothing here needs to be told how to split it."
-            )
-        if len(delimiter) != 1:
-            raise LoadError(f"delimiter must be a single character, not {delimiter!r}.")
-        reader = _delimited(delimiter)
+    suffix = _readable_suffix(path)
+    _check_delimiter(path, suffix, delimiter)
+    reader = _delimited(delimiter) if delimiter is not None else READERS[suffix]
 
     try:
         result = reader(path)
@@ -1238,6 +1264,470 @@ def read_file(path: Path, *, delimiter: str | None = None) -> ReadResult:
         standardized.append(NamedFrame(frame, table.name))
 
     return ReadResult(tuple(standardized), result.notes)
+
+
+# ---------------------------------------------------------------------------
+# Measuring a source before its table exists
+# ---------------------------------------------------------------------------
+#
+# `read_file` above builds every reader's whole frame before a row is inserted,
+# so the load's peak tracks the *file* — 3.0 GB resident against a 1.22 GB CSV
+# (CONSTRAINTS §10.6). What stops that being a chunk-size change is that
+# everything deciding the *table* is a whole-column measurement made before the
+# first insert: the declared type, the width of the widest text value, the
+# numeric split of a mixed column, and whether a text column is dates. pandas
+# infers dtypes per chunk, so a naive chunked insert declares a column from
+# chunk one and meets a value it cannot hold in chunk five.
+#
+# So the file is read twice. The first pass measures, accumulating each of those
+# answers across chunks; the second coerces every chunk to what was measured and
+# inserts it. Two properties are kept that are easy to lose:
+#
+#   * A file that cannot be parsed must not cost a live slot its place
+#     (slots.py). Pass one reads the whole file before `_make_room` is called,
+#     so a parse error still arrives before any eviction.
+#   * The notes are part of the read — the fat-column note, the mixed-column
+#     report, the surrogate-key note — and they are produced from measurements,
+#     so they belong to pass one.
+
+
+@dataclass(frozen=True)
+class ColumnMeasurement:
+    """One column, as it was measured before there was a table to put it in.
+
+    Also everything :meth:`Workspace._described_from` reports, so a column is
+    measured once rather than once for the table and again for the description.
+    """
+
+    name: str
+    declared_type: str
+    #: What the values are, so a chunk of raw text can be turned back into them:
+    #: ``"int"``, ``"float"``, ``"bool"`` or ``"text"``. ``None`` where the frame
+    #: was already typed and there is nothing to turn back.
+    family: str | None = None
+    longest: int | None = None
+    #: The spelling to rewrite this column's dates in, or ``None`` to leave its
+    #: text alone — which covers a column that is not temporal *and* one already
+    #: canonical throughout, since :func:`temporal.standardize` rewrites neither.
+    spelling: temporal.Spelling | None = None
+    temporal_kind: str | None = None
+    temporal_standard: str | None = None
+    numeric_values: int = 0
+    non_numeric_values: int = 0
+    non_numeric_examples: tuple[str, ...] = ()
+    unparsed_temporal_examples: tuple[str, ...] = ()
+
+
+def measure_frame(frame: pd.DataFrame) -> tuple[ColumnMeasurement, ...]:
+    """Measure a frame already in memory, a whole column at a time.
+
+    What every format that is not read in chunks goes through, and the reference
+    the chunked measurement is held to: :class:`_ColumnScan` accumulates these
+    same fields from parts of a column, and a test loads every fixture both ways
+    and compares the schema, the notes and every value.
+    """
+    measured = []
+    for name, label in zip(_unique_columns(list(frame.columns)), frame.columns):
+        series = frame[label]
+        declared = _declared_type(series)
+        numeric = non_numeric = 0
+        examples: tuple[str, ...] = ()
+        dates: tuple[str, ...] = ()
+        standard: str | None = None
+        if declared == "TEXT":
+            if temporal.is_standard(series):
+                standard = "iso8601_utc"
+            else:
+                numeric, non_numeric, examples = _numeric_split(series)
+                dates = temporal.unparsed_temporal_examples(series)
+        measured.append(
+            ColumnMeasurement(
+                name=name,
+                declared_type=declared,
+                longest=_longest_value(series, declared),
+                temporal_kind=binding.column_temporal_kind(series),
+                temporal_standard=standard,
+                numeric_values=numeric,
+                non_numeric_values=non_numeric,
+                non_numeric_examples=examples,
+                unparsed_temporal_examples=dates,
+            )
+        )
+    return tuple(measured)
+
+
+#: What a column of these, and nothing else, is read as. ``read_csv`` gives such
+#: a column a real boolean dtype, and gives it up the moment anything else — a
+#: gap included — appears in it.
+_BOOLEANS = ("true", "false")
+
+#: The declared type each family of values gets. Anything not named is text,
+#: which is also what an unrecognised family would have to be.
+_DECLARED = {"bool": "INTEGER", "int": "INTEGER", "float": "REAL"}
+
+
+class _ColumnScan:
+    """One column's measurements, accumulated a chunk of raw text at a time.
+
+    **Raw text, deliberately.** A chunked read cannot let pandas infer the
+    column's type, because it infers per chunk: a column holding ``1`` and ``2``
+    in chunk one and ``3a`` in chunk five is read as integers and then as text,
+    and the two chunks disagree about what the column is. Reading every chunk as
+    strings and rebuilding the verdict from them is what makes the answer a
+    property of the column rather than of where the chunk boundaries fell.
+
+    It is also what keeps the string-shaped measurements exact. A column of
+    ``007`` inferred as integers measures one character wide instead of three,
+    which is a ``VARCHAR2`` too narrow for the values pass two then reads.
+
+    The rebuilt verdict was checked against ``read_csv``'s own inference over
+    thirty-nine column shapes — leading zeroes, underscores, hex, ``inf``,
+    ``nan``, whitespace, wide integers, booleans with and without gaps — and
+    agrees on all of them (CONSTRAINTS §28).
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        #: Families seen in chunks that held values, widened once at the end
+        #: rather than pairwise as they arrive: the rule reads as a rule that
+        #: way, and applying it pairwise would state it four times.
+        self._families: set[str] = set()
+        self._has_gap = False
+        self._had_values = False
+        self._rows = 0
+        self._longest = 0
+        # Three all-or-nothing temporal questions. Each stops being asked as
+        # soon as a chunk answers no, because no later chunk can answer yes.
+        self._canonical_throughout = True
+        self._parses_throughout = True
+        self._date_shaped_throughout = True
+        self._spelling: temporal.Spelling | None = None
+        self._date_examples: dict[str, None] = {}
+        # The numeric split, for the mixed-column report.
+        self._numeric = 0
+        self._non_numeric = 0
+        self._numeric_examples: dict[str, None] = {}
+
+    def observe(self, raw: pd.Series) -> None:
+        """Fold one chunk of this column's raw text into the measurements."""
+        self._rows += len(raw)
+        if bool(raw.isna().any()):
+            self._has_gap = True
+        present = temporal.text_values(raw)
+        if present is None:
+            # A chunk holding no values says nothing about the column, and must
+            # not be able to answer an all-or-nothing question either — which is
+            # why every question below is asked of `present` and not of `raw`.
+            return
+        self._had_values = True
+        self._longest = max(self._longest, int(present.str.len().max()))
+        self._observe_family(present)
+        self._observe_temporal(present, raw)
+
+    def _observe_family(self, present: pd.Series) -> None:
+        """Which family this chunk's values belong to, and their numeric split.
+
+        The two are measured together because the first answers the second for
+        free in the common case: if every value parses as a number then the
+        split is all-numeric with nothing to give as an example, and the second
+        scan is only paid for by a chunk that actually holds something mixed.
+        """
+        if bool(present.str.lower().isin(_BOOLEANS).all()):
+            self._families.add("bool")
+            self._split(present)
+            return
+        try:
+            parsed = pd.to_numeric(present, errors="raise")
+        except (ValueError, TypeError, OverflowError):
+            self._families.add("text")
+            self._split(present)
+            return
+        if pd.api.types.is_object_dtype(parsed.dtype):
+            # An integer too wide for int64. `to_numeric` falls back to object
+            # and hands back Python ints, and so does `read_csv` — which is why
+            # this is its own family rather than text: the column is *declared*
+            # text either way, but what the values are matters to what binds.
+            self._families.add("wide")
+        elif pd.api.types.is_integer_dtype(parsed.dtype):
+            self._families.add("int")
+        else:
+            self._families.add("float")
+        self._numeric += len(present)
+
+    def _split(self, present: pd.Series) -> None:
+        """Count this chunk's numeric and non-numeric values, and keep examples."""
+        numeric, non_numeric, examples = _numeric_split(present)
+        self._numeric += numeric
+        self._non_numeric += non_numeric
+        for value in examples:
+            if len(self._numeric_examples) == MAX_NON_NUMERIC_EXAMPLES:
+                break
+            self._numeric_examples.setdefault(value)
+
+    def _observe_temporal(self, present: pd.Series, raw: pd.Series) -> None:
+        if self._canonical_throughout and not temporal.is_canonical(present):
+            self._canonical_throughout = False
+
+        if self._parses_throughout:
+            parsed = temporal.parse(present, raw)
+            if parsed is None:
+                self._parses_throughout = False
+            else:
+                found = temporal.spelling_of(parsed)
+                self._spelling = (
+                    found
+                    if self._spelling is None
+                    else self._spelling.merged_with(found)
+                )
+
+        if self._date_shaped_throughout:
+            if not temporal.is_date_shaped(present):
+                self._date_shaped_throughout = False
+            else:
+                for value in present:
+                    if len(self._date_examples) == temporal.MAX_TEMPORAL_EXAMPLES:
+                        break
+                    self._date_examples.setdefault(value)
+
+    def _family(self) -> str:
+        """Which family the whole column belongs to, from the ones its parts do.
+
+        A gap is what widens int to float and takes a boolean column away
+        altogether, because that is what ``read_csv`` does with one: there is no
+        missing marker in either dtype, so the column becomes the one that has
+        one. Boolean beside numeric is not a column either can hold, and reads
+        as text.
+
+        Every rule here is ``read_csv``'s rather than this module's, and each
+        was measured against it rather than reasoned about (CONSTRAINTS §28).
+        """
+        if not self._families:
+            # No value anywhere. A column of *rows* that are all missing reads
+            # as float64; a column with no rows at all — a file that is a header
+            # and nothing else — is left as object, which is text.
+            return "float" if self._rows else "text"
+        if "text" in self._families:
+            return "text"
+        if self._families == {"bool"}:
+            return "text" if self._has_gap else "bool"
+        if "bool" in self._families:
+            return "text"
+        if "wide" in self._families:
+            # A too-wide integer keeps the column as Python ints for as long as
+            # everything in it is an integer, gaps included. One real number in
+            # it and `read_csv` gives up and reads the whole column as text.
+            return "wide" if self._families <= {"wide", "int"} else "text"
+        if "float" in self._families or self._has_gap:
+            return "float"
+        return "int"
+
+    def finish(self) -> ColumnMeasurement:
+        """The column's measurements, now that every chunk has been seen."""
+        family = self._family()
+        declared = _DECLARED.get(family, "TEXT")
+
+        # Canonical throughout by the end, either because it arrived that way or
+        # because pass two will rewrite it into that. `standardize` skips a
+        # column that is already canonical, so only the second case has a
+        # spelling to apply — and only that case is sized from the spelling,
+        # since the first keeps the text it came with.
+        standard = declared == "TEXT" and self._had_values and self._parses_throughout
+        spelling = (
+            self._spelling if standard and not self._canonical_throughout else None
+        )
+
+        if declared != "TEXT":
+            longest = None
+        elif spelling is not None:
+            longest = temporal.canonical_width(spelling)
+        else:
+            longest = self._longest
+
+        return ColumnMeasurement(
+            name=self.name,
+            declared_type=declared,
+            family=family,
+            longest=longest,
+            spelling=spelling,
+            temporal_standard="iso8601_utc" if standard else None,
+            numeric_values=0 if standard or declared != "TEXT" else self._numeric,
+            non_numeric_values=(
+                0 if standard or declared != "TEXT" else self._non_numeric
+            ),
+            non_numeric_examples=(
+                () if standard or declared != "TEXT" else tuple(self._numeric_examples)
+            ),
+            unparsed_temporal_examples=(
+                tuple(self._date_examples)
+                if declared == "TEXT"
+                and not standard
+                and self._had_values
+                and self._date_shaped_throughout
+                else ()
+            ),
+        )
+
+
+#: How a chunk of raw text becomes the values the measurements settled on.
+#: ``float`` is cast rather than left as ``to_numeric`` returns it, because a
+#: chunk holding only whole numbers comes back as integers while the column was
+#: measured to hold reals — the same column read whole is float throughout.
+_COERCE: dict[str, Callable[[pd.Series], pd.Series]] = {
+    "int": lambda values: pd.to_numeric(values),
+    "float": lambda values: pd.to_numeric(values).astype("float64"),
+    "bool": lambda values: values.str.lower().map({"true": True, "false": False}),
+    # Python ints in an object column, which is what `read_csv` gives a column
+    # of integers too wide for int64. Reproduced rather than improved on: the
+    # value is then refused by `binding.adapt_value` for being unrepresentable,
+    # and a file the materialised path refuses must not load here (issue #72).
+    "wide": lambda values: pd.to_numeric(values),
+    "text": lambda values: values,
+}
+
+
+def _as_measured(
+    chunk: pd.DataFrame, columns: tuple[ColumnMeasurement, ...]
+) -> pd.DataFrame:
+    """Turn one chunk of raw text into the values the measurements settled on."""
+    converted = {
+        label: _COERCE[column.family or "text"](chunk[label])
+        for label, column in zip(chunk.columns, columns)
+    }
+    frame = pd.DataFrame(converted, index=chunk.index)
+    spellings = {
+        label: column.spelling
+        for label, column in zip(chunk.columns, columns)
+        if column.spelling is not None
+    }
+    return temporal.standardize_as(frame, spellings) if spellings else frame
+
+
+@dataclass(frozen=True)
+class SourceTable:
+    """One table out of a source: what it holds, and how to read it again.
+
+    ``chunks`` is a callable rather than an iterator because it is called more
+    than once. A backend that cannot see a table it made inside the transaction
+    that made it has its rows written in a second one, and an iterator already
+    walked would write nothing into it — silently, since an empty insert is not
+    an error. Calling it re-reads the source from the beginning.
+    """
+
+    name: str | None
+    columns: tuple[ColumnMeasurement, ...]
+    chunks: Callable[[], Iterator[pd.DataFrame]]
+
+
+@dataclass(frozen=True)
+class SourceRead:
+    """Every table in a source, measured, with whatever the reader had to assume."""
+
+    tables: tuple[SourceTable, ...]
+    notes: tuple[str, ...] = ()
+
+
+#: The formats read a chunk at a time. Each is read by a pandas entry point that
+#: takes a ``chunksize``, and each is a format whose rows are *lines* — which is
+#: what makes reading part of one meaningful. A workbook, a JSON document, XML,
+#: YAML and ``.numbers`` are parsed whole by the libraries that read them, so
+#: they stay materialised and the limit is stated rather than worked around.
+STREAMED = {".csv", ".tsv", ".txt", ".fwf"}
+
+
+def _chunk_reader(
+    path: Path, suffix: str, delimiter: str | None
+) -> Callable[[], Iterator[pd.DataFrame]]:
+    """A callable giving fresh chunks of this file, every column as raw text."""
+
+    def chunks() -> Iterator[pd.DataFrame]:
+        if suffix == ".fwf":
+            reader = pd.read_fwf(path, dtype=str, chunksize=_READ_CHUNK)
+        else:
+            separator = delimiter or ("\t" if suffix == ".tsv" else ",")
+            reader = pd.read_csv(path, sep=separator, dtype=str, chunksize=_READ_CHUNK)
+        with reader as opened:
+            yield from opened
+
+    return chunks
+
+
+def _streamed_notes(
+    path: Path, suffix: str, first: pd.DataFrame, sep: str
+) -> tuple[str, ...]:
+    """What the reader had to assume, which the header alone is enough to say."""
+    if suffix == ".fwf":
+        return (
+            f"{path.name} is fixed-width, so its column boundaries were inferred "
+            f"from which character positions are blank on every line — nothing "
+            f"in the file declares them. Check the columns are the ones you "
+            f"expect before relying on the split.",
+        )
+    return _fat_column_note(first, sep, path.name)
+
+
+def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:
+    """Measure a source, in chunks where the format allows it.
+
+    The one entry point the load path uses, so that a format read in chunks and
+    a format read whole reach the insert as the same thing. What differs between
+    them is only where the measurements came from.
+
+    Like :func:`read_file`, this touches no database state and reads the whole
+    source before returning — which is what lets a caller find out that a file
+    is unreadable before it costs a live datasource its place.
+    """
+    suffix = _readable_suffix(path)
+    _check_delimiter(path, suffix, delimiter)
+
+    if suffix not in STREAMED:
+        read = read_file(path, delimiter=delimiter)
+        return SourceRead(
+            tables=tuple(
+                SourceTable(
+                    name=table.name,
+                    columns=measure_frame(table.frame),
+                    chunks=(lambda frame=table.frame: iter([frame])),
+                )
+                for table in read.tables
+            ),
+            notes=read.notes,
+        )
+
+    chunks = _chunk_reader(path, suffix, delimiter)
+    separator = delimiter or ("\t" if suffix == ".tsv" else ",")
+    scans: list[_ColumnScan] | None = None
+    notes: tuple[str, ...] = ()
+    try:
+        for chunk in chunks():
+            if scans is None:
+                scans = [
+                    _ColumnScan(name) for name in _unique_columns(list(chunk.columns))
+                ]
+                notes = _streamed_notes(path, suffix, chunk, separator)
+            for scan, label in zip(scans, chunk.columns):
+                scan.observe(chunk[label])
+    except LoadError:
+        raise
+    except Exception as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+    if not scans:
+        # A file whose header names no columns. `read_csv` raises for a wholly
+        # empty one, so this is the header-only-and-empty case, which the
+        # materialised path refuses in the same words.
+        raise LoadError(f"{path.name} contains no columns.")
+
+    measured = tuple(scan.finish() for scan in scans)
+
+    def coerced() -> Iterator[pd.DataFrame]:
+        """Pass two: the same chunks, as the values pass one settled on."""
+        for chunk in _chunk_reader(path, suffix, delimiter)():
+            yield _as_measured(chunk, measured)
+
+    return SourceRead(
+        tables=(SourceTable(name=None, columns=measured, chunks=coerced),),
+        notes=notes,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1644,7 +2134,7 @@ class Workspace:
         in the file and unreachable through the server.
         """
         path = resolve_read_path(raw_path)
-        read = read_file(path, delimiter=delimiter)
+        read = read_source(path, delimiter=delimiter)
 
         if len(read.tables) > 1 and table_name is not None:
             named = ", ".join(str(table.name) for table in read.tables)
@@ -1655,8 +2145,8 @@ class Workspace:
             )
 
         return [
-            self.insert_frame(
-                table.frame,
+            self.insert_source(
+                table,
                 _sanitize(table_name or table.name or path.stem, "table"),
                 source=str(path),
                 tag=tag,
@@ -1676,14 +2166,46 @@ class Workspace:
         tag: str,
         notes: tuple[str, ...] = (),
     ) -> TableInfo:
+        """Load a frame that is already in memory.
+
+        A source of exactly one chunk, so that a frame and a file read in chunks
+        travel the same path from here on. Kept as its own method because a
+        caller holding a frame should not have to build the wrapper.
+        """
+        return self.insert_source(
+            SourceTable(
+                name=None,
+                columns=measure_frame(frame),
+                chunks=lambda: iter([frame]),
+            ),
+            table,
+            source=source,
+            tag=tag,
+            notes=notes,
+        )
+
+    def insert_source(
+        self,
+        source_table: SourceTable,
+        table: str,
+        *,
+        source: str,
+        tag: str,
+        notes: tuple[str, ...] = (),
+    ) -> TableInfo:
+        """Make the table these measurements describe and stream the rows in.
+
+        The one insert path. A file read a chunk at a time and a frame held
+        whole differ only in where their :class:`ColumnMeasurement` came from
+        and how many chunks arrive; everything about making the table, splitting
+        the transaction, filling the surrogate key and describing the result is
+        the same, and a second copy of it would be free to drift.
+        """
         entry = self.entry(tag)
-        # The file's own columns, and the type each one was measured to hold.
-        # Distinct from `columns`/`declared` below, which describe the *table* —
-        # the two differ by exactly the surrogate key, where one is added.
-        from_file = _unique_columns(list(frame.columns))
-        types_from_file = [
-            _declared_type(frame[original]) for original in frame.columns
-        ]
+        measured = source_table.columns
+        # The file's own columns. Distinct from `columns` below, which describes
+        # the *table* — the two differ by exactly the surrogate key.
+        from_file = [column.name for column in measured]
 
         # A backend that will not make a table without a primary key gets a
         # surrogate one, because a file has none to offer: nothing in a CSV is
@@ -1698,14 +2220,6 @@ class Workspace:
         # runs `SELECT *`.
         keyed = entry.backend.requires_primary_key()
 
-        # What the table holds, which is the file's columns and possibly one
-        # more. `originals` says which frame column each came from, or None for
-        # the one this server added — needed because `columns` are sanitised
-        # names while the frame's are the originals, so they match only by
-        # position.
-        columns = [_SURROGATE_KEY, *from_file] if keyed else from_file
-        declared = ["INTEGER", *types_from_file] if keyed else types_from_file
-        originals: list[Any] = [None, *frame.columns] if keyed else list(frame.columns)
         if keyed:
             notes = (
                 *notes,
@@ -1727,14 +2241,12 @@ class Workspace:
                 # portable text type cannot be grouped on, and PostgreSQL's REAL
                 # is only four bytes wide.
                 Column(
-                    name,
+                    column.name,
                     entry.backend.column_type(
-                        sql_type, longest=_longest_value(frame[original], sql_type)
+                        column.declared_type, longest=column.longest
                     ),
                 )
-                for name, original, sql_type in zip(
-                    from_file, frame.columns, types_from_file
-                )
+                for column in measured
             ],
             # Anything this dialect's CREATE TABLE cannot be written without.
             # Empty for all but ClickHouse, which has no default table engine —
@@ -1757,15 +2269,16 @@ class Workspace:
         # together either way — it is only the DDL→DML boundary that has to give.
         together = entry.backend.sees_new_tables_in_transaction()
 
+        chunks = source_table.chunks
         try:
             with entry.engines.write.begin() as conn:
                 target.drop(conn, checkfirst=True)
                 target.create(conn)
                 if together:
-                    self._fill(entry, conn, target, frame, from_file, table, keyed)
+                    self._fill(entry, conn, target, chunks, from_file, table, keyed)
             if not together:
                 with entry.engines.write.begin() as conn:
-                    self._fill(entry, conn, target, frame, from_file, table, keyed)
+                    self._fill(entry, conn, target, chunks, from_file, table, keyed)
         except Exception as exc:
             unrepresentable = _unrepresentable(exc)
             if unrepresentable is not None:
@@ -1785,9 +2298,7 @@ class Workspace:
             # next one, on the backend that folds.
             name=self.landed_as(tag, table),
             row_count=self._count(entry, table),
-            columns=self._describe_columns(
-                entry, table, columns, declared, frame, originals
-            ),
+            columns=self._described_from(entry, table, measured, keyed),
             source=source,
             tag=tag,
             notes=notes,
@@ -1800,12 +2311,12 @@ class Workspace:
         entry: Tagged,
         conn: Connection,
         target: Table,
-        frame: pd.DataFrame,
+        chunks: Callable[[], Iterator[pd.DataFrame]],
         columns: list[str],
         table: str,
         keyed: bool = False,
     ) -> None:
-        """Put the frame's rows into a table that already exists, then settle it.
+        """Put the source's rows into a table that already exists, then settle it.
 
         Extracted from :meth:`insert_frame` when Firebird made the transaction
         boundary a per-backend question (#53), and extracted rather than
@@ -1814,18 +2325,26 @@ class Workspace:
         writing itself does, and a second copy of this loop would be free to
         drift.
 
+        ``chunks`` is *called* here rather than iterated by the caller, so that
+        the split-transaction branch re-reads the source instead of walking an
+        iterator the first branch already consumed.
+
         ``keyed`` says the table carries the surrogate key
-        :meth:`insert_frame` adds where a backend refuses a keyless table, and
+        :meth:`insert_source` adds where a backend refuses a keyless table, and
         the value it must be given is the row's position in the file. ``columns``
-        stays the file's own columns either way — the key is filled from the
-        chunk offset rather than from the frame, because the frame does not have
-        it.
+        stays the file's own columns either way — the key is filled from the row
+        offset rather than from the data, because the data does not have it.
         """
         statement = target.insert()
-        # The frame is never materialised as rows — only one chunk of it exists
-        # at a time. See the module docstring for the numbers.
-        for block in self._blocks(frame, columns, _SURROGATE_KEY if keyed else None):
-            conn.execute(statement, block)
+        # Nothing is ever materialised as rows — only one chunk of the source and
+        # one block of that chunk exist at a time. See the module docstring.
+        rows_so_far = 0
+        for chunk in chunks():
+            for block in self._blocks(
+                chunk, columns, _SURROGATE_KEY if keyed else None, rows_so_far
+            ):
+                conn.execute(statement, block)
+            rows_so_far += len(chunk)
         # Nothing for every backend that makes a committed write readable, which
         # is all of them but the search-engine lineage. Inside this block on
         # purpose: a write and the visibility of that write must not be separable
@@ -1834,7 +2353,10 @@ class Workspace:
 
     @staticmethod
     def _blocks(
-        frame: pd.DataFrame, columns: list[str], key: str | None = None
+        frame: pd.DataFrame,
+        columns: list[str],
+        key: str | None = None,
+        base: int = 0,
     ) -> Iterator[list[dict]]:
         """Frame rows as bind-parameter mappings, one insertable chunk at a time.
 
@@ -1849,10 +2371,11 @@ class Workspace:
         materialise exactly what the generator exists to avoid.
 
         ``key``, where given, names a surrogate primary-key column that is filled
-        with the row's position in the file. Counted from the chunk's own offset
-        rather than from a running total, so the ordinal is a property of the row
-        and not of how the reader happened to chunk it: the same file always
-        produces the same keys, whatever ``_INSERT_CHUNK`` is.
+        with the row's position in the file — ``base``, how many rows of the file
+        came before this frame. Both are offsets rather than a running counter,
+        so the ordinal is a property of the row and not of how anything happened
+        to chunk it: the same file always produces the same keys, whatever
+        ``_INSERT_CHUNK`` and ``_READ_CHUNK`` are.
         """
         for start in range(0, len(frame), _INSERT_CHUNK):
             chunk = frame.iloc[start : start + _INSERT_CHUNK]
@@ -1860,7 +2383,7 @@ class Workspace:
             rows = [dict(zip(columns, values)) for values in zip(*adapted)]
             if key is not None:
                 for offset, row in enumerate(rows):
-                    row[key] = start + offset
+                    row[key] = base + start + offset
             yield rows
 
     # -- inspection --------------------------------------------------------
@@ -1912,66 +2435,78 @@ class Workspace:
         return TableInfo(
             name=table,
             row_count=self._count(entry, table),
-            columns=self._describe_columns(entry, table, columns, declared, None),
+            columns=self._describe_columns(entry, table, columns, declared),
             source=source,
             tag=tag,
         )
 
     def _describe_columns(
+        self, entry: Tagged, table: str, columns: list[str], declared: list[str]
+    ) -> list[ColumnInfo]:
+        """Describe a table nothing here loaded, from its declared types alone.
+
+        Everything the load path also reports — whether a column is dates, how
+        its values split between numbers and junk — was measured *from the
+        source*, and a table that arrived in the database rather than through a
+        load has no source to measure. So this says what the declared type says
+        and nothing more, which is all there is to say about it truthfully.
+        """
+        with entry.engines.read.connect() as conn:
+            return [
+                ColumnInfo(
+                    name=name,
+                    declared_type=sql_type,
+                    storage_classes=entry.backend.storage_classes(conn, table, name),
+                )
+                for name, sql_type in zip(columns, declared)
+            ]
+
+    def _described_from(
         self,
         entry: Tagged,
         table: str,
-        columns: list[str],
-        declared: list[str],
-        frame: pd.DataFrame | None,
-        originals: list[Any] | None = None,
+        measured: tuple[ColumnMeasurement, ...],
+        keyed: bool,
     ) -> list[ColumnInfo]:
-        """Describe each column of the table, from the frame where there is one.
+        """Describe a table just loaded, from what its source was measured to hold.
 
-        ``originals`` is parallel to ``columns`` and gives the frame label each
-        one came from, or ``None`` for a column this server added rather than
-        read — the surrogate primary key :meth:`insert_frame` supplies where a
-        backend demands one. Defaulting to positional lookup keeps every existing
-        caller unchanged; a column with no frame behind it is described from its
-        declared type alone, which is all there is to say about it truthfully.
+        The storage classes are the one thing asked of the database rather than
+        of the measurements, and deliberately: they are what the values *became*
+        once stored, which is a different question from what the file held and
+        is the question the mixed-column report exists to answer.
+
+        The surrogate key, where a backend demanded one, has no measurement
+        behind it — it is a column this server added rather than read — so it is
+        described from its declared type, which is the whole truth about it.
         """
         with entry.engines.read.connect() as conn:
             described = []
-            for index, (name, sql_type) in enumerate(zip(columns, declared)):
-                kind = None
-                numeric = non_numeric = 0
-                examples: tuple[str, ...] = ()
-                dates: tuple[str, ...] = ()
-                standard: str | None = None
-                label = (
-                    frame.columns[index]
-                    if originals is None and frame is not None
-                    else (originals[index] if originals is not None else None)
-                )
-                if frame is not None and label is not None:
-                    series = frame[label]
-                    kind = binding.column_temporal_kind(series)
-                    if sql_type == "TEXT":
-                        if temporal.is_standard(series):
-                            standard = "iso8601_utc"
-                        else:
-                            numeric, non_numeric, examples = _numeric_split(series)
-                            dates = temporal.unparsed_temporal_examples(series)
+            if keyed:
                 described.append(
                     ColumnInfo(
-                        name=name,
-                        declared_type=sql_type,
-                        temporal_kind=kind,
+                        name=_SURROGATE_KEY,
+                        declared_type="INTEGER",
                         storage_classes=entry.backend.storage_classes(
-                            conn, table, name
+                            conn, table, _SURROGATE_KEY
                         ),
-                        numeric_values=numeric,
-                        non_numeric_values=non_numeric,
-                        non_numeric_examples=examples,
-                        temporal_standard=standard,
-                        unparsed_temporal_examples=dates,
                     )
                 )
+            described.extend(
+                ColumnInfo(
+                    name=column.name,
+                    declared_type=column.declared_type,
+                    temporal_kind=column.temporal_kind,
+                    storage_classes=entry.backend.storage_classes(
+                        conn, table, column.name
+                    ),
+                    numeric_values=column.numeric_values,
+                    non_numeric_values=column.non_numeric_values,
+                    non_numeric_examples=column.non_numeric_examples,
+                    temporal_standard=column.temporal_standard,
+                    unparsed_temporal_examples=column.unparsed_temporal_examples,
+                )
+                for column in measured
+            )
         return described
 
     # -- public surface ----------------------------------------------------

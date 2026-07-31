@@ -61,11 +61,11 @@ from .loader import (
     READERS,
     IndexInfo,
     LoadError,
-    ReadResult,
+    SourceRead,
     TableInfo,
     Workspace,
     _sanitize,
-    read_file,
+    read_source,
 )
 from .paths import PathNotAllowed, resolve_read_path, resolve_write_path
 
@@ -282,11 +282,11 @@ class Registry:
             # cost a live datasource its place — every refusal above and here
             # happens while the shelf is still untouched.
             try:
-                read = read_file(path, delimiter=delimiter)
+                read = read_source(path, delimiter=delimiter)
             except LoadError as exc:
                 raise AttachRefused(str(exc)) from exc
             evicted = self._make_room()
-            slot = self._attach_frame(read, path, chosen)
+            slot = self._attach_source(read, path, chosen)
         elif (dialect := self._database_dialect(path)) is not None:
             self._refuse_pointless_delimiter(delimiter, f"a {dialect} database")
             evicted = self._make_room()
@@ -415,7 +415,7 @@ class Registry:
                 return dialect
         return None
 
-    def _attach_frame(self, read: ReadResult, path: Path, nickname: str) -> Slot:
+    def _attach_source(self, read: SourceRead, path: Path, nickname: str) -> Slot:
         """Give the tables read out of a file their own database.
 
         Every table in the file lands here, not just the first: a workbook's
@@ -425,8 +425,8 @@ class Registry:
         self._workspace.attach_memory(nickname)
         try:
             landed = [
-                self._workspace.insert_frame(
-                    table.frame,
+                self._workspace.insert_source(
+                    table,
                     _sanitize(table.name or path.stem, "table"),
                     source=str(path),
                     tag=nickname,
@@ -683,7 +683,7 @@ class Registry:
         except PathNotAllowed as exc:
             raise SlotError(str(exc)) from exc
         try:
-            read = read_file(path, delimiter=delimiter)
+            read = read_source(path, delimiter=delimiter)
             if len(read.tables) > 1:
                 named = ", ".join(str(one.name) for one in read.tables)
                 raise SlotError(
@@ -692,8 +692,8 @@ class Registry:
                     f"own datasource instead — it becomes a database with all "
                     f"{len(read.tables)} in it."
                 )
-            return self._workspace.insert_frame(
-                read.tables[0].frame,
+            return self._workspace.insert_source(
+                read.tables[0],
                 table,
                 source=str(path),
                 tag=slot.nickname,
