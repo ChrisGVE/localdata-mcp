@@ -318,6 +318,50 @@ def test_a_file_lands_in_the_endpoint_and_reads_back(live):
     ]
 
 
+def test_a_gap_in_a_text_column_arrives_as_null(live):
+    """A blank cell is NULL, not whatever a bound NaN renders as (#71).
+
+    Here rather than in the local-slot suite because the local slot cannot be
+    asked: SQLite has no NaN and stores a bound one as NULL, so it answered
+    correctly while PostgreSQL stored the string ``'NaN'`` and SQL Server
+    ``'nan'`` — each its own driver's rendering of a value this server should
+    never have bound. ``IS NULL`` matched neither, so every gap in a text column
+    silently counted as present.
+
+    Both halves are asserted. That the count is right is not enough on its own:
+    a backend could answer 1 while holding a string that merely *sorts* like a
+    gap, so the stored values are read back and compared as well.
+    """
+    attach_writable(live)
+    gapped = live.root / "gapped.csv"
+    gapped.write_text("name,note\nalice,first\nbob,\ncarol,third\n")
+    table = live.table("gapped")
+    made = call(
+        "create",
+        nickname="endpoint",
+        type="table",
+        source=str(gapped),
+        table=table,
+    )
+    assert made["ok"] is True, made
+
+    counted = call(
+        "query",
+        nickname="endpoint",
+        sql=f"SELECT count(*) AS gaps FROM {table} WHERE note IS NULL",
+    )
+    assert counted["ok"] is True, counted
+    assert counted["rows"][0][0] == 1
+
+    read_back = call(
+        "query",
+        nickname="endpoint",
+        sql=f"SELECT note FROM {table} ORDER BY name",
+    )
+    assert read_back["ok"] is True, read_back
+    assert [row[0] for row in read_back["rows"]] == ["first", None, "third"]
+
+
 def _build_typed_table(live: Live) -> str:
     """A table of types SQLite does not have, built the way the user's would be.
 

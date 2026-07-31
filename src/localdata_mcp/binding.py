@@ -358,7 +358,18 @@ def adapt_column(values: pd.Series) -> list[Any]:
     elif pd.api.types.is_float_dtype(dtype):
         converted = values.to_numpy(dtype="float64", na_value=np.nan).tolist()
     else:
-        return [adapt_value(value) for value in values]
+        # The mask applies here too, and used to not (issue #71). ``adapt_value``
+        # dispatches on ``type(value)`` and its float entries are numpy's scalar
+        # types, so a **builtin** float NaN — which is what a gap in a text
+        # column iterates as, whatever the column's dtype — matched no entry and
+        # fell through the whole function unchanged. It then bound as a float
+        # into a text column: SQLite has no NaN and stored it as NULL, which is
+        # why nothing caught it, while PostgreSQL stored the string ``'NaN'``
+        # and SQL Server ``'nan'`` and ``WHERE col IS NULL`` matched neither.
+        return [
+            None if absent else adapt_value(value)
+            for value, absent in zip(values, missing)
+        ]
 
     # One mask for every typed branch. ``isna`` is what recognises NaN, NaT,
     # None and ``pd.NA`` alike, and the null has to be restored *after* the

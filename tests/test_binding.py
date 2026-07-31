@@ -174,11 +174,36 @@ def test_bare_date_stores_midnight_utc(workspace):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("missing", [pd.NA, pd.NaT, np.float64("nan"), None])
+@pytest.mark.parametrize(
+    "missing", [pd.NA, pd.NaT, np.float64("nan"), float("nan"), None]
+)
 def test_missing_markers_become_sql_null(workspace, missing):
     """NaN bound through as a float makes `WHERE v IS NULL` miss every gap."""
     stored(workspace, [missing], dtype=object)
     assert answer(workspace, "SELECT count(*) FROM t WHERE v IS NULL") == 1
+
+
+@pytest.mark.parametrize("dtype", ["object", str])
+@pytest.mark.parametrize("missing", [None, float("nan"), np.float64("nan"), pd.NA])
+def test_a_gap_in_an_untyped_column_is_bound_as_null(dtype, missing):
+    """What is *bound* — because SQLite cannot be asked this question (#71).
+
+    Asserted on the adapter rather than on what a query returns, which is the
+    one deliberate exception to this module's rule, and it is the rule's own
+    reasoning that requires it: SQLite has no NaN and stores a bound one as
+    NULL, so every local-slot assertion answers correctly whether the value
+    reached the driver as NULL or as a float NaN. The distinction is invisible
+    exactly where the suite looks, and visible where it did not — PostgreSQL
+    stored the string ``'NaN'`` and SQL Server ``'nan'``.
+
+    The dtypes are both of them because the missing marker differs by
+    construction: a frame built in Python holds ``None`` and one read from a
+    file holds a builtin float NaN, so only the second shape reaches the values
+    a user's file actually carries.
+    """
+    adapted = binding.adapt_column(pd.Series(["a", missing], dtype=dtype))
+    assert adapted[0] == "a"
+    assert adapted[1] is None
 
 
 def test_nulls_are_excluded_from_averages(workspace):
