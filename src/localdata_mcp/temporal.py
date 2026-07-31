@@ -70,12 +70,22 @@ text is also the form the engine is built for.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 import pandas as pd
 
 __all__ = [
-    "standardize",
+    "Spelling",
+    "as_canonical",
+    "canonical_width",
+    "is_canonical",
+    "is_date_shaped",
     "is_standard",
+    "parse",
+    "spelling_of",
+    "standardize",
+    "standardize_as",
+    "text_values",
     "unparsed_temporal_examples",
     "MAX_TEMPORAL_EXAMPLES",
 ]
@@ -119,7 +129,7 @@ MAX_TEMPORAL_EXAMPLES = 3
 _SAMPLE = 64
 
 
-def _text_values(series: pd.Series) -> pd.Series | None:
+def text_values(series: pd.Series) -> pd.Series | None:
     """The non-null values of a text column as strings, or ``None``.
 
     ``None`` for anything that is not a column of text — an already-typed
@@ -160,13 +170,42 @@ def _matches_throughout(values: pd.Series, pattern: re.Pattern[str]) -> bool:
     return bool(values.str.match(pattern).all())
 
 
-def _parse(present: pd.Series, whole: pd.Series) -> pd.Series | None:
+def is_canonical(present: pd.Series) -> bool:
+    """Whether every value is already in a spelling :func:`as_canonical` writes.
+
+    Takes the *present* values — what :func:`text_values` returns — rather than
+    the column, so a caller reading a file a chunk at a time can ask the
+    question of one chunk without an empty chunk answering ``False`` for the
+    whole column.
+    """
+    return _matches_throughout(present, _CANONICAL)
+
+
+def is_date_shaped(present: pd.Series) -> bool:
+    """Whether every value reads as a date, in a standard or not.
+
+    The gate on :func:`unparsed_temporal_examples`, exposed for the same reason
+    :func:`is_canonical` is: it composes across chunks, and a chunk holding no
+    values must not be able to answer for the column.
+    """
+    return _matches_throughout(present, _DATE_SHAPED)
+
+
+def parse(present: pd.Series, whole: pd.Series) -> pd.Series | None:
     """Parse a column if **every** value in it is a standard datetime.
 
     All or nothing, deliberately. A column that is nine-tenths ISO and
     one-tenth something else is a column with a data problem, and converting
     the part that parses would turn the rest into ``NaT`` — deleting exactly
     the values somebody needs to see. It stays text and gets reported instead.
+
+    **This composes across chunks and the rest of the module's decisions do
+    not.** Qualifying is all-or-nothing per *value* — every non-null value must
+    match :data:`_EXTENDED_DATE` and parse under an explicit ``format`` — with
+    no per-column format inference anywhere in it, so a column qualifies if and
+    only if every chunk of it qualifies. There is no day-first ambiguity for two
+    chunks to settle differently. Which *spelling* to write back is the
+    decision that does not compose; see :class:`Spelling`.
     """
     if not _matches_throughout(present, _EXTENDED_DATE):
         return None
@@ -181,26 +220,76 @@ def _parse(present: pd.Series, whole: pd.Series) -> pd.Series | None:
     return parsed
 
 
-def _canonical(parsed: pd.Series) -> pd.Series:
-    """Write parsed instants back as one canonical UTC spelling.
+@dataclass(frozen=True)
+class Spelling:
+    """Which of the canonical forms a temporal column is written in.
+
+    Both flags are properties of the **whole column** rather than of any one
+    value: a column is written date-only when *every* value is midnight, and
+    grows fractional seconds when *any* value carries them. That is what stops
+    the decision being made a chunk at a time — the same column would come out
+    ``2024-03-01`` in one chunk and ``2024-03-01T00:00:00Z`` in the next, which
+    is two spellings of one column and no longer sorts as one. So a reader that
+    works in chunks measures the spelling over the whole column first and
+    :func:`as_canonical` is *told* it, rather than each chunk deciding for
+    itself.
+    """
+
+    date_only: bool
+    fractional: bool
+
+    def merged_with(self, other: "Spelling") -> "Spelling":
+        """The spelling of two parts of one column, taken together.
+
+        The two flags merge in opposite directions because they are opposite
+        quantifiers: date-only holds when it holds *everywhere*, and fractional
+        seconds appear when they appear *anywhere*.
+        """
+        return Spelling(
+            date_only=self.date_only and other.date_only,
+            fractional=self.fractional or other.fractional,
+        )
+
+
+def spelling_of(parsed: pd.Series) -> Spelling:
+    """Measure which canonical spelling these instants call for."""
+    present = parsed.dropna()
+    return Spelling(
+        date_only=bool(
+            (
+                (present.dt.hour == 0)
+                & (present.dt.minute == 0)
+                & (present.dt.second == 0)
+                & (present.dt.microsecond == 0)
+            ).all()
+        ),
+        fractional=bool((present.dt.microsecond != 0).any()),
+    )
+
+
+#: How wide each canonical spelling is, in characters. Exact rather than
+#: measured, because every value in a rewritten column is rendered by one
+#: ``strftime`` format and so is exactly this long. A chunked reader needs it:
+#: it sizes the column before pass 2 has produced a single rewritten value.
+_WIDTHS = {(True, False): 10, (False, False): 20, (False, True): 27}
+
+
+def canonical_width(spelling: Spelling) -> int:
+    """How wide a value written in this spelling is, in characters."""
+    return _WIDTHS[(spelling.date_only, spelling.fractional)]
+
+
+def as_canonical(parsed: pd.Series, spelling: Spelling) -> pd.Series:
+    """Write parsed instants back in the spelling this column was measured for.
 
     Date-only columns keep the date form they arrived in. Anything carrying a
     time of day is written to the second, with fractional seconds only where
     the column actually uses them — a column of whole seconds should not grow
     six zeroes it did not have.
     """
-    present = parsed.dropna()
-    midnight = bool(
-        (
-            (present.dt.hour == 0)
-            & (present.dt.minute == 0)
-            & (present.dt.second == 0)
-            & (present.dt.microsecond == 0)
-        ).all()
-    )
-    if midnight:
+    if spelling.date_only:
         formatted = parsed.dt.strftime("%Y-%m-%d")
-    elif bool((present.dt.microsecond != 0).any()):
+    elif spelling.fractional:
         formatted = parsed.dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     else:
         formatted = parsed.dt.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -218,18 +307,44 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
     converted: dict[str, pd.Series] = {}
     for name in frame.columns:
         series = frame[name]
-        present = _text_values(series)
+        present = text_values(series)
         if present is None:
             continue
         # Already in the form this would rewrite it into, which is the case for
         # any file written the way the documentation asks for. Parsing it only
         # to format it back is the most expensive thing in this module, and it
         # would not change a byte.
-        if _matches_throughout(present, _CANONICAL):
+        if is_canonical(present):
             continue
-        parsed = _parse(present, series)
+        parsed = parse(present, series)
         if parsed is not None:
-            converted[name] = _canonical(parsed)
+            converted[name] = as_canonical(parsed, spelling_of(parsed))
+
+    if not converted:
+        return frame
+    return frame.assign(**converted)
+
+
+def standardize_as(frame: pd.DataFrame, spellings: dict[str, Spelling]) -> pd.DataFrame:
+    """Rewrite the named columns in the spelling each was measured for.
+
+    :func:`standardize` for a reader working in chunks: which columns are
+    temporal, and which spelling each is written in, were settled over the whole
+    column by an earlier pass, so this applies a decision rather than making one.
+    A column named here is one that pass already established parses throughout,
+    so a chunk of it that does not parse is a contradiction rather than an
+    ordinary miss — it is left alone and the column keeps its text, which is the
+    same answer :func:`standardize` gives to anything it cannot parse.
+    """
+    converted: dict[str, pd.Series] = {}
+    for name, spelling in spellings.items():
+        series = frame[name]
+        present = text_values(series)
+        if present is None:
+            continue
+        parsed = parse(present, series)
+        if parsed is not None:
+            converted[name] = as_canonical(parsed, spelling)
 
     if not converted:
         return frame
@@ -250,10 +365,10 @@ def is_standard(series: pd.Series) -> bool:
     re-running ``to_datetime`` here would buy nothing and cost a second pass
     over the column.
     """
-    present = _text_values(series)
+    present = text_values(series)
     if present is None:
         return False
-    return _matches_throughout(present, _CANONICAL)
+    return is_canonical(present)
 
 
 def unparsed_temporal_examples(series: pd.Series) -> tuple[str, ...]:
@@ -269,10 +384,10 @@ def unparsed_temporal_examples(series: pd.Series) -> tuple[str, ...]:
     correctly anyway — ``2025-Q4`` and ``2025-W52-4`` sort chronologically as
     text, so there is no wrong answer to warn about.
     """
-    present = _text_values(series)
+    present = text_values(series)
     if present is None:
         return ()
-    if not _matches_throughout(present, _DATE_SHAPED):
+    if not is_date_shaped(present):
         return ()
 
     examples: dict[str, None] = {}

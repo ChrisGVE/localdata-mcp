@@ -207,3 +207,85 @@ def test_an_empty_column_is_not_declared_temporal_on_no_evidence(workspace):
     column = next(c for c in described.columns if c.name == "v")
     assert column.temporal_standard is None
     assert not column.is_unparsed_temporal
+
+
+# ---------------------------------------------------------------------------
+# The spelling is measured over the column and applied to its parts
+# ---------------------------------------------------------------------------
+#
+# A reader that works in chunks cannot let each chunk pick its own spelling:
+# `_canonical` chose date-only when every value was midnight and grew fractional
+# seconds when any value had them, and both are whole-column aggregates, so the
+# same column would come out `2024-03-01` in one chunk and `2024-03-01T00:00:00Z`
+# in the next. These assert on the values that come out, because the flags being
+# right is not the property — the column reading as one column is.
+
+
+def measured(values: list[str]) -> temporal.Spelling:
+    """The spelling of a column, measured the way a whole-column read does."""
+    series = pd.Series(values, dtype="object")
+    parsed = temporal.parse(temporal.text_values(series), series)
+    assert parsed is not None, f"{values} was expected to parse"
+    return temporal.spelling_of(parsed)
+
+
+def rewritten(values: list[str], spelling: temporal.Spelling) -> list[str]:
+    frame = pd.DataFrame({"v": values})
+    return list(temporal.standardize_as(frame, {"v": spelling})["v"])
+
+
+#: A column split the way a chunked reader splits it: a part that is all
+#: midnight, and a part that is not. Whichever part is met first, the column has
+#: one spelling and it is the one the parts agree on.
+SPLIT_COLUMNS = [
+    (["2024-03-01", "2024-03-02"], ["2024-07-04T23:59:00"]),
+    (["2024-07-04T23:59:00"], ["2024-03-01", "2024-03-02"]),
+    (["2024-03-01T00:00:00.500000"], ["2024-03-02T10:00:00"]),
+    (["2024-03-02T10:00:00"], ["2024-03-01T00:00:00.500000"]),
+]
+
+
+@pytest.mark.parametrize("head,tail", SPLIT_COLUMNS)
+def test_a_spelling_merged_from_two_chunks_is_the_whole_column_s(head, tail):
+    """The merge is what a chunked read has instead of seeing the column at once."""
+    assert measured(head).merged_with(measured(tail)) == measured(head + tail)
+
+
+@pytest.mark.parametrize("head,tail", SPLIT_COLUMNS)
+def test_rewriting_a_column_in_parts_gives_what_rewriting_it_whole_does(head, tail):
+    """The property the chunked loader rests on, asserted on the values.
+
+    Each part is rewritten on its own, told the spelling measured over both.
+    Nothing here checks a flag: what matters is that the two parts come back as
+    values of one column rather than two spellings of it.
+    """
+    spelling = measured(head).merged_with(measured(tail))
+    in_parts = rewritten(head, spelling) + rewritten(tail, spelling)
+    assert in_parts == list(temporal.standardize(pd.DataFrame({"v": head + tail}))["v"])
+
+
+@pytest.mark.parametrize("head,tail", SPLIT_COLUMNS)
+def test_a_chunk_deciding_for_itself_would_spell_the_column_two_ways(head, tail):
+    """What the merge prevents — the failure stated as a test rather than prose.
+
+    Each part decides its own spelling, which is what a chunked read does
+    without a measuring pass, and the column comes back in two forms.
+    """
+    per_chunk = rewritten(head, measured(head)) + rewritten(tail, measured(tail))
+    whole = list(temporal.standardize(pd.DataFrame({"v": head + tail}))["v"])
+    assert per_chunk != whole
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["2024-03-01", "2024-03-02"],
+        ["2024-03-01T14:30:00", "2024-03-02T00:00:00"],
+        ["2024-03-01T14:30:00.500000", "2024-03-02T00:00:00"],
+    ],
+)
+def test_the_declared_width_of_a_spelling_is_the_width_it_writes(values):
+    """The loader sizes the column from this before a value has been rewritten."""
+    spelling = measured(values)
+    written = rewritten(values, spelling)
+    assert {len(value) for value in written} == {temporal.canonical_width(spelling)}
