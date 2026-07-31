@@ -196,6 +196,27 @@ Reading and writing are two registries keyed on the file suffix — `loader.READ
 because everything downstream of a reader works from a DataFrame and everything upstream
 of a writer works from columns and rows.
 
+**A delimited file is read twice rather than held once.** `.csv`, `.tsv`, `.txt` and
+`.fwf` — `loader.STREAMED` — go through a measuring pass and then an inserting pass, so
+the load's peak stops tracking the file: 4,286 MB → 803 MB against a 1.22 GB CSV
+(CONSTRAINTS §28). The file is read twice and that costs 1.4–1.75x wall clock, which is
+the whole of the trade.
+
+This is not a chunk size. Everything that decides the *table* is a whole-column
+measurement made before the first insert — the declared type, the width of the widest
+text value, the numeric split of a mixed column, whether a text column is dates — and
+pandas infers dtypes per chunk, so a naively chunked insert declares a column from chunk
+one and meets a value it cannot hold in chunk five. Pass one accumulates those answers
+across chunks and pass two applies them. Which canonical spelling a date column is
+written in is the one that does not compose (both flags are whole-column aggregates), so
+it is measured over the column and the writer is told it.
+
+Every format keeps one insert path: a frame held in memory is a source of exactly one
+chunk, so a workbook and a million-row CSV reach the same code and nothing downstream
+knows which it got. The formats that are not delimited are parsed whole by the libraries
+that read them — there is no chunk to ask for and no line that is a row — so their peak
+still tracks the file, and that is stated rather than worked around.
+
 | Group | Read | Write |
 |---|---|---|
 | Flat | `.csv` `.tsv` `.txt` `.fwf` | `.csv` `.tsv` `.txt` `.md` |
@@ -404,9 +425,16 @@ nineteen endpoint tests exercise every one of them. Two more are real and unreac
 this machine rather than skipped — a Unix socket does not cross the container boundary, and
 there is no Windows host to integrate with. `docs/CONSTRAINTS.md` §25 has the measurements.
 
-What is left before level 0 closes: those two backends; the load half of the volume work;
-and a pass driving the live server through a real client, since every verb has changed since
-the last one.
+The load half of the volume work is **done**. It was the last gate with code behind it, and
+what it cost was a second read of the file rather than a smaller buffer: the peak used to
+track the file because every measurement deciding the table is a whole-column one, and no
+chunk size reaches that. Measured in §28, and the honest edges are recorded there too —
+below about 150 MB streaming costs slightly *more*, the formats nobody can chunk are
+unchanged, and the earlier sampled figures for this path were under-reports.
+
+What is left before level 0 closes is no longer code: a pass driving the live server
+through a real client, since every verb has changed since the last one, and a review of the
+issues that were fixed forward.
 
 Building blocks first: **simple, composable, multi-faceted, and where possible
 transparent even to the LLM.**

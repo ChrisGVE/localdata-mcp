@@ -1073,9 +1073,11 @@ peak — see §10.7.)
   has been set on it**: nothing has failed there, and the number above is on the record so the
   question can be settled with evidence rather than by analogy to the spreadsheets.
 
-**The read path still materialises**, and that is the other half of task 21: `read_file` builds the
+**The read path still materialises**, and that was the other half of task 21: `read_file` builds the
 whole pandas frame before a row is inserted (§10.6). A very large YAML this server writes is
-therefore one it may not be able to read back — the cliff belongs to loading, not to YAML.
+therefore one it may not be able to read back — the cliff belongs to loading, not to YAML. **Closed
+for the delimited formats on 2026-07-31 (§28); YAML is not one of them**, so this paragraph is
+still exactly true of the format it is about.
 
 ### 9.3 Two memory dimensions, and the budget is on only one of them
 
@@ -1403,14 +1405,20 @@ Two consequences worth carrying:
 
 ### 10.6 What it costs while it runs
 
+> **Closed on 2026-07-31 for the delimited formats — see §28.** A `.csv`, `.tsv`, `.txt` or `.fwf`
+> file is now measured in one pass and inserted in another, and its peak no longer tracks the file:
+> 4,286 MB → **803 MB** for the wide corpus. The paragraph below stands for every other format,
+> which is still parsed whole by the library that reads it. **Its ~3.0 GB is also an under-report**
+> — it was sampled, and a per-process high-water mark puts the same load at 4,286 MB (§28.2).
+
 Peak RSS **~3.0 GB**, against a 1.22 GB source. The load is the peak, not the extract: `read_file`
 builds the whole pandas frame before a single row is inserted, so the load peak tracks the *file*
 and no chunk size bounds it (§3.2a bounds the *insert*, which is a later step). **This is the read
 side of §9.2's gap and is tracked as task 21** — the memory budget bounds resting pages, not either
 transient peak, so no configuration closes it. **The export side of that gap was closed on
-2026-07-28** (§9.2); this side is what is left of the task, and it is the larger half: every reader
-produces a whole frame, so it is the loading of a large file — not the writing of one — that now
-sets the peak. Residency afterwards
+2026-07-28** (§9.2); this side is what was left of the task, and it was the larger half: every
+reader produces a whole frame, so it is the loading of a large file — not the writing of one — that
+set the peak. Residency afterwards
 is far smaller — 1,305 MB for the wide file, 735 MB for the tall — because that measures SQLite
 pages, which is §9.3's point restated at volume.
 
@@ -1511,8 +1519,10 @@ reading" argument to bound it with.
 >
 > **What remains is the read side, and it is not a YAML defect.** `read_file` builds the whole
 > pandas frame before inserting a row, so the 16 GB is the load path (task 21's other half, §10.6);
-> YAML is simply the format that reaches it soonest, being the bulkiest on disk. Until that is
-> closed, a very large YAML this server writes is one it may not read back — **recorded here as a
+> YAML is simply the format that reaches it soonest, being the bulkiest on disk. **That half closed
+> on 2026-07-31 for the delimited formats only (§28), and YAML is not one of them** — it is parsed
+> whole by PyYAML, which has no chunk to ask for — so this cliff stands exactly as written. A very
+> large YAML this server writes is one it may not read back — **recorded here as a
 > documented cliff rather than papered over with a limit**. The 27 minutes is unchanged and is
 > PyYAML serialising, not memory: YAML remains the slowest writer by an order of magnitude, and
 > `.jsonl` is the format to ask for when the result is large and the shape is the same.
@@ -2605,8 +2615,9 @@ A column store's interesting properties are all about scale: MonetDB's advantage
 execution over columns, and every table here is a handful of rows written one statement at a time.
 Nothing measured says how it behaves under the sizes §9 and §10 put through DuckDB and SQLite, and it
 is the one endpoint where that comparison would mean something — it and DuckDB are the two columnar
-engines in this project, one remote and one local. Unmeasured, and worth measuring if the load half
-of task 21 is taken up.
+engines in this project, one remote and one local. Unmeasured, and still worth measuring: the load
+half of task 21 was taken up on 2026-07-31 (§28), but nothing in it was measured against an
+endpoint database, so the comparison this paragraph asks for is exactly as open as it was.
 
 Its concurrency story is equally untouched: `SERIALIZABLE` with no other level available says a
 single-statement harness will never see a conflict, not that conflicts resolve well.
@@ -4498,3 +4509,151 @@ and autocommit is a property of the **websocket** driver rather than of Exasol.
 And it says nothing about the SaaS product. `--saas` is an `init-sc` flag that was
 never passed, and the identity-provider configuration beside it is a code path this
 harness has no way to reach.
+
+---
+
+## §28 — The load half of task 21: a file measured in one pass, inserted in another (2026-07-31)
+
+§10.6 recorded that a load's peak tracks the **file** rather than any chunk size, because
+`read_file` builds every reader's whole pandas frame before a row is inserted. The export half
+of that gap closed on 2026-07-28 (§9.2); this is the read half, which is the larger one — every
+reader produces a whole frame, so it is the *loading* of a large file that sets the peak.
+
+A delimited file is now read twice: pass one measures it, pass two coerces each chunk to what
+was measured and inserts it. `.csv`, `.tsv`, `.txt` and `.fwf` stream; everything else is parsed
+whole by the library that reads it and is unchanged (§28.6).
+
+### 28.1 What it costs, and what it no longer costs
+
+Peak resident set over the load, **three repeats per condition**, each load run in a **process of
+its own** so the figure is that process's `ru_maxrss` — a kernel high-water mark, exact and
+monotonic — with an interpreter-and-imports baseline of 101.5 MB subtracted. Same corpus and same
+100 MB budget as the rest of §10; the budget was never disabled.
+
+| Rows | File | Materialised | Streamed | Peak ratio | Spreads | Seconds |
+|---|---|---|---|---|---|---|
+| 100,000 | 122 MB | 590 MB | **669 MB** | **0.88x — worse** | 1.03x / 1.05x | 6.5 → 11.3 (1.75x) |
+| 300,000 | 366 MB | 1,646 MB | 705 MB | 2.34x lower | 1.00x / 1.01x | 18.6 → 26.1 (1.40x) |
+| 1,000,000 | 1,219 MB | 4,286 MB | **803 MB** | **5.34x lower** | 1.00x / 1.01x | 63.5 → 94.3 (1.49x) |
+
+**The materialised peak tracks the file and the streamed one does not.** 590 → 1,646 → 4,286
+against 122 → 366 → 1,219 MB is a straight line at about 3.5x the file; 669 → 705 → 803 is not.
+What remains is the cost of the *database being written* — the insert's own, §3.2a's subject —
+rather than the reader's, and it is a much smaller quantity than the file.
+
+**Below about 150 MB, streaming is slightly worse**, and the spreads are tight enough (1.03x and
+1.05x against a 0.88x difference) for that to be a result rather than noise. Two passes and
+string-typed chunks are not free, and while the whole frame is still small they cost more than it
+does. This is stated rather than fixed: a size threshold would be a second code path that only
+runs sometimes, which is the shape that goes untested (§28.5).
+
+**Wall clock is 1.4–1.75x throughout.** The file is read twice and that is what it costs. There is
+no configuration that buys it back, and none is offered.
+
+### 28.2 §10.6's ~3.0 GB was an under-report, and the instrument is why
+
+§10.6 recorded ~3.0 GB for the wide file; the figure here is 4,286 MB for the same load. Both were
+honest and the second is right. §9, §10 and the export probe all sample resident set on a thread —
+at 0.2 s there, and this section first tried 0.05 s — and **a sampler measures whatever happens to
+be resident when it looks**, missing a transient peak between two samples and catching pages the
+allocator has not yet returned from something else.
+
+The first attempt at this section used that method and could not answer the question at all:
+
+| Rows | Materialised median | spread | Streamed median | spread |
+|---|---|---|---|---|
+| 100,000 | 112 MB | **6.49x** | 64 MB | **7.74x** |
+| 300,000 | 300 MB | 2.66x | 71 MB | 1.33x |
+| 1,000,000 | 1,477 MB | 2.09x | 128 MB | 2.47x |
+
+At 100,000 rows the within-condition spread is seven times the difference between the conditions,
+so no comparison at that size survives its own noise — and the sign is wrong besides, since the
+tighter instrument shows streaming *costing* more there. **A per-process high-water mark has no
+sampling window to miss and no residue from a previous condition**, which is why it is what §28.1
+reports. Its spreads are 1.00x–1.05x.
+
+Sampling also perturbs what it measures: each sample spawns `ps`, and the 1,000,000-row
+materialised load took 97.5 s while sampled and 63.5 s not. **The timings in §9.2, §10.6 and §10.7
+are inflated by their own instrument by some amount this did not measure.** They remain
+comparable with each other, since every arm paid it; they are not comparable with §28.1.
+
+### 28.3 Why a chunk size was never the answer
+
+Everything deciding the *table* is a whole-column measurement made before the first insert:
+`_declared_type` reads the column's dtype, `_longest_value` sizes a `VARCHAR` from the widest
+value, `_numeric_split` counts the junk in a mostly-numeric column, and the temporal check decides
+whether a text column is dates. **pandas infers dtypes per chunk**, so a naive chunked insert
+declares a column from chunk one and meets a value it cannot hold in chunk five.
+
+| Measurement | How it combines across chunks |
+|---|---|
+| declared type | precedence — any chunk saying text wins; a gap widens integer to real and takes a boolean column away entirely |
+| text width | max |
+| numeric split | sum the counts, union the examples to the existing cap |
+| is this column temporal | all-or-nothing per *value*, so the column qualifies iff every chunk does |
+| **which spelling to write** | **does not compose** — see §28.4 |
+
+### 28.4 The one measurement that does not compose
+
+Which canonical spelling a date column is written in is two whole-column aggregates: date-only
+when *every* value is midnight, fractional seconds when *any* value carries them. Decided a chunk
+at a time, the same column comes out `2024-03-01` in one chunk and `2024-03-01T00:00:00Z` in the
+next — two spellings of one column, which no longer sorts as one.
+
+So the spelling is measured over the whole column in pass one and *told* to the writer in pass two,
+and the two flags merge in opposite directions because they are opposite quantifiers. **A fold that
+simply keeps the last chunk's answer is right whenever the deciding value happens to come last**,
+which is not a hypothetical: the reversion drill ran the spelling test against exactly that
+mistake and the deciding-row-last fixture passed it. The reversed fixture is what fails it, and is
+now asserted.
+
+### 28.5 The type verdict is rebuilt from raw text, and was checked against pandas
+
+Every chunk is read with `dtype=str` and the verdict rebuilt from the strings rather than taken
+from what pandas inferred for that chunk. That is what makes the answer a property of the column
+instead of of where the boundaries fell, and it is also what keeps the string-shaped measurements
+exact: **a column of `007` inferred as integers measures one character wide instead of three**,
+which is a `VARCHAR2` too narrow for the values pass two then reads.
+
+The rebuilt verdict was measured against `read_csv`'s own inference over **39 column shapes** —
+leading zeroes, underscores, hex, `inf`, `nan`, whitespace-only, wide integers, `+`/`-` signs,
+booleans with and without a gap, all-empty columns, ISO dates — and **agrees on all 39**. Two
+shapes needed explicit handling and are the reason the check was run rather than assumed:
+
+- **booleans.** `true`/`false` is a real boolean dtype to `read_csv`, and `to_numeric` refuses it.
+  A gap anywhere in such a column takes it to text, because neither boolean dtype has a missing
+  marker.
+- **integers wider than int64.** `read_csv` reads such a column as `object` holding **Python
+  ints** — not as text — for as long as every value in it is an integer, gaps included. One real
+  number in it and the whole column reads as strings. That is its own value family here, because
+  the column is declared `TEXT` either way but what the values *are* decides what binds: the
+  Python int is then refused by `binding.adapt_value` as unrepresentable. Reproduced rather than
+  improved on, so that a file the materialised path refuses is not accepted by this one — see
+  [#72](https://github.com/ChrisGVE/localdata-mcp/issues/72), which is where the question of
+  whether that refusal is right at all is recorded.
+
+**A caveat that belongs with the number**: 39 shapes agreeing is 39 shapes, not a proof. The
+guard against the rest is `test_streaming.py`, which loads every fixture both ways and compares
+the schema, the notes, the row count and every value — so a divergence shows up as a test failure
+rather than as a wrong table.
+
+### 28.6 What this did not change, and did not test
+
+**The formats that are not delimited.** A workbook, a JSON document, XML, YAML and `.numbers` are
+parsed whole by the libraries that read them; there is no `chunksize` to ask for and no line that
+is a row. They are measured from the frame instead and reach the same insert, so nothing
+downstream knows which it got — but their peak still tracks the file, and this section does not
+change that. `.jsonl` **could** stream and does not: its reader is hand-written for the per-line
+error messages it produces, and rewriting it is a separate change with its own risk.
+
+**The parse-before-eviction ordering is unchanged.** Pass one reads the whole file before
+`_make_room` is called, so a file that cannot be parsed still costs no live datasource its place.
+
+**Nothing here was measured on an endpoint database.** Both conditions wrote to a SQLite file, so
+the figures are the reader's cost and the local insert's. What a streamed load costs against a
+server — where the rows cross a socket — is not measured, and the 1.4–1.75x wall clock above is
+the local number.
+
+**The 10-million-row tall corpus was not re-run.** The wide file is the one §10.6 measured and the
+one whose peak was the constraint; the tall file would cost another twenty minutes to say the same
+thing about a narrower row.
