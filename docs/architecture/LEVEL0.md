@@ -12,13 +12,15 @@ Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB, Fi
 openGauss, YDB and Databend each run every verb, each against a container of its own —
 except SQLite and DuckDB, which are files and need none.
 
-Four candidates are **out**, and for two different reasons. **TiDB** and **HyperSQL** fail
+Five candidates are **out**, and for three different reasons. **TiDB** and **HyperSQL** fail
 the eligibility rule — a database is in scope iff an open-source SQLAlchemy adapter exists,
 and TiDB has none while HyperSQL's reaches it only through a JVM and a JDBC jar that have
-to be on the host. **Greenplum** was dropped as scope. **Db2** is the one that passes the
-rule and still cannot be reached: its adapter installs and cannot be imported, because the
-native client beneath it links against a C++ runtime macOS no longer ships (`CONSTRAINTS.md`
-§24). **OceanBase and Exasol are what remain**, and the list ends there.
+to be on the host. **Greenplum** was dropped as scope. **Db2** and **OceanBase** pass the
+rule and still cannot be reached, each one blocked a layer lower than the last: Db2's
+adapter installs and cannot be imported, because the native client beneath it links against
+a C++ runtime macOS no longer ships (`CONSTRAINTS.md` §24), and OceanBase's server crashes
+at startup on an instruction — `rdtscp` — that the virtual machine Docker runs here does not
+expose (§26). **Exasol is what remains**, and the list ends there.
 
 Fifteen of those are containers, and this machine will run six at a time before the Docker
 VM starves them, so **no single test run covers the catalogue** — it takes three, and each
@@ -376,8 +378,8 @@ correct against each other.
 ## What comes after
 
 Still level 0, and in this order: the format catalogue above (**done**), then the backend
-catalogue (**nearly** — every row of the table above is landed, and OceanBase and Exasol
-are the two that remain).
+catalogue (**nearly** — every row of the table above is landed, OceanBase was measured
+unreachable on this host, and Exasol is the one that remains).
 
 The expectation going into the backends was that they would need a test harness rather
 than a code path, and that was half right: nothing about *reaching* a dialect needed

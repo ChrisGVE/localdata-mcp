@@ -4121,3 +4121,179 @@ mechanisms*, not about every dialect's handling of them.
 
 Nor is any of this a statement about the server's own security posture. It measures that the paths
 work; it does not measure what happens when one of them is attacked.
+
+## §26 — OceanBase, eligible on the rule and stopped by one instruction (2026-07-31)
+
+Db2 (§24) was the first catalogue entry dropped for **reachability** rather than eligibility, and its
+blocker was a client library missing from this host. OceanBase is the second, and its blocker sits a
+layer lower again: the server binary executes a single x86 instruction during startup that the virtual
+machine Docker runs on this host does not expose. Nothing about the adapter, the wire protocol or the
+SQL was ever reached.
+
+The whole measurement ran in throwaway virtualenvs and a throwaway container. No compose entry was
+written, no extra was added, and `.venv` was never touched.
+
+### 26.1 Two adapters, and what the eligibility rule does with them
+
+Standing instruction 10 says a database is eligible iff an open-source SQLAlchemy adapter exists.
+OceanBase has two, which is the first time step 1's "is the rival really a shim?" question has had a
+genuine second candidate to weigh.
+
+| package | version | licence | uploaded | requires | mode | outcome here |
+|---|---|---|---|---|---|---|
+| `oceanbase-sqlalchemy` | 0.7.0 | Apache-2.0 | 2026-01-28 | `sqlalchemy>=1.3.0`, `cx_oracle>=8.0.0` | Oracle | **will not install** |
+| `sqlalchemy-oceanbase` | 0.1.6 | MIT | 2025-04-21 | `sqlalchemy>=2.0.29`, `pymysql>=1.1.0` | MySQL | installs, imports, 136 lines |
+
+**The Apache one cannot be installed on this host, and the reason is not OceanBase's.** It requires
+`cx_Oracle`, whose last release is 8.3.0 from 2021-11-04. That release publishes wheels for
+manylinux and Windows only — **no macOS wheel at any Python version, and nothing past cp310** — so on
+Python 3.12 pip falls back to the sdist, and the build fails before it compiles anything:
+
+```
+ModuleNotFoundError: No module named 'pkg_resources'
+  … setuptools/build_meta.py, run_setup → exec(code) → File "<string>", line 6, in <module>
+ERROR: Failed to build 'cx_oracle' when getting requirements to build wheel
+```
+
+`cx_Oracle`'s `setup.py` imports `pkg_resources`, which modern setuptools no longer ships. This is the
+same defect class as the `setuptools<82` ceiling MonetDB costs this project (§18) — only there it bites
+at *runtime import*, and here it bites in a *build* environment, where the consumer has no pin to
+apply. `cx_Oracle` is in any case superseded by `python-oracledb`, which is what this project's Oracle
+entry already uses.
+
+**The MIT one is thin but real.** `sqlalchemy-oceanbase` is 136 lines. `OceanBaseDialect` subclasses
+`MySQLDialect_pymysql` and overrides one thing: the parser for `SHOW CREATE TABLE`, because OceanBase
+prints a `KEY` line with a trailing `LOCAL` and a foreign-key constraint that names its schema even
+when the schema is the default one. That is a genuine per-engine fact, not a wrapper — so it is not a
+shim. It is also not a dialect of its own, and it says so:
+
+```python
+class OceanBaseDialect(pymysql.MySQLDialect_pymysql):
+    # not change dialect name, since it is a subclass of pymysql.MySQLDialect_pymysql
+    # name = "oceanbase"
+```
+
+Measured rather than read off the entry points, as §17 requires:
+
+| what | value |
+|---|---|
+| entry points | `mysql.oceanbase`, `mysql.asyncoceanbase` — registered *inside* the MySQL namespace |
+| URL | `mysql+oceanbase://…` |
+| `create_engine(url).dialect.name` | `mysql` |
+| `create_engine(url).dialect.driver` | `pymysql` |
+| `mysql+asyncoceanbase://…` | `ModuleNotFoundError: No module named 'aiomysql'` — a second, undeclared driver |
+
+So §17 holds a fourth time, in its plainest form yet: this dialect does not merely fail to name its
+engine, it names a *different* engine, and correctly — the adapter is a sub-dialect of MySQL.
+
+**On the rule, OceanBase is eligible**: an open-source SQLAlchemy adapter exists, installs and imports.
+Eligibility is settled before reachability is asked, and the answer to the second question is below.
+
+### 26.2 The server never starts, and the reason is one instruction
+
+Every attempt ends the same way, ten to twenty seconds in:
+
+```
+cluster scenario: express_oltp
+Start observer ok
+observer program health check x
+[WARN] OBD-2002: Failed to start 172.17.0.2 observer
+boot failed!
+```
+
+`observer.log` stops mid-initialisation and records a signal:
+
+```
+[SERVER] init (ob_srv_deliver.cpp:423) init ObSrvDeliver done
+CRASH ERROR!!! IP=55d544147cab, … sig=4, sig_code=2, sig_addr=0x55d544147cab, tid=936, tname=observer,
+lbt=0x23659438 0x232c0f91 0x7fae7d412cdf 0x2478fcab 0x2478e4e2 0x2477ec18 0x246c66ee …
+```
+
+`sig=4, sig_code=2` is `SIGILL` / `ILL_ILLOPN` — an illegal *operand*, which is what an unsupported
+instruction looks like. Disassembling the shipped binary at the static address in the backtrace
+(`0x2478fcab`, image `latest` = 4.4.2.1) names it:
+
+```
+2478fca8:	49 89 06             	mov    %rax,(%r14)
+2478fcab:	0f 01 f9             	rdtscp
+2478fcae:	48 c1 e2 20          	shl    $0x20,%rdx
+…                                     	je     2478fcd6 <fast_current_time+0xc6>
+```
+
+The crash is the `rdtscp` in `fast_current_time`. The VM does not have it; the host does:
+
+| where | `rdtscp` |
+|---|---|
+| container `/proc/cpuinfo` flags | `tsc constant_tsc nonstop_tsc hypervisor` — **absent** |
+| host `sysctl machdep.cpu.extfeatures` | `… PREFETCHW RDTSCP TSCI` — present |
+| host CPU | Intel i7-10700K (Comet Lake) |
+| Docker's VM manager | `com.docker.virtualization` — Apple's Virtualization.framework, Docker Desktop 29.5.3 |
+
+**A flag line is not an execution.** Three lines of C that do nothing but `rdtscp`, compiled and run
+on both sides, are what actually settles it:
+
+```
+docker run --rm -v $PWD:/w gcc:13 bash -c 'gcc -O0 -o /tmp/p /w/rdtscp_probe.c && /tmp/p; echo exit=$?'
+  about to execute rdtscp
+  bash: line 1:    12 Illegal instruction     /tmp/p
+  exit=132                                    # 128 + SIGILL
+
+cc -o /tmp/p rdtscp_probe.c && /tmp/p         # same source, on the host
+  host rdtscp ok aux=0
+```
+
+Four images, one outcome:
+
+| tag | version | outcome |
+|---|---|---|
+| `latest` | 4.4.2.1 | `CRASH ERROR … sig=4, sig_code=2` at `rdtscp` in `fast_current_time` |
+| `4.3.5-lts` | 4.3.5.6 | `CRASH ERROR … sig=4, sig_code=2` |
+| `4.2.5-lts` | 4.2.5.5 | `CRASH ERROR … sig=4, sig_code=2` |
+| `4.2.1-lts` | 4.2.1.10 | stops at the same log line, writes **no** crash record |
+
+4.2.1 is the interesting one and it does not rescue the entry. Its `fast_current_time` uses plain
+`rdtsc` (`0f 31`), so that call site is legal there — and the process still dies at the identical point
+in initialisation, with 18 `0f 01 f9` sequences elsewhere in the binary. Which of them it reaches was
+not chased: an older image than the four LTS lines is not a route this harness would take anyway.
+
+### 26.3 Memory is not the cause, though it would have been the next one
+
+The first attempt failed on memory, and it is worth separating from the crash so the crash is not
+misread. `MODE` defaults to `MINI`, which sets `OB_MEMORY_LIMIT=6G` on a VM with 7.75 GiB total, and
+`obd` refuses outright:
+
+```
+[ERROR] OBD-2000: not enough memory. (Free: 3G, Buff/Cache: 2G, Need: 6G)
+```
+
+With the VM's page cache dropped (6.0 GiB free) and `OB_MEMORY_LIMIT=5G`, `obd` proceeds and the
+observer crashes as above. So the crash is not an out-of-memory kill wearing a different name.
+
+It does record a second, independent obstacle: **one OceanBase container wants most of this VM.** The
+harness's proven ceiling is six containers on 7.75 GiB (#46), and a 5–6 GiB single tenant does not fit
+inside a batch of six. Even a fixed binary would have forced a batch of its own.
+
+### 26.4 The routes not taken
+
+| Route | Why not |
+|---|---|
+| Raise the Docker VM's memory | Does not touch `SIGILL`, and every measurement in this document — the six-container ceiling above all — was taken on this VM as configured |
+| Select a different VM manager | `settings-store.json` carries `Cpus` and `MemoryMiB` and no VMM key; `com.docker.hyperkit` still ships in the app bundle but nothing selects it. Moving one entry onto a different hypervisor moves it off the substrate the other fifteen are measured on |
+| A QEMU/TCG runtime (colima, lima) | Emulation would execute `rdtscp`, and the harness would then be testing one entry on a container runtime no other entry uses |
+| Oracle mode, via `oceanbase-sqlalchemy` | Will not install here (26.1), and would need Oracle Instant Client on the host besides |
+| Wait for a guarded build | Reported upstream; there is nothing to work around in the meantime, because nothing of ours is involved |
+
+Reported as [oceanbase/oceanbase#2441](https://github.com/oceanbase/oceanbase/issues/2441) — no
+existing issue mentions `SIGILL`, `rdtscp` or an illegal instruction. The suggestion made there is to
+gate the instruction on `CPUID.80000001H:EDX[27]` and fall back to `rdtsc`, or, if it is a hard
+requirement, to say so at startup instead of crashing.
+
+**Disposition: unreachable on this host, awaiting a call.** Db2's precedent is a drop.
+
+### 26.5 What this did not test
+
+Everything about OceanBase itself. No cluster ever served a connection, so nothing here says anything
+about its MySQL-mode compatibility, its transactions, its types, its identifier folding or its
+isolation levels — nor whether `sqlalchemy-oceanbase`'s one override is sufficient, which is the only
+question that would have mattered had the server run. The finding is about one instruction on one
+host, and it should not be read as a statement about the database.
