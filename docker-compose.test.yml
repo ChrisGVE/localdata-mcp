@@ -822,13 +822,29 @@ services:
             kdc = 127.0.0.1:88
           }
         EOF
-        if [ ! -f /krb/.made ]; then
-          kdb5_util create -s -P "$$KRB5_PASSWORD" -r "$$KRB5_REALM"
-          kadmin.local -q "addprinc -pw $$KRB5_PASSWORD $$KRB5_PRINCIPAL@$$KRB5_REALM"
-          kadmin.local -q "addprinc -randkey postgres/127.0.0.1@$$KRB5_REALM"
-          rm -f /krb/postgres.keytab
-          kadmin.local -q "ktadd -k /krb/postgres.keytab postgres/127.0.0.1@$$KRB5_REALM"
-          cat > /krb/pg_hba.conf <<'HBA'
+        # Built on every start, not once behind a marker in the volume. The
+        # marker used to live in /krb while the KDC database it stood for lived
+        # in the container's own filesystem, so the two had different lifetimes:
+        # `docker compose down` destroyed the database and kept the marker, and
+        # the next `up` skipped the build and died with `cannot initialize realm
+        # LOCALDATA.TEST`. A `stop`/`up` cycle never showed it, because that
+        # restarts the container rather than recreating it (#63).
+        #
+        # Rebuilding unconditionally also keeps the keytab and the database in
+        # step, which the marker could not: a half-restored state where the
+        # keytab is the old realm's and the database is new authenticates
+        # nobody, and says so in a message about neither.
+        # The directory has to survive: `kdb5_util create` writes into it and
+        # will not make it, answering `No such file or directory while creating
+        # database` if it is gone.
+        rm -rf /var/lib/krb5kdc /krb/.made
+        mkdir -p /var/lib/krb5kdc
+        kdb5_util create -s -P "$$KRB5_PASSWORD" -r "$$KRB5_REALM"
+        kadmin.local -q "addprinc -pw $$KRB5_PASSWORD $$KRB5_PRINCIPAL@$$KRB5_REALM"
+        kadmin.local -q "addprinc -randkey postgres/127.0.0.1@$$KRB5_REALM"
+        rm -f /krb/postgres.keytab
+        kadmin.local -q "ktadd -k /krb/postgres.keytab postgres/127.0.0.1@$$KRB5_REALM"
+        cat > /krb/pg_hba.conf <<'HBA'
         local   all all             trust
         # `include_realm=0` is what makes the database user `krbuser` rather than
         # `krbuser@LOCALDATA.TEST`, which is not a role and would be refused
@@ -836,15 +852,13 @@ services:
         host    all all 0.0.0.0/0   gss include_realm=0
         host    all all ::/0        gss include_realm=0
         HBA
-          cat > /krb/krbuser.sql <<'SQL'
+        cat > /krb/krbuser.sql <<'SQL'
         CREATE ROLE krbuser LOGIN;
         GRANT ALL ON SCHEMA public TO krbuser;
         SQL
-          chown 70:70 /krb/postgres.keytab /krb/pg_hba.conf /krb/krbuser.sql
-          chmod 640 /krb/postgres.keytab
-          chmod 644 /krb/pg_hba.conf /krb/krbuser.sql
-          touch /krb/.made
-        fi
+        chown 70:70 /krb/postgres.keytab /krb/pg_hba.conf /krb/krbuser.sql
+        chmod 640 /krb/postgres.keytab
+        chmod 644 /krb/pg_hba.conf /krb/krbuser.sql
         exec krb5kdc -n
     healthcheck:
       # Asks the KDC for a real ticket using the keytab it just wrote, over the
