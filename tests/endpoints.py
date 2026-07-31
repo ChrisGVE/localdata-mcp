@@ -729,6 +729,46 @@ def _databend(env: dict[str, str], port: int) -> str:
     )
 
 
+def _exasol(env: dict[str, str], port: int) -> str:
+    """Exasol over its WebSocket protocol, as a user its healthcheck made.
+
+    Three things here are unlike the builders above, and each was measured.
+
+    **The URL's database component is a schema.** The dialect's
+    ``create_connect_args`` calls ``translate_connect_args(database="schema")``,
+    so what every other builder spells as a database is what Exasol opens as the
+    current schema — and a fresh cluster has none. Naming one that does not exist
+    fails at connect, not at the first statement.
+
+    **The credential is provisioned rather than configured.** This image reads no
+    password variable at all: ``exadt init-sc --sys-passwd`` wants a hash, and
+    passing one — hash or cleartext — stops the database from starting, which
+    also rules out its ``--init-sql``. So the compose entry declares a user and a
+    password, its healthcheck creates them along with the schema, and this reads
+    them back out of that same environment. The variables are ours rather than
+    the image's, and they are read here for the reason every other builder reads
+    its own: a credential stated twice is a credential that can disagree.
+
+    **``SSLCertificate=SSL_VERIFY_NONE`` is required, not tidy.** The protocol is
+    TLS-only and the cluster serves a certificate it signed itself, so
+    ``pyexasol`` — which since 1.0.0 verifies by default — refuses the handshake
+    with ``CERTIFICATE_VERIFY_FAILED: self-signed certificate``. The dialect maps
+    this query parameter onto its ``certificate_validation`` argument; the other
+    accepted spelling, ``FINGERPRINT``, pins the certificate instead and would
+    make the URL depend on a value the container regenerates. Databend's
+    ``sslmode=disable`` is the same shape of concession made for the opposite
+    reason — there the server offers no TLS, here it offers nothing else.
+    """
+    return _url(
+        "exa+websocket",
+        username=env["EXASOL_APP_USER"],
+        password=env["EXASOL_APP_PASSWORD"],
+        port=port,
+        database="localdata",
+        query={"SSLCertificate": "SSL_VERIFY_NONE"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Authentication modes — the same databases, reached other ways
 # ---------------------------------------------------------------------------
@@ -1427,6 +1467,27 @@ ENDPOINTS = (
         driver="databend_sqlalchemy",
         extra="databend",
         url=_databend,
+    ),
+    # `engine` differs from `dialect` for the fourth time, and this one is
+    # narrower than the three before it: not another engine's dialect, not a
+    # driver's name and not a query language, but **one package disagreeing with
+    # itself**. `sqlalchemy-exasol` registers the entry point `exa`, which is
+    # what a URL resolves to and therefore what `backend_for` is keyed on, while
+    # the dialect it registers calls itself `exasol` — and reports its driver as
+    # `exasol.driver.websocket.dbapi2`, a module path rather than a driver name.
+    # A refusal has to say `exasol`.
+    #
+    # `warmup` is generous because this container builds a cluster before it
+    # serves anything: the port is published while `exadt` is still at stage 2.
+    Endpoint(
+        dialect="exa",
+        service="localdata-test-exasol",
+        container_port=8563,
+        driver="sqlalchemy_exasol",
+        extra="exasol",
+        url=_exasol,
+        engine="exasol",
+        warmup=90.0,
     ),
 )
 

@@ -1419,3 +1419,149 @@ def test_the_transactionless_backends_do_not_all_answer_the_same_way():
     assert databend.ddl_survives_refusal() is False
     assert crate.dml_survives_refusal() is True
     assert crate.ddl_survives_refusal() is True
+
+
+# ---------------------------------------------------------------------------
+# Exasol
+# ---------------------------------------------------------------------------
+
+
+def test_the_exasol_backend_is_keyed_on_its_url_and_named_after_its_engine():
+    """The fifth way a dialect name is not an identity, and the narrowest yet.
+
+    The four before this were a dialect borrowed from another engine
+    (YugabyteDB), one named after its driver (Firebird), one named after a query
+    language (YDB) and one whose name and engine simply agreed (Databend, as the
+    control). This one is a single package disagreeing with itself:
+    ``sqlalchemy-exasol`` registers the entry point ``exa``, so that is what a
+    URL resolves to and what the registry must be keyed on, while the dialect it
+    registers answers ``exasol`` when asked its name.
+
+    Both halves are asserted, because either alone passes while the other is
+    wrong: keyed on ``exasol`` the lookup misses and a caller is refused by "a
+    generic datasource named exa", and named ``exa`` the refusal prints a URL
+    scheme at somebody who opened Exasol.
+    """
+    from sqlalchemy.engine import make_url
+
+    url = "exa+websocket://sys:exasol@127.0.0.1:18563/localdata"
+
+    assert make_url(url).get_backend_name() == "exa"
+    assert backend_for("exa").name == "exasol"
+    # And the dialect's own answer is the third spelling, so nothing may key on
+    # it either: it is a module path, not a driver name.
+    assert "exasol" not in BACKENDS
+
+
+def test_exasol_tells_only_the_read_engine_to_stop_committing():
+    """Autocommit is the driver's default, so the floor has to be asked for.
+
+    :meth:`Backend.read_posture`'s guarantee is transactional — open a
+    connection, never commit, close it — and it is worth nothing against a driver
+    that commits every statement as it runs. This DBAPI does: ``autocommit``
+    defaults to ``True``, and an ``INSERT`` followed by ``rollback()`` leaves the
+    row behind. ``AUTOCOMMIT=n`` on the read URL is what puts the floor back.
+
+    The write engine must **not** carry it, which is the half worth asserting:
+    the same parameter on both would make every write this server does depend on
+    an explicit commit reaching a driver that was never asked to defer one.
+    """
+    exasol = backend_for("exa")
+
+    assert dict(exasol.read_only_query) == {"AUTOCOMMIT": "n"}
+
+    engines = exasol.open(
+        "exa+websocket://sys:exasol@127.0.0.1:18563/localdata", writable=True
+    )
+    try:
+        assert engines.read.url.query["AUTOCOMMIT"] == "n"
+        assert "AUTOCOMMIT" not in engines.write.url.query
+    finally:
+        engines.dispose()
+
+
+def test_exasol_asks_the_driver_for_the_type_mapper_its_dbapi_hardcodes_away(
+    monkeypatch,
+):
+    """Without it a widened number arrives as text, which JSON cannot rescue.
+
+    Exasol's WebSocket protocol sends a ``DECIMAL`` as a JSON **string** once its
+    precision outgrows a double, so ``SUM`` over a ``DECIMAL(18,0)`` column —
+    widened to ``DECIMAL(29,0)`` — reads back as ``'155000'``. ``_ON_THE_WIRE``
+    spells a ``Decimal`` as a number on the way out and cannot help here: a
+    ``str`` is indistinguishable from a column that really is text.
+
+    The DBAPI hardcodes ``fetch_mapper`` to ``None`` and exposes no argument for
+    it, which is why this goes through the ``connection_class`` its own
+    ``connect()`` accepts. Asserted by driving the class rather than by reading
+    the seam back: what matters is that the option reaches ``pyexasol``.
+    """
+    import pyexasol
+
+    connection_class = backend_for("exa").connect_args()["connection_class"]
+    connection = connection_class(
+        dsn="127.0.0.1:18563", username="sys", password="exasol", schema="localdata"
+    )
+
+    captured: dict[str, object] = {}
+
+    class _NeverOpened:
+        """Enough of a connection for the wrapper's own destructor to run."""
+
+        def __del__(self) -> None:
+            return None
+
+    def fake_connect(**options):
+        captured.update(options)
+        return _NeverOpened()
+
+    monkeypatch.setattr(pyexasol, "connect", fake_connect)
+    connection.connect()
+
+    assert captured["fetch_mapper"] is pyexasol.exasol_mapper
+
+
+def test_an_index_exasol_keeps_for_itself_is_refused_rather_than_reported():
+    """This database indexes itself, so there is no name to hand back.
+
+    Exasol creates and drops indexes from the queries it actually runs and offers
+    no statement for making one: the dialect refuses ``CREATE INDEX`` at compile
+    time with *"Exasol manages indexes internally"*, and the raw statement is
+    refused by the server too. Reporting one as created would be the shape this
+    server refuses elsewhere — an answer that reads as done and cannot be acted
+    on — which is why ClickHouse, Trino and Databend all reach this same axis by
+    different roads.
+    """
+    from sqlalchemy import Column, Integer, MetaData, Table
+
+    backend = backend_for("exa")
+    assert backend.builds_indexes() is False
+
+    table = Table("orders", MetaData(), Column("region", Integer))
+    with pytest.raises(UnsupportedOperation) as refused:
+        backend.build_index("ix_orders_region", table, ["region"])
+
+    message = str(refused.value)
+    # The engine, not the URL scheme it is registered under.
+    assert "exasol" in message
+    assert "region" in message
+    # And it says why, so the refusal does not read as this server's own limit.
+    assert "maintains its own indexes" in message
+
+
+def test_exasol_declines_the_one_type_its_dialect_will_not_compile():
+    """One, and refused before anything is sent — the honest end of this axis.
+
+    Exasol has no binary column type, and the dialect says so at *compile* time:
+    ``BLOB is not supported by the Exasol dialect``, with no table made and no
+    value bound. ClickHouse's binary column can be created and not written to,
+    and Databend's works until the bytes stop being valid UTF-8; this one does
+    not exist and nothing pretends it does.
+
+    The rest is asserted rather than left to omission: ``Time`` is where three
+    other backends here fail, and Exasol takes it.
+    """
+    unstorable = backend_for("exa").unstorable_column_types()
+
+    assert unstorable == {"LargeBinary"}
+    assert not {"Time", "Numeric", "Date", "DateTime", "Boolean", "Text"} & unstorable

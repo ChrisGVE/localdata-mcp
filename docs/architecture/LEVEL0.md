@@ -9,8 +9,9 @@ and more backends are **still level 0**, because they are nothing new — the sa
 pointed at more kinds of source. Formats are done. The backends are a **closed** catalogue
 worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
 Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB, Firebird,
-openGauss, YDB and Databend each run every verb, each against a container of its own —
-except SQLite and DuckDB, which are files and need none.
+openGauss, YDB, Databend and Exasol each run every verb, each against a container of its
+own — except SQLite and DuckDB, which are files and need none. **The catalogue is
+worked through**: every entry that can be reached on this machine is landed.
 
 Five candidates are **out**, and for three different reasons. **TiDB** and **HyperSQL** fail
 the eligibility rule — a database is in scope iff an open-source SQLAlchemy adapter exists,
@@ -20,11 +21,12 @@ rule and still cannot be reached, each one blocked a layer lower than the last: 
 adapter installs and cannot be imported, because the native client beneath it links against
 a C++ runtime macOS no longer ships (`CONSTRAINTS.md` §24), and OceanBase's server crashes
 at startup on an instruction — `rdtscp` — that the virtual machine Docker runs here does not
-expose (§26). **Exasol is what remains**, and the list ends there.
+expose (§26). Exasol, the last entry, landed (§27) — and the list ends there.
 
-Fifteen of those are containers, and this machine will run six at a time before the Docker
-VM starves them, so **no single test run covers the catalogue** — it takes three, and each
-one reports a green suite while the dialects it never reached stay silent (issue #46).
+Sixteen of those are containers, and this machine will run six at a time before the Docker
+VM starves them, so **no single test run covers the catalogue** — it takes five batches once
+the authentication variants are counted, and each one reports a green suite while the
+dialects it never reached stay silent (issue #46).
 
 ## The premise
 
@@ -270,7 +272,8 @@ where the generic answer means something different here, or nothing at all:
 | openGauss | URL | nothing — but it is the first PostgreSQL fork here that cannot be *addressed* as PostgreSQL, since its version banner does not parse and SQLAlchemy's own PGDialect raises while initialising the connection; it ships its own dialect, so there is no impostor to resolve either |
 | Firebird | URL | that rows cannot be written in the transaction that created the table, since DDL is transactional *and* prepared against committed metadata; the refusal of `update(type='table', to=…)`, since no statement renames a table here; `DOUBLE PRECISION`, since the dialect renders `Double` as a keyword Firebird lacks; and `VARCHAR` sized from the data, since `Text` becomes a `BLOB` that groups by identity rather than by value |
 | YDB | URL | a **primary key on every loaded table**, since it has no heap tables and a file has no key to offer — so one holding the row's position is added and reported; a **read-only isolation level**, since an uncommitted write here is not rolled back at all and the floor has to be a refusal rather than an undo; the two codes that refusal arrives under, one for rows and one for schema; and `Time`, which it does not have |
-| Databend | URL | that a statement is **a read before it runs**, since it has no transaction, no read-only session, and a write that answers with a named result set no examination of the result can tell from a query — so the server itself is asked to plan the statement as a subquery first; `Time`, which it does not have and its dialect renders `DATETIME`; `LargeBinary`, which binds or not depending on whether the bytes are valid UTF-8; and the refusal of `create(type='index')`, since the statement for one compiles to nothing and succeeds
+| Databend | URL | that a statement is **a read before it runs**, since it has no transaction, no read-only session, and a write that answers with a named result set no examination of the result can tell from a query — so the server itself is asked to plan the statement as a subquery first; `Time`, which it does not have and its dialect renders `DATETIME`; `LargeBinary`, which binds or not depending on whether the bytes are valid UTF-8; and the refusal of `create(type='index')`, since the statement for one compiles to nothing and succeeds |
+| Exasol | URL | **autocommit turned off for the read engine**, since its driver commits every statement by default and the transactional floor is otherwise no floor at all; the driver's own type mapper, without which a number widened by `SUM` arrives as the *string* `'155000'` and a `TIMESTAMP` as text; `RENAME TABLE`; `LargeBinary`, which the database does not have and its dialect refuses at compile time; and the refusal of `create(type='index')`, since the engine maintains its own indexes and offers no statement for one |
 
 Two things generalised out of that table and became generic rather than per-dialect. **A
 declared type is named by the backend**, because the portable spellings are what make one
@@ -378,8 +381,8 @@ correct against each other.
 ## What comes after
 
 Still level 0, and in this order: the format catalogue above (**done**), then the backend
-catalogue (**nearly** — every row of the table above is landed, OceanBase was measured
-unreachable on this host, and Exasol is the one that remains).
+catalogue (**done** — every entry that can be reached on this machine is landed, and the
+two that cannot, Db2 and OceanBase, were measured rather than assumed).
 
 The expectation going into the backends was that they would need a test harness rather
 than a code path, and that was half right: nothing about *reaching* a dialect needed

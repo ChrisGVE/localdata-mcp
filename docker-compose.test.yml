@@ -476,6 +476,105 @@ services:
       retries: 12
       start_period: 5s
 
+  # Exasol, through the vendor's own self-contained image. `exadt init-sc` builds
+  # a one-node cluster inside this container and starts a database in it, which is
+  # why the entrypoint is a cluster tool rather than a server: the image ships the
+  # cluster OS, the runtime and the database, and the container *is* the node.
+  #
+  # `privileged: true` is the vendor's documented requirement and is not optional
+  # — the storage layer opens block devices and sets up its own volumes, and
+  # without it initialisation stops at stage 2. It is the only privileged service
+  # in this harness, and it is worth stating plainly rather than burying: this
+  # container gets capabilities the others do not, on a machine that runs it only
+  # to answer test queries.
+  #
+  # The database is reached as SYS with the image's own default password, which is
+  # why nothing here sets a credential: there is no environment variable the
+  # entrypoint reads for one, and `--sys-passwd` — which takes a hash rather than
+  # a password — **stops this image from starting at all**. Measured on 2026.1.0,
+  # with a real SHA-512 hash and with `--encode-passwd` alike: `exasqlinit`
+  # terminates with signal 6, the port opens, and every handshake dies with
+  # `SSL: UNEXPECTED_EOF_WHILE_READING` because nothing is serving behind it.
+  #
+  # That is also why the schema the endpoint URL opens is made by the healthcheck
+  # below rather than declared here. `exadt init-sc --init-sql <file>` is the
+  # documented way, and it is unusable in the same image for the same reason: the
+  # path is written into EXAConf as `InitialSQL` and stage 4 then fails with
+  # `Could not get password for sys … Could not get sys password: system does not
+  # exist`, so the file is silently never run — while the container still reports
+  # itself healthy. The option that enables initial SQL is the option that
+  # prevents the database from starting.
+  localdata-test-exasol:
+    image: exasol/docker-db:2026.1.0
+    privileged: true
+    # The cluster shuts its database down cleanly and needs to be let: the vendor
+    # documents 120s, and a container killed mid-shutdown comes back replaying its
+    # log rather than starting.
+    stop_grace_period: 120s
+    environment:
+      # Read by the healthcheck below — which is what *creates* this user — and
+      # by `tests/endpoints.py`, which builds the endpoint URL from this same
+      # block. One spelling, two readers. Unlike SYS, this credential is ours
+      # rather than the image's, so it is the one the URL carries.
+      #
+      # The password holds `:` and `@` on purpose, as Databend's and openGauss's
+      # do: it keeps this endpoint proving that a credential reaches the driver
+      # as a value and not as URL syntax.
+      EXASOL_APP_USER: localdata
+      EXASOL_APP_PASSWORD: "l0cal:data@test"
+    ports:
+      - "18563:8563"
+    healthcheck:
+      # `exaplus` is the image's own SQL client, and this runs real statements
+      # through it over the same port the tests use.
+      #
+      # It also *provisions*, because nothing else in this image can (see above):
+      # the schema the endpoint URL opens and the user it connects as are made
+      # here, on the first run that finds them missing. The probe proper is the
+      # last statement, run **as that user** — so `healthy` means what the tests
+      # need it to mean, a database serving SQL to the credential the URL
+      # carries, rather than merely a listening port. YDB's image does DDL in its
+      # own healthcheck for the same reason.
+      #
+      # Provisioning is guarded by the probe rather than run every interval:
+      # `exaplus` is a JVM and this fires every 10s, so the steady state is one
+      # invocation and the four-statement path runs only while the database is
+      # not yet set up. A test that drops the schema puts the next run back into
+      # it, which is the same idempotence a `CREATE … IF NOT EXISTS` would give.
+      #
+      # One statement per invocation, because `exaplus` refuses more than one per
+      # line. `CREATE USER` has no `IF NOT EXISTS`; its failure on an already
+      # provisioned database is why the guard is the probe and not this.
+      #
+      # The output is grepped rather than the exit code trusted, and that is
+      # measured rather than cautious: **exaplus exits 0 for a statement the
+      # database rejected** — `select * from no_such_table` gives `Error: [42000]
+      # object NO_SUCH_TABLE not found` on stdout and status 0 — and reserves a
+      # non-zero status for failures to connect (status 2 for a wrong password).
+      # So a probe that read only the status would report a database ready on the
+      # strength of an error message. Third instance of the same trap in this file
+      # after ClickHouse's and Databend's HTTP handlers.
+      #
+      # `validateservercertificate=0` because the cluster serves a certificate it
+      # signed itself; the endpoint URL carries the same concession as
+      # `SSLCertificate=SSL_VERIFY_NONE`.
+      #
+      # The token cannot arrive by accident: a failing statement's error text
+      # names the object, not the projected literal, so it never contains
+      # `localdata_ok`.
+      #
+      # `$$` is compose's escape for a shell `$`, so every variable here is read
+      # from the container's own environment at probe time.
+      test:
+        [
+          "CMD-SHELL",
+          "E=/opt/exasol/db-2026.1.0/bin/Console/exaplus; S=\"-c localhost:8563 -u sys -p exasol -q -jdbcparam validateservercertificate=0\"; A=\"-c localhost:8563 -u $$EXASOL_APP_USER -p $$EXASOL_APP_PASSWORD -q -jdbcparam validateservercertificate=0\"; probe() { $$E $$A -sql \"SELECT 'localdata_ok' AS probe FROM exa_all_schemas WHERE schema_name='LOCALDATA';\" 2>&1 | grep -q localdata_ok; }; probe && exit 0; $$E $$S -sql 'CREATE SCHEMA IF NOT EXISTS localdata;' >/dev/null 2>&1; $$E $$S -sql \"CREATE USER $$EXASOL_APP_USER IDENTIFIED BY \\\"$$EXASOL_APP_PASSWORD\\\";\" >/dev/null 2>&1; $$E $$S -sql \"GRANT CREATE SESSION, CREATE TABLE, CREATE VIEW TO $$EXASOL_APP_USER;\" >/dev/null 2>&1; $$E $$S -sql \"ALTER SCHEMA localdata CHANGE OWNER $$EXASOL_APP_USER;\" >/dev/null 2>&1; probe || exit 1",
+        ]
+      interval: 10s
+      timeout: 30s
+      retries: 30
+      start_period: 30s
+
   # -------------------------------------------------------------------------
   # Authentication variants
   #

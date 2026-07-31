@@ -92,6 +92,7 @@ __all__ = [
     "DatabendBackend",
     "DuckDBBackend",
     "Engines",
+    "ExasolBackend",
     "FirebirdBackend",
     "MySQLBackend",
     "PostgreSQLBackend",
@@ -2283,6 +2284,156 @@ class DatabendBackend(Backend):
         return frozenset({"LargeBinary", "Time"})
 
 
+# ---------------------------------------------------------------------------
+# Exasol
+# ---------------------------------------------------------------------------
+
+
+def _exasol_mapped_connection() -> type:
+    """The driver's connection class, with the type mapper its DBAPI omits.
+
+    ``exasol.driver.websocket`` builds every connection through one options
+    dictionary and hardcodes ``fetch_mapper`` to ``None`` in it, while
+    ``connect()`` takes a ``connection_class`` — so the supported way to change
+    an option the DBAPI does not expose is to subclass what it constructs. That
+    is what this is, and it is why the seam can state the fact at all.
+
+    Reported as `exasol/pyexasol#361
+    <https://github.com/exasol/pyexasol/issues/361>`_, which asks for the option
+    to be a connect argument. **Delete this and the ``connect_args`` override
+    together on the day it is**: ``_options`` is private, and reaching into it is
+    the whole reason this exists rather than a keyword.
+
+    Imported here rather than at module scope because the extra is optional, as
+    CrateDB's converter is.
+    """
+    import pyexasol
+    from exasol.driver.websocket.dbapi2 import DefaultConnection
+
+    class _MappedConnection(DefaultConnection):
+        def connect(self):  # noqa: ANN201 - the vendor's signature, untyped
+            self._options["fetch_mapper"] = pyexasol.exasol_mapper
+            return super().connect()
+
+    return _MappedConnection
+
+
+@dataclass(frozen=True)
+class ExasolBackend(Backend):
+    """Exasol, whose values arrive as text unless the driver is asked otherwise.
+
+    Registered under ``exa`` — the backend name in its URL — while calling
+    itself ``exasol``, which is the **fifth** distinct way a dialect name has
+    failed to be an identity in this project and the first where the gap is
+    inside one package: ``sqlalchemy-exasol`` registers the entry point ``exa``,
+    names the dialect ``exasol``, and reports a *module path* —
+    ``exasol.driver.websocket.dbapi2`` — as its driver. So a URL says ``exa``,
+    ``Dialect.name`` says ``exasol``, and neither of them is what a refusal
+    should print, which is why the name is carried here.
+    """
+
+    name: str = "exasol"
+
+    #: Autocommit off, for the **read** engine only, and it is what puts the
+    #: transactional floor under this backend at all.
+    #:
+    #: The DBAPI's ``autocommit`` defaults to ``True`` (measured:
+    #: ``_connection.py`` signature, and an ``INSERT`` followed by ``rollback()``
+    #: leaves the row behind), so every statement a read connection ran would
+    #: persist and :meth:`Backend.read_posture`'s "open, never commit, close"
+    #: guarantee would be no guarantee at all. The dialect maps this query
+    #: parameter onto the connect argument, and with it the same drill rolls the
+    #: row back.
+    #:
+    #: Set here rather than through :meth:`connect_args` deliberately: the write
+    #: engine must keep the driver's own default, and ``read_only_query`` is the
+    #: one lever that reaches exactly one of the two engines.
+    read_only_query: ClassVar[Mapping[str, str]] = {"AUTOCOMMIT": "n"}
+
+    def connect_args(self) -> Mapping[str, Any]:
+        """The type mapper, without which a widened number arrives as text.
+
+        Exasol's WebSocket protocol carries a ``DECIMAL`` as a JSON **string**
+        once its precision outgrows what a double holds exactly, and the DBAPI
+        this dialect ships passes the payload through untouched. Measured on one
+        table: a ``DECIMAL(18,0)`` column reads back as ``42``, and
+        ``SUM`` of that same column — which Exasol widens to ``DECIMAL(29,0)`` —
+        reads back as the string ``'42'``. A ``TIMESTAMP`` is the same shape of
+        answer: ``'2020-01-02 03:04:05.000000'``, text.
+
+        That is the defect ``_ON_THE_WIRE`` exists for, arriving in the one form
+        it cannot fix: a ``Decimal`` is spelled as a number on the way out, but a
+        ``str`` is indistinguishable from a column that really is text, so the
+        agent gets ``"155000"`` and adds it as prose. CrateDB's converter is the
+        same fact from the same cause — an untyped wire protocol — and the same
+        remedy.
+
+        Not reachable through SQLAlchemy's typing: a Core ``select()`` converts,
+        because the dialect's ``colspecs`` know the column is numeric, and
+        ``query`` runs the caller's own text where nothing does.
+        """
+        return {"connection_class": _exasol_mapped_connection()}
+
+    def rename_table(self, conn: Connection, table: str, to: str) -> None:
+        """``RENAME TABLE``, which is the only spelling this database has.
+
+        ``ALTER TABLE … RENAME TO`` is refused — measured, and refused with an
+        empty message, which is this driver's habit rather than the database's:
+        ``_cursor.py`` raises ``Error()`` with the server's text dropped, for
+        every failure alike (`exasol/pyexasol#360
+        <https://github.com/exasol/pyexasol/issues/360>`_). The preparer quotes
+        both identifiers, as the generic implementation does.
+
+        Through ``DDL`` rather than ``text`` for the generic implementation's
+        reason (#59): only one of the two carries the signal that this is schema,
+        and an override that reaches for ``text`` drops it for the sake of
+        changing the verb. This dialect happens not to care — measured both ways
+        — which is exactly the agreement that let the generic one stand as
+        ``text`` for eleven dialects before YDB disagreed.
+        """
+        prepare = conn.dialect.identifier_preparer.quote
+        conn.execute(DDL(f"RENAME TABLE {prepare(table)} TO {prepare(to)}"))
+
+    def builds_indexes(self) -> bool:
+        return False
+
+    def build_index(
+        self, name: str, table: Table, columns: Sequence[str]
+    ) -> tuple[Index, tuple[str, ...]]:
+        """Refused, because this database indexes itself.
+
+        Exasol creates and drops indexes on its own, from the joins and filters
+        it actually sees, and offers no statement for one: the dialect refuses
+        ``CREATE INDEX`` at compile time with *"Exasol manages indexes
+        internally"*, and the database refuses the raw statement too. There is
+        nothing to create under a name that could then be listed or dropped, so
+        this says what is true rather than reporting an index nobody made.
+        """
+        raise UnsupportedOperation(
+            f"{self.name} maintains its own indexes: it creates and drops them "
+            f"from the queries it actually runs, and has no statement for making "
+            f"one by hand. There is nothing to create for {', '.join(columns)} "
+            f"and nothing this interface could afterwards list or drop, so this "
+            f"verb refuses rather than report an index that does not exist."
+        )
+
+    def unstorable_column_types(self) -> frozenset[str]:
+        """``LargeBinary``, and this one is refused before anything is sent.
+
+        Exasol has no binary column type at all, and the dialect says so at
+        **compile** time — ``BLOB is not supported by the Exasol dialect`` — so
+        the table is not made and no value is bound. That is the honest end of
+        the range this axis covers: ClickHouse's binary column can be made and
+        not written to, Databend's works until the bytes stop being valid UTF-8,
+        and here the type does not exist and nothing pretends otherwise.
+
+        Nothing else is missing. ``Time``, ``Numeric``, ``Boolean``, ``Date``,
+        ``DateTime``, ``Float``, ``Integer`` and ``String`` were each created and
+        dropped on a live server, one statement at a time.
+        """
+        return frozenset({"LargeBinary"})
+
+
 _SQLITE = SQLiteBackend()
 
 #: Dialect name to the backend that has something *extra* to say about it. An
@@ -2316,6 +2467,10 @@ BACKENDS: dict[str, Backend] = {
     # problem was another engine's name, and this is neither.
     "yql": YDBBackend(),
     "databend": DatabendBackend(),
+    # The third key that is not the name of an engine, and the first where the
+    # engine's own package is what spells it differently: `sqlalchemy-exasol`
+    # registers `exa`, and the dialect it registers calls itself `exasol`.
+    "exa": ExasolBackend(),
 }
 
 

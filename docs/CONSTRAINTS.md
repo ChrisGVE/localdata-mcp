@@ -4297,3 +4297,204 @@ about its MySQL-mode compatibility, its transactions, its types, its identifier 
 isolation levels — nor whether `sqlalchemy-oceanbase`'s one override is sufficient, which is the only
 question that would have mattered had the server run. The finding is about one instruction on one
 host, and it should not be read as a statement about the database.
+
+## §27 — Exasol, and a database that will not say what went wrong (2026-07-31)
+
+The sixteenth endpoint dialect and the thirteenth from the backend catalogue, which
+this entry closes. Exasol is reached through `sqlalchemy-exasol` 7.1.1 on `pyexasol`
+2.3.0 — both Exasol's own, both open source, and the first entry here where the
+adapter, the driver and the database come from one vendor, so step 1's "is the rival
+a shim?" question has no second candidate to weigh.
+
+Nothing native is installed for it: the wire protocol is a WebSocket carrying JSON,
+so the client stack is `websocket-client` and `cryptography` and nothing that has to
+be compiled or found on the host. That is the opposite end of the range from Db2's
+clidriver (§24) and Firebird's `libfbclient` (§20.1), and it is worth noting because
+this endpoint's difficulties are all on the *server* side of the wire for once.
+
+### 27.1 The identity, for the fifth time
+
+| what | value |
+|---|---|
+| entry point registered | `exa`, and `exa.websocket` |
+| URL | `exa+websocket://…` |
+| `make_url(url).get_backend_name()` | `exa` — so this is what `backend_for` is keyed on |
+| `create_engine(url).dialect.name` | `exasol` — so this is what a refusal must print |
+| `create_engine(url).dialect.driver` | `exasol.driver.websocket.dbapi2` — a module path |
+
+§17 has now been re-proved five times and this is the narrowest instance: not a
+dialect borrowed from another engine (YugabyteDB), not one named after its driver
+(Firebird), not one named after a query language (YDB), but **one package
+disagreeing with itself**. Both halves are asserted in the seam's tests, because
+either alone passes while the other is wrong.
+
+### 27.2 Getting a database to exist at all
+
+The image is `exasol/docker-db`, and it is not a server image: `exadt init-sc` builds
+a one-node cluster *inside* the container — cluster OS, runtime and database — so the
+entrypoint is a cluster tool and the container is the node. `privileged: true` is the
+vendor's stated requirement and is real; the storage layer opens block devices.
+
+**The documented way to initialise it with SQL cannot be used, and the reason is a
+pair of options that cancel each other out.** Measured, each in a fresh container:
+
+| what was run | what happened |
+|---|---|
+| `init-sc --init-sql /init.sql` | EXAConf records `InitialSQL = /init.sql`; stage 4 fails with `Could not get password for sys … Could not get sys password: system does not exist`; **the file never runs and the container reports itself healthy** |
+| `init-sc --sys-passwd exasol -e` | `exasqlinit` terminates with signal 6 (core dumped); port 8563 opens and every handshake dies `SSL: UNEXPECTED_EOF_WHILE_READING`, for as long as it was polled |
+| `init-sc --sys-passwd '$6$…'` (a real SHA-512 hash) | identical |
+| `init-sc --sys-passwd '$6$…'` with no `--init-sql` | identical — so the fault is `--sys-passwd`, not the pair |
+| `init-sc` (nothing) | healthy in 45 s, and stays healthy across `stop`/`start` (#63's question, asked and answered) |
+
+So the option that enables initial SQL is inert without a SYS password, and setting a
+SYS password stops the database from starting. **There is nowhere to report this**:
+`exasol/docker-db` has GitHub issues disabled on purpose, and its README says the
+image is "not officially supported" and points at a sales contact form. Recorded here
+instead, which is the whole reason this file exists.
+
+What the harness does instead is **provision from the healthcheck**: it probes as the
+application user, and when that probe fails it creates the schema, the user and the
+grants and probes again. Three properties make that acceptable rather than a bodge —
+it is idempotent, it is self-synchronising (`healthy` means the tests' credential
+really can reach a schema, not that a port is open), and it keeps the service
+self-contained, so `up -d localdata-test-exasol` needs nothing else started. YDB's
+image does DDL in its own healthcheck for the same reason.
+
+**The route not taken was a sidecar** — a one-shot service that provisions and exits,
+the shape `localdata-test-tls-ca` already has here. It was rejected on a dependency
+direction: the batch commands name services explicitly, and compose starts what a
+named service *depends on*, never what depends on it. A sidecar would therefore be
+skipped by exactly the command this harness is driven with, and the endpoint would
+sit unhealthy for a reason nothing in the compose file states.
+
+### 27.3 `exaplus` reports a rejected statement as a success
+
+The healthcheck runs the image's own client, and greps its output rather than reading
+its exit code, because:
+
+| statement | stdout | exit |
+|---|---|---|
+| `select 'localdata_ok'` | the value | 0 |
+| `select * from no_such_table` | `Error: [42000] object NO_SUCH_TABLE not found` | **0** |
+| any statement, wrong password | connection error | 2 |
+
+So `exaplus` reserves its exit code for failures to *connect* and reports a refused
+statement as success. Third instance of this trap in this harness after ClickHouse's
+and Databend's HTTP handlers, and the general rule earned the third time: **a probe
+that reads a status rather than an answer will eventually report a database ready on
+the strength of an error message.**
+
+### 27.4 The transactional floor is off until it is asked for
+
+`Backend.read_posture`'s guarantee is transactional — open a connection, never commit,
+close it — and it is worth nothing against a driver that commits every statement as it
+runs. This one does: `autocommit` defaults to `True` in
+`exasol/driver/websocket/_connection.py`, so a read connection's `INSERT` was still
+there after `rollback()`, and `query` reported a write refused while the row stayed
+written — 5 rows to 6.
+
+`AUTOCOMMIT=n` in the read engine's URL is what puts the floor back, and it goes in
+`read_only_query` rather than `connect_args` because that mapping reaches **only the
+read engine**: the same parameter on both would make every write this server does
+depend on an explicit commit reaching a driver that was never asked to defer one.
+Measured both ways on the same table.
+
+This is the shape §22 and §23 keep finding — a backend whose posture has to be asked
+for rather than assumed — with a new cause. ClickHouse has no transactions and
+supplies `readonly=1`; CrateDB has neither; Exasol *has* transactions and turns them
+off by default in the client.
+
+### 27.5 A number that arrives as text, and the hook that was not exposed
+
+Exasol's WebSocket protocol sends a `DECIMAL` as a JSON **string** once its precision
+outgrows what a double holds exactly. Measured on one table:
+
+| expression | declared type | value | Python type |
+|---|---|---|---|
+| `i` | `DECIMAL(18,0)` | `42` | `int` |
+| `SUM(i)` | `DECIMAL(29,0)` | `'42'` | **`str`** |
+| `ts` | `TIMESTAMP` | `'2020-01-02 03:04:05.000000'` | **`str`** |
+
+`_ON_THE_WIRE` cannot rescue this. It spells a `Decimal` as a number on the way out —
+which is what MySQL's `SUM` needed — but a `str` is indistinguishable from a column
+that really is text, so `SELECT department, SUM(salary) …` reached the agent as
+`["engineering", "155000"]`, which compares and concatenates instead of adding.
+
+`pyexasol` has the answer — `fetch_mapper=exasol_mapper` converts both cases — and the
+DBAPI wrapper hardcodes `fetch_mapper` to `None` in its options dictionary and takes
+no argument for it. What it *does* take is `connection_class`, so the fix is a
+three-line subclass whose `connect()` sets the option and calls `super()`, passed
+through `connect_args`. Filed as
+[exasol/pyexasol#361](https://github.com/exasol/pyexasol/issues/361); the subclass and
+the `connect_args` override are to be deleted together when it lands, because
+`_options` is private and reaching into it is the whole reason they exist.
+
+Not reachable through SQLAlchemy's typing, and worth stating because it is the trap:
+a Core `select()` converts correctly — the dialect's `colspecs` know the column is
+numeric — and `query` runs the caller's own text, where SQLAlchemy knows nothing.
+CrateDB's converter (§19) is the same fact from the same cause: an untyped wire
+protocol, and a driver that will spell values properly only if asked.
+
+### 27.6 Every failure arrives with an empty message
+
+`exasol/driver/websocket/_cursor.py` catches the driver's own exception and raises
+its base class with the text dropped:
+
+```python
+        except pyexasol.exceptions.ExaError as ex:
+            raise Error() from ex
+```
+
+`_connection.py` does the same on connect. So a missing object, a syntax error, a
+privilege problem and a bad schema name are one bare `Error` with `str(e) == ''` and
+`e.args == ()`, and through SQLAlchemy the caller sees the statement — supplied by
+SQLAlchemy — and no reason at all:
+
+```
+sqlalchemy.exc.DBAPIError: (exasol.driver.websocket._errors.Error)
+[SQL: ALTER TABLE orders RENAME TO sales]
+```
+
+The same statement through `pyexasol` directly says `object NO_SUCH_TABLE not found
+[line 1, column 15]`. The package defines the whole PEP 249 exception hierarchy in
+`_errors.py` and raises none of it. Filed as
+[exasol/pyexasol#360](https://github.com/exasol/pyexasol/issues/360).
+
+This costs more than legibility here: `Workspace._explain` reads a driver's error to
+tell a caller which verb to use instead, and on this endpoint there is nothing to
+read. Every refusal Exasol produces is diagnosed by *this* server or not at all.
+
+### 27.7 What the database itself declines
+
+| axis | Exasol | how it refuses |
+|---|---|---|
+| `LargeBinary` | no binary type at all | at **compile** time — `BLOB is not supported by the Exasol dialect`, nothing sent, nothing made |
+| `CREATE INDEX` | indexes are maintained by the engine | dialect refuses at compile time (*"Exasol manages indexes internally"*), and the raw statement is refused by the server |
+| `ALTER TABLE … RENAME TO` | not the spelling here | `RENAME TABLE a TO b` is, and is what the seam issues — as `DDL`, not `text` (#59) |
+
+`LargeBinary` is the honest end of the `unstorable_column_types` range: ClickHouse's
+binary column can be created and not written to (§11.4), Databend's works until the
+bytes stop being valid UTF-8 (§23), and here the type does not exist and the compiler
+says so before a statement is sent.
+
+**The measurements that found nothing**, which are the ones an entry is tempted to
+skip: `Time`, `Numeric`, `Boolean`, `Date`, `DateTime`, `Float`, `Integer` and
+`String` were each created and dropped on a live server, one statement at a time —
+so the one refusal above is a refusal and not a habit. Exasol takes a time-of-day
+type, which Oracle, YDB and Databend do not.
+
+### 27.8 What this did not test
+
+The cluster is one node, so nothing here says anything about how Exasol distributes a
+table, what it does when a node goes away, or how its indexes behave at a size where
+they matter — the whole point of the engine, and none of it reachable from a harness
+that asks a container of test rows to answer eight verbs.
+
+Nor does it test the other two drivers the dialect registers. `turbodbc` and `pyodbc`
+were deliberately not installed: both would put a system ODBC driver manager back in
+the way of an endpoint that needs none, and every finding above about values, errors
+and autocommit is a property of the **websocket** driver rather than of Exasol.
+
+And it says nothing about the SaaS product. `--saas` is an `init-sc` flag that was
+never passed, and the identity-provider configuration beside it is a code path this
+harness has no way to reach.

@@ -176,13 +176,28 @@ ydb = ["ydb-sqlalchemy>=0.1.22"]
 # The driver is not named here: the dialect requires it, and naming it again
 # would let the two drift.
 databend = ["databend-sqlalchemy>=0.5.5"]
+# Exasol, through Exasol's own dialect on Exasol's own driver — the first entry
+# here where the adapter, the driver and the database all come from one vendor,
+# so step 1's shim question has nothing to weigh and neither package can be
+# abandoned without the other going with it.
+#
+# `pyexasol` is not named here: the dialect requires it (`pyexasol>=0.26,<3.0`),
+# and naming it again would let the two drift. It brings `websocket-client` and
+# `cryptography`, and nothing native: the wire protocol is a WebSocket carrying
+# JSON, which is why this endpoint costs no system library at all — the opposite
+# end of the range from Db2's clidriver (docs/CONSTRAINTS.md §24).
+#
+# The dialect also registers a `turbodbc` and a `pyodbc` driver, and neither is
+# requested: both would put a system ODBC driver manager back in the way of an
+# endpoint that does not need one.
+exasol = ["sqlalchemy-exasol>=7.1"]
 
 # -- aggregates ------------------------------------------------------------
 formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird,opengauss,ydb,databend]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird,opengauss,ydb,databend,exasol]",
 ]
 all = [
   "localdata-mcp[formats,databases]",

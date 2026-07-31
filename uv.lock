@@ -1572,6 +1572,7 @@ all = [
     { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
     { name = "sqlalchemy-cratedb" },
+    { name = "sqlalchemy-exasol" },
     { name = "sqlalchemy-firebirdsql" },
     { name = "sqlalchemy-monetdb" },
     { name = "tabulate" },
@@ -1603,6 +1604,7 @@ databases = [
     { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
     { name = "sqlalchemy-cratedb" },
+    { name = "sqlalchemy-exasol" },
     { name = "sqlalchemy-firebirdsql" },
     { name = "sqlalchemy-monetdb" },
     { name = "trino", extra = ["sqlalchemy"] },
@@ -1617,6 +1619,9 @@ dev = [
 duckdb = [
     { name = "duckdb" },
     { name = "duckdb-engine" },
+]
+exasol = [
+    { name = "sqlalchemy-exasol" },
 ]
 excel = [
     { name = "openpyxl" },
@@ -1685,7 +1690,7 @@ requires-dist = [
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.0" },
     { name = "duckdb-engine", marker = "extra == 'duckdb'", specifier = ">=0.13" },
     { name = "fastmcp", specifier = ">=3.0.0" },
-    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "opengauss", "ydb", "databend"], marker = "extra == 'databases'" },
+    { name = "localdata-mcp", extras = ["duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "opengauss", "ydb", "databend", "exasol"], marker = "extra == 'databases'" },
     { name = "localdata-mcp", extras = ["formats", "databases"], marker = "extra == 'all'" },
     { name = "localdata-mcp", extras = ["yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet"], marker = "extra == 'formats'" },
     { name = "numbers-parser", marker = "extra == 'numbers'", specifier = ">=4.4" },
@@ -1706,6 +1711,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlalchemy-cockroachdb", marker = "extra == 'cockroachdb'", specifier = ">=2.0.4" },
     { name = "sqlalchemy-cratedb", marker = "extra == 'cratedb'", specifier = ">=0.43" },
+    { name = "sqlalchemy-exasol", marker = "extra == 'exasol'", specifier = ">=7.1" },
     { name = "sqlalchemy-firebirdsql", marker = "extra == 'firebird'", specifier = ">=0.1" },
     { name = "sqlalchemy-monetdb", marker = "extra == 'monetdb'", specifier = ">=2.0" },
     { name = "tabulate", marker = "extra == 'markdown'", specifier = ">=0.9" },
@@ -1714,7 +1720,7 @@ requires-dist = [
     { name = "xlrd", marker = "extra == 'xls'", specifier = ">=2.0" },
     { name = "ydb-sqlalchemy", marker = "extra == 'ydb'", specifier = ">=0.1.22" },
 ]
-provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "opengauss", "ydb", "databend", "formats", "databases", "all"]
+provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "opengauss", "ydb", "databend", "exasol", "formats", "databases", "all"]
 
 [[package]]
 name = "lz4"
@@ -3022,6 +3028,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pyexasol"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "packaging" },
+    { name = "websocket-client" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/40/5c3c554b684a07d8a056d16d3db6395b90268be9dd0a54359c97fce5b5e9/pyexasol-2.3.0.tar.gz", hash = "sha256:51c00b9b46d61fc28fa541c070d48f68d4ee7ecbfddab9bfc6396db3cea0e5b4", size = 64010, upload-time = "2026-07-17T14:30:33.364Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/91/27084c49a5b6b7c13217bd96a60b3db15899cc2c3593736d4f325f778b9a/pyexasol-2.3.0-py3-none-any.whl", hash = "sha256:d6aa66018dc0d2a776b7a81352c5db454150050aa8f8a229eea6a3902279f038", size = 75853, upload-time = "2026-07-17T14:30:34.432Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3612,6 +3632,20 @@ wheels = [
 ]
 
 [[package]]
+name = "sqlalchemy-exasol"
+version = "7.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pyexasol" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/85/8d/85358fb26e92c2d29133ffd691604c94e3bcb9d693fea91266abc52747e9/sqlalchemy_exasol-7.1.1.tar.gz", hash = "sha256:367b82cdfd9c3c1084f2ed6f41eb1a7f23c19730d669bb9507b0033848db88f4", size = 19602, upload-time = "2026-06-09T11:57:00.632Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/7c/e0d847c5c9c273c49734f5d01477d4bf31de657e97f6739fb74928df338e/sqlalchemy_exasol-7.1.1-py3-none-any.whl", hash = "sha256:eabe78d378bb24466309b0563f63c3b43e77adc9a71dbf512d2d59783fdfea05", size = 21178, upload-time = "2026-06-09T11:57:01.548Z" },
+]
+
+[[package]]
 name = "sqlalchemy-firebirdsql"
 version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3939,6 +3973,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/34/74/c6428f875774288bec1396f5bfcbc2d925700a4dad61727fd5f2b12f249d/wcwidth-0.8.2.tar.gz", hash = "sha256:91fbef97204b96a3d4d421609b80340b760cf33e26da123ff243d76b1fda8dda", size = 1466253, upload-time = "2026-06-29T18:11:11.601Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/96/42/3e5985a0a7e57de470b320c6d6a1a67c844f6737a587f3d44dd13d1819e7/wcwidth-0.8.2-py3-none-any.whl", hash = "sha256:d63947694a0539a1d51e01eda7caf800c291020e6cdd7e28ad7b14dd33ad4f85", size = 323166, upload-time = "2026-06-29T18:11:09.888Z" },
+]
+
+[[package]]
+name = "websocket-client"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz", hash = "sha256:9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98", size = 70576, upload-time = "2025-10-07T21:16:36.495Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl", hash = "sha256:af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef", size = 82616, upload-time = "2025-10-07T21:16:34.951Z" },
 ]
 
 [[package]]
