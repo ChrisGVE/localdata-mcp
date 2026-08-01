@@ -338,7 +338,12 @@ A recognised column is rewritten into **one canonical UTC spelling** and stays
 text. An offset is honoured and normalised, so the same instant written
 `+00:00` and `-05:00` compares equal — the join that used to return zero rows.
 The original offset is **not** recoverable afterwards; a file that needs it must
-keep it in a column of its own. A column of plain dates stays `YYYY-MM-DD`.
+keep it in a column of its own. A column of plain dates stays `YYYY-MM-DD` —
+but only where *every* value is a plain date. **One spelling means one spelling
+for the whole column**: a single value carrying a time takes the column to
+`…T00:00:00Z` throughout, and one carrying fractional seconds takes it to
+`…T00:00:00.000000Z`, because a column written two ways does not sort as one
+(CONSTRAINTS §28.4, [#75](https://github.com/ChrisGVE/localdata-mcp/issues/75)).
 
 > **Why not integer ticks**, which CONSTRAINTS §1.4 otherwise calls for. Ticks
 > move the silent wrong answer rather than removing it: against a tick column
