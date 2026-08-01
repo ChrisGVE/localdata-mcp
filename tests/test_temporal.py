@@ -289,3 +289,103 @@ def test_the_declared_width_of_a_spelling_is_the_width_it_writes(values):
     spelling = measured(values)
     written = rewritten(values, spelling)
     assert {len(value) for value in written} == {temporal.canonical_width(spelling)}
+
+
+# ---------------------------------------------------------------------------
+# Already canonical is not the same as already in one spelling
+# ---------------------------------------------------------------------------
+#
+# `_CANONICAL` makes the time and the fractional part optional, so a column can
+# be canonical at every value and still hold three different spellings. The
+# fixtures above never catch it because none of them arrives canonical — they
+# are written without the trailing `Z` and so are always rewritten. A file that
+# arrives the way the documentation asks for takes the other branch entirely
+# (#75).
+
+
+def load_pairs(workspace, pairs: list[tuple[str, str]], table: str = "m") -> None:
+    """Load labelled values, standardized the way a whole-column read does."""
+    frame = pd.DataFrame(
+        {"label": [label for label, _ in pairs], "v": [value for _, value in pairs]}
+    )
+    workspace.insert_frame(temporal.standardize(frame), table, source="test", tag=TAG)
+
+
+def stored(workspace, table: str = "m") -> list[str]:
+    _, rows = workspace.query(TAG, f"SELECT v FROM {table} ORDER BY label")
+    return [row[0] for row in rows]
+
+
+#: Two instants half a second apart, both already canonical. `'.'` is 0x2E and
+#: `'Z'` is 0x5A, so the *later* value sorts first as text — the same second has
+#: to be shared for the two spellings to be comparable at all, which is why
+#: these are not drawn from INSTANTS.
+HALF_A_SECOND_APART = [
+    ("earlier", "2024-03-01T09:15:30Z"),
+    ("later", "2024-03-01T09:15:30.500000Z"),
+]
+
+#: A midnight written date-only beside a time of day on the same day.
+DATE_BESIDE_TIMESTAMP = [
+    ("earlier", "2024-03-01"),
+    ("later", "2024-03-01T14:30:00Z"),
+]
+
+
+@pytest.mark.parametrize("pairs", [HALF_A_SECOND_APART, DATE_BESIDE_TIMESTAMP])
+def test_a_column_of_mixed_canonical_spellings_orders_chronologically(workspace, pairs):
+    """The property, asserted where it is used rather than on a flag."""
+    load_pairs(workspace, pairs)
+    _, rows = workspace.query(TAG, "SELECT label FROM m ORDER BY v")
+    assert [row[0] for row in rows] == ["earlier", "later"]
+
+
+@pytest.mark.parametrize("pairs", [HALF_A_SECOND_APART, DATE_BESIDE_TIMESTAMP])
+def test_min_of_a_mixed_canonical_column_is_the_earliest_instant(workspace, pairs):
+    """`min()` over text is the lexical minimum, so this is the same defect.
+
+    Asserted separately because an aggregate is what a caller reaches for when
+    it does not want to sort the column, and it is wrong in its own right.
+    """
+    load_pairs(workspace, pairs)
+    _, rows = workspace.query(TAG, "SELECT min(v) FROM m")
+    assert rows[0][0] == stored(workspace)[0]
+
+
+@pytest.mark.parametrize("pairs", [HALF_A_SECOND_APART, DATE_BESIDE_TIMESTAMP])
+def test_a_mixed_canonical_column_is_rewritten_into_one_spelling(workspace, pairs):
+    """One column, one width — which is what makes the comparisons above hold."""
+    load_pairs(workspace, pairs)
+    assert len({len(value) for value in stored(workspace)}) == 1
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["2024-03-01", "2024-03-02"],
+        ["2024-03-01T14:30:00Z", "2024-03-02T00:00:00Z"],
+        ["2024-03-01T14:30:00.500000Z", "2024-03-02T00:00:00.000000Z"],
+    ],
+)
+def test_a_column_already_in_one_spelling_is_left_byte_for_byte(workspace, values):
+    """The control, and the optimisation this must not cost.
+
+    A file written the way the documentation asks for is the common case, and
+    parsing it only to format it back would not change a byte. Skipping that is
+    worth keeping; what it may not do is skip a column that *would* change.
+    """
+    frame = pd.DataFrame({"v": values})
+    assert list(temporal.standardize(frame)["v"]) == values
+
+
+def test_a_mixed_canonical_column_is_not_reported_as_comparing_chronologically():
+    """`is_standard` says comparisons on the column are chronological.
+
+    For a column in two spellings that claim is false, and it is the claim the
+    loader uses to decide whether to warn — so a wrong answer here is why the
+    defect is silent rather than merely present.
+    """
+    mixed = pd.Series(["2024-03-01T09:15:30Z", "2024-03-01T09:15:30.500000Z"])
+    assert not temporal.is_standard(mixed)
+    uniform = pd.Series(["2024-03-01T09:15:30Z", "2024-03-01T09:15:31Z"])
+    assert temporal.is_standard(uniform)

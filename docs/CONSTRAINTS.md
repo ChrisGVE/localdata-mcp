@@ -4607,6 +4607,35 @@ which is not a hypothetical: the reversion drill ran the spelling test against e
 mistake and the deciding-row-last fixture passed it. The reversed fixture is what fails it, and is
 now asserted.
 
+**There was a third aggregate, and it was asked the wrong question**
+([#75](https://github.com/ChrisGVE/localdata-mcp/issues/75), fixed 2026-08-01). Both paths skip
+the rewrite entirely for a column that is *already* canonical — justified by "it would not change
+a byte". `is_canonical` answers that by matching each value against one pattern that leaves the
+time part and the fractional part **optional**, so it says yes to a column holding
+`2024-03-01` beside `2024-03-02T10:00:00Z`: every value is in *a* canonical spelling, none of
+them in the *same* one. The premise the optimisation stated was never the property it tested.
+
+**The harm, measured rather than reasoned.** `'.'` is `0x2E` and `'Z'` is `0x5A`, so
+`…T09:15:30.123456Z` sorts **before** `…T09:15:30Z` — a value 0.123456 s later comes back first,
+and `MIN`, `MAX`, `ORDER BY` and range filters are all silently wrong. Silently, because
+`is_standard` — the predicate the loader uses to decide whether to warn — was the same
+`is_canonical` and so claimed the column compared chronologically. Reproduced at **six rows**,
+far under a chunk, so it is not a streaming defect: `git log -L` puts the early return at a perf
+commit of 2026-07-27, predating the streamed loader.
+
+The fix makes canonicity two questions instead of one. The three canonical spellings have three
+exact widths — 10 for a date, 20 to the second, 27 with fractional seconds — so **a width is a
+spelling**, and `temporal.canonical_widths` counts the distinct ones; the rewrite is skipped only
+where the column is canonical *and* one width wide. In the streamed path that count is a **set
+unioned across chunks, not a flag**, for the reason this whole section is about: two chunks each
+written one way are each uniform while the column is not, so a per-chunk boolean cannot answer it.
+
+**What made this invisible to 1,203 tests**: every temporal fixture in `test_temporal.py` writes
+its instants without the trailing `Z`, so all of them are non-canonical and take the rewriting
+branch. The already-canonical branch — the one a file written the way the documentation
+recommends takes — had **no fixture at all**. It was found by driving the finished server over
+stdio against a corpus written the documented way, not by the suite.
+
 ### 28.5 The type verdict is rebuilt from raw text, and was checked against pandas
 
 Every chunk is read with `dtype=str` and the verdict rebuilt from the strings rather than taken

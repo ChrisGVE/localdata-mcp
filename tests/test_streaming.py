@@ -93,10 +93,16 @@ LATE_DECIDERS = {
         "id,d\n1,2024-03-01T09:30:00.500000\n2,2024-03-02T09:30:00\n"
         "3,2024-03-03T09:30:00\n4,2024-03-04T09:30:00\n"
     ),
-    # Canonical throughout, in two spellings. `standardize` leaves such a
-    # column alone, so the streamed read must leave it alone too.
+    # Canonical throughout, in two spellings — which is not one spelling, so
+    # `standardize` settles it on the merged one and the streamed read must
+    # settle it the same way (#75). The deciding value sits in the middle here
+    # and last in the twin below, so the width union is exercised with it in a
+    # chunk of its own and in the final chunk.
     "canonical_mixed.csv": (
         "id,d\n1,2024-03-01\n2,2024-03-02T10:00:00Z\n3,2024-03-03\n"
+    ),
+    "canonical_mixed_last.csv": (
+        "id,d\n1,2024-03-01\n2,2024-03-02\n3,2024-03-03T10:00:00Z\n"
     ),
     # A gap in an integer column, in the last row only. The gap is what makes
     # the column REAL rather than INTEGER, and it arrives last.
@@ -308,18 +314,36 @@ def test_a_date_column_is_written_in_one_spelling_throughout(
     assert [row[0] for row in found] == expected
 
 
+CANONICAL_MIXED = [
+    (
+        "canonical_mixed.csv",
+        ["2024-03-01T00:00:00Z", "2024-03-02T10:00:00Z", "2024-03-03T00:00:00Z"],
+    ),
+    (
+        "canonical_mixed_last.csv",
+        ["2024-03-01T00:00:00Z", "2024-03-02T00:00:00Z", "2024-03-03T10:00:00Z"],
+    ),
+]
+
+
 @pytest.mark.parametrize("chunked", [1, 2, 5_000], indirect=True)
-def test_a_column_already_canonical_in_two_spellings_is_left_alone(
-    workspace, root, chunked
+@pytest.mark.parametrize(
+    "name,expected", CANONICAL_MIXED, ids=[n for n, _ in CANONICAL_MIXED]
+)
+def test_a_column_canonical_in_two_spellings_is_settled_on_one(
+    workspace, root, chunked, name, expected
 ):
-    """`standardize` rewrites nothing here, and neither may the chunked read."""
-    assert_identical(workspace, root / "canonical_mixed.csv")
+    """Canonical at every value is not canonical in one spelling (#75).
+
+    This column passed `is_canonical` and was left in both spellings, where
+    ``.`` sorting below ``Z`` put a later instant first. `standardize` now
+    rewrites it, and the chunked read must reach the same place — which it can
+    only do by unioning the widths it saw, since each chunk here is uniform on
+    its own and the column is not.
+    """
+    assert_identical(workspace, root / name)
     _, found = workspace.query("parts", "SELECT d FROM t ORDER BY rowid")
-    assert [row[0] for row in found] == [
-        "2024-03-01",
-        "2024-03-02T10:00:00Z",
-        "2024-03-03",
-    ]
+    assert [row[0] for row in found] == expected
 
 
 @pytest.mark.parametrize("chunked", [1, 2, 5_000], indirect=True)

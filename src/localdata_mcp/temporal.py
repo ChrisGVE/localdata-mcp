@@ -78,6 +78,7 @@ __all__ = [
     "Spelling",
     "as_canonical",
     "canonical_width",
+    "canonical_widths",
     "is_canonical",
     "is_date_shaped",
     "is_standard",
@@ -177,8 +178,32 @@ def is_canonical(present: pd.Series) -> bool:
     the column, so a caller reading a file a chunk at a time can ask the
     question of one chunk without an empty chunk answering ``False`` for the
     whole column.
+
+    **Every value being in *a* canonical spelling does not make them all in the
+    *same* one**, because :data:`_CANONICAL` leaves both the time and the
+    fractional part optional. Ask :func:`canonical_widths` for that; the two
+    questions together are what :func:`is_standard` needs (#75).
     """
     return _matches_throughout(present, _CANONICAL)
+
+
+def canonical_widths(present: pd.Series) -> frozenset[int]:
+    """How many distinct spellings these canonical values are written in.
+
+    The three canonical spellings have three exact widths — 10 for a date, 20 to
+    the second, 27 with fractional seconds (:data:`_WIDTHS`) — so a width *is* a
+    spelling, and counting the distinct ones asks whether the column is written
+    one way. One width means one spelling.
+
+    Composes across chunks by union, which is why this is a set rather than a
+    flag: a chunk written one way and a chunk written another are each uniform,
+    and the column is not. Only meaningful where :func:`is_canonical` holds; a
+    non-canonical value's width says nothing.
+
+    Every value is counted rather than a sample, because it takes exactly one
+    odd value at the end of a column to make it two-spelled.
+    """
+    return frozenset(present.str.len().unique().tolist())
 
 
 def is_date_shaped(present: pd.Series) -> bool:
@@ -314,7 +339,12 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
         # any file written the way the documentation asks for. Parsing it only
         # to format it back is the most expensive thing in this module, and it
         # would not change a byte.
-        if is_canonical(present):
+        #
+        # That last clause is the whole justification, and it only holds while
+        # the column is written *one* way. A column mixing canonical spellings
+        # would change — into the single spelling that makes it sort — so it
+        # takes the parsing branch (#75).
+        if is_canonical(present) and len(canonical_widths(present)) == 1:
             continue
         parsed = parse(present, series)
         if parsed is not None:
@@ -364,11 +394,16 @@ def is_standard(series: pd.Series) -> bool:
     :func:`standardize` accepted it has already rewritten into one of them, so
     re-running ``to_datetime`` here would buy nothing and cost a second pass
     over the column.
+
+    One spelling as well as canonical, because the claim being made is about
+    *comparisons*: a column holding both ``…:30Z`` and ``…:30.5Z`` is canonical
+    at every value and still orders the later one first, since ``.`` sorts below
+    ``Z``. Answering ``True`` there is what made that defect silent (#75).
     """
     present = text_values(series)
     if present is None:
         return False
-    return is_canonical(present)
+    return is_canonical(present) and len(canonical_widths(present)) == 1
 
 
 def unparsed_temporal_examples(series: pd.Series) -> tuple[str, ...]:

@@ -1401,6 +1401,10 @@ class _ColumnScan:
         self._canonical_throughout = True
         self._parses_throughout = True
         self._date_shaped_throughout = True
+        #: Which canonical spellings the column arrived in, unioned rather than
+        #: folded: two chunks each written one way are each uniform and the
+        #: column is not, so a flag per chunk cannot answer this (#75).
+        self._canonical_widths: set[int] = set()
         self._spelling: temporal.Spelling | None = None
         self._date_examples: dict[str, None] = {}
         # The numeric split, for the mixed-column report.
@@ -1465,8 +1469,11 @@ class _ColumnScan:
             self._numeric_examples.setdefault(value)
 
     def _observe_temporal(self, present: pd.Series, raw: pd.Series) -> None:
-        if self._canonical_throughout and not temporal.is_canonical(present):
-            self._canonical_throughout = False
+        if self._canonical_throughout:
+            if not temporal.is_canonical(present):
+                self._canonical_throughout = False
+            else:
+                self._canonical_widths |= temporal.canonical_widths(present)
 
         if self._parses_throughout:
             parsed = temporal.parse(present, raw)
@@ -1528,13 +1535,18 @@ class _ColumnScan:
 
         # Canonical throughout by the end, either because it arrived that way or
         # because pass two will rewrite it into that. `standardize` skips a
-        # column that is already canonical, so only the second case has a
-        # spelling to apply — and only that case is sized from the spelling,
-        # since the first keeps the text it came with.
-        standard = declared == "TEXT" and self._had_values and self._parses_throughout
-        spelling = (
-            self._spelling if standard and not self._canonical_throughout else None
+        # column that arrived canonical *and in one spelling*, so only the other
+        # cases have a spelling to apply — and only those are sized from the
+        # spelling, since a column left alone keeps the text it came with.
+        #
+        # A column mixing canonical spellings is rewritten like any other: it
+        # arrived canonical, but not in the one spelling that makes it sort
+        # (#75), and pass two settles it on the merged one.
+        arrived_in_one_spelling = (
+            self._canonical_throughout and len(self._canonical_widths) == 1
         )
+        standard = declared == "TEXT" and self._had_values and self._parses_throughout
+        spelling = self._spelling if standard and not arrived_in_one_spelling else None
 
         if declared != "TEXT":
             longest = None
