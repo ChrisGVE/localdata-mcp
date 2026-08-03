@@ -2004,6 +2004,52 @@ code. The catalogue is approaching what this machine holds concurrently, and a w
 entries will not fit at all — containers will need bringing up per-dialect rather than all at once.
 Recorded because a killed container looks exactly like a broken commit until the logs are read.
 
+### 13.5 The batches, and why they are a script rather than a paragraph
+
+The ceiling settled at **six containers**, so the sixteen dialects and the four-service
+authentication axis run in **five batches**. They live in `scripts/endpoint-batch.sh`, not here:
+
+```bash
+./scripts/endpoint-batch.sh all            # five batches, cleaning up after each
+./scripts/endpoint-batch.sh a              # one batch
+./scripts/endpoint-batch.sh b --keep       # leave it up to iterate against
+./scripts/endpoint-batch.sh c -- -x -q     # everything after -- goes to pytest
+```
+
+| Batch | Dialects |
+|---|---|
+| A | postgresql, mysql, mariadb, mssql, oracle, firebird |
+| B | postgresql, clickhouse, cockroachdb, yugabytedb, trino, monetdb |
+| C | postgresql, cratedb, opengauss, ydb, databend |
+| D | postgresql, exasol |
+| E | the authentication axis — trust, no-auth, TLS, Kerberos |
+
+**Why the composition is executable rather than prose.** It was prose twice and went stale
+twice: on 2026-08-01 the working sets had to be reconstructed from
+[#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)'s own comment history, because no
+document held them. A table in a file nobody runs decays silently; a script fails loudly. The
+table above is a reader's summary of the script, and the script is the source of truth — it
+also derives each batch's **images from compose itself** (`docker compose config --images`), so
+that list cannot drift from the services either.
+
+### 13.6 The images are removed after every batch, deliberately
+
+The sixteen images are **33 GB**, of which `exasol/docker-db` alone is **12.3 GB**. They are all
+pulled from public registries and none is built here, so keeping them between sessions spends
+disk to save a download. The decision (Chris, 2026-08-03) is to spend the download instead:
+every batch removes its own containers, volumes, network and images when it finishes, including
+when the suite fails — a red run is exactly when the next batch is wanted.
+
+Measured on the day it was decided: tearing the harness down took the Docker data directory
+from **153 GB to 114 GB**, so **39 GB came back to the filesystem** and no VM-compaction step
+was needed — Docker Desktop returned the space on its own. Worth stating because the
+`Docker.raw` disk image is **sparse**, showing an apparent 1.86 TB against its real occupancy,
+and reading the apparent figure is how a routine cache gets mistaken for a runaway one.
+
+Two images are deliberately **not** removed: `alpine:3`, which the CA and KDC build on, is a
+base half the machine shares and re-pulls in a second. The script says so per image rather than
+skipping silently, so its count always matches the lines beneath it.
+
 ## §14 — The MCP 2026-07-28 specification, measured against this server (2026-07-29)
 
 The fifth MCP spec release landed on 2026-07-28: a **stateless protocol core**, Multi Round-Trip
