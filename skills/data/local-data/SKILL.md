@@ -1,6 +1,6 @@
 ---
 name: local-data
-description: Answer questions about local data files and SQLite databases with SQL — attach a spreadsheet or CSV, look one file up against another, check the match is complete, and keep the result. Use whenever someone points at a data file and asks a question about what is in it.
+description: Answer questions about local data files and databases with SQL — attach a spreadsheet, CSV, Parquet file, SQLite or DuckDB file, or a database URL; look one source up against another, check the match is complete, and keep the result. Use whenever someone points at a data file or a database and asks a question about what is in it.
 allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save
 argument-hint: "<file-path> [and what you want to know]"
 ---
@@ -127,12 +127,44 @@ because the totals looked plausible.
 
 ### 2b. "That sheet is called Sheet1"
 
-A workbook's tables arrive under the names the *spreadsheet* chose. Rename
-rather than re-reading the file — the rows, types and any index stay put:
+A workbook's tables arrive under the names the *spreadsheet* chose, lowercased
+and snake_cased — `Sheet1` becomes `sheet1`, `Q2 Prices` becomes `q2_prices`.
+**Use the name `attach` reported, not the one on the tab**, or the rename is
+refused for naming no table. Then rename rather than re-reading the file; the
+rows, types and any index stay put:
 
 ```
-update(nickname="shop", type="table", name="Sheet1", to="q2_sales")
+update(nickname="shop", type="table", name="sheet1", to="q2_sales")
 ```
+
+A workbook whose sheets are all called `Sheet1`, `Sheet2`, `Sheet3` is worth
+renaming before you do anything else — every query you write afterwards reads
+better for it, and so does the file if they `save` it.
+
+### 2c. "It's in our Postgres, not a file"
+
+A database URL attaches exactly like a file, and every verb then works on it:
+
+```
+attach(database="postgresql://user:pass@host:5432/sales")
+```
+
+Eighteen backends are supported — SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
+SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB,
+Firebird, openGauss, YDB, Databend and Exasol. Two things differ from a file:
+
+- **A URL is refused unless `network.enabled = true`** is set in the user's
+  configuration file. The refusal says so and masks the password. That is a
+  decision for them to make, not a flag to hunt for.
+- **It arrives read-only**, like anything from outside, and it is somebody's
+  production database. Do not ask for `writable=true` because a `create` failed —
+  ask the user whether they meant to change the database itself.
+
+`create(nickname, type="table", source="./local.csv")` reads a local file *into*
+that database, so a lookup against a server-side table is the same move as
+against a second file. On Oracle, be aware that a write sent to `query` is
+refused **after** the database has already committed it — Oracle commits DDL as
+it runs, and the refusal says so rather than pretending otherwise.
 
 ### 3. "Send me the result"
 
@@ -154,8 +186,10 @@ by name rather than written as something else. Choose it rather than defaulting:
 | something big, for another program | `.parquet` | fastest and smallest of all of them |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |
 
-`.yaml` is available and is roughly an order of magnitude slower than anything
-else here; reach for `.jsonl` instead unless YAML is specifically wanted.
+`.yaml` is available and is the slowest writer here by a wide margin — **4.3×
+`.csv`** on the same million-row result, 237.6 s against 55.5 s. It has no row
+cap and holds nothing in memory, so size is not the problem; time is. Reach for
+`.jsonl` unless YAML was specifically wanted.
 
 This is also the answer when a result is simply too big to return — say so and
 offer it, rather than returning tens of thousands of rows through the
@@ -218,19 +252,54 @@ discount set yet, so I left them out of the average"* — because whether to
 exclude them, treat them as zero, or go and fill them in is their call, not
 yours.
 
+**Nested values became JSON text.** A JSON or XML column holding a structure
+comes back as `TEXT` carrying exactly what was in the file, and the warning names
+the columns. Reach into it with `json_extract(addr, '$.city')` rather than telling
+the user the field is missing — nothing was lost.
+
 **Ten datasources, and the oldest is dropped.** Check `evicted` in every
 `attach` response. `detach` what you have finished with rather than letting the
 limit choose for you.
 
-**Read-only by default.** A SQLite file someone else made cannot be written to
-unless it was attached with `writable=true`. A database built from a flat file
-is yours and is always writable.
+**Read-only by default.** Anything that came from outside — a SQLite or DuckDB
+file someone else made, a database URL — cannot be written to unless it was
+attached with `writable=true`. A database built from a flat file is yours and is
+always writable.
+
+**A format whose library is missing is refused by name.** The message says which
+extra installs it (`pip install 'localdata-mcp[parquet]'`). That is an install
+step for the user, not something to route around by asking for a different file.
 
 **The same file twice is refused**, naming the datasource already holding it.
 That is not an error to work around — go and use the one that is open.
 
-**Dates.** A temporal column is stored as integer ticks, and `info` says so.
-Format it in SQL when a human is going to read it.
+**A JSON, YAML or XML file with two tables in it is refused, naming both.** A
+workbook's sheets all land, but a document is different: an array under a key is
+a table only by guesswork, so one candidate loads with a note saying which key it
+came from, and two are refused rather than one being picked. Take that back to
+the user with the two names — *"that file has a `customers` list and an `orders`
+list; which did you want, or shall we do both as separate files?"* — because the
+answer is theirs and splitting the file is the fix.
+
+**Dates.** A column of ISO 8601 dates is rewritten into one canonical UTC
+spelling and stays text; `attach` and `info` mark it
+`"temporal": "iso8601_utc", "normalized": "UTC"`. It orders, ranges and joins
+correctly as it stands — do not reach for a conversion. Two things to tell the
+user about:
+
+- **The original offset is gone.** `+00:00` and `-05:00` now compare equal,
+  which is the point, but if they need the local time they wrote, it has to be
+  in a column of its own.
+- **One spelling for the whole column.** A single value carrying a time takes
+  every other value to `…T00:00:00Z`, because a column written two ways does not
+  sort as one.
+
+A date column in no recognised standard is **left exactly as it was**, and the
+warning names the values. That column compares alphabetically, not
+chronologically, so `'30.11.2023'` sorts after `'01.03.2025'` and `max()` returns
+the earliest date. Say so before quoting any number that came out of an
+`ORDER BY` or a `max()` over it. Unix timestamps are integers and are left
+untouched; integer comparison is already chronological.
 
 ## Checking your own work
 

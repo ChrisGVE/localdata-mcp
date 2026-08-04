@@ -40,11 +40,30 @@ datasources together is `create`, which copies one into the other so the join is
 ordinary statement.
 
 **A file may hold more than one table, and all of them land.** Sheets in a workbook are
-the case that forces it — a `.numbers` document and a JSON file carrying several arrays
-are the same shape. Reading the first and ignoring the rest would leave data that is
-present in the file unreachable through the server — the same silent loss as dropping a
-value — so the datasource, being a database, holds every table the file had, under the
-names the file gave them.
+the case that forces it, and a `.numbers` document is the same shape — a canvas per sheet,
+each carrying its own named tables. Reading the first and ignoring the rest would leave
+data that is present in the file unreachable through the server — the same silent loss as
+dropping a value — so the datasource, being a database, holds every table the file had,
+under the names the file gave them **put through the same snake_case rule as a nickname**
+(a sheet called `Sheet1` becomes the table `sheet1`).
+
+> **Corrected (2026-08-04) — a multi-table JSON is not this shape, and the code says so.**
+> An earlier draft of this paragraph named "a JSON file carrying several arrays" alongside
+> the workbook. It is not the same case and never was built as one: a JSON, YAML or XML
+> document with **two or more** candidate tables is **refused**, naming both, per *"One
+> candidate is not a choice"* below. Measured through the shipped surface: a JSON object
+> holding a `customers` array and an `orders` array comes back as
+>
+> > `Could not read multi.json: it holds more than one table ('customers', 'orders'), and
+> > which one you want is not something this server should decide. Split the file, or
+> > attach it as one table per file.`
+>
+> The two rules genuinely point different ways and only one of them is built. A sheet is
+> **declared** a table by the format — the file says so — whereas an array under a key is a
+> table only by inference, and a document may equally be one record with a list inside it.
+> That is a defensible line, and it is the line the code draws. But the refusal's own
+> wording — *"which one you want"* — is the pick-one model this design left behind, and
+> the premise above is the reason to revisit it. **Open, not decided.**
 
 That premise was already true of the registry. What level 0 changes is the *verbs*:
 they were file verbs wearing database names. Attach made a database, and after that you
@@ -137,12 +156,12 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 
 | Verb | Shape | Notes |
 |---|---|---|
-| `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Multipurpose — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. A file holding several tables becomes a database holding all of them. `delimiter` applies to character-separated text only. |
+| `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Multipurpose — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. A workbook or `.numbers` document becomes a database holding all its sheets, snake_cased. `delimiter` applies to character-separated text only, and is refused elsewhere. |
 | `detach` | `nickname` | Drop a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if spilled. |
-| `query` | `nickname`, `sql`, `path?`, `force?` | The `path` suffix chooses the output format and one with no writer is refused by name. **Reads only** — every write is refused whatever the slot allows, by the connection rather than by a check, as far as each backend can refuse (see *Write is not the default*). Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. `force` is the same overwrite consent `save` takes, for the same reason. |
+| `query` | `nickname`, `sql`, `path?`, `force?`, `delimiter?` | The `path` suffix chooses the output format and one with no writer is refused by name. `delimiter` separates fields on the way *out*, for `.csv`/`.tsv`/`.txt` only. **Reads only** — every write is refused whatever the slot allows, by the connection rather than by a check, as far as each backend can refuse (see *Write is not the default*). Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. `force` is the same overwrite consent `save` takes, for the same reason. |
 | `info` | — \| `nickname` \| `nickname`+`table` | Polymorphic: bare → every slot; nickname → its tables; nickname+table → schema, row count and indexes. **Absorbs `list_tables` + `describe_table`.** |
 | `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a datasource in beside the tables already there, which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
-| `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes. The third of create/update/drop, and the answer to a file that names its own tables — a workbook's sheets arrive as the spreadsheet named them. Renaming onto a taken name is refused, not allowed to replace. |
+| `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes. The third of create/update/drop, and the answer to a file that names its own tables — a workbook's `Sheet1` arrives as `sheet1` and means nothing to anybody. `name` is the snake_cased name `info` lists, not the spelling in the spreadsheet. Renaming onto a taken name is refused, not allowed to replace. |
 | `drop` | `nickname`, `type`, `name` | Composition needs both directions, for both types. The index name is the one `create` returned and `info` lists. |
 | `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. An occupied path is refused until `force` carries the user's consent, and a path a live slot sits on is refused regardless. |
 
@@ -266,8 +285,12 @@ what is unambiguous, say what was assumed, refuse an actual choice*:
 
 `delimiter` earns its place on the same test `join_on` failed: it declares a **fact about
 the source** the server cannot know and the caller often does, rather than a judgement the
-caller was already making. It applies to character-separated text only, and is refused —
-not ignored — anywhere else.
+caller was already making. It applies to character-separated text only, and **the two
+directions treat a mismatch differently, deliberately**. Reading — `attach` and
+`create` — **refuses** it: a `.parquet` handed a `delimiter` is a caller who has
+misunderstood the file, and the refusal names the suffix and the three that qualify.
+Writing — `query(path=…)` — **ignores** it, because one default can then be carried across
+a mix of destinations without the call having to know which suffix it is about to hit.
 
 ### The backends, and what each one needed
 
@@ -313,8 +336,11 @@ tests skip — with the command to start one — rather than fail where none is 
 
 A file holds dates as text, and text compares as text — so `'30.11.2023'` sorts
 *after* `'01.03.2025'`, `ORDER BY` runs backwards and `max()` returns the
-earliest instant. Measured across twenty-four spellings, seven ordered wrongly
-and four reported the earliest as the maximum, silently (CONSTRAINTS §8.1).
+earliest instant. Measured across twenty-four spellings of five instants spanning
+three years, seven ordered wrongly, and the day-first and month-name forms among
+them reported the earliest as the maximum, silently (CONSTRAINTS §8.1 — whose
+heading says "four", counting table rows rather than spellings; the correction
+is recorded there).
 
 The answer is not a better parser, because most of those spellings are
 **genuinely ambiguous**: `01/03/2025` is the first of March or the third of
@@ -422,11 +448,13 @@ result could tell from a read. They are measured one section at a time in
 
 The authentication matrix is **done**, and it was the item whose shape was unknown. A
 database is reached one of several ways and only one of them was ever exercised: a password
-in the URL. There are now ten, across four endpoints — a server that authenticates nobody, a
-password read from the environment, a password read from a file, TLS actually verified, a
-client certificate, a Kerberos ticket, an option file, an empty password, and a data-source
-name in place of an address. They run as a second axis on the endpoint table, so all
-nineteen endpoint tests exercise every one of them. Two more are real and unreachable from
+in the URL. **Nine more now exist, spread across four endpoints** — a server that
+authenticates nobody, a password read from the environment, a password read from a file,
+TLS actually verified, a client certificate, a Kerberos ticket, an option file, an empty
+password, and a data-source name in place of an address — which with the credentialed URL
+that all sixteen still use makes ten modes in all. They run as a second axis on the
+endpoint table, so all **twenty** endpoint tests exercise every one of them without one
+being written for them. Two more are real and unreachable from
 this machine rather than skipped — a Unix socket does not cross the container boundary, and
 there is no Windows host to integrate with. `docs/CONSTRAINTS.md` §25 has the measurements.
 

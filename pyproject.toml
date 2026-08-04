@@ -1,7 +1,7 @@
 [project]
 name = "localdata-mcp"
 version = "3.0.0.dev0"
-description = "MCP server giving LLM agents SQL access to local files and databases."
+description = "MCP server giving LLM agents SQL access to local files and databases: eight verbs over 18 file formats and 18 SQL backends."
 readme = "README.md"
 authors = [
   { name = "Christian C. Berclaz", email = "christian.berclaz@mac.com" },
@@ -19,8 +19,10 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 keywords = [
-  "mcp", "model-context-protocol", "mcp-server", "database",
-  "sqlite", "csv", "sql", "ai", "llm", "ai-agent",
+  "mcp", "model-context-protocol", "mcp-server", "database", "sql",
+  "sqlite", "duckdb", "postgresql", "clickhouse",
+  "csv", "excel", "parquet", "spreadsheet",
+  "ai", "llm", "ai-agent",
 ]
 
 # Deliberately minimal. Every dependency here is load-bearing for the current

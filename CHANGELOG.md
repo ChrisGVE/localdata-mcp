@@ -7,6 +7,248 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- sphinx-start -->
 
+## [3.0.0] - unreleased
+
+A ground-up rewrite. **Every one of the 71 tools 2.1.0 registered is gone**, and
+eight verbs stand where they were. Nothing a 2.x client calls by name resolves,
+and no alias, shim or compatibility layer is provided — the names are not
+deprecated, they are absent.
+
+### Upgrading from 2.x
+
+**Your entire tool vocabulary is gone.** `connect_database`, `execute_query`,
+`list_databases`, `describe_table`, `analyze_regression`, `forecast_time_series`,
+`analyze_spatial_autocorrelation`, `get_node`, `export_graph` — all 71. A client
+that names a tool explicitly will find nothing there; an agent that discovers
+tools at runtime will simply see eight.
+
+The eight, and which 2.x tools they replace:
+
+| 3.0.0 verb | What it replaces from 2.x |
+|---|---|
+| `attach` | `connect_database` |
+| `detach` | `disconnect_database` |
+| `query` | `execute_query`, `analyze_query_preview`, `next_chunk`, `request_data_chunk`, `request_multiple_chunks`, `get_query_metadata`, `export_structured`, `search_data` |
+| `info` | `list_databases`, `describe_database`, `describe_table`, `find_table`, `export_schema`, `get_data_quality_report` |
+| `create` | no equivalent — reading a second datasource *into* an open one is new |
+| `update` | no equivalent |
+| `drop` | no equivalent |
+| `save` | no equivalent — 2.x had staging databases, which were not the user's to keep |
+
+**Forty-six of the seventy-one have no replacement at all** — twenty analytical,
+ten geospatial, seven graph and nine tree. Statistics, regression, clustering,
+anomaly detection, time series, RFM, A/B testing, optimization, spatial analysis,
+graph traversal and key-value trees are not in this product and are not planned.
+The remaining nine — `manage_memory_bounds`, `get_streaming_status`,
+`clear_streaming_buffer`, `cancel_query_operation`, `get_query_log`,
+`get_error_log`, `get_metrics`, `check_compatibility` and `transform_data` —
+managed machinery that no longer exists. That platform
+was abandoned, not deferred; its documentation is quarantined in `non_factual/`.
+What this server does is SQL, and an agent that can write SQL can compute a
+group-by, a correlation or an anti-join in the statement it was going to send
+anyway.
+
+**Every write path through query is refused.** In 2.x, `execute_query` ran what
+it was given and a `security.readonly` setting tried to catch writes by matching
+SQL patterns — a check three issues found ways around
+([#33](https://github.com/ChrisGVE/localdata-mcp/issues/33),
+[#36](https://github.com/ChrisGVE/localdata-mcp/issues/36),
+[#38](https://github.com/ChrisGVE/localdata-mcp/issues/38)). There is no such
+setting now, because there is no such check: `query` runs on a connection that is
+read-only from the moment it opens, and composition has its own verbs. If your
+2.x workflow wrote through a query, it must now call `create`, `update` or
+`drop`, on a datasource attached with `writable=true`.
+
+**Configuration is TOML, and thirty environment variables became one.** 2.x read
+YAML from `~/.localdata.yaml` and elsewhere, and accepted roughly thirty
+`LOCALDATA_*` environment overrides. 3.0.0 reads `config.toml` through a
+first-found-wins cascade, and the only environment variable is
+`LOCALDATA_CONFIG_PATH`, which *locates* the file and never carries a setting.
+There are three sections and six settings in total; **an unknown section or key
+refuses the start** rather than being ignored, because a mistyped
+`path_limitted = false` that silently kept the safe default is a security switch
+you believe you have thrown. No 2.x configuration file is readable, and none is
+migrated.
+
+**Nothing survives the session unless you `save` it.** 2.x persisted staging
+databases and buffers across calls with their own eviction policies and disk
+budgets. A 3.0.0 slot lives until `detach` or until the server stops.
+
+**Ten datasources, and the oldest is evicted.** Check the `evicted` field on
+every `attach` response: it describes the slot that was dropped well enough to
+rebuild it.
+
+### Added
+
+- Eight MCP tools: `attach`, `detach`, `query`, `info`, `create`, `update`,
+  `drop`, `save`. Few and multi-faceted rather than many and narrow — `info`
+  alone absorbs six 2.x tools by varying on its two optional arguments.
+- **Eighteen file formats read** (`.csv` `.tsv` `.txt` `.fwf` `.json` `.jsonl`
+  `.ndjson` `.xml` `.yaml` `.yml` `.xlsx` `.xlsm` `.xls` `.ods` `.numbers`
+  `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less the four
+  spreadsheet and fixed-width readers, plus `.md`). Eight of the readers and
+  seven of the writers need no dependency beyond the base install.
+- **A file may hold more than one table, and all of them land.** A workbook or a
+  `.numbers` document becomes a database with a table per sheet, under the sheet's
+  own name put through the same snake_case rule as a nickname — `Sheet1` becomes
+  `sheet1`, and `update` renames it. 2.x read the first sheet and said nothing
+  about the rest. A JSON, YAML or XML document with **two** candidate tables is
+  refused instead, naming both, rather than one being picked silently.
+- **Eighteen database backends**, each running all eight verbs: SQLite, DuckDB,
+  PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, ClickHouse, CockroachDB,
+  YugabyteDB, Trino, MonetDB, CrateDB, Firebird, openGauss, YDB, Databend and
+  Exasol. Sixteen are exercised against a container of their own in
+  `docker-compose.test.yml`.
+- **Ten authentication modes across four endpoints**, beyond the credentialed URL
+  that was the only route 2.x ever took: a server configured to trust, a password
+  from the environment, a password from a file, verified TLS, a client
+  certificate, a Kerberos ticket, a MySQL option file, an empty password, and an
+  ODBC data-source name in place of a host and port.
+- **`create(nickname, type="table", source=…)`** reads a second datasource in
+  beside the tables already in a slot, which is what makes a cross-file lookup
+  keepable: `save` writes one database, not a join.
+- **`create(nickname, type="index", …)`** and `drop`, so a join that drags can be
+  indexed. Nothing is indexed unless asked for.
+- **`save(nickname, path, force?)`** relocates an in-memory or spilled database to
+  a path the user chose. An occupied path is refused until `force` carries their
+  consent, and a path a live slot sits on is refused regardless.
+- **`query(…, path=…)`** writes an oversized result straight to a file instead of
+  into the answer, and the suffix chooses the format.
+- **Transparent spill to disk.** The working budget is 100 MB by default. A load
+  that crosses it is allowed to finish; the *next* operation moves the largest
+  in-memory database to a temp file and reconnects it in the same slot. No tool
+  announces it. Residency is measured as
+  `(page_count − freelist_count) × page_size` — measured, not estimated from file
+  size, because a pre-flight estimate is the fail-open pattern that bit this
+  project once.
+- **Date canonicalisation.** Across twenty-four spellings of five instants
+  spanning three years, seven ordered wrongly under `ORDER BY`, and the day-first
+  and month-name forms among them returned the earliest instant from `max()` —
+  silently, with no error and no warning.
+  ISO 8601 extended and Unix time are recognised; a recognised column is rewritten
+  into one canonical UTC spelling and reported as
+  `{"temporal": "iso8601_utc", "normalized": "UTC"}`. Everything else is left
+  alone and reported with the offending values named. Ambiguous spellings such as
+  `01/03/2025` are deliberately not guessed.
+- **A mixed-type column is flagged on load**, with the non-numeric values named.
+  An `avg()` over such a column counts text as zero and keeps it in the
+  denominator, and nothing else says so.
+- **Nickname collision is reported rather than resolved silently.** A second
+  source deriving the same nickname gets a numeric suffix, and `collided_with`
+  names the slot and source that forced it. The same source attached twice is
+  refused outright, naming where it already lives.
+- **A `delimiter` parameter on `attach`, `create` and `query`.** Nothing sniffs:
+  a semicolon-separated file read at `,` loads as one column, and the warning says
+  so and names the parameter rather than re-reading at a guessed separator.
+- **Path confinement** to the working directory and configured roots, with
+  symlinks and `..` resolved before the check. Network URLs are refused until
+  `network.enabled = true`, and the refusal masks the password.
+- `docs/architecture/LEVEL0.md` — the specification — and `docs/CONSTRAINTS.md`,
+  which records every behaviour measured to arrive at these decisions, with the
+  numbers.
+
+### Changed
+
+- **Every datasource is a database**, whatever it came from, and the same eight
+  verbs work on all of them. In 2.x a URL-reached database supported three of the
+  seven file verbs while a file supported all seven, with nothing in the type
+  system to notice.
+- **A statement reaches one datasource.** Slots do not share a connection, so
+  there is no join across nicknames; `create` copies one into the other and the
+  join is then ordinary SQL.
+- **The whole result comes back, and there is no row cap.** 2.x buffered results
+  and handed them back in chunks. A row cap measures the wrong dimension — a
+  hundred rows of a two-hundred-column table is the flood it was meant to
+  prevent — so `LIMIT`, named columns and `path=` are the controls instead.
+- **A delimited file is read twice rather than held once.** `.csv`, `.tsv`,
+  `.txt` and `.fwf` go through a measuring pass and an inserting pass, dropping
+  the load's peak from 4,286 MB to 803 MB on a 1.22 GB CSV, at 1.4–1.75× wall
+  clock. Below about 150 MB it costs slightly more than it saves. Formats that
+  cannot be chunked still peak with the file, and that is stated rather than
+  worked around.
+- **A declared column type is named by the backend.** The portable spellings 2.x
+  used could not create a table on Oracle at all, and quietly put float64 data
+  into PostgreSQL's four-byte `REAL`.
+- **A value leaving `query` is spelled for JSON.** A `Decimal` left alone reached
+  the client as the string `"155000"`, and an agent then compares and adds text.
+- **The dependency set is minimal**: `fastmcp`, `pandas`, `sqlalchemy` and a
+  `tomli` backport on Python 3.10. 2.x carried scipy, scikit-learn, statsmodels,
+  numpy, networkx, pydot, rdflib and SPARQLWrapper as core requirements. Every
+  format library and every database driver is now an extra.
+- The licence is Apache 2.0, unchanged from 2.1.0.
+
+### Removed
+
+- **All 71 MCP tools of 2.1.0.** See Upgrading above.
+- **The data science platform** — statistical analysis, regression, pattern
+  recognition, time series, business intelligence, optimization, sampling and
+  geospatial domains, along with the pipeline framework and the sklearn-compatible
+  transformers underneath them.
+- **Graph, RDF and tree storage.** DOT, GML, GraphML, Mermaid, Turtle,
+  N-Triples, SPARQL endpoints, and the key-value tree tools.
+- **The non-SQL databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j and
+  CouchDB. This server speaks SQL through SQLAlchemy, and a database is in scope
+  iff an open-source SQLAlchemy adapter exists.
+- **`.html` and `.htm`**, from both registries, on 2026-07-28. Reading them was
+  defensible; writing them was not — the writer emitted a bare `<table>` fragment
+  rather than a document, and it was the one suffix that broke the round-trip
+  property the overlap between the two registries is supposed to mean, since it
+  wrote a table of any size and could not read back past lxml's 10,000,000-node
+  XPath ceiling (about 417,000 rows of eleven columns). The `html` extra went with
+  it, lxml being its only dependency.
+- **`.hdf5`, `.ini`, `.toml` and `.arrow`** as datasource formats.
+- **Eighteen skills and eleven agents.** One skill ships now,
+  `skills/data/local-data/SKILL.md`, and it carries the idiom the tools
+  deliberately do not: the naming conversation, and how to phrase an incomplete
+  join in a user's own words rather than as an anti-join.
+- **The `security.readonly` setting, `max_query_length` and `blocked_keywords`.**
+  All three were pattern checks over SQL text; `query` is now read-only by the
+  connection's posture, which cannot be reached around.
+- **Every `LOCALDATA_*` environment variable except `LOCALDATA_CONFIG_PATH`.**
+- **The staging-database and disk-budget subsystem**, the query audit log
+  (`get_query_log`, `get_error_log`), the structured error taxonomy, the metrics
+  endpoint and the compatibility manager.
+
+### Fixed
+
+Defects of 2.x that this rewrite removes by construction rather than by patch —
+each was reported against 2.x and none of the code carrying it survives:
+
+- **Console logging wrote to stdout, corrupting the MCP JSON-RPC channel**
+  ([#35](https://github.com/ChrisGVE/localdata-mcp/issues/35),
+  [#39](https://github.com/ChrisGVE/localdata-mcp/issues/39),
+  [#41](https://github.com/ChrisGVE/localdata-mcp/issues/41)). This server writes
+  nothing to stdout but JSON-RPC: there is no logging configuration, no log
+  destination to point at stdout, and no `print` in the package.
+- **`optimize_constrained` evaluated LLM-supplied strings through `eval()` behind
+  a defeatable sandbox — a host RCE**
+  ([#42](https://github.com/ChrisGVE/localdata-mcp/issues/42)). The tool is gone,
+  and nothing in this server evaluates a caller's string as code.
+- **The SELECT-only gate was SQLite-shaped and other dialects walked around it**
+  ([#36](https://github.com/ChrisGVE/localdata-mcp/issues/36)). Enforcement is now
+  the connection's, per backend, as far as each backend can enforce it — with
+  Oracle's inability to refuse DDL stated in the refusal rather than papered over.
+- **Ten of twelve analytical tools crashed on their documented happy path**
+  ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
+  longer exist.
+
+### Known limitations
+
+- **`.xlsx` and `.ods` are refused above 65,535 rows.** That is the older
+  worksheet's own limit and it is what bounds the writer's memory: uncapped,
+  `.xlsx` held 12.9 GB while writing a million rows. `.ods` is 13.5× slower than
+  `.xlsx` at the cap.
+- **Formats that are not delimited are parsed whole**, so their load peak still
+  tracks the file size.
+- **A normalised temporal column loses its original offset.** A file that needs
+  it must keep it in a column of its own.
+- **No single test run covers the backend catalogue.** This machine runs six
+  containers before the Docker VM starves them, so it takes five batches, and each
+  reports a green suite while the dialects it never reached stay silent
+  ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
+- **Db2 and OceanBase are eligible and unreachable** from a macOS host —
+  measured, in `docs/CONSTRAINTS.md` §24 and §26.
+
 ## [2.1.0] - unreleased
 
 ### Upgrading from 2.0.0

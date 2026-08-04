@@ -31,60 +31,77 @@ git remote add upstream https://github.com/ChrisGVE/localdata-mcp.git
 ### Set up the development environment
 
 ```bash
-# Using uv (recommended). The dev tools are an extra, not a uv dependency group,
-# so `uv sync --dev` will not install them — use --extra dev or --all-extras.
-uv sync --extra dev
+# Using uv (recommended)
+uv sync --all-extras
 
 # Or using pip
 python -m venv venv
 source venv/bin/activate   # macOS/Linux
-pip install -e ".[dev]"
+pip install -e ".[all,dev]"
 ```
 
-`uv sync --all-extras` additionally installs the `modern-databases` and `enterprise` drivers, which the integration tests need.
+**`--all-extras`, not `--extra dev`, and never `--dev`.** Test tooling here is a
+project *extra*, not a uv dependency group, so `uv sync --dev` uninstalls pytest
+rather than installing it. And the `dev` extra is pytest and nothing else: every
+format library and every database driver is a separate extra, and the loader,
+export and endpoint suites need them. Without them those tests do not fail —
+they skip, which is worse, because the run still reports green.
 
 ### Verify the setup
 
 ```bash
-# Run unit tests
-pytest tests/ -v --ignore=tests/integration
-
-# Check that the server starts
-localdata-mcp --version
+# The fast suite: everything but the volume tests
+.venv/bin/python -m pytest -q -m 'not slow'
 ```
+
+At the time of writing that is `721 passed, 500 skipped, 5 deselected` in about
+90 seconds. **Every one of the 500 skips is an endpoint test with no container
+listening**, and each names the command that would start one — see "Endpoint
+tests" below. There is no `--version` flag: the entry point starts the server, so
+anything after `localdata-mcp` on the command line is ignored.
 
 ## Project structure
 
 ```
 localdata-mcp/
 ├── src/localdata_mcp/            # The whole package — nine modules, no sub-packages
-│   ├── server.py                 # The seven MCP tools, and nothing else
+│   ├── server.py                 # The eight MCP tools, and nothing else
 │   ├── slots.py                  # The registry: nicknames, lifecycle, eviction, spill
 │   ├── loader.py                 # Reading a datasource in, and describing it
 │   ├── dialects.py               # What differs per backend, and only that
+│   ├── temporal.py               # Recognising and canonicalising date columns
 │   ├── binding.py                # Type adapters — see CONSTRAINTS §1
 │   ├── config.py                 # Configuration discovery and validation
 │   ├── paths.py                  # Path containment at the trust boundary
 │   └── export.py                 # Writing a result out
 ├── tests/                        # One test module per source module
-│   └── assets/                   # Deliberately hostile test files
+│   ├── assets/                   # Deliberately hostile test files
+│   └── endpoints.py              # The endpoint catalogue and its auth-mode axis
 ├── docs/
-│   ├── architecture/LEVEL0.md    # The specification: premise, three arcs, seven verbs
+│   ├── architecture/LEVEL0.md    # The specification: premise, three arcs, eight verbs
 │   └── CONSTRAINTS.md            # Measured behaviour, with the evidence
 ├── non_factual/                  # Quarantined prose — see its README before reading
 ├── skills/data/local-data/       # The skill that ships with the server
 ├── .claude-plugin/plugin.json    # Claude Code plugin manifest
 ├── server.json                   # MCP registry entry
-├── scripts/                      # Test-data generation
-├── .github/                      # CI workflows and issue templates
+├── scripts/                      # Test-data and fixture generation
+├── .github/                      # Workflows and issue templates — read .github/WORKFLOWS.md
 ├── pyproject.toml                # Project metadata and dependencies
-├── Dockerfile                    # Container build
-├── docker-compose.yml            # Dev stack with databases
+├── docker-compose.test.yml       # One container per endpoint, for the endpoint suite
 ├── LICENSE                       # Apache License 2.0
 └── NOTICE                        # Attribution notice required by Apache 2.0
 ```
 
-Each skill is a directory holding a single `SKILL.md`; the directory name is the skill name and must match the `name` field in the file's frontmatter. Place a new skill in the domain directory it belongs to rather than at the top of `skills/`. Version bumps must stay in step across `pyproject.toml`, `.claude-plugin/plugin.json`, and `server.json`.
+There are no sub-packages and no plugin registry: a new format is one entry in
+`loader.READERS` and one in `export.WRITERS`, and a new backend is a
+`dialects.Backend` subclass **only if** the generic SQLAlchemy answer means
+something different for it — several backends needed no subclass at all, which is
+the result rather than an omission.
+
+One skill ships, at `skills/data/local-data/`. A skill is a directory holding a
+single `SKILL.md`, and the directory name must match the `name` field in its
+frontmatter. Version bumps must stay in step across `pyproject.toml`,
+`.claude-plugin/plugin.json`, and `server.json`.
 
 ## Development workflow
 
@@ -92,77 +109,133 @@ Each skill is a directory holding a single `SKILL.md`; the directory name is the
 
 ```bash
 git fetch upstream
-git checkout main
-git merge upstream/main
+git checkout new-v3
+git merge upstream/new-v3
 git checkout -b feature/your-feature-name
 ```
 
+**Branch off `new-v3`, not `main`.** `main` still carries 2.x — a different
+product with 71 tools, none of which survive — and will until the 3.0.0 release
+lands. A patch against `main` is a patch against code that is being deleted.
+
 ### Make changes
 
-- Follow existing code patterns and module structure
-- Add tests for new functionality
+- Follow existing code patterns and module structure. Nine modules, no
+  sub-packages: a change usually belongs in one of them rather than in a new one.
+- Add tests for new functionality, and write the test first. The suite has caught
+  wrong answers that no error surfaced — a number arriving as text, a `CREATE
+  TABLE` that was permanent despite being refused, a rollback that returned
+  normally over a write that stood.
+- **Assert on query results, never on binding.** A value that binds without error
+  and comes back wrong is the failure mode this project keeps meeting
+  (`docs/CONSTRAINTS.md` §5.1), and a test that only checks the insert did not
+  raise is blind to all of it.
 - Keep modules focused enough to read in one sitting. There is no enforced line
-  limit, but `server/database_manager.py` is the cautionary example at 4,000-plus
-  lines: new domains go in their own adapter and mixin rather than into it
-- Update documentation when adding user-facing features
+  limit, and `dialects.py` at 126 KB is the one to watch: a new entry there
+  should be a `Backend` subclass carrying only what the generic answer gets
+  wrong for that engine, not a place for logic every backend shares.
+- Update documentation in the same commit as the change, not afterwards.
 
 ### Run tests
 
 ```bash
-# Unit tests only (fast)
-pytest tests/ -v --ignore=tests/integration
+# Everything but the volume suite — what to run before every commit
+.venv/bin/python -m pytest -q -m 'not slow'
 
-# Include integration tests (requires database services)
-pytest tests/ -v
+# One module
+.venv/bin/python -m pytest tests/test_loader.py -v
 
-# Run a specific test file
-pytest tests/test_config_manager.py -v
+# The volume and timing tests, which take minutes and gigabytes
+.venv/bin/python -m pytest -m slow
 
-# Run tests matching a keyword
-pytest tests/ -v -k "security"
-
-# With coverage
-pytest tests/ --cov=localdata_mcp --cov-report=html --ignore=tests/integration
+# Only the dialects
+.venv/bin/python -m pytest -m endpoint
 ```
 
-### Integration test setup
+There are two markers, both declared in `pyproject.toml`: `slow` for the volume
+and timing tests, and `endpoint` for the dialects. `endpoint` exists to make the
+*reverse* selection possible — every endpoint test already skips itself when its
+container is not answering, so the marker is not needed to keep a Docker-free run
+green.
 
-Integration tests require running database services. The simplest approach is Docker Compose:
+### Endpoint tests
+
+Twenty tests run against every entry in `tests/endpoints.py` — sixteen
+containers, each carrying its own authentication-mode axis. `docker-compose.test.yml`
+defines them:
 
 ```bash
-# Start database services
-docker-compose up -d postgres mysql mongodb redis elasticsearch
-
-# Run integration tests
-pytest tests/integration/ -v
-
-# Stop services when done
-docker-compose down
+docker compose -f docker-compose.test.yml up -d localdata-test-postgres
+.venv/bin/python -m pytest -m endpoint -k postgres
+docker compose -f docker-compose.test.yml down
 ```
+
+**This machine will not run the whole catalogue at once.** At around seven
+containers the Docker VM starves them and the suite reports code failures that
+are not, so the catalogue takes five batches once the authentication variants are
+counted, and each batch reports a green suite while the dialects it never reached
+stay silent ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
+`scripts/endpoint-batch.sh` holds the five batches — `a` through `e` — so they
+live in a script rather than in prose that has already gone stale twice:
+
+```bash
+./scripts/endpoint-batch.sh a          # one batch, then remove its images
+./scripts/endpoint-batch.sh all        # all five in sequence
+./scripts/endpoint-batch.sh a --keep   # leave the containers and images up
+```
+
+The sixteen images are 33 GB, Exasol alone 12 GB, so the script removes them
+afterwards by default: re-download every time, and leave nothing behind. **Say in
+your PR which batches you actually ran** — a green run says nothing about a
+dialect it never reached.
 
 ## Code standards
 
 ### Style
 
-- Follow PEP 8
-- Use type hints on all public function signatures
-- Write clear docstrings for public APIs
-- Keep functions focused enough to read without scrolling
+- Follow PEP 8. `pyproject.toml` configures black at line length 88, isort on
+  the black profile, and mypy targeting 3.10 with `no_implicit_optional` and
+  `strict_optional`. **None of the three is in the `dev` extra**, so install them
+  yourself if you want to run them locally — `uv tool install black`, and the
+  same for `isort` and `mypy` (one package per invocation).
+- Use type hints on all public function signatures.
+- **Write the docstring for a reader who has to justify the code, not describe
+  it.** This codebase says why a thing is the way it is — which measurement
+  forced it, which alternative was tried, what it costs — and that is the house
+  style, not decoration. `dialects.py` and `loader.py` are the examples to match.
+- Keep functions focused enough to read without scrolling.
 
 ### Security
 
-- Validate all inputs at system boundaries
-- Route every agent-supplied query through `SQLQueryParser`
-  (`src/localdata_mcp/query_parser.py`). The agent writes the SQL, so there is
-  nothing to parameterize; what protects the database is a whitelist that admits
-  `SELECT` and `WITH` and rejects the other 25 named operations, plus a check
-  that refuses multiple statements in one call. Never open a query path that
-  bypasses it
-- Parameterize any SQL the server itself composes from a value it did not write —
-  a table name, a filter, a limit. That is a different case from the agent's
-  query, and binding is the right tool for it
-- Restrict file access to allowed directories
-- Handle errors without exposing sensitive information
+- **Do not add a SQL parser.** There isn't one, deliberately. `query` runs on a
+  connection that is read-only from the moment it opens, so there is no statement
+  text to parse and mis-parse and no window in which the posture is briefly
+  something else. The previous design matched SQL patterns and three issues found
+  ways around it ([#33](https://github.com/ChrisGVE/localdata-mcp/issues/33),
+  [#36](https://github.com/ChrisGVE/localdata-mcp/issues/36),
+  [#38](https://github.com/ChrisGVE/localdata-mcp/issues/38)). A new backend
+  makes its read connection refuse as far as that engine can, and where it cannot
+  — Oracle commits DDL as it runs — the refusal says so rather than claiming
+  otherwise.
+- **Underneath every dialect is one dialect-free rule**: a statement that returns
+  no rows, or rows of no columns, is not a read and is refused on that ground.
+  Without it, a rolled-back write came back as a statement that succeeded and
+  returned nothing, which is indistinguishable from success.
+- **Parameterize any SQL the server itself composes** from a value it did not
+  write — a table name, a filter, a limit. That is a different case from the
+  agent's query, and binding is the right tool for it.
+- **Every path crosses `paths.py`**, which resolves symlinks and `..` *before*
+  the containment check, not after. A network URL is refused unless
+  `network.enabled` is set.
+- **Nothing may reach stdout but JSON-RPC.** There is no logging configuration
+  and no `print` in the package, and that is not an accident: a stray write to
+  stdout corrupts the protocol channel, which is what
+  [#35](https://github.com/ChrisGVE/localdata-mcp/issues/35) and
+  [#39](https://github.com/ChrisGVE/localdata-mcp/issues/39) were.
+- **Never evaluate a caller's string as code.** The v2 tool that did was a host
+  RCE ([#42](https://github.com/ChrisGVE/localdata-mcp/issues/42)).
+- Handle errors without exposing sensitive information — a datasource URL is
+  reported with its password masked, in the refusal and in `info` alike.
 
 ### Testing
 
@@ -180,15 +253,21 @@ docker-compose down
 - Rebase on the latest `main` if needed:
   ```bash
   git fetch upstream
-  git rebase upstream/main
+  git rebase upstream/new-v3
   ```
+- **Say which tests you ran.** For anything touching `dialects.py` or a reader,
+  name the endpoint batches — a Docker-free run reports green against every
+  dialect it never reached.
 
 ### PR guidelines
 
-- Use a descriptive title following conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`, `perf:`)
-- Fill out the PR template
+- Use a descriptive title following conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`, `perf:`); a `!` marks a breaking change
+- Fill out the PR template. It predates this rewrite and its "Database Support"
+  checklist names 2.x's database types — answer the spirit of it and say so
 - Reference related issues with `#issue_number`
 - One feature, one bug fix, or one improvement per PR
+- **There is no CI gating this branch.** `.github/WORKFLOWS.md` explains why, so
+  the test run in your PR description is the only evidence there is
 
 ### Review process
 
@@ -205,24 +284,34 @@ docker-compose down
 
 ## Documentation
 
-There are four documents and each has one job. Update the one that owns what you
-changed, in the same commit as the change — documentation that lags is a defect,
-not a chore:
+Each document has one job. Update the one that owns what you changed, in the same
+commit as the change — documentation that lags is a defect, not a chore:
 
 - **`README.md`** — what the server is and how to use it. Any change to the tool
-  surface lands here.
+  surface, the format registries or the backend catalogue lands here.
+- **`CHANGELOG.md`** — every user-facing change, in Keep a Changelog form.
+  Anything that would make an existing caller do something different is a
+  breaking change and is called out as one.
 - **`docs/architecture/LEVEL0.md`** — the specification. Change it when the
-  design changes, not when the code does.
+  design changes, not when the code does. An amendment gets a dated note saying
+  what it supersedes rather than a silent edit, because the reasoning is what the
+  document is for.
 - **`docs/CONSTRAINTS.md`** — behaviour established by measurement, with the
   numbers. Add to it when you measure something that shaped a decision; a
-  constraint nobody recorded is one the next person re-derives.
+  constraint nobody recorded is one the next person re-derives. It is append-only
+  in spirit: a later measurement that changes the answer is a new section, not an
+  edit to an old one.
 - **`skills/data/local-data/SKILL.md`** — how an agent should talk to a user
   about their data. It ships with the server and is versioned with it, because
   the two are only correct against each other.
+- **`.github/WORKFLOWS.md`** — what CI does and does not do.
 
-Test the code examples you write. A worked example that does not run is the
+**Run the code examples you write.** A worked example that does not run is the
 failure mode this project has hit most often — the README taught an addressing
-its own code refused for a full session before a test caught it.
+its own code refused for a full session before a test caught it, and the shipped
+skill told agents that dates were stored as integer ticks for weeks after the
+code had settled on canonical UTC text. Reading the source and finding the claim
+plausible is not verification.
 
 Everything under `non_factual/` is quarantined and unverified by construction.
 Do not cite it, and do not restore anything from it without checking it against
@@ -235,6 +324,11 @@ We follow semantic versioning:
 - **Major**: Breaking changes to the MCP tool API
 - **Minor**: New features, backward compatible
 - **Patch**: Bug fixes, backward compatible
+
+A version lives in three files and they must move together: `pyproject.toml`,
+`.claude-plugin/plugin.json` and `server.json`. They currently disagree —
+`3.0.0.dev0`, `3.0.0-dev` and `2.1.0` — and that is a release decision, not
+something to fix in passing.
 
 ## License
 

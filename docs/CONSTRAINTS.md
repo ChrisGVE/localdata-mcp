@@ -743,6 +743,22 @@ put first and last (fixture and method: the run's own build script; the year spa
 | **`month_name`** (`Mar 01, 2025`), **`month_long`** | **no — fully inverted** | **the earliest instant** |
 | **`rfc2822`** | **no** | **the earliest instant** |
 
+> **Correction (2026-08-04) — the "four" in this section's heading counts table
+> *rows*, not spellings.** The rows above marked "the earliest instant" name
+> **six** spellings, not four: `eu_dmy_dot`, `eu_dmy_slash`, `dmy_dash`,
+> `month_name`, `month_long` and `rfc2822`. Seven spellings order wrongly, which
+> is the number the resolution note below uses and the number that is right.
+>
+> The class is what generalises; the exact counts are fixture-dependent.
+> Re-measured independently against a differently-chosen twenty-four
+> (`tmp/doc-workspace/verify_dates.py`, SQLite 3.x, five instants
+> 2023-11-30 … 2025-07-04): **nine ordered wrongly and six returned the earliest
+> instant from `max()`** — the six being every day-first and month-name form.
+> `rfc2822` ordered wrongly there but did not return the earliest, because its
+> weekday prefix (`Fri, …`) dominates the text comparison, so which bucket it
+> lands in depends on which weekdays the instants fall on. Do not quote a count
+> from this section as a property of the format space; quote the classes.
+
 Two further measurements on the same table, both silent:
 
 - **The same five instants, one column offset-`+00:00` and one offset-`-05:00`, join 0 rows.**
@@ -4000,8 +4016,10 @@ database, and the others were code paths the server had never run — which is w
 and what this section measures.
 
 The axis is on the endpoint descriptor rather than in the tests: an `AuthMode` hangs off the
-`Endpoint` it varies, `TARGETS` is the product, and all nineteen endpoint tests run against every
-mode without one being written for them. A mode is **not** a new `Endpoint`, because an `Endpoint` is
+`Endpoint` it varies, `TARGETS` is the product, and every endpoint test runs against every
+mode without one being written for them. There were nineteen such tests when this section
+was written; a twentieth landed afterwards and inherited the whole axis without being
+touched, which is the property this arrangement was for. A mode is **not** a new `Endpoint`, because an `Endpoint` is
 identified by its compose service and two rows sharing one collide in the probe cache exactly the way
 § on issue #44 records — the same defect, one axis further out.
 
