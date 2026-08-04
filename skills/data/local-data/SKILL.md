@@ -1,7 +1,7 @@
 ---
 name: local-data
-description: Answer questions about local data files and databases with SQL — attach a spreadsheet, CSV, Parquet file, SQLite or DuckDB file, or a database URL; look one source up against another, check the match is complete, and keep the result. Use whenever someone points at a data file or a database and asks a question about what is in it.
-allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save
+description: Answer questions about local data files and databases with SQL. Attach a spreadsheet, CSV, Parquet file, SQLite or DuckDB file, or a database URL, then look one source up against another and keep the result. Use whenever someone points at a data file or a database and asks what is in it.
+allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save mcp__plugin_localdata-mcp_localdata__attach mcp__plugin_localdata-mcp_localdata__detach mcp__plugin_localdata-mcp_localdata__info mcp__plugin_localdata-mcp_localdata__query mcp__plugin_localdata-mcp_localdata__create mcp__plugin_localdata-mcp_localdata__update mcp__plugin_localdata-mcp_localdata__drop mcp__plugin_localdata-mcp_localdata__save
 argument-hint: "<file-path> [and what you want to know]"
 ---
 
@@ -66,8 +66,10 @@ query(nickname, "SELECT …")                → the answer
 `info` straight after it — you have that. Go and answer the question.
 
 **Nothing here is permanent.** It lives until `detach`, or until this server
-stops. If the work is worth keeping, say so and offer `save` — do not let
-someone spend twenty minutes building something that evaporates.
+stops. If the work is worth keeping, say so and offer to keep it — do not let
+someone spend twenty minutes building something that evaporates. How you keep it
+depends on where it came from: `save` for anything built from a file, and
+`query(path=…)` for a database reached over a URL. See §6.
 
 ### 2. "Can you look it up against this other file?"
 
@@ -101,6 +103,12 @@ create(nickname="shop", type="index", table="prices", columns=["sku"])
 `info(nickname, table)` lists the indexes already there — cheaper than asking
 for one twice. The name comes back, and that is the name `drop` wants.
 
+**Five backends refuse an index** — ClickHouse, Trino, CrateDB, Databend and
+Exasol — because on those engines the request means nothing: every column is
+indexed already, or there is no storage to index, or the engine keeps its own.
+The refusal says which. It is not a permission problem and not something to
+retry; run the join as it stands, and if it is genuinely slow, narrow it in SQL.
+
 **`query` will not write.** Not a permission you can ask for — a property of the
 verb. If you find yourself reaching for `INSERT` or `CREATE TABLE`, the answer is
 `create`; for removing one, `drop(nickname, type="table", name=…)`.
@@ -125,7 +133,7 @@ Never say "anti-join" to them. A join that silently dropped rows is the single
 most likely way to hand back a confident wrong number, so do not skip this
 because the totals looked plausible.
 
-### 2b. "That sheet is called Sheet1"
+### 3. "That sheet is called Sheet1"
 
 A workbook's tables arrive under the names the *spreadsheet* chose, lowercased
 and snake_cased — `Sheet1` becomes `sheet1`, `Q2 Prices` becomes `q2_prices`.
@@ -141,9 +149,9 @@ A workbook whose sheets are all called `Sheet1`, `Sheet2`, `Sheet3` is worth
 renaming before you do anything else — every query you write afterwards reads
 better for it, and so does the file if they `save` it.
 
-### 2c. "It's in our Postgres, not a file"
+### 4. "It's in our Postgres, not a file"
 
-A database URL attaches exactly like a file, and every verb then works on it:
+A database URL attaches exactly like a file, and the same eight verbs address it:
 
 ```
 attach(database="postgresql://user:pass@host:5432/sales")
@@ -151,7 +159,7 @@ attach(database="postgresql://user:pass@host:5432/sales")
 
 Eighteen backends are supported — SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
 SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB,
-Firebird, openGauss, YDB, Databend and Exasol. Two things differ from a file:
+Firebird, openGauss, YDB, Databend and Exasol. Three things differ from a file:
 
 - **A URL is refused unless `network.enabled = true`** is set in the user's
   configuration file. The refusal says so and masks the password. That is a
@@ -159,6 +167,18 @@ Firebird, openGauss, YDB, Databend and Exasol. Two things differ from a file:
 - **It arrives read-only**, like anything from outside, and it is somebody's
   production database. Do not ask for `writable=true` because a `create` failed —
   ask the user whether they meant to change the database itself.
+- **`save` does not work here.** It writes out a database this server is
+  holding, and a slot reached over its own connection has none — the rows live
+  in the engine. **Never offer `save` over a URL-attached slot.** This also
+  covers a DuckDB *file*, which is reached over DuckDB's own connection and is
+  refused for the same reason. Offer `query(nickname, "SELECT …",
+  path="/path/result.parquet")` instead, or `create` the rows into a slot of
+  your own — attach a small local file, land the result in it — and `save` that.
+  §6 has the rule in full.
+
+Two smaller refusals live here too: `create(type="index")` on the five engines
+listed in §2, and `update(type="table")` on **Firebird**, which has no
+rename-table statement. Both name the reason.
 
 `create(nickname, type="table", source="./local.csv")` reads a local file *into*
 that database, so a lookup against a server-side table is the same move as
@@ -166,7 +186,7 @@ against a second file. On Oracle, be aware that a write sent to `query` is
 refused **after** the database has already committed it — Oracle commits DDL as
 it runs, and the refusal says so rather than pretending otherwise.
 
-### 3. "Send me the result"
+### 5. "Send me the result"
 
 A result they want as a *file* — to open in Excel, to mail on, to feed something
 else — goes straight to disk instead of coming back through you:
@@ -196,7 +216,21 @@ offer it, rather than returning tens of thousands of rows through the
 conversation. The path is theirs: ask for it, and treat "the file already
 exists" as a question for them, exactly as with `save` below.
 
-### 4. "Keep this"
+### 6. "Keep this"
+
+**Check where the slot came from before you offer anything.** `save` writes out
+a database this server is holding, so it works on a slot built from a file — a
+CSV, a workbook, a Parquet file — and on SQLite, and **only** on those. Every
+other backend is reached over its own connection and has no local database to
+write out, so `save` is refused there. A DuckDB file is one of those: it is a
+file on disk, and it is still reached over DuckDB's own connection.
+
+`attach` reports `"kind": "file"` for anything read out of a data file, and
+those can always be saved. `"kind": "database"` covers both SQLite (saveable)
+and everything else (not), and **the response does not say which engine it is**
+— so for a `"database"` slot, go by the URL or the suffix the user gave you, and
+otherwise treat a `save` refusal as the answer rather than as something to
+retry.
 
 ```
 save(nickname, path="/path/analysis.db")
@@ -206,14 +240,24 @@ Writes the whole database — every table added — to a file they own. It stays
 open afterwards. Attaching it again another day is an ordinary `attach`, so it
 comes back **read-only** unless they pass `writable=true`.
 
+Where `save` is refused, the answer is one of two things, and the refusal names
+the first:
+
+- **Land the rows in a slot of your own and save that.** Attach or build a local
+  slot, `create(…, type="table", source=…)` the pieces you want into it, and
+  `save` that. This is what to do when they want the *relationship* — several
+  tables they can come back to.
+- **Send the result to a file** with `query(nickname, "SELECT …", path=…)`. This
+  is what to do when they want one answer in a form they can open or mail on.
+
 **The path is theirs, not yours.** Ask for the name rather than inventing one.
 If `save` reports the file already exists, that is a question for them, not a
 retry for you — say what is in the way and ask. Once they say replace it, pass
 `force=true`. Never set it because a first attempt failed.
 
-A file that some attached datasource is sitting on is refused even with
-`force`, including the one the slot was built from. If you hit that, the name
-is wrong, not the flag.
+`save` also refuses to overwrite a file that any open datasource was read from —
+including the file this very datasource came from — and `force` does not change
+that. If you hit it, the path is wrong, not the flag.
 
 ## The naming conversation
 
@@ -252,14 +296,35 @@ discount set yet, so I left them out of the average"* — because whether to
 exclude them, treat them as zero, or go and fill them in is their call, not
 yours.
 
+**One fat column instead of the columns they described.** Nothing sniffs the
+separator. A file written by a European tool is usually semicolon-separated, and
+read at `,` it loads as **a single column whose name is the whole header line**
+— `a_b_c` — with a warning saying exactly that and naming the `delimiter`
+parameter. `ok: true` comes back and every number you compute from it is wrong,
+so this is one to notice rather than to work around:
+
+```
+attach(database="/path/sales.csv", delimiter=";")
+```
+
+`delimiter` is also a parameter of `create` and of `query(path=…)`. It applies
+to character-separated text only — `.csv`, `.tsv`, `.txt` — and on `attach` and
+`create` a `delimiter` handed to a `.parquet` or a workbook is **refused**,
+naming the suffix, because that is a caller who has misread the file. Do not
+retry without it and assume the file was fine; look at what the columns are.
+A fixed-width file (`.fwf`) has no separator at all: its column boundaries are
+inferred from which character positions are blank on every line, and the warning
+says so, because nothing in the file declares them.
+
 **Nested values became JSON text.** A JSON or XML column holding a structure
 comes back as `TEXT` carrying exactly what was in the file, and the warning names
 the columns. Reach into it with `json_extract(addr, '$.city')` rather than telling
 the user the field is missing — nothing was lost.
 
-**Ten datasources, and the oldest is dropped.** Check `evicted` in every
+**Ten datasources, and the oldest is evicted.** Check `evicted` in every
 `attach` response. `detach` what you have finished with rather than letting the
-limit choose for you.
+limit choose for you. (Eviction is automatic and whole-datasource; it has nothing
+to do with the `drop` verb, which removes one table or index you name.)
 
 **Read-only by default.** Anything that came from outside — a SQLite or DuckDB
 file someone else made, a database URL — cannot be written to unless it was

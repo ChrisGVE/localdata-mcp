@@ -1,15 +1,15 @@
 # Contributing to LocalData MCP
 
-Thank you for your interest in contributing. This guide covers how to set up a development environment, run tests, and submit changes.
+How to set up a development environment, run the tests, and submit a change.
 
-## Ways to contribute
+Two things are worth knowing before anything else. **Branch off `new-v3`, not
+`main`** — `main` still carries 2.x, a different product, and a patch against it
+is a patch against code that is being deleted. And **there is no CI gating this
+branch**, so the test run you describe in your pull request is the only evidence
+there is; `.github/WORKFLOWS.md` says why.
 
-- **Bug reports**: Open an issue with reproduction steps and error output
-- **Feature requests**: Describe the use case and expected behavior
-- **Code**: Bug fixes, new features, performance improvements
-- **Documentation**: Fix typos, improve examples, expand guides
-- **Testing**: Expand test coverage, report edge cases
-- **Security**: Report vulnerabilities responsibly (see below)
+Security vulnerabilities do not go through an issue — see
+[Security vulnerabilities](#security-vulnerabilities).
 
 ## Prerequisites
 
@@ -54,11 +54,23 @@ they skip, which is worse, because the run still reports green.
 .venv/bin/python -m pytest -q -m 'not slow'
 ```
 
-At the time of writing that is `721 passed, 500 skipped, 5 deselected` in about
-90 seconds. **Every one of the 500 skips is an endpoint test with no container
-listening**, and each names the command that would start one — see "Endpoint
-tests" below. There is no `--version` flag: the entry point starts the server, so
-anything after `localdata-mcp` on the command line is ignored.
+At the time of writing that is `721 passed, 500 skipped, 5 deselected`, measured
+at 77 s on this machine. **Every one of the 500 skips is an endpoint test with no
+container listening**, and each names the command that would start one — see
+"Endpoint tests" below.
+
+Coverage is not in the `dev` extra either. To measure it, install the plugin
+yourself and ask for it:
+
+```bash
+uv tool install pytest-cov          # or: pip install pytest-cov
+.venv/bin/python -m pytest -q -m 'not slow' \
+    --cov=localdata_mcp --cov-report=html
+```
+
+There is no `--version` flag on the server: the entry point starts it, so
+anything after `localdata-mcp` on the command line is ignored. Check what you
+have installed with `uv tool list` or `pip show localdata-mcp`.
 
 ## Project structure
 
@@ -74,7 +86,7 @@ localdata-mcp/
 │   ├── config.py                 # Configuration discovery and validation
 │   ├── paths.py                  # Path containment at the trust boundary
 │   └── export.py                 # Writing a result out
-├── tests/                        # One test module per source module
+├── tests/                        # test_<module>.py for each of the nine, except export.py
 │   ├── assets/                   # Deliberately hostile test files
 │   └── endpoints.py              # The endpoint catalogue and its auth-mode axis
 ├── docs/
@@ -88,9 +100,16 @@ localdata-mcp/
 ├── .github/                      # Workflows and issue templates — read .github/WORKFLOWS.md
 ├── pyproject.toml                # Project metadata and dependencies
 ├── docker-compose.test.yml       # One container per endpoint, for the endpoint suite
+├── Dockerfile                    # 2.x's, and broken — see .github/WORKFLOWS.md
+├── docker-compose.yml            # 2.x's development stack, likewise
 ├── LICENSE                       # Apache License 2.0
 └── NOTICE                        # Attribution notice required by Apache 2.0
 ```
+
+**`export.py` is the one module with no test module of its own.** It is exercised
+from `test_loader.py`, `test_server.py` and `test_volume.py`, which is where the
+writers are reached from. A test for a new writer goes in whichever of those
+matches how it is reached; do not add a `test_export.py` for one writer alone.
 
 There are no sub-packages and no plugin registry: a new format is one entry in
 `loader.READERS` and one in `export.WRITERS`, and a new backend is a
@@ -99,9 +118,10 @@ something different for it — several backends needed no subclass at all, which
 the result rather than an omission.
 
 One skill ships, at `skills/data/local-data/`. A skill is a directory holding a
-single `SKILL.md`, and the directory name must match the `name` field in its
-frontmatter. Version bumps must stay in step across `pyproject.toml`,
-`.claude-plugin/plugin.json`, and `server.json`.
+single `SKILL.md`, the directory name must match the `name` field in its
+frontmatter, and a new one goes under its domain directory rather than at the top
+of `skills/`. Version numbers live in more than one file and must move together —
+see [Versioning](#versioning).
 
 ## Development workflow
 
@@ -170,11 +190,13 @@ docker compose -f docker-compose.test.yml up -d localdata-test-postgres
 docker compose -f docker-compose.test.yml down
 ```
 
-**This machine will not run the whole catalogue at once.** At around seven
-containers the Docker VM starves them and the suite reports code failures that
-are not, so the catalogue takes five batches once the authentication variants are
-counted, and each batch reports a green suite while the dialects it never reached
-stay silent ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
+**This machine will not run the whole catalogue at once.** Six containers run;
+at around seven the Docker VM starves them and the suite reports code failures
+that are not. That one measurement is what every "six at a time" and "five
+batches" in the other documents refers to. So the catalogue takes five batches
+once the authentication variants are counted, and each batch reports a green
+suite while the dialects it never reached stay silent
+([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
 `scripts/endpoint-batch.sh` holds the five batches — `a` through `e` — so they
 live in a script rather than in prose that has already gone stale twice:
 
@@ -239,18 +261,25 @@ dialect it never reached.
 
 ### Testing
 
-- Every new function or method needs at least one test
-- Cover edge cases and error conditions
-- Use mocks for filesystem scenarios (permissions, missing files)
-- Test security boundaries (path traversal, injection)
+The rules that are specific to this project are under "Make changes" above —
+write the test first, and assert on query results rather than on binding. Two
+more that are not obvious from the code:
+
+- **Mock the filesystem** for permission and missing-file scenarios rather than
+  touching the real one. The endpoint suite is the exception: it runs against
+  real containers, because the failures it exists to catch are the engine's.
+- **A path-containment or refusal test must send a statement the parser would
+  otherwise accept.** A test whose input is rejected for an unrelated reason
+  stays green after the guard it is testing is deleted.
 
 ## Pull request process
 
 ### Before submitting
 
 - Ensure all tests pass
-- Update documentation for user-facing changes
-- Rebase on the latest `main` if needed:
+- Update documentation for user-facing changes, in the same commit
+- Rebase on the latest `new-v3` if needed — **not `main`**, for the reason at
+  the top of this file:
   ```bash
   git fetch upstream
   git rebase upstream/new-v3
@@ -269,12 +298,6 @@ dialect it never reached.
 - **There is no CI gating this branch.** `.github/WORKFLOWS.md` explains why, so
   the test run in your PR description is the only evidence there is
 
-### Review process
-
-- Maintainers review code and provide feedback
-- Address requested changes promptly
-- Keep discussions constructive
-
 ## Security vulnerabilities
 
 - **Critical vulnerabilities**: Email `christian@berclaz.org` directly
@@ -284,8 +307,9 @@ dialect it never reached.
 
 ## Documentation
 
-Each document has one job. Update the one that owns what you changed, in the same
-commit as the change — documentation that lags is a defect, not a chore:
+**Seven documents ship, and this is the list.** Each has one job. Update the one
+that owns what you changed, in the same commit as the change — documentation that
+lags is a defect, not a chore:
 
 - **`README.md`** — what the server is and how to use it. Any change to the tool
   surface, the format registries or the backend catalogue lands here.
@@ -305,6 +329,8 @@ commit as the change — documentation that lags is a defect, not a chore:
   about their data. It ships with the server and is versioned with it, because
   the two are only correct against each other.
 - **`.github/WORKFLOWS.md`** — what CI does and does not do.
+- **`CONTRIBUTING.md`** — this file: how to build, test and submit. It owns the
+  document inventory above, so a document added or retired is edited here first.
 
 **Run the code examples you write.** A worked example that does not run is the
 failure mode this project has hit most often — the README taught an addressing
@@ -325,10 +351,21 @@ We follow semantic versioning:
 - **Minor**: New features, backward compatible
 - **Patch**: Bug fixes, backward compatible
 
-A version lives in three files and they must move together: `pyproject.toml`,
-`.claude-plugin/plugin.json` and `server.json`. They currently disagree —
-`3.0.0.dev0`, `3.0.0-dev` and `2.1.0` — and that is a release decision, not
-something to fix in passing.
+A version lives in **five** places across four files, and they must move
+together:
+
+| File | Field | Today |
+|---|---|---|
+| `pyproject.toml` | `project.version` | `3.0.0.dev0` |
+| `.claude-plugin/plugin.json` | `version` | `3.0.0-dev` |
+| `server.json` | `version` — the registry entry's own | `2.1.0` |
+| `server.json` | `packages[0].version` — **the PyPI release a client is told to fetch**, which is not the same thing and must name a release that exists | `2.1.0`, which PyPI 404s |
+| `Dockerfile` | `LABEL version` | `2.0.0` |
+
+They disagree, and which number 3.0.0 carries is a release decision rather than
+something to fix in passing. `server.json`'s `packages[0].version` is the one
+that is a defect either way: it names an artifact nobody can fetch, so the
+registry submission is rejected whatever version is chosen.
 
 ## License
 

@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "localdata-mcp",
   "version": "3.0.0-dev",
   "description": "SQL over local data files and databases. Every datasource becomes a database addressed by a nickname — 18 file formats and 18 SQL backends, reached by the same eight verbs.",
@@ -25,8 +26,8 @@
   ],
   "mcpServers": {
     "localdata": {
-      "command": "uvx",
-      "args": ["localdata-mcp"],
+      "command": "uv",
+      "args": ["run", "--directory", "${CLAUDE_PLUGIN_ROOT}", "localdata-mcp"],
       "env": {}
     }
   }

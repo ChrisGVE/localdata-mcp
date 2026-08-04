@@ -5,8 +5,6 @@ All notable changes to LocalData MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-<!-- sphinx-start -->
-
 ## [3.0.0] - unreleased
 
 A ground-up rewrite. **Every one of the 71 tools 2.1.0 registered is gone**, and
@@ -22,7 +20,9 @@ deprecated, they are absent.
 that names a tool explicitly will find nothing there; an agent that discovers
 tools at runtime will simply see eight.
 
-The eight, and which 2.x tools they replace:
+The seventy-one divide three ways: **sixteen map onto four of the new verbs**,
+**forty-six have no successor at all**, and **nine managed machinery that no
+longer exists**. The other four verbs are new in 3.0.0 and replace nothing.
 
 | 3.0.0 verb | What it replaces from 2.x |
 |---|---|
@@ -30,10 +30,12 @@ The eight, and which 2.x tools they replace:
 | `detach` | `disconnect_database` |
 | `query` | `execute_query`, `analyze_query_preview`, `next_chunk`, `request_data_chunk`, `request_multiple_chunks`, `get_query_metadata`, `export_structured`, `search_data` |
 | `info` | `list_databases`, `describe_database`, `describe_table`, `find_table`, `export_schema`, `get_data_quality_report` |
-| `create` | no equivalent — reading a second datasource *into* an open one is new |
-| `update` | no equivalent |
-| `drop` | no equivalent |
-| `save` | no equivalent — 2.x had staging databases, which were not the user's to keep |
+| `create` | **new in 3.0.0** — reading a second datasource *into* an open one had no 2.x counterpart |
+| `update` | **new in 3.0.0** |
+| `drop` | **new in 3.0.0** |
+| `save` | **new in 3.0.0** — 2.x had staging databases, which were not the user's to keep |
+
+That table accounts for sixteen 2.x tools: 1 + 1 + 8 + 6.
 
 **Forty-six of the seventy-one have no replacement at all** — twenty analytical,
 ten geospatial, seven graph and nine tree. Statistics, regression, clustering,
@@ -42,7 +44,8 @@ graph traversal and key-value trees are not in this product and are not planned.
 The remaining nine — `manage_memory_bounds`, `get_streaming_status`,
 `clear_streaming_buffer`, `cancel_query_operation`, `get_query_log`,
 `get_error_log`, `get_metrics`, `check_compatibility` and `transform_data` —
-managed machinery that no longer exists. That platform
+managed machinery that no longer exists. Sixteen mapped, forty-six gone, nine
+retired: seventy-one, with nothing unaccounted for. That platform
 was abandoned, not deferred; its documentation is quarantined in `non_factual/`.
 What this server does is SQL, and an agent that can write SQL can compute a
 group-by, a correlation or an anti-join in the statement it was going to send
@@ -64,11 +67,14 @@ YAML from `~/.localdata.yaml` and elsewhere, and accepted roughly thirty
 `LOCALDATA_*` environment overrides. 3.0.0 reads `config.toml` through a
 first-found-wins cascade, and the only environment variable is
 `LOCALDATA_CONFIG_PATH`, which *locates* the file and never carries a setting.
-There are three sections and six settings in total; **an unknown section or key
-refuses the start** rather than being ignored, because a mistyped
-`path_limitted = false` that silently kept the safe default is a security switch
-you believe you have thrown. No 2.x configuration file is readable, and none is
-migrated.
+There are three sections and five settings in total — `workspace.slots`,
+`workspace.memory_budget_mb`, `paths.roots`, `paths.path_limited` and
+`network.enabled`. **An unknown section or key is refused rather than ignored**,
+because a mistyped `path_limitted = false` that silently kept the safe default is
+a security switch you believe you have thrown. The file is read on the first tool
+call rather than at startup, so the server launches and the handshake completes;
+the refusal arrives on that first call, naming the bad key and the keys the
+section does know. No 2.x configuration file is readable, and none is migrated.
 
 **Nothing survives the session unless you `save` it.** 2.x persisted staging
 databases and buffers across calls with their own eviction policies and disk
@@ -80,30 +86,44 @@ rebuild it.
 
 ### Added
 
-- Eight MCP tools: `attach`, `detach`, `query`, `info`, `create`, `update`,
-  `drop`, `save`. Few and multi-faceted rather than many and narrow — `info`
-  alone absorbs six 2.x tools by varying on its two optional arguments.
+- Eight MCP tools — **verbs**, the word used for them throughout: `attach`,
+  `detach`, `query`, `info`, `create`, `update`, `drop`, `save`. Few and
+  multi-faceted rather than many and narrow — `info` alone absorbs six 2.x tools
+  by varying on its two optional arguments.
 - **Eighteen file formats read** (`.csv` `.tsv` `.txt` `.fwf` `.json` `.jsonl`
   `.ndjson` `.xml` `.yaml` `.yml` `.xlsx` `.xlsm` `.xls` `.ods` `.numbers`
-  `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less the four
-  spreadsheet and fixed-width readers, plus `.md`). Eight of the readers and
-  seven of the writers need no dependency beyond the base install.
-- **A file may hold more than one table, and all of them land.** A workbook or a
-  `.numbers` document becomes a database with a table per sheet, under the sheet's
-  own name put through the same snake_case rule as a nickname — `Sheet1` becomes
-  `sheet1`, and `update` renames it. 2.x read the first sheet and said nothing
-  about the rest. A JSON, YAML or XML document with **two** candidate tables is
-  refused instead, naming both, rather than one being picked silently.
-- **Eighteen database backends**, each running all eight verbs: SQLite, DuckDB,
-  PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, ClickHouse, CockroachDB,
-  YugabyteDB, Trino, MonetDB, CrateDB, Firebird, openGauss, YDB, Databend and
-  Exasol. Sixteen are exercised against a container of their own in
-  `docker-compose.test.yml`.
-- **Ten authentication modes across four endpoints**, beyond the credentialed URL
-  that was the only route 2.x ever took: a server configured to trust, a password
-  from the environment, a password from a file, verified TLS, a client
-  certificate, a Kerberos ticket, a MySQL option file, an empty password, and an
-  ODBC data-source name in place of a host and port.
+  `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less `.fwf`,
+  `.xlsm`, `.xls` and `.numbers`, plus `.md`). `.xlsx` and `.ods` are written as
+  well as read. Eight of the readers and seven of the writers need no dependency
+  beyond the base install.
+- **A file may hold more than one table, and all of them land.** A workbook
+  becomes a database with a table per sheet, and a `.numbers` document one per
+  **table** — a Numbers sheet is a canvas that may carry several — each under its
+  own name put through the same snake_case rule as a nickname, so `Sheet1`
+  becomes `sheet1` and `update` renames it. Where two tables in one document
+  share a name, the sheet name is prefixed to break the collision. 2.x read the
+  first sheet and said nothing about the rest. A JSON, YAML or XML document with
+  **two** candidate tables is refused instead, naming both, rather than one being
+  picked silently.
+- **Eighteen database backends**: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
+  SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB,
+  CrateDB, Firebird, openGauss, YDB, Databend and Exasol. Sixteen are exercised
+  against a container of their own in `docker-compose.test.yml`. The eight verbs
+  are the whole surface on all of them; three verbs are refused on some engines,
+  and those refusals are listed under *Known limitations* below.
+- **Nine further ways of authenticating an endpoint are exercised by the test
+  suite**, beyond the credentialed URL that was the only route 2.x ever took: a
+  server configured to trust, a password from the environment, a password from a
+  file, verified TLS, a client certificate, a Kerberos ticket, a MySQL option
+  file, an empty password, and an ODBC data-source name in place of a host and
+  port — ten routes in all, counting the credentialed URL that all sixteen
+  endpoints still use. **These are not server settings and there is no parameter
+  for them**: `attach` takes a datasource string, and each mode is expressed in
+  the URL or in the driver's own environment, which this server passes through
+  untouched. What 3.0.0 adds is the evidence that they work —
+  `tests/endpoints.py` runs the whole endpoint suite as a second axis over them.
+  `docs/CONSTRAINTS.md` §25 has the measurements, and
+  `docs/architecture/LEVEL0.md` records which endpoint carries which mode.
 - **`create(nickname, type="table", source=…)`** reads a second datasource in
   beside the tables already in a slot, which is what makes a cross-file lookup
   keepable: `save` writes one database, not a join.
@@ -121,10 +141,12 @@ rebuild it.
   `(page_count − freelist_count) × page_size` — measured, not estimated from file
   size, because a pre-flight estimate is the fail-open pattern that bit this
   project once.
-- **Date canonicalisation.** Across twenty-four spellings of five instants
-  spanning three years, seven ordered wrongly under `ORDER BY`, and the day-first
-  and month-name forms among them returned the earliest instant from `max()` —
-  silently, with no error and no warning.
+- **Date canonicalisation.** Across two dozen spellings of five instants
+  spanning three years, every day-first and every month-name form ordered wrongly
+  under `ORDER BY` and returned the earliest instant from `max()` — silently,
+  with no error and no warning. (`docs/CONSTRAINTS.md` §8.1 asks that the classes
+  be quoted rather than the counts: how many spellings fall in each class depends
+  on which spellings the fixture happened to include.)
   ISO 8601 extended and Unix time are recognised; a recognised column is rewritten
   into one canonical UTC spelling and reported as
   `{"temporal": "iso8601_utc", "normalized": "UTC"}`. Everything else is left
@@ -150,9 +172,12 @@ rebuild it.
 ### Changed
 
 - **Every datasource is a database**, whatever it came from, and the same eight
-  verbs work on all of them. In 2.x a URL-reached database supported three of the
-  seven file verbs while a file supported all seven, with nothing in the type
-  system to notice.
+  verbs address all of them. In 2.x a CSV and a PostgreSQL connection were
+  different kinds of thing: `connect_database` took both, and which of the
+  seventy-one tools then worked depended on which you had handed it, with nothing
+  in the type system to notice. Here the surface does not vary — where an engine
+  cannot carry out a verb, the verb is still there and the refusal names the way
+  round (see *Known limitations*).
 - **A statement reaches one datasource.** Slots do not share a connection, so
   there is no join across nicknames; `create` copies one into the other and the
   join is then ordinary SQL.
@@ -188,7 +213,7 @@ rebuild it.
   N-Triples, SPARQL endpoints, and the key-value tree tools.
 - **The non-SQL databases**: MongoDB, Redis, Elasticsearch, InfluxDB, Neo4j and
   CouchDB. This server speaks SQL through SQLAlchemy, and a database is in scope
-  iff an open-source SQLAlchemy adapter exists.
+  if and only if an open-source SQLAlchemy adapter exists.
 - **`.html` and `.htm`**, from both registries, on 2026-07-28. Reading them was
   defensible; writing them was not — the writer emitted a bare `<table>` fragment
   rather than a document, and it was the one suffix that broke the round-trip
@@ -234,6 +259,19 @@ each was reported against 2.x and none of the code carrying it survives:
 
 ### Known limitations
 
+- **`save` is refused on every backend but SQLite** — seventeen of the eighteen,
+  a local DuckDB file included. `save` writes out a database this server is
+  holding, and a slot reached over its own connection has none: the rows live in
+  the engine, not here. Every file-derived slot *is* SQLite, so `save` works on
+  all of them. For the rest, `create` the rows you want into a slot of your own
+  and save that, or send the result straight to a file with `query(path=…)`. The
+  refusal says so.
+- **`create(type="index")` is refused on ClickHouse, Trino, CrateDB, Databend and
+  Exasol**, each for its own reason — indexes that cannot be reflected, no
+  storage to index, every column indexed already, a statement that compiles to
+  nothing, or an engine that maintains its own.
+- **`update(type="table")` is refused on Firebird**, which has no rename-table
+  statement and never has.
 - **`.xlsx` and `.ods` are refused above 65,535 rows.** That is the older
   worksheet's own limit and it is what bounds the writer's memory: uncapped,
   `.xlsx` held 12.9 GB while writing a million rows. `.ods` is 13.5× slower than
@@ -243,7 +281,7 @@ each was reported against 2.x and none of the code carrying it survives:
 - **A normalised temporal column loses its original offset.** A file that needs
   it must keep it in a column of its own.
 - **No single test run covers the backend catalogue.** This machine runs six
-  containers before the Docker VM starves them, so it takes five batches, and each
+  containers and starves them at around seven, so it takes five batches, and each
   reports a green suite while the dialects it never reached stay silent
   ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
 - **Db2 and OceanBase are eligible and unreachable** from a macOS host —

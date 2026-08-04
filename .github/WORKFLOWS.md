@@ -14,7 +14,7 @@ re-derives it from a workflow file that looks plausible.
 | File | Triggers on | State |
 |---|---|---|
 | `codeql.yml` | push and PR to `main`; Tuesdays 14:43 UTC | Works. Runs against `main`, which still carries 2.x. |
-| `publish-to-pypi.yml` | push to `main`; tags `v*.*.*`; manual | Works. Trusted publishing to PyPI. |
+| `publish-to-pypi.yml` | push to `main`; tags `v*.*.*`; manual | Works, and the two triggers publish to **different registries** — a push to `main` goes to TestPyPI, a `v*.*.*` tag goes to PyPI. See below. |
 | `docker-publish.yml` | tags `v*.*.*`; manual | Builds and pushes the image. **The image itself is broken** — see below. |
 | `v3-ci.yml` | push and PR to `v3` or `main` | **Does not run and would not pass.** |
 | `v3-nightly.yml` | daily 04:17 UTC; manual | **Does not run to completion.** |
@@ -36,13 +36,20 @@ modules and no sub-packages at all, so:
 
 - `v3-ci.yml`'s mypy job type-checks `src/localdata_mcp/nexus`, which does not
   exist.
-- Between them the two files invoke seven scripts that are not in `scripts/`:
-  `check_audit_severity.py`, `check_battery_run_trailer.py`,
-  `check_pin_drift.py`, `cold_start_smoke.py`, `merge_battery_results.py`,
-  `compare_battery_runs.py`. `build_db_fixtures.py` and
-  `build_oracle_datasets.py` are the only two they name that are present.
-- `v3-ci.yml` gates a coverage floor of 85 over `tests/v3`, which now holds one
-  subdirectory.
+- Between them the two files invoke **six** scripts that are not in `scripts/`.
+  Three are named by both files — `check_audit_severity.py`,
+  `cold_start_smoke.py`, `merge_battery_results.py`; two by `v3-ci.yml` alone —
+  `check_battery_run_trailer.py`, `check_pin_drift.py`; and one by
+  `v3-nightly.yml` alone — `compare_battery_runs.py`. They also name
+  `build_db_fixtures.py` and `build_oracle_datasets.py`, which are the only two
+  that are present. Eight paths referenced, two present, six missing.
+- `v3-ci.yml` gates a coverage floor of 85 over `tests/v3`, **which is not in the
+  repository at all** — `git ls-files tests/v3` is empty, and what is on disk is
+  untracked leftovers. The job would run pytest over a path a clean checkout does
+  not have.
+- Neither the mypy job nor the coverage job has the tool it invokes. Both run
+  `uv sync --frozen --extra dev`, and the `dev` extra is `pytest` and nothing
+  else, so `uv run mypy` and `--cov-fail-under` have no mypy and no pytest-cov.
 - Neither triggers on `new-v3`, so none of that has ever been reported.
 
 ## The Docker image
@@ -88,11 +95,66 @@ Support" checklist were written for 2.x's thirteen database types.
 
 ## PyPI trusted publishing
 
-`publish-to-pypi.yml` publishes on a `v*.*.*` tag through PyPI's trusted
-publishing, which needs the publisher registered at
-<https://pypi.org/manage/account/publishing/> against this repository and this
-workflow filename. Trusted publishing carries no long-lived token, which is why
-it is used.
+`publish-to-pypi.yml` has three jobs. `build` produces the sdist and wheel and
+runs `twine check`. The two publish jobs are mutually exclusive and go to
+different registries:
+
+| Job | Fires on | Registry |
+|---|---|---|
+| `publish-to-testpypi` | a push to `main` | **TestPyPI** — `https://test.pypi.org/legacy/`, `skip-existing: true` |
+| `publish-to-pypi` | a `refs/tags/v*` tag | **PyPI** |
+
+Both use PyPI's trusted publishing, which carries no long-lived token — that is
+why it is used. It has two prerequisites, and **both must be in place before a
+release tag is pushed**:
+
+1. The publisher registered at
+   <https://pypi.org/manage/account/publishing/> against this repository and this
+   workflow filename — and separately at
+   <https://test.pypi.org/manage/account/publishing/> for the TestPyPI half.
+2. **Two GitHub environments, named `testpypi` and `pypi`.** Each publish job
+   declares `environment: name: …` alongside `permissions: id-token: write`. A
+   job naming an environment that does not exist fails before it uploads
+   anything, so this is a hard prerequisite rather than a nicety — and the
+   environment is where a protection rule on the release would live.
+
+**Nothing verifies that the tag and `project.version` agree.** Push `v3.0.0` at
+this commit and the job builds `3.0.0.dev0` and uploads it under a tag saying
+otherwise. `twine check` passes, because a pre-release is valid metadata — and
+because it is a pre-release, `pip install localdata-mcp` and `uvx localdata-mcp`
+exclude it from resolution by default, so the release would look green while no
+user's install changed at all. A `refs/tags/v*` → `project.version` equality
+check in the `build` job is the standard guard.
+
+**Nothing publishes `server.json` either.** No workflow runs `mcp-publisher`,
+and this server has never appeared in the MCP registry — a query for `localdata`,
+`chrisgve` and `io.github.chrisgve/localdata-mcp` returns nothing. Publishing it
+is a manual step somebody has to take, and `server.json` has to be valid first
+(see [Before the next release](#before-the-next-release)).
+
+**Nothing validates any manifest.** No workflow runs the `server.json` schema
+check or `claude plugin validate`; `twine check` is the only manifest gate there
+is, and it does not look at either file.
+
+## What a release does, end to end
+
+Nothing walks a release for you, so this is the whole of it:
+
+1. Bring the version numbers into step — five values across four files, listed in
+   `CONTRIBUTING.md` under *Versioning*.
+2. Run the tests locally, including the endpoint batches, since nothing gates
+   this branch.
+3. Push a `vX.Y.Z` tag. That, and only that, fires `publish-to-pypi.yml`'s PyPI
+   job and `docker-publish.yml` — **read the gaps below before doing it.**
+4. Create the GitHub release from the tag, for the notes; the upload has already
+   happened by then.
+5. Publish `server.json` to the MCP registry by hand. No workflow does it.
+
+**Branch protection** is not configured and is not described anywhere else. The
+previous version of this document listed required checks belonging to a `ci.yml`
+that does not exist, which was worse than saying nothing; the honest statement is
+that there is no protection posture today, and that setting one up has to wait on
+gap 1 below, since there is no passing check to require.
 
 ## Before the next release
 
@@ -101,5 +163,20 @@ These are the known gaps, stated so a release does not walk into them:
 1. `v3-ci.yml` and `v3-nightly.yml` need deleting or rewriting against the tree
    that exists, and whichever survives needs to trigger on the release branch.
 2. The `Dockerfile` needs rewriting or `docker-publish.yml` needs disabling
-   before a `v3.0.0` tag is pushed.
-3. `docker-compose.yml`, the issue templates and the PR template describe 2.x.
+   before a `v3.0.0` tag is pushed. `docker-publish.yml` also moves the `latest`
+   tag unconditionally, including on a `workflow_dispatch` run from any branch,
+   so it can publish the broken image with no tag involved at all.
+3. **The tag and `project.version` are not checked against each other**, and
+   `3.0.0.dev0` is a pre-release nobody's `pip install` would resolve
+   ([#76](https://github.com/ChrisGVE/localdata-mcp/issues/76)).
+4. **The `testpypi` and `pypi` GitHub environments have to exist** before the
+   publish jobs can run — see above.
+5. **`server.json`'s `packages[0].version` is `2.1.0`, and PyPI 404s on it.**
+   The registry resolves that field against the named `registryType` during
+   publish, so it has to name a release that exists — which today it does not,
+   and never did. It moves with the release version, so it is fixed when that is
+   decided ([#78](https://github.com/ChrisGVE/localdata-mcp/issues/78)). The
+   over-length `description` in the same file was fixed on 2026-08-04; it had
+   survived a deliberate rewrite of that very line, because **nothing in CI
+   validates this file** and the error only appears server-side at publish time.
+6. `docker-compose.yml`, the issue templates and the PR template describe 2.x.

@@ -17,8 +17,9 @@ deliberately**. Everything whose factual state is unknown lives here instead.
 
 ## What is in here
 
-Everything under `docs/` that described **LocalData v2** — a data-science platform with
-71 tools spanning statistics, regression, time series, geospatial and optimization. That
+Everything under `docs/` that described **LocalData v2** — a data-science platform
+spanning statistics, regression, time series, geospatial and optimization, whose published
+2.0.0 registered fifty-three tools and whose unreleased 2.1.0 grew that to seventy-one. That
 product was not built. This branch is a database server with **eight verbs** — `attach`,
 `detach`, `query`, `info`, `create`, `update`, `drop`, `save` — and the v2 documents
 describe tools that do not exist, at paths that do not exist, with parameters that were
@@ -33,10 +34,10 @@ never implemented.
 > the site had almost nothing left to build and `conf.py` excluded pages that were no
 > longer there. `docs/conf.py`, `docs/requirements.txt` and `.readthedocs.yaml` have been
 > deleted, and with them the three include-stubs that were their only remaining content.
-> Nothing is published: the four documents this project ships — `README.md`, `LEVEL0.md`,
-> `CONSTRAINTS.md` and the skill — are read where they live. A generated site for a
-> seven-verb server was a fifth surface to keep current and no reader's shortest path to
-> anything.
+> Nothing is published: the documents this project ships are read where they live, and
+> `CONTRIBUTING.md` carries the single inventory of what they are and which owns what. A
+> generated site for an eight-verb server was one more surface to keep current and no
+> reader's shortest path to anything.
 >
 > `TROUBLESHOOTING.md` and `DOCKER_USAGE.md` arrived here at the same time and for the
 > original reason: both described the v2 product end to end. The Docker image itself still

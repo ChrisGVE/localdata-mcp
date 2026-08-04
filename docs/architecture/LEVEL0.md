@@ -7,14 +7,22 @@ pointed at more kinds of source, so a block that is wrong here is wrong everywhe
 The surface is built, and the gate has since opened onto its own breadth: more formats
 and more backends are **still level 0**, because they are nothing new — the same verbs
 pointed at more kinds of source. Formats are done. The backends are a **closed** catalogue
-worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
-Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB, Firebird,
-openGauss, YDB, Databend and Exasol each run every verb, each against a container of its
-own — except SQLite and DuckDB, which are files and need none. **The catalogue is
-worked through**: every entry that can be reached on this machine is landed.
+of **eighteen**, worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
+SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB, Firebird,
+openGauss, YDB, Databend and Exasol. Each is reached by the same eight verbs, and each is
+exercised against a container of its own — except SQLite and DuckDB, which are files and
+need none. **The catalogue is worked through**: every entry that can be reached on this
+machine is landed.
+
+Reached is not the same as *carried out*. Three verbs mean nothing on some engines and are
+refused there, with the reason named: **`save` on every backend but SQLite** (a slot reached
+over its own connection holds no database here to write out), **`create(type='index')` on
+ClickHouse, Trino, CrateDB, Databend and Exasol**, and **`update(type='table')` on
+Firebird**. The per-backend table below carries each one, and they are the reason the surface
+is uniform while the outcomes are not.
 
 Five candidates are **out**, and for three different reasons. **TiDB** and **HyperSQL** fail
-the eligibility rule — a database is in scope iff an open-source SQLAlchemy adapter exists,
+the eligibility rule — a database is in scope if and only if an open-source SQLAlchemy adapter exists,
 and TiDB has none while HyperSQL's reaches it only through a JVM and a JDBC jar that have
 to be on the host. **Greenplum** was dropped as scope. **Db2** and **OceanBase** pass the
 rule and still cannot be reached, each one blocked a layer lower than the last: Db2's
@@ -154,16 +162,40 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 
 ## The eight verbs
 
-| Verb | Shape | Notes |
+The table gives the shape and the one-line purpose. What each verb costs and why it is
+drawn where it is follows underneath.
+
+| Verb | Shape | What it is for |
 |---|---|---|
-| `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Multipurpose — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. A workbook or `.numbers` document becomes a database holding all its sheets, snake_cased. `delimiter` applies to character-separated text only, and is refused elsewhere. |
-| `detach` | `nickname` | Drop a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if spilled. |
-| `query` | `nickname`, `sql`, `path?`, `force?`, `delimiter?` | The `path` suffix chooses the output format and one with no writer is refused by name. `delimiter` separates fields on the way *out*, for `.csv`/`.tsv`/`.txt` only. **Reads only** — every write is refused whatever the slot allows, by the connection rather than by a check, as far as each backend can refuse (see *Write is not the default*). Returns the whole result; the optional path is where an oversized one is written instead, which **absorbs `export_query`**. `force` is the same overwrite consent `save` takes, for the same reason. |
-| `info` | — \| `nickname` \| `nickname`+`table` | Polymorphic: bare → every slot; nickname → its tables; nickname+table → schema, row count and indexes. **Absorbs `list_tables` + `describe_table`.** |
+| `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Open a datasource as a database — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. |
+| `detach` | `nickname` | Close a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if it had spilled. |
+| `query` | `nickname`, `sql`, `path?`, `force?`, `delimiter?` | Run SQL. **Reads only.** Returns the whole result, or writes it to `path` when it is too large to return. |
+| `info` | — \| `nickname` \| `nickname`+`table` | Three levels of detail: bare → every slot and the path posture; nickname → its tables; nickname and table → schema, row count and indexes. |
 | `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a datasource in beside the tables already there, which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
-| `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes. The third of create/update/drop, and the answer to a file that names its own tables — a workbook's `Sheet1` arrives as `sheet1` and means nothing to anybody. `name` is the snake_cased name `info` lists, not the spelling in the spreadsheet. Renaming onto a taken name is refused, not allowed to replace. |
-| `drop` | `nickname`, `type`, `name` | Composition needs both directions, for both types. The index name is the one `create` returned and `info` lists. |
-| `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. An occupied path is refused until `force` carries the user's consent, and a path a live slot sits on is refused regardless. |
+| `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes — the answer to a file that named its own tables. |
+| `drop` | `nickname`, `type`, `name` | Remove a table or an index. Composition needs both directions, for both types. |
+| `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. |
+
+**`attach`.** A workbook becomes a database holding a table per sheet and a `.numbers`
+document one per table, snake_cased. `delimiter` applies to character-separated text only
+and is refused elsewhere.
+
+**`query`.** Every write is refused whatever the slot allows, by the connection rather than
+by a check, and as far as each backend can refuse — see *Write is not the default*. The
+`path` suffix chooses the output format and one with no writer is refused by name; `force`
+is the same overwrite consent `save` takes, for the same reason. `delimiter` separates
+fields on the way *out*, for `.csv`/`.tsv`/`.txt` only, and is ignored rather than refused
+elsewhere.
+
+**`update` and `drop`.** `update`'s `name` is the snake_cased name `info` lists, not the
+spelling in the spreadsheet; renaming onto a taken name is refused rather than allowed to
+replace. The index name `drop` takes is the one `create` returned and `info` lists.
+`update(type='table')` is refused on Firebird, and `create(type='index')` on the five
+engines named in the backend table.
+
+**`save`.** An occupied path is refused until `force` carries the user's consent, and a path
+a live slot sits on is refused regardless. It writes out a database this server holds, so it
+is refused on every backend but SQLite; the refusal names the route round it.
 
 ### Write is not the default
 
@@ -297,12 +329,18 @@ a mix of destinations without the call having to know which suffix it is about t
 A database is reached through a SQLAlchemy engine, and `create_engine` is generic — so
 `Backend` is **not** an interface a database must implement to be reachable. A dialect
 nobody has subclassed still opens, still queries, still composes. A subclass exists only
-where the generic answer means something different here, or nothing at all:
+where the generic answer means something different here, or nothing at all.
+
+**Seventeen rows for eighteen backends**: MySQL and MariaDB need the same overrides and
+share one. **Every row but SQLite's refuses `save`** — that refusal is the generic answer,
+not a per-dialect one, so it is stated once here rather than repeated in seventeen cells:
+`Backend.snapshot` raises, and only `SQLiteBackend` overrides it, because only a database
+this server built is a database it holds.
 
 | Backend | Reached as | What it could not be asked portably |
 |---|---|---|
-| SQLite | file, URL | `query_only` and an authorizer; `VACUUM INTO` for `save`; residency from the page count; `typeof()` for mixed columns; the declared type *is* the affinity |
-| DuckDB | file, URL | nothing — the generic answers are the whole answer |
+| SQLite | file, URL | `query_only` and an authorizer; `VACUUM INTO`, which is what makes it the one backend `save` works on; residency from the page count; `typeof()` for mixed columns; the declared type *is* the affinity |
+| DuckDB | file, URL | `access_mode=read_only` on the read connection — refused by DuckDB itself at open time, so a read connection cannot write however it is reached, which is stronger than the generic transactional floor. That is the whole of the subclass, and everything else is the generic answer |
 | PostgreSQL | URL | nothing |
 | MySQL / MariaDB | URL | a read-only session, since DDL commits itself; an index over a *prefix*, since `TEXT` cannot be a key |
 | Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |
@@ -329,6 +367,23 @@ classes: a `Decimal`, a `date`, a `timedelta`, a `UUID`, raw `bytes`. A `Decimal
 alone reached the client as the *string* `"155000"`, and an agent then compares and adds
 text.
 
+> **Corrected (2026-08-04) — DuckDB's row said "nothing", and DuckDB is the reason the
+> subclass exists.** The row above read *"nothing — the generic answers are the whole
+> answer"*. That contradicted this document's own *Write is not the default* section, which
+> already records that DuckDB opens `access_mode=read_only`, and it contradicted the class:
+> `DuckDBBackend`'s docstring says the read-only posture carried by the URL is *"the one
+> thing it adds, and the reason it is registered at all"*. The row now says so.
+>
+> **And a second thing is open, not decided.** A DuckDB file attached `writable=true` is
+> broken today: the slot opens a read engine carrying `access_mode=read_only` and a write
+> engine without it, and DuckDB refuses two connections to one file under different
+> configurations. Measured through the shipped surface — `attach` and `query` succeed,
+> `info` and `create` raise, `update` and `drop` return a refusal naming the driver error,
+> and `save` is refused for the unrelated reason above. The read-only arm is clean. The two
+> ways out point different directions: open one engine and carry the posture per statement,
+> or refuse `writable=true` on a DuckDB file outright and say why. Filed as
+> [#79](https://github.com/ChrisGVE/localdata-mcp/issues/79). **Open, not decided.**
+
 Every dialect is exercised against a live container (`docker-compose.test.yml`), and the
 tests skip — with the command to start one — rather than fail where none is running.
 
@@ -336,11 +391,11 @@ tests skip — with the command to start one — rather than fail where none is 
 
 A file holds dates as text, and text compares as text — so `'30.11.2023'` sorts
 *after* `'01.03.2025'`, `ORDER BY` runs backwards and `max()` returns the
-earliest instant. Measured across twenty-four spellings of five instants spanning
-three years, seven ordered wrongly, and the day-first and month-name forms among
-them reported the earliest as the maximum, silently (CONSTRAINTS §8.1 — whose
-heading says "four", counting table rows rather than spellings; the correction
-is recorded there).
+earliest instant. Measured across two dozen spellings of five instants spanning
+three years, every day-first and every month-name form ordered wrongly and
+reported the earliest as the maximum, silently (CONSTRAINTS §8.1, which asks that
+the class be quoted rather than the count — how many spellings land in each class
+depends on which spellings the fixture happened to include).
 
 The answer is not a better parser, because most of those spellings are
 **genuinely ambiguous**: `01/03/2025` is the first of March or the third of
@@ -430,11 +485,23 @@ the skill writes the anti-join, decides which direction the user cared about, an
 The skill ships in this repo and is versioned with the server, because the two are only
 correct against each other.
 
-## What comes after
+## What is left, and what it took to get here
 
-Still level 0, and in this order: the format catalogue above (**done**), then the backend
-catalogue (**done** — every entry that can be reached on this machine is landed, and the
-two that cannot, Db2 and OceanBase, were measured rather than assumed).
+**What is left before level 0 closes is no longer code**: a pass driving the live server
+through a real client, since every verb has changed since the last one, and a review of the
+issues that were fixed forward. Three design questions are open and are recorded where they
+arise, each marked **Open, not decided**:
+
+| Question | Where |
+|---|---|
+| Whether a JSON, YAML or XML document with two candidate tables should still be refused, given the premise that a file may hold more than one table | *The premise*, above |
+| What a DuckDB file attached `writable=true` should do, since two engines on one file is refused by DuckDB ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)) | *The backends*, above |
+| Whether the refusal's wording — *"which one you want"* — should survive, since it is the pick-one model this design left behind | *The premise*, above |
+
+The rest of this section is how the two catalogues went, and is history rather than plan.
+Both are **done**: the format catalogue first, then the backends — every entry that can be
+reached on this machine is landed, and the two that cannot, Db2 and OceanBase, were measured
+rather than assumed.
 
 The expectation going into the backends was that they would need a test harness rather
 than a code path, and that was half right: nothing about *reaching* a dialect needed
@@ -448,15 +515,20 @@ result could tell from a read. They are measured one section at a time in
 
 The authentication matrix is **done**, and it was the item whose shape was unknown. A
 database is reached one of several ways and only one of them was ever exercised: a password
-in the URL. **Nine more now exist, spread across four endpoints** — a server that
-authenticates nobody, a password read from the environment, a password read from a file,
-TLS actually verified, a client certificate, a Kerberos ticket, an option file, an empty
-password, and a data-source name in place of an address — which with the credentialed URL
-that all sixteen still use makes ten modes in all. They run as a second axis on the
-endpoint table, so all **twenty** endpoint tests exercise every one of them without one
-being written for them. Two more are real and unreachable from
-this machine rather than skipped — a Unix socket does not cross the container boundary, and
-there is no Windows host to integrate with. `docs/CONSTRAINTS.md` §25 has the measurements.
+in the URL. Nine more are exercised now:
+
+| | Modes | Where |
+|---|---|---|
+| The route 2.x took | 1 — a credentialed URL | all sixteen endpoints |
+| Added by this work | 9 — trust, a password from the environment, a password from a file, verified TLS, a client certificate, a Kerberos ticket, an option file, an empty password, a data-source name in place of an address | four endpoints |
+| **Exercised in total** | **10** | |
+| Real and out of reach here | 2 — a Unix socket, which does not cross the container boundary, and Windows integrated authentication, there being no Windows host | — |
+
+They run as a **second axis** over the endpoint table rather than as tests of their own, so
+each of the twenty endpoint tests runs against every mode its endpoint carries. Nothing in
+the server implements them: each is expressed in the URL or in the driver's own environment,
+which this server passes through untouched, so what was added is the evidence rather than a
+feature. `docs/CONSTRAINTS.md` §25 has the measurements.
 
 The load half of the volume work is **done**. It was the last gate with code behind it, and
 what it cost was a second read of the file rather than a smaller buffer: the peak used to
@@ -464,10 +536,6 @@ track the file because every measurement deciding the table is a whole-column on
 chunk size reaches that. Measured in §28, and the honest edges are recorded there too —
 below about 150 MB streaming costs slightly *more*, the formats nobody can chunk are
 unchanged, and the earlier sampled figures for this path were under-reports.
-
-What is left before level 0 closes is no longer code: a pass driving the live server
-through a real client, since every verb has changed since the last one, and a review of the
-issues that were fixed forward.
 
 Building blocks first: **simple, composable, multi-faceted, and where possible
 transparent even to the LLM.**

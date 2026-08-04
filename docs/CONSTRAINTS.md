@@ -4,9 +4,48 @@ Every entry below was established by **direct execution**, not by reading docume
 reasoning. Each one cost real measurement time, and each one is a trap that a from-scratch
 implementation walks into by default.
 
-**How to use this file.** Do not read it end to end before starting. It is organised by *when each
-constraint bites*, so the relevant section is consulted at the moment the code reaches that
-capability. A constraint you read six weeks early is a constraint you forget.
+**How to use this file.** Do not read it end to end before starting. Consult the section you
+need, from the contents below. It has two halves, and they are organised differently:
+**§1–§6 are capability sections** — reached when the code reaches that capability, which is
+the point of the split, because a constraint read six weeks early is a constraint you forget.
+**§7–§28 are dated measurement sessions**, in the order they were run, each named for what it
+measured. The second half is append-only: a later measurement that changes an answer is a new
+section, not an edit to an old one, so where a section carries a `> **Correction**` block,
+that block is the current answer and the text above it is the record.
+
+### Contents
+
+*By capability*
+
+| | |
+|---|---|
+| [§1](#1--loading-a-file-into-sqlite) | Loading a file into SQLite |
+| [§2](#2--querying-and-joining-across-files) | Querying, and joining across files |
+| [§3](#3--volume-performance-concurrency) | Volume, performance, concurrency |
+| [§4](#4--writing-files-out) | Writing files out |
+| [§5](#5--how-to-verify-things-the-method-that-caught-the-errors-above) | How to verify things — the method that caught the errors above |
+| [§6](#6--deferred-only-relevant-once-data-outgrows-memory) | Deferred: only relevant once data outgrows memory |
+
+*By measurement session, in the order they were run*
+
+| | |
+|---|---|
+| §7 (2026-07-26) | Driving the surface as an agent |
+| §8 (2026-07-27) | Driving the live server through a real client — **§8.1 is the date-ordering result** the other documents cite |
+| §9 (2026-07-27) | Memory footprint, stress and performance |
+| §10 (2026-07-27) | A million rows and ten million, end to end — **§10.7 is the writer timing table** |
+| §11–§12 (2026-07-28) | ClickHouse; CockroachDB |
+| §13–§14 (2026-07-28) | TiDB and the eligibility rule; the MCP specification measured against this server |
+| §15–§18 (2026-07-29) | YugabyteDB; Trino; a dialect names a wire protocol, never an engine; MonetDB |
+| §19–§20 (2026-07-29) | CrateDB; Firebird |
+| §21–§23 (2026-07-30) | openGauss; YDB; Databend |
+| §24–§25 (2026-07-30) | Db2, eligible and unreachable; six ways into one database |
+| §26–§27 (2026-07-31) | OceanBase, eligible and stopped by one instruction; Exasol |
+| §28 (2026-07-31) | The load half of task 21 — a file measured in one pass, inserted in another |
+
+Section numbers are cited from `README.md`, `LEVEL0.md` and `CONTRIBUTING.md` as `§N`; use
+your reader's search, since the sub-section headings are sentences and their anchors are not
+stable enough to link against.
 
 **Measurement environment.** Python 3.12.9 · pandas 3.0.2 · numpy 2.4.4 · sqlite3 3.47.1
 (library ≥ 3.27 assumed) · SQLAlchemy 2.0.49 · fastmcp 3.2.0, macOS. Where behaviour depends on a
@@ -719,8 +758,10 @@ whether the surface *reads* right. This pass asked what happens when the inputs 
 the fixtures build — every container format, and twenty-four spellings of the same five instants.
 
 The seven verbs, the guards and the arcs came through it intact. What did not is recorded below.
+(Seven is the count as it stood on 2026-07-27. `add_table` and `drop_table` have since been renamed
+`create` and `drop`, and `update` was added, making eight — see `LEVEL0.md`.)
 
-### 8.1 A temporal from a flat file is never converted, and four spellings report the earliest
+### 8.1 A temporal from a flat file is never converted, and six spellings report the earliest
 instant as the maximum
 
 **The headline measurement of this pass.** `binding.py` converts temporals to INTEGER ticks exactly
@@ -743,21 +784,41 @@ put first and last (fixture and method: the run's own build script; the year spa
 | **`month_name`** (`Mar 01, 2025`), **`month_long`** | **no — fully inverted** | **the earliest instant** |
 | **`rfc2822`** | **no** | **the earliest instant** |
 
-> **Correction (2026-08-04) — the "four" in this section's heading counts table
-> *rows*, not spellings.** The rows above marked "the earliest instant" name
-> **six** spellings, not four: `eu_dmy_dot`, `eu_dmy_slash`, `dmy_dash`,
-> `month_name`, `month_long` and `rfc2822`. Seven spellings order wrongly, which
-> is the number the resolution note below uses and the number that is right.
+> **Correction (2026-08-04) — the "four" in this section's heading counted table
+> *rows*, not spellings, and the heading has been changed to six.** The rows above
+> marked "the earliest instant" name **six** spellings, not four: `eu_dmy_dot`,
+> `eu_dmy_slash`, `dmy_dash`, `month_name`, `month_long` and `rfc2822`. Seven
+> spellings order wrongly. The heading was corrected in place rather than left
+> standing with a note beneath it: the append-only rule protects a *measurement*,
+> and a heading is a label — it is what a search result and a generated outline
+> show, so a wrong one travels further than its own correction. The measurement
+> table above is untouched.
+>
+> **Two further reconciliations of this section against itself (2026-08-04).**
+>
+> 1. **The table enumerates twenty-one spellings, and the sentence above it says
+>    twenty-four.** Counted: 5 ISO forms, 5 offset/clock/period forms, 4 numeric,
+>    then `us_mdy`, `eu_dmy_dot`, `eu_dmy_slash`, `dmy_dash`, `month_name`,
+>    `month_long`, `rfc2822`. Three spellings were measured and not tabulated, or
+>    the count is wrong; the fixture that would settle it — "the run's own build
+>    script" — is not in the repository, so **neither number has been changed**.
+>    Read the table as the record and the twenty-four as unverified.
+> 2. **The resolution note below said "the seven correct spellings still
+>    correct"; it now says fourteen.** Seven is the count of spellings that order
+>    *wrongly*, which the same paragraph uses again four lines later. The table's
+>    "yes" rows name fourteen correct spellings. A transposition, corrected in
+>    place for the same reason as the heading.
 >
 > The class is what generalises; the exact counts are fixture-dependent.
-> Re-measured independently against a differently-chosen twenty-four
-> (`tmp/doc-workspace/verify_dates.py`, SQLite 3.x, five instants
-> 2023-11-30 … 2025-07-04): **nine ordered wrongly and six returned the earliest
-> instant from `max()`** — the six being every day-first and month-name form.
-> `rfc2822` ordered wrongly there but did not return the earliest, because its
-> weekday prefix (`Fri, …`) dominates the text comparison, so which bucket it
-> lands in depends on which weekdays the instants fall on. Do not quote a count
-> from this section as a property of the format space; quote the classes.
+> Re-measured independently against a differently-chosen twenty-four spellings of
+> five instants — 2023-11-30, 2024-03-01, 2024-12-25, 2025-03-01 and 2025-07-04 —
+> ordered by `ORDER BY` and reduced by `max()` in SQLite 3.x: **nine ordered
+> wrongly and six returned the earliest instant from `max()`** — the six being
+> every day-first and month-name form. `rfc2822` ordered wrongly there but did not
+> return the earliest, because its weekday prefix (`Fri, …`) dominates the text
+> comparison, so which bucket it lands in depends on which weekdays the instants
+> fall on. Do not quote a count from this section as a property of the format
+> space; quote the classes.
 
 Two further measurements on the same table, both silent:
 
@@ -777,7 +838,7 @@ no counterpart for this, which is the larger silent-wrong-answer class of the tw
 > pandas' own `to_datetime(format="ISO8601")`, which rejected every ambiguous spelling tried
 > against it; two holes were closed on top of it (it accepts basic-format `20240301`, which would
 > turn order numbers into dates, and maps `''` to `NaT`). Re-measured against the same fixture: the
-> seven correct spellings still correct, the cross-offset join **5 where it was 0**, the range
+> fourteen correct spellings still correct, the cross-offset join **5 where it was 0**, the range
 > filter **2 where it was 5**, and all seven ambiguous spellings now named in a warning. Full
 > contract in `LEVEL0.md`.
 >
@@ -1540,8 +1601,20 @@ reading" argument to bound it with.
 > whole by PyYAML, which has no chunk to ask for — so this cliff stands exactly as written. A very
 > large YAML this server writes is one it may not read back — **recorded here as a
 > documented cliff rather than papered over with a limit**. The 27 minutes is unchanged and is
-> PyYAML serialising, not memory: YAML remains the slowest writer by an order of magnitude, and
+> PyYAML serialising, not memory: YAML remains by a wide margin the slowest writer here, and
 > `.jsonl` is the format to ask for when the result is large and the shape is the same.
+>
+> > **Correction (2026-08-04) — "by an order of magnitude" was wrong, and the number
+> > above is the right one.** The sentence closing this block read *"YAML remains the
+> > slowest writer by an order of magnitude"*, in the same blockquote as the clean
+> > re-run that measures it at **237.6 s against `.csv`'s 55.5 s — 4.3×**. The two
+> > cannot both hold, and the clean measurement is the one to quote. The phrase was a
+> > survival from the pre-re-run figure (1,619 s), which this block itself says must
+> > not be quoted. It has been replaced in place, because it was a claim about a
+> > measurement recorded four sentences above it rather than a measurement of its own.
+> > The wrong half had already escaped into `query`'s tool schema in `server.py`
+> > ([#77](https://github.com/ChrisGVE/localdata-mcp/issues/77)); the shipped skill
+> > states 4.3×.
 
 #### Spreadsheets are capped, and measured at the cap
 

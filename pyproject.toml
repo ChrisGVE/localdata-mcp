@@ -15,8 +15,14 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  # 3.13 is verified by installing the built wheel and importing it, not by a CI
+  # matrix — both workflows pin UV_PYTHON to 3.12, so `requires-python` above is
+  # honoured by luck rather than by a gate.
+  "Programming Language :: Python :: 3.13",
   "Topic :: Database",
   "Topic :: Software Development :: Libraries :: Python Modules",
+  # `py.typed` ships in the wheel, so the marker belongs here too.
+  "Typing :: Typed",
 ]
 keywords = [
   "mcp", "model-context-protocol", "mcp-server", "database", "sql",
