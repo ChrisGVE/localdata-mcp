@@ -1359,6 +1359,13 @@ fix and is also the seam every new format arrives through.
 > write-only because a Markdown table has no types and no quoting, so no reader could return what
 > went in.
 >
+> **Amended 2026-08-05.** That sentence claimed a reason for each of five and gave four. `.xlsm`
+> was the one left out, and it is the one whose asymmetry is *not* a library limitation: it reads
+> through openpyxl (`loader.py:833`), which writes `.xlsm` as well. It is simply absent from
+> `export.WRITERS`. Amended in place rather than left standing, because the sentence's shape — a
+> cardinal asserted over a set, then a list shorter than the cardinal — is the class this document
+> keeps finding in itself.
+>
 > What this section got right and is worth keeping: **the suffix is the whole of the format
 > decision**, in both directions, so a new format is one registry entry and nothing upstream of it
 > changes.
@@ -2160,9 +2167,11 @@ was needed — Docker Desktop returned the space on its own. Worth stating becau
 `Docker.raw` disk image is **sparse**, showing an apparent 1.86 TB against its real occupancy,
 and reading the apparent figure is how a routine cache gets mistaken for a runaway one.
 
-Two images are deliberately **not** removed: `alpine:3`, which the CA and KDC build on, is a
-base half the machine shares and re-pulls in a second. The script says so per image rather than
-skipping silently, so its count always matches the lines beneath it.
+One image is deliberately **not** removed: `alpine:3`, the base the CA and the KDC both build
+on, which half the machine shares and re-pulls in a second. The skip is a glob on `alpine:*`
+(`endpoint-batch.sh:151`), so `postgres:16-alpine` does not match it and is removed like
+everything else. The script says so per image rather than skipping silently, so its count
+always matches the lines beneath it.
 
 ## §14 — The MCP 2026-07-28 specification, measured against this server (2026-07-29)
 

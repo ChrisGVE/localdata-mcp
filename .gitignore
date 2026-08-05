@@ -57,11 +57,10 @@ ENV/
 env.bak/
 venv.bak/
 
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
+# IDEs and editors
+.idea
+.vscode
+*.sw?
 
 # OS
 .DS_Store
@@ -82,24 +81,20 @@ malicious/
 
 # Logs
 *.log
-
 logs
+dev-debug.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-dev-debug.log
-# Dependency directories
+
+# Node and Visual Studio leftovers from the template this file started as. There
+# is no JavaScript in this repository and no solution file; these are kept so a
+# stray artifact stays out of the tree, not because the project has either.
 node_modules/
-# Environment variables
-# Editor directories and files
-.idea
-.vscode
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
-# OS specific
 
 # Development directories
 .cursor/

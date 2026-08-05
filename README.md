@@ -196,6 +196,12 @@ plugin: sqlalchemy.dialects:<name>` naming a SQLAlchemy dialect entry point —
 which for CockroachDB, openGauss and YDB is a composite name (`yql.ydb`) that is
 not importable as a module path at all.
 
+Both shapes above are what the *URL* route returns. A datasource attached as a
+**file** — the common DuckDB route — is wrapped by the attach path instead, and
+reads `Could not attach <path>: Can't load plugin: sqlalchemy.dialects:duckdb`:
+`slots.py:482` renders the exception's message, so the class name is not part of
+it.
+
 Which of those two exceptions you get is mostly whether SQLAlchemy ships the
 dialect itself, but not entirely: CrateDB and Exasol are third-party dialects
 that would raise `NoSuchModuleError` too, and give `ModuleNotFoundError` only

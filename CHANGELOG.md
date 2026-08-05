@@ -65,8 +65,11 @@ read-only from the moment it opens, and composition has its own verbs. If your
 **Configuration is TOML, and thirty environment variables became one.** 2.x read
 YAML from `~/.localdata.yaml` and elsewhere, and accepted roughly thirty
 `LOCALDATA_*` environment overrides. 3.0.0 reads `config.toml` through a
-first-found-wins cascade, and the only environment variable is
-`LOCALDATA_CONFIG_PATH`, which *locates* the file and never carries a setting.
+first-found-wins cascade, and the only environment variable that carries any
+part of the configuration is `LOCALDATA_CONFIG_PATH`, which *locates* the file
+and never holds a setting. The cascade also consults `XDG_CONFIG_HOME` and, on
+Windows, `APPDATA`, but those belong to the operating system and name a
+directory rather than a setting.
 There are three sections and five settings in total — `workspace.slots`,
 `workspace.memory_budget_mb`, `paths.roots`, `paths.path_limited` and
 `network.enabled`. **An unknown section or key is refused rather than ignored**,
