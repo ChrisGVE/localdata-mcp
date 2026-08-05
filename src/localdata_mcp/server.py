@@ -628,12 +628,14 @@ def query(
             write is refused by name rather than written as something else.
             For a very large result the suffix is worth choosing rather than
             defaulting to. .csv and .jsonl write row by row and never hold the
-            result; .parquet does hold it, but is the fastest and most compact
-            of all of them. .yaml is an order of magnitude slower than anything
-            else here, and .md holds the whole table because a Markdown column
-            is only as wide as its widest value. A spreadsheet (.xlsx, .ods)
-            refuses more than 65,535 rows outright, and of those two .ods takes
-            around thirteen times as long as .xlsx for the same rows — ask for
+            result; .parquet does hold it, and is among the fastest and the
+            smallest — though .feather writes faster and .orc is smaller on some
+            shapes, neither by more than about 1.5x. .yaml is slow (4.3x .csv on
+            a million-row result) though it holds nothing, and .md holds the
+            whole table because a Markdown column is only as wide as its widest
+            value. A spreadsheet (.xlsx, .ods) refuses more than 65,535 rows
+            outright, and of those two .ods is about 6x slower than .xlsx at
+            20,000 rows and ~13x at 50,000, the gap widening with rows — ask for
             it when OpenDocument is what was wanted, not by default.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the path is theirs, so the refusal you get

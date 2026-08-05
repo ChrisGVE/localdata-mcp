@@ -165,12 +165,15 @@ is, and it does not look at either file.
 
 Nothing walks a release for you, so this is the whole of it:
 
-1. Bring the version numbers into step — five values across four files, listed in
-   `CONTRIBUTING.md` under *Versioning*.
+1. Bring the version numbers into step — six values across five files, listed in
+   `CONTRIBUTING.md` under *Versioning* — then re-run `uv lock`.
 2. Run the tests locally, including the endpoint batches, since nothing gates
    this branch.
-3. Push a `vX.Y.Z` tag. That, and only that, fires `publish-to-pypi.yml`'s PyPI
-   job and `docker-publish.yml` — **read the gaps below before doing it.** Then
+3. Push a `vX.Y.Z` tag. That is the only *push* that fires `publish-to-pypi.yml`'s
+   PyPI job or `docker-publish.yml`, but it is not the only path to either: both
+   declare `workflow_dispatch`, `docker-publish.yml`'s job carries no `if:` at
+   all, and a dispatch may name a tag — **read the gaps below before doing it.**
+   Then
    wait: the `pypi` environment holds the upload for fifteen minutes, so a job
    that has not started is the timer doing its job.
 4. Create the GitHub release from the tag, for the notes; the upload has already

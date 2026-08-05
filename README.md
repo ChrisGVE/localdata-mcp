@@ -150,7 +150,7 @@ what every datasource becomes.
 | --- | --- |
 | `attach(database, nickname?, writable?, delimiter?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. A workbook or `.numbers` document becomes a database holding all its sheets. |
 | `detach(nickname)` | Close it and free the slot. Deletes the temp file if the slot had been spilled to disk (see [Memory](#memory)). |
-| `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format. |
+| `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format and answers `rows_written` and the column names instead of the rows. |
 | `info(nickname?, table?)` | Three levels of detail: bare → the session (see above); nickname → its tables; nickname and table → columns, row count and indexes. |
 | `create(nickname, type, table?, source?, columns?, delimiter?)` | `type="table"` lands a datasource *inside* an open database; `type="index"` indexes columns of a table already there. |
 | `update(nickname, type, name, to)` | Rename a table, keeping its rows, types and indexes. For when the file chose the name — a workbook's `Sheet1`, which arrives as `sheet1`. |
@@ -478,12 +478,15 @@ ask for and no line that is a row — so their peak still tracks the file.
 
 ## Configuration
 
-Optional. Discovery is a cascade — **first found wins**, not a merge:
+Optional. **`$LOCALDATA_CONFIG_PATH` is not the head of the search — it replaces it.** Set it and
+the three locations below are not consulted at all, and a value naming something that is not a
+file is refused rather than skipped, on the first tool call. Unset it to use the search.
 
-1. `$LOCALDATA_CONFIG_PATH`
-2. `$XDG_CONFIG_HOME/localdata/config.toml` (defaults to `~/.config`)
-3. `./localdata.toml`
-4. `~/Library/Application Support/localdata/config.toml` (macOS) or `%APPDATA%\localdata\config.toml` (Windows)
+With it unset, discovery is a cascade — **first found wins**, not a merge:
+
+1. `$XDG_CONFIG_HOME/localdata/config.toml` (defaults to `~/.config`)
+2. `./localdata.toml`
+3. `~/Library/Application Support/localdata/config.toml` (macOS) or `%APPDATA%\localdata\config.toml` (Windows)
 
 ```toml
 [workspace]

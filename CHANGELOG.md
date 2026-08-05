@@ -123,16 +123,18 @@ rebuild it.
   file, an empty password, and an ODBC data-source name in place of a host and
   port — ten routes in all, counting the plain URL that all sixteen endpoints
   still use, which carries a password on eleven of them and a bare username on
-  the other five (CockroachDB, YugabyteDB, Trino, CrateDB, YDB). Those five are
-  not the `trust` case: they have **no authentication to configure**, so a
-  passwordless URL is the only URL they have, whereas `trust` is a server that
-  *has* authentication and is told not to use it — which is why `trust` is
-  counted among the nine added modes and belongs to PostgreSQL alone. **These are not server settings and there is no parameter
-  for them**: `attach` takes a datasource string, and each mode is expressed in
-  the URL or in the driver's own environment, which this server passes through
-  untouched. What 3.0.0 adds is the evidence that they work —
-  `tests/endpoints.py` runs the whole endpoint suite as a second axis over them.
-  `docs/CONSTRAINTS.md` §25 has the measurements, and
+  the other five (CockroachDB, YugabyteDB, Trino, CrateDB, YDB). Two of those
+  five have no authentication to ask for at all — CockroachDB runs `--insecure`
+  and YDB's image configures none — while the other three are databases with
+  authentication available and none configured, which is the same shape as
+  `trust`. `trust` is counted among the nine added modes because it is a named
+  PostgreSQL setting this suite sets deliberately, not because those three
+  differ in kind from it. **None of the ten is a setting of this server, and
+  there is no parameter for any of them**: `attach` takes a datasource string,
+  and each mode is expressed in the URL or in the driver's own environment,
+  which this server passes through untouched. What 3.0.0 adds is the evidence
+  that they work — `tests/endpoints.py` runs the whole endpoint suite as a
+  second axis over them. `docs/CONSTRAINTS.md` §25 has the measurements, and
   `docs/architecture/LEVEL0.md` records which endpoint carries which mode.
 - **`create(nickname, type="table", source=…)`** reads a second datasource in
   beside the tables already in a slot, which is what makes a cross-file lookup

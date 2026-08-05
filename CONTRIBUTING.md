@@ -362,12 +362,15 @@ We follow semantic versioning:
 - **Minor**: New features, backward compatible
 - **Patch**: Bug fixes, backward compatible
 
-A version lives in **five** places across four files, and they must move
-together:
+A version lives in **six** hand-edited places across five files, and they must
+move together — then `uv lock` has to be re-run, because `uv.lock` carries the
+project's own version too and a bump without a relock fails `uv lock --check`
+and every `uv sync --frozen`:
 
 | File | Field | Today |
 |---|---|---|
 | `pyproject.toml` | `project.version` | `3.0.0.dev0` |
+| `src/localdata_mcp/__init__.py` | `__version__` — **nothing derives this from `pyproject.toml`**; there is no `dynamic` key, so the two agree only because someone kept them in step, and no test checks that they do | `3.0.0.dev0` |
 | `.claude-plugin/plugin.json` | `version` | `3.0.0-dev` |
 | `server.json` | `version` — the registry entry's own | `2.1.0` |
 | `server.json` | `packages[0].version` — **the PyPI release a client is told to fetch**, which is not the same thing and must name a release that exists | `2.1.0`, which PyPI 404s |

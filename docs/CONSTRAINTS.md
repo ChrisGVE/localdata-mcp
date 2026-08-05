@@ -1154,12 +1154,13 @@ record: **9.04 → 0.17 MB** at 50,000 rows, **35.80 → 0.17 MB** at 200,000, *
 **YAML moved from the materialising group to the streaming one** by being dumped a chunk at a time —
 a top-level sequence dumped in pieces concatenates into the same sequence, byte for byte. It cost
 540 MB at 200,000 rows before and 2.46 MB after. **It remains slow**: 90.9 s against `.csv`'s 2.4 s
-on the same result, which is PyYAML serialising rather than anything about the peak. *The slowest*
-is more than this figure carries, and the population was never driven until round 7 of the
-documentation loop: on a wide result (50,000 × 40) `.md` takes 20.3 s against `.yaml`'s 15.1 s, and
-under the spreadsheet cap at 20,000 rows both `.ods` (26.5 s) and `.xlsx` (4.6 s) are slower than
-`.yaml` (2.0 s). Slowest-of depends on the shape of the result, not only its size. Confirmed at the full 1M × 11 corpus, where it writes 1.39 GB in **237.6 s adding no
-measurable RSS over its baseline** — the size at which the old writer held gigabytes (§10.7).
+on the same result, which is PyYAML serialising rather than anything about the peak. Confirmed at
+the full 1M × 11 corpus, where it writes 1.39 GB in **237.6 s adding no measurable RSS over its
+baseline** — the size at which the old writer held gigabytes (§10.7). **It is not, however, the
+slowest.** That superlative was never driven against the other writers: on a wide result
+(50,000 × 40) `.md` takes 20.3 s against `.yaml`'s 15.1 s, and under the spreadsheet cap at
+20,000 rows both `.ods` (26.5 s) and `.xlsx` (4.6 s) are slower than `.yaml` (2.0 s). Slowest-of
+depends on the shape of the result, not only its size.
 
 So the group boundary now falls at **nine streaming suffixes and six materialising ones**
 (`.md` `.parquet` `.feather` `.orc` `.xlsx` `.ods`), and each of the six is deliberate.
@@ -1168,8 +1169,9 @@ streamed, at 0.07 MB flat, and were removed later the same day for a reason unre
 peak — see §10.7.)
 
 * the **columnar three** must have every value before they write any of it, because a columnar file
-  stores each column contiguously. They are also the fastest and the most compact writers here, and
-  the right destination for a large result;
+  stores each column contiguously. They are also the fastest writers here, and `.parquet` and
+  `.orc` the most compact — `.feather` is not, and is larger than plain `.csv` on most corpora
+  driven. A columnar file is still the right destination for a large result;
 * the **two workbooks** are capped at 65,535 rows (§10.7), so their peak is bounded by the cap;
 * **`.md`** builds a list of lists and one string, because a Markdown table's column widths are not
   known until the last row has been seen. It is the most expensive per row of anything measured —
@@ -1329,7 +1331,7 @@ registry keyed on suffix, refusing an unknown one by name the way `read_file` al
 fix and is also the seam every new format arrives through.
 
 > **Resolved 2026-07-27**, and the fix is the registry this section asked for. Re-measured against
-> the code on `new-v3` at `af95ce79`, through the tool functions rather than the writers directly:
+> the code on `new-v3` at `e3ae21ce`, through the tool functions rather than the writers directly:
 >
 > | Asked for | Reported | Written |
 > |---|---|---|
@@ -1391,11 +1393,11 @@ fix and is also the seam every new format arrives through.
 > returned the right rows. A round trip through a reader that auto-detects cannot verify format
 > identity — it verifies only that *something* readable was written. The check that does work is
 > the archive membership (`mimetype` and `META-INF/manifest.xml` for ODS, `[Content_Types].xml` for
-> XLSX), and that is what the two tests added at `813920f5` assert.
+> XLSX), and that is what the two tests added at `f5668f4e` assert.
 >
 > **Real ODS costs about thirteen times what the workbook did**, which is the measure of how much
 > was being skipped: 50,000 rows extracted in **156.2 s** against **11.8 s**, and read back in
-> **66.3 s** against **13.4 s**. Any ODS timing recorded before `813920f5` is a timing of XLSX.
+> **66.3 s** against **13.4 s**. Any ODS timing recorded before `f5668f4e` is a timing of XLSX.
 >
 > **Corrected again 2026-07-28: `.html` and `.htm` were removed from both registries**, so the
 > counts above now read **18 suffixes across 9 readers** and **15 across 8 writers**, and the
@@ -1569,7 +1571,7 @@ budget that spills, and it was described as one.
 **§10.2's unexplained 149.6 s no longer needs a code explanation.** Attach here spans 101.5–124.4 s
 and **every repetition paged** — the first pushed **626,278 pages (~2.4 GB) to swap** during the
 attach alone. A paging attach lands squarely in the 149.6 s range. The likeliest reading is now a
-measured mechanism rather than a guess, and **the `d4abba1b` A/B is probably unnecessary.**
+measured mechanism rather than a guess, and **the `80470699` A/B is probably unnecessary.**
 
 #### The format sweep
 
@@ -1620,8 +1622,8 @@ reading" argument to bound it with.
 > **The 1,619 s → 238 s is not clean and must not be quoted as a 6.8x code speedup** — the earlier
 > figure was drawn from a sweep in which steps paged (§10.7's opening), so the gap mixes the writer
 > change with the conditions it was measured under. What can be said is that both the peak and the
-> wall clock moved in the same direction and that YAML is still, by a wide margin, the slowest
-> writer here: 237.6 s against `.csv`'s 55.5 s on the identical result.
+> wall clock moved in the same direction and that YAML is still slow: 237.6 s against `.csv`'s
+> 55.5 s on the identical result.
 >
 > **A cap was considered and rejected.** The spreadsheet argument does not transfer: 65,535
 > is the older worksheet's own limit and a spreadsheet is a thing a person opens, whereas YAML has
@@ -1635,8 +1637,8 @@ reading" argument to bound it with.
 > whole by PyYAML, which has no chunk to ask for — so this cliff stands exactly as written. A very
 > large YAML this server writes is one it may not read back — **recorded here as a
 > documented cliff rather than papered over with a limit**. The 27 minutes is unchanged and is
-> PyYAML serialising, not memory: YAML remains by a wide margin the slowest writer here, and
-> `.jsonl` is the format to ask for when the result is large and the shape is the same.
+> PyYAML serialising, not memory: YAML remains slow on a large narrow result, and `.jsonl` is
+> the format to ask for when the result is large and the shape is the same.
 >
 > > **Correction (2026-08-04) — "by an order of magnitude" was wrong, and the number
 > > above is the right one.** The sentence closing this block read *"YAML remains the
@@ -1649,6 +1651,18 @@ reading" argument to bound it with.
 > > The wrong half had already escaped into `query`'s tool schema in `server.py`
 > > ([#77](https://github.com/ChrisGVE/localdata-mcp/issues/77)); the shipped skill
 > > states 4.3×.
+> >
+> > **Correction (2026-08-05) — "by a wide margin, the slowest writer here" was the same
+> > claim wearing a different phrase, and it was wrong for the same reason.** The 2026-08-04
+> > correction above replaced *"by an order of magnitude"* and left the two sentences that
+> > said *"by a wide margin, the slowest writer here"* standing, in this same blockquote.
+> > Both have now been replaced in place. YAML is not the slowest writer at all: the §10.7
+> > sweep sixty lines above puts `.md` at **226.0 s** on the wide corpus where the clean
+> > `.yaml` re-run is 237.6 s — 1.05×, which is not a wide margin — and on a 50,000 × 40
+> > result `.md` (20.3 s) is slower than `.yaml` (15.1 s) outright. **Narrowing a superlative
+> > without driving the population it still quantifies over is how the same wrong claim
+> > survived two corrections**; what YAML is, is slow on a large narrow result, which is what
+> > the numbers here measure.
 
 #### Spreadsheets are capped, and measured at the cap
 
@@ -1668,8 +1682,21 @@ refusal costs 0.88 s and no memory at all — it is settled before the frame is 
 million rows does not pay what writing them would have, and it leaves no partial file.
 
 **What the cap does not fix is `.ods` being slow.** 551 s for 65,535 rows is **13.5x `.xlsx`'s
-40.7 s** on identical input — the same ratio measured at 50,000 rows, so it is a property of odfpy
-rather than of scale. Nine minutes for a file a spreadsheet opens in seconds is the honest cost of
+40.7 s** on identical input, and 50,000 rows gives the same ratio (156.2 s against 11.8 s, 13.2x).
+
+> **Correction (2026-08-05) — that ratio is a property of scale, not of odfpy, and this
+> paragraph said the opposite.** It read *"the same ratio measured at 50,000 rows, so it is a
+> property of odfpy rather than of scale"* — an inference from two points that sit next to each
+> other at the top of the range. Driven across the range, eleven columns, both writers in one
+> process at each point: **6.35x at 10,000 rows** (12.94 s against 2.04 s), **6.45x at 20,000**
+> (28.97 s against 4.49 s), **12.71x at 50,000** (96.71 s against 7.61 s). The ratio roughly
+> doubles between 20,000 and 50,000 because `.ods` is superlinear in rows while `.xlsx` is
+> roughly linear. The anchor measurements above are right; the generalisation drawn from them
+> was not, and it is that generalisation that licensed an unconditional *"~13x"* in the shipped
+> skill and in `query`'s tool schema, where a reader at 20,000 rows would have been wrong by
+> more than a factor of two. Both now name the row count.
+
+Nine minutes for a file a spreadsheet opens in seconds is the honest cost of
 the format, and it is only visible now: before §10.1's defect was fixed, `.ods` was writing XLSX,
 so every ODS timing this document ever carried was an XLSX timing. Uncapped, `.ods` crossed 16 GB
 about six minutes into the export without producing a file at all.
@@ -1710,7 +1737,7 @@ came from.
 
 **HTML stops round-tripping at roughly 417,000 rows of 11 columns.** The export succeeds at 1M rows
 (24.6 s) and the read back is refused: at about `2 x columns + 2` document nodes per row, 1M rows is
-~24M nodes against libxml2's 10,000,000 ceiling. That is the improved message from `af95ce79`
+~24M nodes against libxml2's 10,000,000 ceiling. That is the improved message from `e3ae21ce`
 working — the same condition used to report only `"unknown error"`.
 
 > **Resolved 2026-07-28 by removing the format.** This measurement is what settled it: HTML was the
@@ -2095,7 +2122,7 @@ the opposite of the truth.
 > a dialect name identifies the engine on the other end
 
 **It does not.** A dialect names a *wire protocol and a driver*, and several engines answer on each.
-This is the production-code twin of the harness defect fixed at `d7cb14d8`, where the probe cache
+This is the production-code twin of the harness defect fixed at `b6ee282c`, where the probe cache
 and the pytest ids made the same wrong assumption and would have run one container's suite under
 another container's name.
 
@@ -2644,9 +2671,10 @@ for the *other* reason a dialect earns an entry: three engines borrow it.
 ## §18 — MonetDB, a column store that needed nothing but cost a version ceiling (2026-07-29)
 
 Tenth endpoint dialect, and the seventh entry from the backend catalogue (task 22, worklist item 7).
-MonetDB is a **column store** — the first storage model in this harness that is neither a row store
-nor, like Trino, an absence of storage — and the question it was taken to answer is whether the seam's
-generic answers are about SQL or about how a database keeps its bytes.
+MonetDB is a **column store**, and not the first here in any sense: DuckDB (a file) and ClickHouse
+(a URL, whose tables are created as `MergeTree`) both came earlier, and Databend (§31) is a
+cloud-native columnar warehouse. The question it was taken to answer is whether the seam's generic
+answers are about SQL or about how a database keeps its bytes.
 
 They are about SQL. **All 19 endpoint tests pass unchanged, `BACKENDS` gains no entry, and no test
 assertion needed generalising.** Measured against `monetdb/monetdb:latest`, server version
@@ -2786,8 +2814,9 @@ user tables** — 0 on a fresh database — so nothing has to filter system obje
 A column store's interesting properties are all about scale: MonetDB's advantage is vectorised
 execution over columns, and every table here is a handful of rows written one statement at a time.
 Nothing measured says how it behaves under the sizes §9 and §10 put through DuckDB and SQLite, and it
-is the one endpoint where that comparison would mean something — it and DuckDB are the two columnar
-engines in this project, one remote and one local. Unmeasured, and still worth measuring: the load
+is one of the endpoints where that comparison would mean something — MonetDB, ClickHouse and
+Databend keep their bytes by column and are reached over a connection, DuckDB does so in a local
+file. Unmeasured, and still worth measuring: the load
 half of task 21 was taken up on 2026-07-31 (§28), but nothing in it was measured against an
 endpoint database, so the comparison this paragraph asks for is exactly as open as it was.
 
@@ -4135,10 +4164,9 @@ database.
 
 Every endpoint in this harness was reached exactly one way until now: a plain URL, in plaintext,
 over TCP to the loopback interface — carrying a username and a password on eleven of the sixteen,
-and a bare username on the five that have no authentication to configure (see the correction at the
-end of this section). That is one of the ways a caller reaches a
-database, and the others were code paths the server had never run — which is what task 23 was about
-and what this section measures.
+and a bare username on the five reached with no password at all (§25.1 below names them). That is
+one of the ways a caller reaches a database, and the others were code paths the server had never
+run — which is what task 23 was about and what this section measures.
 
 The axis is on the endpoint descriptor rather than in the tests: an `AuthMode` hangs off the
 `Endpoint` it varies, `TARGETS` is the product, and every endpoint test runs against every
@@ -4164,8 +4192,20 @@ identified by its compose service and two rows sharing one collide in the probe 
 | `odbc-dsn` | SQL Server | in the URL; the *address* is in a file | a URL with no host and no port |
 
 Five endpoints were already reached with no password — CockroachDB, YugabyteDB, Trino, CrateDB and
-YDB — and none of them is the same case: those databases have **no authentication to configure**, so
-a passwordless URL is the only URL they have. `trust` is a server that could ask and does not.
+YDB. **Two of them have no authentication to ask for**: CockroachDB runs `--insecure`, and YDB's
+image configures none. The other three are servers with authentication available and none
+configured — Trino *"with no authenticator configured"*, CrateDB *"a fresh node has no users
+configured"*, and YugabyteDB, whose YSQL layer is PostgreSQL 15 and whose own docstring in
+`tests/endpoints.py:502` says a fresh cluster **authenticates by trust**.
+
+> **Correction (2026-08-05) — "none of them is the same case" was wrong about three of the five.**
+> This paragraph said all five *"have no authentication to configure"*, and that `trust` is the
+> distinct case of *"a server that could ask and does not"*. Three of the five are exactly that
+> case: they could ask and do not. The distinction that survives is narrower and is the one now
+> stated above — **whether the server has an authentication mechanism at all**, not whether a
+> password appears in the URL. `trust` remains counted among the nine added modes because it is a
+> named PostgreSQL setting this harness sets deliberately, not because the other three differ in
+> kind from it.
 
 ### 25.2 Three failures that named the wrong cause
 
@@ -4821,13 +4861,17 @@ written one way are each uniform while the column is not, so a per-chunk boolean
 
 **What made this invisible to 1,203 tests**: the `INSTANTS` fixtures that drive the mixed-column
 work write their instants without the trailing `Z`, so they are non-canonical and take the
-rewriting branch. Canonical `Z` values do reach the tests, from three places, not two:
-`HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP`, neither drawn from `INSTANTS`; and
-`spell(fmt)` (`test_temporal.py:58-60`), which reformats `INSTANTS` *itself* into the canonical
-spelling for three tests. All of them test text ordering within one spelling, not the
-mixed-canonicality question. For *that*, the already-canonical branch — the one a file written
-the way the documentation recommends takes — had **no fixture at all**. It was found by driving
-the finished server over stdio against a corpus written the documented way, not by the suite.
+rewriting branch. Canonical `Z` values do reach the tests, from **at least five places**:
+`HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP`, neither drawn from `INSTANTS`; `spell(fmt)`
+(`test_temporal.py:58-60`), which reformats `INSTANTS` *itself* into the canonical spelling for
+three tests; and two parametrized literal lists, at `test_temporal.py:366-367` and `:388-390`.
+Most of them test text ordering within one spelling — though not all, since
+`test_an_iso_column_is_reported_as_the_standard_it_is_in` asserts the reported standard rather
+than an ordering. For the mixed-canonicality question the already-canonical branch — the one a
+file written the way the documentation recommends takes — **did have a fixture, and that is
+worse than having none: it asserted the defect as the specification.** It was still found by
+driving the finished server over stdio against a corpus written the documented way, not by the
+suite.
 
 > **Amended 2026-08-05, and corrected again the same day.** This paragraph first said *"every
 > temporal fixture … writes its instants without the trailing `Z`"*, which is false. The
@@ -4838,6 +4882,20 @@ the finished server over stdio against a corpus written the documented way, not 
 > survive was the count, twice. Each version was written from the fixtures in front of the writer
 > rather than from the file's whole fixture set — the same failure this section is a post-mortem
 > of, committed in the post-mortem, and then committed again in the correction to it.
+>
+> **Corrected a third time, 2026-08-05, and the substance did not survive this one.** The count
+> was wrong again — **three** was as wrong as two, since an exhaustive scan for canonical-`Z`
+> literals finds at least five places, the two missed ones being parametrized lists added by the
+> fix itself (`1c9302f9`), so no "at the time" defence is available. More seriously, *"had no
+> fixture at all"* was false. At `16b660c9`, the day before the fix,
+> `test_a_column_already_canonical_in_two_spellings_is_left_alone` drove `canonical_mixed.csv` —
+> a column canonical at every value and in two spellings, which is exactly the case this section
+> is about — at three chunk sizes, and **asserted the two-spelling result to be correct**. The
+> fix deleted that test and replaced it with
+> `test_a_column_canonical_in_two_spellings_is_settled_on_one`. So the answer to *"what made this
+> invisible to 1,203 tests"* is not an absent fixture but **a present test pinning the wrong
+> answer**, which is a materially different post-mortem finding: a silent gap is an oversight,
+> whereas a test asserting the defect is a specification that had to be re-decided.
 
 ### 28.5 The type verdict is rebuilt from raw text, and was checked against pandas
 
