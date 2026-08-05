@@ -64,8 +64,8 @@ uv tool install 'localdata-mcp[all]'      # every format and every database driv
 ```
 
 The base install declares no format libraries and no database drivers. **Eight of
-the eighteen readable formats are guaranteed by it**; the other ten are declared
-behind six extras (`parquet` covering all three columnar suffixes, `excel`,
+the eighteen readable formats are guaranteed by it**; the remaining ten are
+declared behind six extras (`parquet` covering all three columnar suffixes, `excel`,
 `ods`, `xls`, `numbers`, `yaml`), and each database is one more (`postgres`,
 `duckdb`, `oracle`, …). One extra is for the write side only: `markdown`
 installs the table formatter `.md` output needs, and there is no `.md` reader.
@@ -75,6 +75,7 @@ requires `PyYAML` unconditionally and `.yaml`/`.yml` therefore work without thei
 extra. That is a fact about today's dependency graph and not a promise this
 project makes: `yaml` stays the declared extra, and code that needs YAML should
 install it rather than rely on a transitive arriving.
+
 A format is **known whether or not its library is installed**, so a missing one
 is an instruction rather than a mystery:
 
@@ -99,8 +100,11 @@ Add the server to your MCP client configuration. From a clone, name the clone �
 }
 ```
 
-After `uv tool install` puts the entry point on `PATH`, `"command":
-"localdata-mcp"` with no arguments is equivalent.
+After `uv tool install 'localdata-mcp[all]'` puts the entry point on `PATH`,
+`"command": "localdata-mcp"` with no arguments is equivalent. It has to be the
+`[all]` form: the bare `uv tool install localdata-mcp` carries no extras, so that
+configuration would reach ten of the eighteen formats and one of the eighteen
+backends — which is what `--all-extras` above exists to avoid.
 
 Then point it at a file and ask:
 
@@ -188,11 +192,17 @@ you which.** A missing *format* library produces the instruction quoted above. A
 missing *driver* produces one of two raw exceptions, neither naming the extra:
 eight backends give `ModuleNotFoundError` naming the Python module
 (`No module named 'psycopg'`), and nine give `NoSuchModuleError. Can't load
-plugin: sqlalchemy.dialects:<name>` naming a SQLAlchemy dialect entry point,
-which for openGauss and CockroachDB is a composite name that is not importable
-anywhere. Which of the two you get depends on whether the dialect is built into
-SQLAlchemy or shipped by the driver, so the map is here. Two rows point at
-another backend's extra:
+plugin: sqlalchemy.dialects:<name>` naming a SQLAlchemy dialect entry point —
+which for CockroachDB, openGauss and YDB is a composite name (`yql.ydb`) that is
+not importable as a module path at all.
+
+Which of the two you get is mostly whether SQLAlchemy ships the dialect itself,
+but not entirely: CrateDB and Exasol are third-party dialects that would raise
+`NoSuchModuleError` too, and give `ModuleNotFoundError` only because this server
+imports their driver eagerly to build a type converter, before the engine exists.
+So six of the eight are the plain case and two are ours. Either way the refusal
+never names the extra, which is why the map is here. Two rows point at another
+backend's extra:
 
 | Backend | Extra |
 |---|---|
@@ -288,7 +298,7 @@ that could be reached around, and each backend goes as far as it can: SQLite
 refuses at statement preparation through an authorizer, DuckDB opens
 `access_mode=read_only`, MySQL and MariaDB open a read-only session because their
 DDL commits itself, ClickHouse carries `readonly=1` because it has no transaction
-to withhold. **Two are honest exceptions.** Oracle commits DDL before anything
+to withhold. **Two are exceptions.** Oracle commits DDL before anything
 can object and has no session-level read-only posture, so a `CREATE` sent to
 `query` there really does take effect; its DML still rolls back. CrateDB has no
 transactions at all, so **both** a refused `CREATE` and a refused `INSERT` stand

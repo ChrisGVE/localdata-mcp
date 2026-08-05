@@ -94,8 +94,10 @@ rebuild it.
   `.ndjson` `.xml` `.yaml` `.yml` `.xlsx` `.xlsm` `.xls` `.ods` `.numbers`
   `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less `.fwf`,
   `.xlsm`, `.xls` and `.numbers`, plus `.md`). `.xlsx` and `.ods` are written as
-  well as read. Eight of the readers and seven of the writers need no dependency
-  beyond the base install.
+  well as read. Eight of the readers and seven of the writers are guaranteed by
+  the base install; `.yaml`/`.yml` also work without their extra today, because
+  `fastmcp` requires `PyYAML` unconditionally — a fact about the dependency graph
+  rather than a promise, so `yaml` stays the declared extra.
 - **A file may hold more than one table, and all of them land.** A workbook
   becomes a database with a table per sheet, and a `.numbers` document one per
   **table** — a Numbers sheet is a canvas that may carry several — each under its
@@ -273,8 +275,8 @@ each was reported against 2.x and none of the code carrying it survives:
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement and never has.
 - **On two backends a statement `query` refuses can still have happened.** The
-  read-only guarantee is enforced on the connection, and these two engines end
-  the transaction before the refusal is composed:
+  read-only guarantee is enforced on the connection, and on these two engines
+  there is no open transaction left to withhold when the refusal is composed:
   - **Oracle** commits DDL as it runs it, so a refused `CREATE` or `DROP`
     stands. DML still rolls back, so the guarantee holds everywhere it can.
   - **CrateDB** has no transactions at all, so **both** DDL *and* DML survive:

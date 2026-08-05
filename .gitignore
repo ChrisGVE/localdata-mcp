@@ -79,7 +79,6 @@ Thumbs.db
 test_*.db
 temp_*.db
 malicious/
-.serena/
 
 # Logs
 *.log
@@ -104,8 +103,6 @@ node_modules/
 
 # Development directories
 .cursor/
-.serena/
-.taskmaster/
 .claude/
 
 # Generated assets and build artifacts (but allow assets/logo.png)
