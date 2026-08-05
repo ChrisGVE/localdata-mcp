@@ -1,7 +1,7 @@
 ---
 name: local-data
 description: Answer questions about local data files and databases with SQL. Attach a spreadsheet, CSV, Parquet file, SQLite or DuckDB file, or a database URL, then look one source up against another and keep the result. Use whenever someone points at a data file or a database and asks what is in it.
-allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save mcp__plugin_localdata-mcp_localdata__attach mcp__plugin_localdata-mcp_localdata__detach mcp__plugin_localdata-mcp_localdata__info mcp__plugin_localdata-mcp_localdata__query mcp__plugin_localdata-mcp_localdata__create mcp__plugin_localdata-mcp_localdata__update mcp__plugin_localdata-mcp_localdata__drop mcp__plugin_localdata-mcp_localdata__save
+allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save
 argument-hint: "<file-path> [and what you want to know]"
 ---
 
@@ -168,12 +168,12 @@ Firebird, openGauss, YDB, Databend and Exasol. Three things differ from a file:
   production database. Do not ask for `writable=true` because a `create` failed —
   ask the user whether they meant to change the database itself.
 - **`save` does not work here.** It writes out a database this server is
-  holding, and a slot reached over its own connection has none — the rows live
-  in the engine. **Never offer `save` over a URL-attached slot.** This also
-  covers a DuckDB *file*, which is reached over DuckDB's own connection and is
-  refused for the same reason. Offer `query(nickname, "SELECT …",
-  path="/path/result.parquet")` instead, or `create` the rows into a slot of
-  your own — attach a small local file, land the result in it — and `save` that.
+  holding, and a datasource reached over its own connection has none — the rows
+  live in the engine. **Never offer `save` over a URL-attached datasource.** This
+  also covers a DuckDB *file*, which is reached over DuckDB's own connection and
+  is refused for the same reason. Offer `query(nickname, "SELECT …",
+  path="/path/result.parquet")` instead, or `create` the rows into a datasource
+  of your own — attach a small local file, land the result in it — and `save` it.
   §6 has the rule in full.
 
 Two smaller refusals live here too: `create(type="index")` on the five engines
@@ -218,8 +218,8 @@ exists" as a question for them, exactly as with `save` below.
 
 ### 6. "Keep this"
 
-**Check where the slot came from before you offer anything.** `save` writes out
-a database this server is holding, so it works on a slot built from a file — a
+**Check where the datasource came from before you offer anything.** `save` writes
+out a database this server is holding, so it works on one built from a file — a
 CSV, a workbook, a Parquet file — and on SQLite, and **only** on those. Every
 other backend is reached over its own connection and has no local database to
 write out, so `save` is refused there. A DuckDB file is one of those: it is a
@@ -228,7 +228,7 @@ file on disk, and it is still reached over DuckDB's own connection.
 `attach` reports `"kind": "file"` for anything read out of a data file, and
 those can always be saved. `"kind": "database"` covers both SQLite (saveable)
 and everything else (not), and **the response does not say which engine it is**
-— so for a `"database"` slot, go by the URL or the suffix the user gave you, and
+— so for a `"database"` datasource, go by the URL or the suffix they gave you, and
 otherwise treat a `save` refusal as the answer rather than as something to
 retry.
 
@@ -243,8 +243,8 @@ comes back **read-only** unless they pass `writable=true`.
 Where `save` is refused, the answer is one of two things, and the refusal names
 the first:
 
-- **Land the rows in a slot of your own and save that.** Attach or build a local
-  slot, `create(…, type="table", source=…)` the pieces you want into it, and
+- **Land the rows in a datasource of your own and save that.** Attach or build a
+  local one, `create(…, type="table", source=…)` the pieces you want into it, and
   `save` that. This is what to do when they want the *relationship* — several
   tables they can come back to.
 - **Send the result to a file** with `query(nickname, "SELECT …", path=…)`. This

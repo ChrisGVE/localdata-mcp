@@ -116,7 +116,23 @@ release tag is pushed**:
    declares `environment: name: …` alongside `permissions: id-token: write`. A
    job naming an environment that does not exist fails before it uploads
    anything, so this is a hard prerequisite rather than a nicety — and the
-   environment is where a protection rule on the release would live.
+   environment is where a protection rule on the release lives.
+
+   **Both exist, and have since 2025-08-29.** They are also the only release gate
+   this project actually has, so what they carry matters
+   (`gh api repos/ChrisGVE/localdata-mcp/environments`, re-read 2026-08-05):
+
+   | Environment | Deployment branch policy | Other protection |
+   |---|---|---|
+   | `testpypi` | `main`, and tags matching `v*.*.*` | — |
+   | `pypi` | `main`, and tags matching `v*.*.*` | **`wait_timer: 15`** |
+
+   **The PyPI upload sits in a fifteen-minute timed hold before it starts.** Push
+   the release tag, watch the build go green, and the upload job will not have
+   begun; that is the timer, not a hang, and re-pushing or cancelling the run is
+   the wrong reaction. The branch policy is also why gap 2's "with no tag
+   involved at all" is true of Docker and not of PyPI: `docker-publish.yml`
+   names no environment, so nothing restricts what it publishes from.
 
 **Nothing verifies that the tag and `project.version` agree.** Push `v3.0.0` at
 this commit and the job builds `3.0.0.dev0` and uploads it under a tag saying
@@ -145,7 +161,9 @@ Nothing walks a release for you, so this is the whole of it:
 2. Run the tests locally, including the endpoint batches, since nothing gates
    this branch.
 3. Push a `vX.Y.Z` tag. That, and only that, fires `publish-to-pypi.yml`'s PyPI
-   job and `docker-publish.yml` — **read the gaps below before doing it.**
+   job and `docker-publish.yml` — **read the gaps below before doing it.** Then
+   wait: the `pypi` environment holds the upload for fifteen minutes, so a job
+   that has not started is the timer doing its job.
 4. Create the GitHub release from the tag, for the notes; the upload has already
    happened by then.
 5. Publish `server.json` to the MCP registry by hand. No workflow does it.
@@ -169,8 +187,11 @@ These are the known gaps, stated so a release does not walk into them:
 3. **The tag and `project.version` are not checked against each other**, and
    `3.0.0.dev0` is a pre-release nobody's `pip install` would resolve
    ([#76](https://github.com/ChrisGVE/localdata-mcp/issues/76)).
-4. **The `testpypi` and `pypi` GitHub environments have to exist** before the
-   publish jobs can run — see above.
+4. ~~**The `testpypi` and `pypi` GitHub environments have to exist.**~~ Not a
+   gap: both have existed since 2025-08-29. Listed as outstanding until
+   2026-08-05, when the repository was queried rather than assumed. The
+   requirement itself, and the fifteen-minute hold the `pypi` environment
+   imposes on the upload, are stated above.
 5. **`server.json`'s `packages[0].version` is `2.1.0`, and PyPI 404s on it.**
    The registry resolves that field against the named `registryType` during
    publish, so it has to name a release that exists — which today it does not,

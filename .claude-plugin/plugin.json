@@ -27,7 +27,7 @@
   "mcpServers": {
     "localdata": {
       "command": "uv",
-      "args": ["run", "--directory", "${CLAUDE_PLUGIN_ROOT}", "localdata-mcp"],
+      "args": ["run", "--all-extras", "--directory", "${CLAUDE_PLUGIN_ROOT}", "localdata-mcp"],
       "env": {}
     }
   }

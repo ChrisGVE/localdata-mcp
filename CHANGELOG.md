@@ -141,7 +141,7 @@ rebuild it.
   `(page_count − freelist_count) × page_size` — measured, not estimated from file
   size, because a pre-flight estimate is the fail-open pattern that bit this
   project once.
-- **Date canonicalisation.** Across two dozen spellings of five instants
+- **Date canonicalisation.** Across the spellings of five instants
   spanning three years, every day-first and every month-name form ordered wrongly
   under `ORDER BY` and returned the earliest instant from `max()` — silently,
   with no error and no warning. (`docs/CONSTRAINTS.md` §8.1 asks that the classes
@@ -272,6 +272,14 @@ each was reported against 2.x and none of the code carrying it survives:
   nothing, or an engine that maintains its own.
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement and never has.
+- **On Oracle, DDL sent to `query` is refused *after* the database has already
+  committed it.** Oracle commits DDL as it runs it, and that implicit commit
+  ends the read-only transaction before the statement can be refused, so the
+  refusal is accurate about what `query` allows and too late to undo what the
+  engine did. DML still rolls back, so the guarantee holds everywhere it can.
+  This is the one limitation here where following the documentation can still
+  leave your database changed — weigh it before pointing this at a production
+  Oracle.
 - **`.xlsx` and `.ods` are refused above 65,535 rows.** That is the older
   worksheet's own limit and it is what bounds the writer's memory: uncapped,
   `.xlsx` held 12.9 GB while writing a million rows. `.ods` is 13.5× slower than

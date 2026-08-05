@@ -113,6 +113,15 @@ query("sales", "SELECT sku, sum(qty) AS qty FROM sales GROUP BY sku")
 #    "row_count": 3}
 ```
 
+`info()` with no arguments answers for the session rather than for a datasource —
+what is open, how much room is left, and which paths the server will accept:
+
+```python
+info()
+# → {"ok": true, "datasources": [], "slots_used": 0, "slots_available": 10,
+#    "roots": ["/path/to/your/project"], "path_limited": true}
+```
+
 `attach` derives the nickname from the filename and **returns the one it actually
 used** — if that name was taken by a different source, you get `sales_2` and
 `collided_with` names the slot that forced it. Always read it back rather than
@@ -121,8 +130,9 @@ any warning, so there is nothing for an `info` call straight afterwards to add.
 
 **A slot is one attached datasource** — its database, the two connections that
 reach it, and the nickname it answers to. There are ten of them; the word is
-used throughout this document and in `docs/architecture/LEVEL0.md`, where the
-premise is stated the other way round: *a slot is a database*.
+used throughout this document and in `docs/architecture/LEVEL0.md`, which states
+the same premise from the other end — *a slot **is** a database*, since that is
+what every datasource becomes.
 
 ## The eight verbs
 
@@ -130,12 +140,12 @@ premise is stated the other way round: *a slot is a database*.
 | --- | --- |
 | `attach(database, nickname?, writable?, delimiter?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. A workbook or `.numbers` document becomes a database holding all its sheets. |
 | `detach(nickname)` | Close it and free the slot. Deletes the temp file if the slot had been spilled to disk (see [Memory](#memory)). |
-| `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format. `delimiter` is *ignored* here when the suffix has no separator, where `attach` and `create` refuse it — deliberately, so one default can be carried across a mixed batch of destinations. |
-| `info(nickname?, table?)` | Three levels of detail: bare → every slot, plus `slots_used`, `slots_available` and the path posture (`roots`, `path_limited`) the server is working under; nickname → its tables; nickname and table → columns, row count and indexes. |
+| `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format. |
+| `info(nickname?, table?)` | Three levels of detail: bare → the session (see above); nickname → its tables; nickname and table → columns, row count and indexes. |
 | `create(nickname, type, table?, source?, columns?, delimiter?)` | `type="table"` lands a datasource *inside* an open database; `type="index"` indexes columns of a table already there. |
 | `update(nickname, type, name, to)` | Rename a table, keeping its rows, types and indexes. For when the file chose the name — a workbook's `Sheet1`, which arrives as `sheet1`. |
 | `drop(nickname, type, name)` | Remove a table or an index. |
-| `save(nickname, path, force?)` | Write the database out to a SQLite file you keep. **Only a slot this server built holds a database to write out** — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
+| `save(nickname, path, force?)` | Write the database out to a SQLite file you keep — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
 
 ## What it reads, writes and connects to
 
@@ -166,6 +176,27 @@ Firebird, openGauss, YDB, Databend and Exasol. SQLite and DuckDB are normally
 files, and can also be reached by URL; the other sixteen are URLs only, and each
 of the sixteen is exercised against a container of its own in
 `docker-compose.test.yml`.
+
+**Each backend needs its driver extra installed, and the refusal will not tell
+you which.** A missing *format* library produces the instruction quoted above; a
+missing *driver* produces a bare `ModuleNotFoundError` naming the Python module
+rather than the extra. So the map is here. Two of them do not follow the name:
+
+| Backend | Extra | Backend | Extra |
+|---|---|---|---|
+| SQLite | none — stdlib | CockroachDB | `cockroachdb` |
+| DuckDB | `duckdb` | YugabyteDB | **`postgres`** |
+| PostgreSQL | `postgres` | Trino | `trino` |
+| MySQL | `mysql` | MonetDB | `monetdb` |
+| MariaDB | **`mysql`** (addressed `mariadb+pymysql`) | CrateDB | `cratedb` |
+| SQL Server | `mssql` | Firebird | `firebird` |
+| Oracle | `oracle` | openGauss | `opengauss` |
+| ClickHouse | `clickhouse` | YDB | `ydb` |
+| | | Databend | `databend` |
+| | | Exasol | `exasol` |
+
+`databases` installs all fifteen at once, `formats` the seven format extras (the
+six for reading, plus `markdown` for `.md` output), and `all` both.
 
 ### Not every verb reaches every backend
 
@@ -339,11 +370,16 @@ answer belongs to whoever wrote the file, it reports and carries on.
   `delimiter` parameter. It does not re-read at a guessed separator: a guess that
   is usually right is the worst kind.
 
+  The two directions differ deliberately. On the way in, `attach` and `create`
+  **refuse** a `delimiter` for any suffix that has no separator. On the way out,
+  `query(path=…)` **ignores** it for such a suffix, so one default can be carried
+  across a mixed batch of destinations without the caller stripping it per file.
+
 ## Dates
 
 A file holds dates as text, and text compares as text — so `'30.11.2023'` sorts
 *after* `'01.03.2025'`, `ORDER BY` runs backwards and `max()` returns the
-earliest instant. Measured across two dozen spellings of five instants spanning
+earliest instant. Measured across the spellings of five instants spanning
 three years, **every day-first and every month-name form ordered wrongly, and
 returned the earliest instant from `max()`** — silently, with no error and no
 warning (`docs/CONSTRAINTS.md` §8.1, which asks that the classes be quoted rather
@@ -440,6 +476,19 @@ shipping the `local-data` skill — the mental model, the naming conversation, a
 how to phrase an incomplete join in the user's own words rather than as an
 anti-join. The tools stay mechanical precisely because the skill carries that.
 
+**There is no install route for it yet.** `claude plugin install` resolves a
+plugin from a marketplace, and this repository publishes no marketplace entry —
+there is no `.claude-plugin/marketplace.json` and nothing lists the plugin
+elsewhere. Until one exists, use the ordinary client configuration above; it
+reaches the same server, and the skill is the only thing the plugin adds on top.
+
+When that route does open, the manifest launches the server with
+`uv run --all-extras`, so the first start resolves every format library and every
+database driver — 140 distributions, slow on a cold `uv` cache and a few seconds
+after that. That is deliberate: without `--all-extras` the plugin would reach ten
+of the eighteen formats and one of the eighteen backends while the description
+beside it advertises all of them.
+
 ## Documentation
 
 - [Level 0 specification](docs/architecture/LEVEL0.md) — the premise, the three user journeys, the eight verbs
@@ -449,7 +498,7 @@ anti-join. The tools stay mechanical precisely because the skill carries that.
 - [Contributing](CONTRIBUTING.md) — development setup, tests, and which document owns what
 - [What CI does and does not do](.github/WORKFLOWS.md) — read it before trusting a green check
 
-That is the complete set of shipping documents;
+Those six and this file are the complete set of shipping documents;
 [`CONTRIBUTING.md`](CONTRIBUTING.md#documentation) is the single inventory and
 says which one owns what, so a change lands in exactly one of them.
 

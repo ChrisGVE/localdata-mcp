@@ -30,22 +30,24 @@ that block is the current answer and the text above it is the record.
 
 | | |
 |---|---|
-| §7 (2026-07-26) | Driving the surface as an agent |
-| §8 (2026-07-27) | Driving the live server through a real client — **§8.1 is the date-ordering result** the other documents cite |
-| §9 (2026-07-27) | Memory footprint, stress and performance |
-| §10 (2026-07-27) | A million rows and ten million, end to end — **§10.7 is the writer timing table** |
-| §11–§12 (2026-07-28) | ClickHouse; CockroachDB |
-| §13–§14 (2026-07-28) | TiDB and the eligibility rule; the MCP specification measured against this server |
-| §15–§18 (2026-07-29) | YugabyteDB; Trino; a dialect names a wire protocol, never an engine; MonetDB |
-| §19–§20 (2026-07-29) | CrateDB; Firebird |
-| §21–§23 (2026-07-30) | openGauss; YDB; Databend |
-| §24–§25 (2026-07-30) | Db2, eligible and unreachable; six ways into one database |
-| §26–§27 (2026-07-31) | OceanBase, eligible and stopped by one instruction; Exasol |
-| §28 (2026-07-31) | The load half of task 21 — a file measured in one pass, inserted in another |
+| [§7](#7--driving-the-surface-as-an-agent-2026-07-26) (2026-07-26) | Driving the surface as an agent |
+| [§8](#8--driving-the-live-server-through-a-real-client-2026-07-27) (2026-07-27) | Driving the live server through a real client — **§8.1 is the date-ordering result** the other documents cite |
+| [§9](#9--memory-footprint-stress-and-performance-2026-07-27) (2026-07-27) | Memory footprint, stress and performance |
+| [§10](#10--a-million-rows-and-ten-million-end-to-end-2026-07-27) (2026-07-27) | A million rows and ten million, end to end — **§10.7 is the writer timing table** |
+| [§11](#11--clickhouse-the-first-backend-with-no-transactions-2026-07-28)–[§12](#12--cockroachdb-the-dialect-that-needed-nothing-2026-07-28) (2026-07-28) | ClickHouse; CockroachDB |
+| [§13](#13--tidb-and-the-assumption-underneath-backends-2026-07-28)–[§14](#14--the-mcp-2026-07-28-specification-measured-against-this-server-2026-07-29) (2026-07-28) | TiDB and the eligibility rule; the MCP specification measured against this server |
+| [§15](#15--yugabytedb-and-the-retryable-error-123-asked-for-2026-07-29)–[§18](#18--monetdb-a-column-store-that-needed-nothing-but-cost-a-version-ceiling-2026-07-29) (2026-07-29) | YugabyteDB; [Trino](#16--trino-the-backend-that-owns-no-data-2026-07-29); [a dialect names a wire protocol, never an engine](#17--a-dialect-names-a-wire-protocol-never-an-engine-2026-07-29); MonetDB |
+| [§19](#19--cratedb-where-a-write-is-durable-before-it-is-readable-2026-07-29)–[§20](#20--firebird-whose-strictness-costs-more-than-any-laxity-here-2026-07-30) (2026-07-29) | CrateDB; Firebird |
+| [§21](#21--opengauss-and-a-banner-that-stopped-the-dialect-before-the-query-2026-07-30)–[§23](#23--databend-and-a-write-that-looks-exactly-like-a-read-2026-07-30) (2026-07-30) | openGauss; [YDB](#22--ydb-and-a-rollback-that-reports-success-over-a-write-that-stands-2026-07-30); Databend |
+| [§24](#24--db2-eligible-on-the-rule-and-unreachable-on-the-machine-2026-07-30)–[§25](#25--ten-ways-into-one-database-and-the-two-that-this-machine-cannot-take-2026-07-30) (2026-07-30) | Db2, eligible and unreachable; ten ways into one database |
+| [§26](#26--oceanbase-eligible-on-the-rule-and-stopped-by-one-instruction-2026-07-31)–[§27](#27--exasol-and-a-database-that-will-not-say-what-went-wrong-2026-07-31) (2026-07-31) | OceanBase, eligible and stopped by one instruction; Exasol |
+| [§28](#28--the-load-half-of-task-21-a-file-measured-in-one-pass-inserted-in-another-2026-07-31) (2026-07-31) | The load half of task 21 — a file measured in one pass, inserted in another |
 
-Section numbers are cited from `README.md`, `LEVEL0.md` and `CONTRIBUTING.md` as `§N`; use
-your reader's search, since the sub-section headings are sentences and their anchors are not
-stable enough to link against.
+Section numbers are cited from `README.md`, `LEVEL0.md` and `CONTRIBUTING.md` as `§N`, and
+every top-level section above is linked. **Sub-sections — `§8.1`, `§10.7`, `§5.1` — are cited
+by number rather than linked**, because their headings are full sentences whose anchors change
+whenever a heading is corrected, as §8.1's did on 2026-08-04. Use your reader's search for
+those.
 
 **Measurement environment.** Python 3.12.9 · pandas 3.0.2 · numpy 2.4.4 · sqlite3 3.47.1
 (library ≥ 3.27 assumed) · SQLAlchemy 2.0.49 · fastmcp 3.2.0, macOS. Where behaviour depends on a
@@ -761,8 +763,7 @@ The seven verbs, the guards and the arcs came through it intact. What did not is
 (Seven is the count as it stood on 2026-07-27. `add_table` and `drop_table` have since been renamed
 `create` and `drop`, and `update` was added, making eight — see `LEVEL0.md`.)
 
-### 8.1 A temporal from a flat file is never converted, and six spellings report the earliest
-instant as the maximum
+### 8.1 A temporal from a flat file is never converted, and six spellings report the earliest instant as the maximum
 
 **The headline measurement of this pass.** `binding.py` converts temporals to INTEGER ticks exactly
 as §1.4 requires, and its tests prove it. No caller can reach that code with a temporal. The reader
@@ -1207,7 +1208,7 @@ earlier and the OS is still holding it. A genuinely cold spilled slot is not mea
 | Date already ISO 8601 | 9.25 MB | 24.15 MB | 2.60 s |
 | Date needing conversion | 10.21 MB | 32.38 MB | 3.82 s |
 
-Session 34 measured the temporal work in isolation; this is it paid inside a full attach. A column
+§8 measured the temporal work in isolation; this is it paid inside a full attach. A column
 that genuinely needs normalising costs **+1.22 s and +8.2 MB** over one already ISO, and **+2.13 s**
 over no date column at all — against a load that is otherwise 1.69 s. Residency is identical for
 both date shapes (9.79 MB), which is the expected consequence of both landing in the same canonical
@@ -1339,7 +1340,7 @@ fix and is also the seam every new format arrives through.
 > decision**, in both directions, so a new format is one registry entry and nothing upstream of it
 > changes.
 >
-> **Corrected 2026-07-27 (session 40): the round-trip property held for fifteen of those sixteen,
+> **Corrected 2026-07-27: the round-trip property held for fifteen of those sixteen,
 > not sixteen.** The `out.xlsx, out.ods` row above is where the defect was hiding, and the row
 > itself shows how: both were checked only as far as `PK\x03\x04`, and **both formats are Zip
 > archives, so the magic bytes cannot tell them apart**. `.ods` had been writing XLSX. `file(1)`
@@ -1504,7 +1505,7 @@ database; tall 0.76 GB → 735 MB → 0.77 GB. Nothing expands or compresses mea
 
 ### 10.7 The re-measurement — with repetitions, and with the conditions written down
 
-**Measured 2026-07-27/28 (session 40).** Everything above in §10 is a **single draw**. This section
+**Measured 2026-07-27/28.** Everything above in §10 is a **single draw**. This section
 re-measures it as the **median of three repetitions of the whole condition**, at the server's own
 **100 MB default budget** — never disabled, so the slot spills and the arm is `disk`, which is the
 only arm comparable with an endpoint database (§5.2). Each step also records its own load average
@@ -1726,8 +1727,8 @@ than as a small effect. The `count(*)` column is the spill itself, and 0.54 s is
 
 **The more useful result is in the spread column.** On the resident arm the spreads collapse to
 **1.02–1.17x**, against 1.15–1.35x on the disk arm, and only **3 of 27 steps paged** against **32 of
-63**. The variance §10 has been carrying since session 35 — the ±25% band, the 1.50x within-condition
-span, the "unattributed speedup" of session 39 — **is very largely the machine paging, not the code
+63**. The variance §10 has been carrying from the start — the ±25% band, the 1.50x within-condition
+span, the "unattributed speedup" nobody could account for — **is very largely the machine paging, not the code
 varying.** Measure on an arm that does not page and the same operations reproduce to a few percent.
 
 #### The conclusions of §10.3 and §10.4 survive re-measurement
@@ -1739,7 +1740,7 @@ sit either side of 1.0, which is the point: it is the same operation with the sa
 
 The index still pays for itself on the first join:
 
-| | s40 (median of 3) | spread | §10.4 |
+| | This pass (median of 3) | spread | §10.4 |
 |---|---|---|---|
 | Join, no index | 31.4 s | 1.12x | 124.8 s |
 | Build index on `tall.foreign_id` | 14.1 s | 1.24x | 47.4 s |
@@ -1787,8 +1788,9 @@ dialect under the name **`clickhousedb`** (and `clickhousedb.connect`), speaks H
 than the native protocol on 9000, and ships a `MIGRATING_FROM_CLICKHOUSE_SQLALCHEMY.md` in-tree —
 upstream itself treats the third-party package as the thing to move away from.
 
-This is the second time the dialect a search finds first was not the live one; §-note in the s42
-handover records the same for Trino. **The registered dialect name is also the backend key**, so
+This is the second time the dialect a search finds first was not the live one; §16.1 records the
+same for Trino, where `sqlalchemy-trino` last shipped 0.5.0 in 2022 and now declares the official
+`trino[sqlalchemy]` as its own dependency. **The registered dialect name is also the backend key**, so
 `backend_for` looks up `clickhousedb`, not `clickhouse`.
 
 ### 11.2 A missing value silently becomes an empty string — in one code path, and raises in the other
@@ -4020,7 +4022,7 @@ failed is the native stack underneath the adapter, on this host, before a single
 composed — and nothing in the eligibility test looks there.
 
 No compose entry was written, no extra was added, and `.venv` was never touched: the whole measurement
-ran in throwaway virtualenvs under the scratchpad, which is the cheap form of this question.
+ran in throwaway virtualenvs outside the repository, which is the cheap form of this question.
 
 ### 24.1 The measurement
 
@@ -4081,7 +4083,14 @@ nothing here says anything about Db2's transactions, types, identifier folding o
 The finding is about a client library on one host, and it should not be read as a statement about the
 database.
 
-## §25 — Six ways into one database, and the two that this machine cannot take (2026-07-30)
+## §25 — Ten ways into one database, and the two that this machine cannot take (2026-07-30)
+
+> **Corrected 2026-08-05 — the heading said "Six ways" and §25.1's table enumerates ten.**
+> Six is the count of PostgreSQL-specific modes, which the heading did not say, while
+> `CHANGELOG.md`, `LEVEL0.md` and this section's own table all cite it for *ten routes in
+> all*. Corrected in place on the principle §8.1 records: the append-only rule protects a
+> measurement, and a heading is a label — it is what a search result and a generated outline
+> show, so a wrong one travels further than its own correction. No measurement changed.
 
 Every endpoint in this harness was reached exactly one way until now: a username and a password in
 the URL, in plaintext, over TCP to the loopback interface. That is one of the ways a caller reaches a

@@ -63,7 +63,7 @@ Coverage is not in the `dev` extra either. To measure it, install the plugin
 yourself and ask for it:
 
 ```bash
-uv tool install pytest-cov          # or: pip install pytest-cov
+uv pip install pytest-cov           # into .venv, not as a standalone tool
 .venv/bin/python -m pytest -q -m 'not slow' \
     --cov=localdata_mcp --cov-report=html
 ```
@@ -180,9 +180,9 @@ green.
 
 ### Endpoint tests
 
-Twenty tests run against every entry in `tests/endpoints.py` — sixteen
-containers, each carrying its own authentication-mode axis. `docker-compose.test.yml`
-defines them:
+`tests/test_endpoints.py` holds twenty test functions, and each runs against
+every entry in `tests/endpoints.py` — sixteen containers, four of which carry an
+authentication-mode axis as well. `docker-compose.test.yml` defines them:
 
 ```bash
 docker compose -f docker-compose.test.yml up -d localdata-test-postgres
@@ -307,9 +307,11 @@ more that are not obvious from the code:
 
 ## Documentation
 
-**Seven documents ship, and this is the list.** Each has one job. Update the one
-that owns what you changed, in the same commit as the change — documentation that
-lags is a defect, not a chore:
+**Seven documents are maintained, and this is the list.** Each has one job.
+Update the one that owns what you changed, in the same commit as the change —
+documentation that lags is a defect, not a chore. (`non_factual/README.md` ships
+too, and is deliberately not on this list: it is a quarantine notice for the
+abandoned v2 documents, not a document kept current.)
 
 - **`README.md`** — what the server is and how to use it. Any change to the tool
   surface, the format registries or the backend catalogue lands here.

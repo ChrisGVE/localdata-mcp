@@ -62,9 +62,11 @@ under the names the file gave them **put through the same snake_case rule as a n
 > candidate is not a choice"* below. Measured through the shipped surface: a JSON object
 > holding a `customers` array and an `orders` array comes back as
 >
-> > `Could not read multi.json: it holds more than one table ('customers', 'orders'), and
-> > which one you want is not something this server should decide. Split the file, or
-> > attach it as one table per file.`
+> ```
+> Could not read multi.json: it holds more than one table ('customers', 'orders'), and
+> which one you want is not something this server should decide. Split the file, or
+> attach it as one table per file.
+> ```
 >
 > The two rules genuinely point different ways and only one of them is built. A sheet is
 > **declared** a table by the format — the file says so — whereas an array under a key is a
@@ -270,10 +272,11 @@ still tracks the file, and that is stated rather than worked around.
 
 | Group | Read | Write |
 |---|---|---|
-| Flat | `.csv` `.tsv` `.txt` `.fwf` | `.csv` `.tsv` `.txt` `.md` |
+| Flat | `.csv` `.tsv` `.txt` `.fwf` | `.csv` `.tsv` `.txt` |
 | Structured | `.json` `.jsonl` `.ndjson` `.yaml` `.yml` `.xml` | same |
 | Spreadsheet | `.xlsx` `.xlsm` `.xls` `.ods` `.numbers` | `.xlsx` `.ods` |
 | Columnar | `.parquet` `.feather` `.orc` | same |
+| Markdown | — | `.md` — write only, there is no `.md` reader |
 
 > **`.html` and `.htm` were removed from both registries on 2026-07-28.** They had been a
 > "Web" group of their own. Reading them was defensible — a saved page is a real thing to
@@ -391,7 +394,7 @@ tests skip — with the command to start one — rather than fail where none is 
 
 A file holds dates as text, and text compares as text — so `'30.11.2023'` sorts
 *after* `'01.03.2025'`, `ORDER BY` runs backwards and `max()` returns the
-earliest instant. Measured across two dozen spellings of five instants spanning
+earliest instant. Measured across the spellings of five instants spanning
 three years, every day-first and every month-name form ordered wrongly and
 reported the earliest as the maximum, silently (CONSTRAINTS §8.1, which asks that
 the class be quoted rather than the count — how many spellings land in each class
@@ -490,7 +493,8 @@ correct against each other.
 **What is left before level 0 closes is no longer code**: a pass driving the live server
 through a real client, since every verb has changed since the last one, and a review of the
 issues that were fixed forward. Three design questions are open and are recorded where they
-arise, each marked **Open, not decided**:
+arise, under an **Open, not decided** mark (rows 1 and 3 share one, since the second is moot
+if the first resolves against the refusal):
 
 | Question | Where |
 |---|---|
@@ -525,7 +529,9 @@ in the URL. Nine more are exercised now:
 | Real and out of reach here | 2 — a Unix socket, which does not cross the container boundary, and Windows integrated authentication, there being no Windows host | — |
 
 They run as a **second axis** over the endpoint table rather than as tests of their own, so
-each of the twenty endpoint tests runs against every mode its endpoint carries. Nothing in
+each endpoint test runs against every mode its endpoint carries. The two counts are not in
+tension: `tests/test_endpoints.py` holds **twenty test functions**, and each is parameterised
+over the **sixteen** entries in `tests/endpoints.py` — one per container. Nothing in
 the server implements them: each is expressed in the URL or in the driver's own environment,
 which this server passes through untouched, so what was added is the evidence rather than a
 feature. `docs/CONSTRAINTS.md` §25 has the measurements.
