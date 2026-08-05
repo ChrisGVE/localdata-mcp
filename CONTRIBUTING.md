@@ -34,9 +34,9 @@ git remote add upstream https://github.com/ChrisGVE/localdata-mcp.git
 # Using uv (recommended)
 uv sync --all-extras
 
-# Or using pip
-python -m venv venv
-source venv/bin/activate   # macOS/Linux
+# Or using pip — name it .venv, which is what every command below invokes
+python -m venv .venv
+source .venv/bin/activate   # macOS/Linux
 pip install -e ".[all,dev]"
 ```
 

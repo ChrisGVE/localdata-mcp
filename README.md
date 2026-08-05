@@ -63,12 +63,18 @@ uv tool install localdata-mcp             # CSV, TSV, TXT, FWF, JSON, JSONL, NDJ
 uv tool install 'localdata-mcp[all]'      # every format and every database driver
 ```
 
-The base install carries no format libraries and no database drivers. Eight of
-the eighteen readable formats need nothing beyond it; the other ten arrive
+The base install declares no format libraries and no database drivers. **Eight of
+the eighteen readable formats are guaranteed by it**; the other ten are declared
 behind six extras (`parquet` covering all three columnar suffixes, `excel`,
 `ods`, `xls`, `numbers`, `yaml`), and each database is one more (`postgres`,
 `duckdb`, `oracle`, …). One extra is for the write side only: `markdown`
 installs the table formatter `.md` output needs, and there is no `.md` reader.
+
+In practice a base install reads **ten** and writes nine, because `fastmcp`
+requires `PyYAML` unconditionally and `.yaml`/`.yml` therefore work without their
+extra. That is a fact about today's dependency graph and not a promise this
+project makes: `yaml` stays the declared extra, and code that needs YAML should
+install it rather than rely on a transitive arriving.
 A format is **known whether or not its library is installed**, so a missing one
 is an instruction rather than a mystery:
 
@@ -87,7 +93,7 @@ Add the server to your MCP client configuration. From a clone, name the clone �
   "mcpServers": {
     "localdata": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/localdata-mcp", "localdata-mcp"]
+      "args": ["run", "--all-extras", "--directory", "/path/to/localdata-mcp", "localdata-mcp"]
     }
   }
 }
@@ -178,25 +184,41 @@ of the sixteen is exercised against a container of its own in
 `docker-compose.test.yml`.
 
 **Each backend needs its driver extra installed, and the refusal will not tell
-you which.** A missing *format* library produces the instruction quoted above; a
-missing *driver* produces a bare `ModuleNotFoundError` naming the Python module
-rather than the extra. So the map is here. Two of them do not follow the name:
+you which.** A missing *format* library produces the instruction quoted above. A
+missing *driver* produces one of two raw exceptions, neither naming the extra:
+eight backends give `ModuleNotFoundError` naming the Python module
+(`No module named 'psycopg'`), and nine give `NoSuchModuleError. Can't load
+plugin: sqlalchemy.dialects:<name>` naming a SQLAlchemy dialect entry point,
+which for openGauss and CockroachDB is a composite name that is not importable
+anywhere. Which of the two you get depends on whether the dialect is built into
+SQLAlchemy or shipped by the driver, so the map is here. Two rows point at
+another backend's extra:
 
-| Backend | Extra | Backend | Extra |
-|---|---|---|---|
-| SQLite | none — stdlib | CockroachDB | `cockroachdb` |
-| DuckDB | `duckdb` | YugabyteDB | **`postgres`** |
-| PostgreSQL | `postgres` | Trino | `trino` |
-| MySQL | `mysql` | MonetDB | `monetdb` |
-| MariaDB | **`mysql`** (addressed `mariadb+pymysql`) | CrateDB | `cratedb` |
-| SQL Server | `mssql` | Firebird | `firebird` |
-| Oracle | `oracle` | openGauss | `opengauss` |
-| ClickHouse | `clickhouse` | YDB | `ydb` |
-| | | Databend | `databend` |
-| | | Exasol | `exasol` |
+| Backend | Extra |
+|---|---|
+| SQLite | none — stdlib |
+| DuckDB | `duckdb` |
+| PostgreSQL | `postgres` |
+| MySQL | `mysql` |
+| MariaDB | **`mysql`** — addressed `mariadb+pymysql` |
+| SQL Server | `mssql` |
+| Oracle | `oracle` |
+| ClickHouse | `clickhouse` |
+| CockroachDB | `cockroachdb` |
+| YugabyteDB | **`postgres`** |
+| Trino | `trino` |
+| MonetDB | `monetdb` |
+| CrateDB | `cratedb` |
+| Firebird | `firebird` |
+| openGauss | `opengauss` |
+| YDB | `ydb` |
+| Databend | `databend` |
+| Exasol | `exasol` |
 
-`databases` installs all fifteen at once, `formats` the seven format extras (the
-six for reading, plus `markdown` for `.md` output), and `all` both.
+`databases` installs all fifteen at once — fifteen and not eighteen because
+SQLite needs no extra and MariaDB and YugabyteDB share another backend's.
+`formats` installs the seven format extras (the six for reading, plus `markdown`
+for `.md` output), and `all` installs both.
 
 ### Not every verb reaches every backend
 
@@ -266,10 +288,13 @@ that could be reached around, and each backend goes as far as it can: SQLite
 refuses at statement preparation through an authorizer, DuckDB opens
 `access_mode=read_only`, MySQL and MariaDB open a read-only session because their
 DDL commits itself, ClickHouse carries `readonly=1` because it has no transaction
-to withhold. Oracle is the honest exception — it commits DDL before anything can
-object and has no session-level read-only posture, so a `CREATE` sent to `query`
-there really does take effect, and the refusal says so rather than claiming
-otherwise.
+to withhold. **Two are honest exceptions.** Oracle commits DDL before anything
+can object and has no session-level read-only posture, so a `CREATE` sent to
+`query` there really does take effect; its DML still rolls back. CrateDB has no
+transactions at all, so **both** a refused `CREATE` and a refused `INSERT` stand
+— the worse of the two, and the refusal names only `CREATE`/`DROP`, so on
+CrateDB it must not be read as meaning nothing happened
+([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
 
 Landing the second file inside the first database is not just tidier. **`save`
 writes one database, not a join** — so attaching the two files separately gives
@@ -482,12 +507,14 @@ there is no `.claude-plugin/marketplace.json` and nothing lists the plugin
 elsewhere. Until one exists, use the ordinary client configuration above; it
 reaches the same server, and the skill is the only thing the plugin adds on top.
 
-When that route does open, the manifest launches the server with
+When that route does open, `.claude-plugin/plugin.json` launches the server with
 `uv run --all-extras`, so the first start resolves every format library and every
-database driver — 140 distributions, slow on a cold `uv` cache and a few seconds
-after that. That is deliberate: without `--all-extras` the plugin would reach ten
-of the eighteen formats and one of the eighteen backends while the description
-beside it advertises all of them.
+database driver — 139 distributions, slow on a cold `uv` cache and a few seconds
+after that. That is deliberate: the plugin builds its own environment, and
+without the flag it would reach ten of the eighteen formats and one of the
+eighteen backends while that file's own description advertises all of them. The
+client configuration above carries the same flag for the same reason, so neither
+path depends on `uv sync --all-extras` having been run in the clone first.
 
 ## Documentation
 
@@ -498,7 +525,7 @@ beside it advertises all of them.
 - [Contributing](CONTRIBUTING.md) — development setup, tests, and which document owns what
 - [What CI does and does not do](.github/WORKFLOWS.md) — read it before trusting a green check
 
-Those six and this file are the complete set of shipping documents;
+Those six and this file are the documents kept current;
 [`CONTRIBUTING.md`](CONTRIBUTING.md#documentation) is the single inventory and
 says which one owns what, so a change lands in exactly one of them.
 

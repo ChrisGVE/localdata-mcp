@@ -130,9 +130,10 @@ release tag is pushed**:
    **The PyPI upload sits in a fifteen-minute timed hold before it starts.** Push
    the release tag, watch the build go green, and the upload job will not have
    begun; that is the timer, not a hang, and re-pushing or cancelling the run is
-   the wrong reaction. The branch policy is also why gap 2's "with no tag
+   the wrong reaction. The branch policy is also why the Docker gap's "with no tag
    involved at all" is true of Docker and not of PyPI: `docker-publish.yml`
-   names no environment, so nothing restricts what it publishes from.
+   names no environment, so nothing restricts what it publishes from. The Docker
+   gap is listed under [Before the next release](#before-the-next-release).
 
 **Nothing verifies that the tag and `project.version` agree.** Push `v3.0.0` at
 this commit and the job builds `3.0.0.dev0` and uploads it under a tag saying

@@ -272,14 +272,20 @@ each was reported against 2.x and none of the code carrying it survives:
   nothing, or an engine that maintains its own.
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement and never has.
-- **On Oracle, DDL sent to `query` is refused *after* the database has already
-  committed it.** Oracle commits DDL as it runs it, and that implicit commit
-  ends the read-only transaction before the statement can be refused, so the
-  refusal is accurate about what `query` allows and too late to undo what the
-  engine did. DML still rolls back, so the guarantee holds everywhere it can.
-  This is the one limitation here where following the documentation can still
-  leave your database changed — weigh it before pointing this at a production
-  Oracle.
+- **On two backends a statement `query` refuses can still have happened.** The
+  read-only guarantee is enforced on the connection, and these two engines end
+  the transaction before the refusal is composed:
+  - **Oracle** commits DDL as it runs it, so a refused `CREATE` or `DROP`
+    stands. DML still rolls back, so the guarantee holds everywhere it can.
+  - **CrateDB** has no transactions at all, so **both** DDL *and* DML survive:
+    a refused `INSERT` stands. It is the worse of the two, and the refusal text
+    names only `CREATE`/`DROP`, which reads as *this was not DDL, therefore
+    nothing happened*
+    ([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
+
+  These are the limitations where following the documentation can still leave
+  your database changed. Weigh them before pointing this at a production Oracle
+  or CrateDB.
 - **`.xlsx` and `.ods` are refused above 65,535 rows.** That is the older
   worksheet's own limit and it is what bounds the writer's memory: uncapped,
   `.xlsx` held 12.9 GB while writing a million rows. `.ods` is 13.5× slower than

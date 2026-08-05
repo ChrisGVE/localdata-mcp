@@ -233,6 +233,12 @@ which is not equally far:
   a connection that never commits is simply applied. Its read engine therefore carries
   `readonly=1` in the URL, and the database refuses DML and DDL alike before either runs —
   which makes it *stronger* here than the backends that rely on rollback, not weaker.
+- **CrateDB** has no transactions either and no read-only posture to reach for, so it is
+  the one backend where the floor is absent on **both** axes: `dml_survives_refusal()` and
+  `ddl_survives_refusal()` are both `True`, and a refused `INSERT` is in the index before
+  this server has anything to say about it. It is worse than Oracle, which loses only the
+  DDL half. The refusal text names `CREATE`/`DROP` for both, which on CrateDB points a
+  reader away from what happened ([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
 
 Underneath all of them is one dialect-free rule: **a statement that returns no rows is not
 a read**, and is refused on that ground. No SQL is parsed to decide it — a `SELECT` returns
@@ -529,9 +535,9 @@ in the URL. Nine more are exercised now:
 | Real and out of reach here | 2 — a Unix socket, which does not cross the container boundary, and Windows integrated authentication, there being no Windows host | — |
 
 They run as a **second axis** over the endpoint table rather than as tests of their own, so
-each endpoint test runs against every mode its endpoint carries. The two counts are not in
-tension: `tests/test_endpoints.py` holds **twenty test functions**, and each is parameterised
-over the **sixteen** entries in `tests/endpoints.py` — one per container. Nothing in
+each endpoint test runs against every mode its endpoint carries: `tests/test_endpoints.py`
+holds **twenty test functions**, and each is parameterised over the **sixteen** entries in
+`tests/endpoints.py` — one per container. Nothing in
 the server implements them: each is expressed in the URL or in the driver's own environment,
 which this server passes through untouched, so what was added is the evidence rather than a
 feature. `docs/CONSTRAINTS.md` §25 has the measurements.

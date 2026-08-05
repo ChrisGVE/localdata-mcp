@@ -30,18 +30,41 @@ that block is the current answer and the text above it is the record.
 
 | | |
 |---|---|
-| [§7](#7--driving-the-surface-as-an-agent-2026-07-26) (2026-07-26) | Driving the surface as an agent |
-| [§8](#8--driving-the-live-server-through-a-real-client-2026-07-27) (2026-07-27) | Driving the live server through a real client — **§8.1 is the date-ordering result** the other documents cite |
-| [§9](#9--memory-footprint-stress-and-performance-2026-07-27) (2026-07-27) | Memory footprint, stress and performance |
-| [§10](#10--a-million-rows-and-ten-million-end-to-end-2026-07-27) (2026-07-27) | A million rows and ten million, end to end — **§10.7 is the writer timing table** |
-| [§11](#11--clickhouse-the-first-backend-with-no-transactions-2026-07-28)–[§12](#12--cockroachdb-the-dialect-that-needed-nothing-2026-07-28) (2026-07-28) | ClickHouse; CockroachDB |
-| [§13](#13--tidb-and-the-assumption-underneath-backends-2026-07-28)–[§14](#14--the-mcp-2026-07-28-specification-measured-against-this-server-2026-07-29) (2026-07-28) | TiDB and the eligibility rule; the MCP specification measured against this server |
-| [§15](#15--yugabytedb-and-the-retryable-error-123-asked-for-2026-07-29)–[§18](#18--monetdb-a-column-store-that-needed-nothing-but-cost-a-version-ceiling-2026-07-29) (2026-07-29) | YugabyteDB; [Trino](#16--trino-the-backend-that-owns-no-data-2026-07-29); [a dialect names a wire protocol, never an engine](#17--a-dialect-names-a-wire-protocol-never-an-engine-2026-07-29); MonetDB |
-| [§19](#19--cratedb-where-a-write-is-durable-before-it-is-readable-2026-07-29)–[§20](#20--firebird-whose-strictness-costs-more-than-any-laxity-here-2026-07-30) (2026-07-29) | CrateDB; Firebird |
-| [§21](#21--opengauss-and-a-banner-that-stopped-the-dialect-before-the-query-2026-07-30)–[§23](#23--databend-and-a-write-that-looks-exactly-like-a-read-2026-07-30) (2026-07-30) | openGauss; [YDB](#22--ydb-and-a-rollback-that-reports-success-over-a-write-that-stands-2026-07-30); Databend |
-| [§24](#24--db2-eligible-on-the-rule-and-unreachable-on-the-machine-2026-07-30)–[§25](#25--ten-ways-into-one-database-and-the-two-that-this-machine-cannot-take-2026-07-30) (2026-07-30) | Db2, eligible and unreachable; ten ways into one database |
-| [§26](#26--oceanbase-eligible-on-the-rule-and-stopped-by-one-instruction-2026-07-31)–[§27](#27--exasol-and-a-database-that-will-not-say-what-went-wrong-2026-07-31) (2026-07-31) | OceanBase, eligible and stopped by one instruction; Exasol |
-| [§28](#28--the-load-half-of-task-21-a-file-measured-in-one-pass-inserted-in-another-2026-07-31) (2026-07-31) | The load half of task 21 — a file measured in one pass, inserted in another |
+| [§7] (2026-07-26) | Driving the surface as an agent |
+| [§8] (2026-07-27) | Driving the live server through a real client — **§8.1 is the date-ordering result** the other documents cite |
+| [§9] (2026-07-27) | Memory footprint, stress and performance |
+| [§10] (2026-07-27) | A million rows and ten million, end to end — **§10.7 is the writer timing table** |
+| [§11] · [§12] (2026-07-28) | ClickHouse; CockroachDB |
+| [§13] · [§14] (2026-07-28) | TiDB and the eligibility rule; the MCP specification measured against this server |
+| [§15] · [§16] · [§17] · [§18] (2026-07-29) | YugabyteDB; Trino; a dialect names a wire protocol, never an engine; MonetDB |
+| [§19] · [§20] (2026-07-29) | CrateDB; Firebird |
+| [§21] · [§22] · [§23] (2026-07-30) | openGauss; YDB; Databend |
+| [§24] · [§25] (2026-07-30) | Db2, eligible and unreachable; ten ways into one database |
+| [§26] · [§27] (2026-07-31) | OceanBase, eligible and stopped by one instruction; Exasol |
+| [§28] (2026-07-31) | The load half of task 21 — a file measured in one pass, inserted in another |
+
+[§7]: #7--driving-the-surface-as-an-agent-2026-07-26
+[§8]: #8--driving-the-live-server-through-a-real-client-2026-07-27
+[§9]: #9--memory-footprint-stress-and-performance-2026-07-27
+[§10]: #10--a-million-rows-and-ten-million-end-to-end-2026-07-27
+[§11]: #11--clickhouse-the-first-backend-with-no-transactions-2026-07-28
+[§12]: #12--cockroachdb-the-dialect-that-needed-nothing-2026-07-28
+[§13]: #13--tidb-and-the-assumption-underneath-backends-2026-07-28
+[§14]: #14--the-mcp-2026-07-28-specification-measured-against-this-server-2026-07-29
+[§15]: #15--yugabytedb-and-the-retryable-error-123-asked-for-2026-07-29
+[§16]: #16--trino-the-backend-that-owns-no-data-2026-07-29
+[§17]: #17--a-dialect-names-a-wire-protocol-never-an-engine-2026-07-29
+[§18]: #18--monetdb-a-column-store-that-needed-nothing-but-cost-a-version-ceiling-2026-07-29
+[§19]: #19--cratedb-where-a-write-is-durable-before-it-is-readable-2026-07-29
+[§20]: #20--firebird-whose-strictness-costs-more-than-any-laxity-here-2026-07-30
+[§21]: #21--opengauss-and-a-banner-that-stopped-the-dialect-before-the-query-2026-07-30
+[§22]: #22--ydb-and-a-rollback-that-reports-success-over-a-write-that-stands-2026-07-30
+[§23]: #23--databend-and-a-write-that-looks-exactly-like-a-read-2026-07-30
+[§24]: #24--db2-eligible-on-the-rule-and-unreachable-on-the-machine-2026-07-30
+[§25]: #25--ten-ways-into-one-database-and-the-two-that-this-machine-cannot-take-2026-07-30
+[§26]: #26--oceanbase-eligible-on-the-rule-and-stopped-by-one-instruction-2026-07-31
+[§27]: #27--exasol-and-a-database-that-will-not-say-what-went-wrong-2026-07-31
+[§28]: #28--the-load-half-of-task-21-a-file-measured-in-one-pass-inserted-in-another-2026-07-31
 
 Section numbers are cited from `README.md`, `LEVEL0.md` and `CONTRIBUTING.md` as `§N`, and
 every top-level section above is linked. **Sub-sections — `§8.1`, `§10.7`, `§5.1` — are cited
