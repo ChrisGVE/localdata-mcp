@@ -118,8 +118,10 @@ rebuild it.
   server configured to trust, a password from the environment, a password from a
   file, verified TLS, a client certificate, a Kerberos ticket, a MySQL option
   file, an empty password, and an ODBC data-source name in place of a host and
-  port — ten routes in all, counting the credentialed URL that all sixteen
-  endpoints still use. **These are not server settings and there is no parameter
+  port — ten routes in all, counting the plain URL that all sixteen endpoints
+  still use, which carries a password on eleven of them and a bare username on
+  the five that authenticate by trust (CockroachDB, YugabyteDB, Trino, CrateDB,
+  YDB). **These are not server settings and there is no parameter
   for them**: `attach` takes a datasource string, and each mode is expressed in
   the URL or in the driver's own environment, which this server passes through
   untouched. What 3.0.0 adds is the evidence that they work —

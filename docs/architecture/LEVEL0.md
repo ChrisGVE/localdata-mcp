@@ -358,7 +358,7 @@ this server built is a database it holds.
 | CockroachDB | URL | nothing — and on a different engine speaking PostgreSQL's wire, that is the result rather than an absence |
 | YugabyteDB | URL | nothing — reached on PostgreSQL's dialect, which is why the seam had to learn to ask the *engine* what it is rather than trust the dialect's name |
 | Trino | URL | an isolation level, since the driver connects in `AUTOCOMMIT` and there is no transaction left to withhold; `LargeBinary`; and `create(type='index')`, since it owns no storage to index |
-| MonetDB | URL | nothing — the first column store here, and it answers every axis the way a row store does |
+| MonetDB | URL | nothing — the first column store here *reached over a URL* (DuckDB, a file, came earlier), and it answers every axis the way a row store does |
 | CrateDB | URL | that a refused write really happened, since it has neither transactions nor a read-only session; a `REFRESH TABLE` before a write can be read back; the driver's type converter, without which a date arrives as epoch milliseconds; `LargeBinary` and `Time`, which it does not have, and `Numeric`, which its dialect silently truncates; and the refusal of `create(type='index')`, since every column is indexed already |
 | openGauss | URL | nothing — but it is the first PostgreSQL fork here that cannot be *addressed* as PostgreSQL, since its version banner does not parse and SQLAlchemy's own PGDialect raises while initialising the connection; it ships its own dialect, so there is no impostor to resolve either |
 | Firebird | URL | that rows cannot be written in the transaction that created the table, since DDL is transactional *and* prepared against committed metadata; the refusal of `update(type='table', to=…)`, since no statement renames a table here; `DOUBLE PRECISION`, since the dialect renders `Double` as a keyword Firebird lacks; and `VARCHAR` sized from the data, since `Text` becomes a `BLOB` that groups by identity rather than by value |
@@ -393,8 +393,10 @@ text.
 > or refuse `writable=true` on a DuckDB file outright and say why. Filed as
 > [#79](https://github.com/ChrisGVE/localdata-mcp/issues/79). **Open, not decided.**
 
-Every dialect is exercised against a live container (`docker-compose.test.yml`), and the
-tests skip — with the command to start one — rather than fail where none is running.
+Every dialect that needs a server is exercised against a live container
+(`docker-compose.test.yml`) — sixteen of the eighteen; SQLite and DuckDB are files and need
+none. The tests skip — with the command to start one — rather than fail where none is
+running.
 
 ## Dates, and the two spellings that carry their own meaning
 
@@ -515,7 +517,9 @@ rather than assumed.
 
 The expectation going into the backends was that they would need a test harness rather
 than a code path, and that was half right: nothing about *reaching* a dialect needed
-writing, and the two that needed nothing at all — DuckDB and PostgreSQL — are the proof.
+writing, and PostgreSQL — which needed nothing at all — is the proof. (DuckDB was named
+here too until the correction above: it carries `access_mode=read_only`, which is the one
+thing its subclass adds.)
 What the harness found instead was defect after defect the file-backed dialects could not
 have shown, most of them a wrong answer rather than an error: a number arriving as text, a
 write reported as a success, a `CREATE TABLE` that was permanent despite being refused, a
@@ -524,20 +528,21 @@ result could tell from a read. They are measured one section at a time in
 `docs/CONSTRAINTS.md`, and the client-library half of them is reported upstream.
 
 The authentication matrix is **done**, and it was the item whose shape was unknown. A
-database is reached one of several ways and only one of them was ever exercised: a password
-in the URL. Nine more are exercised now:
+database is reached one of several ways and only one of them was ever exercised: a plain URL,
+carrying a password where the server wants one. Nine more are exercised now:
 
 | | Modes | Where |
 |---|---|---|
-| The route 2.x took | 1 — a credentialed URL | all sixteen endpoints |
+| The route 2.x took | 1 — a plain URL | all sixteen endpoints — **eleven with a password in it, five with none**, since CockroachDB, YugabyteDB, Trino, CrateDB and YDB are reached by a bare username |
 | Added by this work | 9 — trust, a password from the environment, a password from a file, verified TLS, a client certificate, a Kerberos ticket, an option file, an empty password, a data-source name in place of an address | four endpoints |
 | **Exercised in total** | **10** | |
 | Real and out of reach here | 2 — a Unix socket, which does not cross the container boundary, and Windows integrated authentication, there being no Windows host | — |
 
 They run as a **second axis** over the endpoint table rather than as tests of their own, so
 each endpoint test runs against every mode its endpoint carries: `tests/test_endpoints.py`
-holds **twenty test functions**, and each is parameterised over the **sixteen** entries in
-`tests/endpoints.py` — one per container. Nothing in
+holds **twenty test functions**, and each is parameterised over `TARGETS` — one entry per
+endpoint *per authentication mode*, **twenty-five** of them against sixteen containers. That
+is where the suite's 500 endpoint tests come from: 20 × 25. Nothing in
 the server implements them: each is expressed in the URL or in the driver's own environment,
 which this server passes through untouched, so what was added is the evidence rather than a
 feature. `docs/CONSTRAINTS.md` §25 has the measurements.

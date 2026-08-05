@@ -1677,7 +1677,7 @@ about six minutes into the export without producing a file at all.
 `.xlsx`, `.ods` and `.yaml` were three of the eight suffixes §9.2 listed as materialising every row
 before writing any of it, measured at the scale where that stops being a footnote. **Two of the
 three still are** — the workbooks, now bounded by the cap. `.yaml` streams as of 2026-07-28, and
-§9.2's corrected table puts the boundary at eleven streaming suffixes against six materialising.
+§9.2's corrected table puts the boundary at nine streaming suffixes against six materialising.
 
 **A columnar format is a large win on writing and a small one on reading, and the gap between
 those two is the result worth keeping.** Against CSV, on the same rows:
@@ -3270,8 +3270,10 @@ its dialect is named after the *driver*, so the entry is keyed on the dialect wh
 Two container facts, both from the entrypoint rather than from documentation. `GS_PASSWORD` is checked
 against a complexity rule — eight characters, a lower, an upper, a digit and one of `#?!@$%^&*-` —
 and initialisation is refused without one that passes, **so every password this database accepts
-contains a URL delimiter.** An endpoint that formatted credentials into a URL could not reach
-openGauss at all; the `@` in the compose file is load-bearing, not decorative. And the initial user
+carries a punctuation character, and three of the ten it will take — `#`, `?`, `@` — are URL
+delimiters.** A password meeting the rule with `-` or `*` is fine in a URL; the one this compose
+file uses is not, so its `@` is load-bearing rather than decorative, and an endpoint that
+formatted such a password into a URL unescaped could not reach openGauss at all. And the initial user
 `omm` is refused over TCP outright — `FATAL: Forbid remote connection with initial user` — so
 `GS_USERNAME` must create a normal user or nothing connects.
 
@@ -4799,10 +4801,18 @@ where the column is canonical *and* one width wide. In the streamed path that co
 unioned across chunks, not a flag**, for the reason this whole section is about: two chunks each
 written one way are each uniform while the column is not, so a per-chunk boolean cannot answer it.
 
-**What made this invisible to 1,203 tests**: every temporal fixture in `test_temporal.py` writes
-its instants without the trailing `Z`, so all of them are non-canonical and take the rewriting
-branch. The already-canonical branch — the one a file written the way the documentation
-recommends takes — had **no fixture at all**. It was found by driving the finished server over
+**What made this invisible to 1,203 tests**: the `INSTANTS` fixtures that drive the mixed-column
+work write their instants without the trailing `Z`, so they are non-canonical and take the
+rewriting branch. Two small fixtures do carry canonical `Z` values — `HALF_A_SECOND_APART` and
+`DATE_BESIDE_TIMESTAMP`, both deliberately not drawn from `INSTANTS` — but they test text
+ordering within one spelling, not the mixed-canonicality question. For *that*, the
+already-canonical branch — the one a file written the way the documentation recommends takes —
+had **no fixture at all**.
+
+> **Amended 2026-08-05.** This paragraph said *"every temporal fixture … writes its instants
+> without the trailing `Z`"*, which is false of the two named above. The universal was written
+> from the fixtures the bug ran through rather than from the file's whole fixture set — which is
+> the same failure this very section is a post-mortem of, committed in the post-mortem. It was found by driving the finished server over
 stdio against a corpus written the documented way, not by the suite.
 
 ### 28.5 The type verdict is rebuilt from raw text, and was checked against pandas

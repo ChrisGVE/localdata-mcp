@@ -209,10 +209,12 @@ by name rather than written as something else. Choose it rather than defaulting:
 | something big, for another program | `.parquet` | fastest and smallest of all of them |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |
 
-`.yaml` is available and is the slowest writer here by a wide margin — **4.3×
-`.csv`** on the same million-row result, 237.6 s against 55.5 s. It has no row
-cap and holds nothing in memory, so size is not the problem; time is. Reach for
-`.jsonl` unless YAML was specifically wanted.
+`.yaml` is available and is **4.3× `.csv`** on the same million-row result,
+237.6 s against 55.5 s — the slowest of the formats with no row cap. It holds
+nothing in memory, so size is not the problem; time is. Reach for `.jsonl`
+unless YAML was specifically wanted. (`.ods` is slower still per row, by roughly
+35×, but it is capped at 65,535 rows so the two never compete on the same
+result.)
 
 This is also the answer when a result is simply too big to return — say so and
 offer it, rather than returning tens of thousands of rows through the
