@@ -188,8 +188,10 @@ green.
 ### Endpoint tests
 
 `tests/test_endpoints.py` holds twenty test functions, and each runs against
-every entry in `tests/endpoints.py` — sixteen containers, four of which carry an
-authentication-mode axis as well. `docker-compose.test.yml` defines them:
+every entry in `tests/endpoints.py`'s `TARGETS` — **twenty-five**, not sixteen:
+the sixteen containers plus the nine authentication-mode variants that four of
+them carry. That is where the 500 skips above come from, 20 × 25.
+`docker-compose.test.yml` defines the containers:
 
 ```bash
 docker compose -f docker-compose.test.yml up -d localdata-test-postgres

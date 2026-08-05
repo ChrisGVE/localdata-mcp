@@ -43,6 +43,14 @@ modules and no sub-packages at all, so:
   `v3-nightly.yml` alone — `compare_battery_runs.py`. They also name
   `build_db_fixtures.py` and `build_oracle_datasets.py`, which are the only two
   that are present. Eight paths referenced, two present, six missing.
+- **The two that are present do not run either.** Both import
+  `localdata_mcp.testbench` — named four lines above as one of the deleted
+  sub-packages — and die at import with `ModuleNotFoundError` before reaching
+  argument parsing; `v3-nightly.yml` invokes `build_db_fixtures.py` in three
+  separate steps, each of them dead. So the count above understates it: **eight
+  paths referenced, eight unusable.** Tracked as
+  [#85](https://github.com/ChrisGVE/localdata-mcp/issues/85); whether the two
+  return with a v3 testbench or are deleted with the workflows is not decided.
 - `v3-ci.yml` gates a coverage floor of 85 over `tests/v3`, **which is not in the
   repository at all** — `git ls-files tests/v3` is empty, and what is on disk is
   untracked leftovers. The job would run pytest over a path a clean checkout does
@@ -181,6 +189,8 @@ These are the known gaps, stated so a release does not walk into them:
 
 1. `v3-ci.yml` and `v3-nightly.yml` need deleting or rewriting against the tree
    that exists, and whichever survives needs to trigger on the release branch.
+   Budget for **eight** scripts, not six: the two that exist are dead on import
+   and need writing or removing along with the six that are absent (#85).
 2. The `Dockerfile` needs rewriting or `docker-publish.yml` needs disabling
    before a `v3.0.0` tag is pushed. `docker-publish.yml` also moves the `latest`
    tag unconditionally, including on a `workflow_dispatch` run from any branch,

@@ -117,14 +117,17 @@ rebuild it.
   are the whole surface on all of them; three verbs are refused on some engines,
   and those refusals are listed under *Known limitations* below.
 - **Nine further ways of authenticating an endpoint are exercised by the test
-  suite**, beyond the credentialed URL that was the only route 2.x ever took: a
+  suite**, beyond the plain URL that was the only route 2.x ever took: a
   server configured to trust, a password from the environment, a password from a
   file, verified TLS, a client certificate, a Kerberos ticket, a MySQL option
   file, an empty password, and an ODBC data-source name in place of a host and
   port — ten routes in all, counting the plain URL that all sixteen endpoints
   still use, which carries a password on eleven of them and a bare username on
-  the five that authenticate by trust (CockroachDB, YugabyteDB, Trino, CrateDB,
-  YDB). **These are not server settings and there is no parameter
+  the other five (CockroachDB, YugabyteDB, Trino, CrateDB, YDB). Those five are
+  not the `trust` case: they have **no authentication to configure**, so a
+  passwordless URL is the only URL they have, whereas `trust` is a server that
+  *has* authentication and is told not to use it — which is why `trust` is
+  counted among the nine added modes and belongs to PostgreSQL alone. **These are not server settings and there is no parameter
   for them**: `attach` takes a datasource string, and each mode is expressed in
   the URL or in the driver's own environment, which this server passes through
   untouched. What 3.0.0 adds is the evidence that they work —

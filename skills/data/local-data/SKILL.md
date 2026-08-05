@@ -206,15 +206,21 @@ by name rather than written as something else. Choose it rather than defaulting:
 | to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
 | to open it in LibreOffice specifically | `.ods` | same cap, and ~13× slower than `.xlsx`; use `.xlsx` unless OpenDocument was asked for |
 | a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
-| something big, for another program | `.parquet` | fastest and smallest of all of them |
+| something big, for another program | `.parquet` | **smallest** of all of them, by 2–4×; `.feather` and `.orc` write about as fast and are much larger |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |
 
 `.yaml` is available and is **4.3× `.csv`** on the same million-row result,
-237.6 s against 55.5 s — the slowest of the formats with no row cap. It holds
-nothing in memory, so size is not the problem; time is. Reach for `.jsonl`
-unless YAML was specifically wanted. (`.ods` is slower still per row, by roughly
-35×, but it is capped at 65,535 rows so the two never compete on the same
-result.)
+237.6 s against 55.5 s. It holds nothing in memory, so size is not the problem;
+time is. Reach for `.jsonl` unless YAML was specifically wanted.
+
+Do not read that as a superlative. **Which writer is slowest depends on the
+shape of the result, not only its size**, and the spreadsheet writers are in the
+same race rather than a separate one. On a wide result — 50,000 rows × 40
+columns — `.md` takes 20.3 s against `.yaml`'s 15.1 s; on a narrow one `.yaml`
+comes first, by about a quarter rather than by a wide margin. Under the
+65,535-row cap, at 20,000 rows: `.ods` 26.5 s, `.xlsx` 4.6 s, `.yaml` 2.0 s,
+`.md` 1.5 s, `.csv` 0.13 s — so on a result an agent can actually ask for,
+`.ods` is the slowest by 13.6× and `.yaml` is only the third slowest.
 
 This is also the answer when a result is simply too big to return — say so and
 offer it, rather than returning tens of thousands of rows through the

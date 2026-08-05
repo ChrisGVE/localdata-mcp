@@ -1153,9 +1153,12 @@ record: **9.04 → 0.17 MB** at 50,000 rows, **35.80 → 0.17 MB** at 200,000, *
 
 **YAML moved from the materialising group to the streaming one** by being dumped a chunk at a time —
 a top-level sequence dumped in pieces concatenates into the same sequence, byte for byte. It cost
-540 MB at 200,000 rows before and 2.46 MB after. **It remains by far the slowest writer**: 90.9 s
-against `.csv`'s 2.4 s on the same result, which is PyYAML serialising rather than anything about
-the peak. Confirmed at the full 1M × 11 corpus, where it writes 1.39 GB in **237.6 s adding no
+540 MB at 200,000 rows before and 2.46 MB after. **It remains slow**: 90.9 s against `.csv`'s 2.4 s
+on the same result, which is PyYAML serialising rather than anything about the peak. *The slowest*
+is more than this figure carries, and the population was never driven until round 7 of the
+documentation loop: on a wide result (50,000 × 40) `.md` takes 20.3 s against `.yaml`'s 15.1 s, and
+under the spreadsheet cap at 20,000 rows both `.ods` (26.5 s) and `.xlsx` (4.6 s) are slower than
+`.yaml` (2.0 s). Slowest-of depends on the shape of the result, not only its size. Confirmed at the full 1M × 11 corpus, where it writes 1.39 GB in **237.6 s adding no
 measurable RSS over its baseline** — the size at which the old writer held gigabytes (§10.7).
 
 So the group boundary now falls at **nine streaming suffixes and six materialising ones**
@@ -3279,10 +3282,14 @@ its dialect is named after the *driver*, so the entry is keyed on the dialect wh
 Two container facts, both from the entrypoint rather than from documentation. `GS_PASSWORD` is checked
 against a complexity rule — eight characters, a lower, an upper, a digit and one of `#?!@$%^&*-` —
 and initialisation is refused without one that passes, **so every password this database accepts
-carries a punctuation character, and three of the ten it will take — `#`, `?`, `@` — are URL
-delimiters.** A password meeting the rule with `-` or `*` is fine in a URL; the one this compose
-file uses is not, so its `@` is load-bearing rather than decorative, and an endpoint that
-formatted such a password into a URL unescaped could not reach openGauss at all. And the initial user
+carries a punctuation character.** Of the ten it will take, **exactly one breaks a URL under this
+project's own parser**: `make_url` truncates the password at `@`. `#` and `?` round-trip intact
+despite being delimiters in the abstract — measured, not reasoned from the grammar. **A second
+fails worse than breaking**: `%` is percent-decoded silently, so a password of `Testpass1%41`
+arrives as `Testpass1A` — the wrong password, with no error anywhere. A password meeting the rule
+with `-` or `*` is fine in a URL; the one this compose file uses is not, so its `@` is load-bearing
+rather than decorative, and an endpoint that formatted such a password into a URL unescaped could
+not reach openGauss at all. And the initial user
 `omm` is refused over TCP outright — `FATAL: Forbid remote connection with initial user` — so
 `GS_USERNAME` must create a normal user or nothing connects.
 
@@ -4126,8 +4133,10 @@ database.
 > measurement, and a heading is a label — it is what a search result and a generated outline
 > show, so a wrong one travels further than its own correction. No measurement changed.
 
-Every endpoint in this harness was reached exactly one way until now: a username and a password in
-the URL, in plaintext, over TCP to the loopback interface. That is one of the ways a caller reaches a
+Every endpoint in this harness was reached exactly one way until now: a plain URL, in plaintext,
+over TCP to the loopback interface — carrying a username and a password on eleven of the sixteen,
+and a bare username on the five that have no authentication to configure (see the correction at the
+end of this section). That is one of the ways a caller reaches a
 database, and the others were code paths the server had never run — which is what task 23 was about
 and what this section measures.
 
@@ -4143,7 +4152,7 @@ identified by its compose service and two rows sharing one collide in the probe 
 
 | Mode | Endpoint | Where the credential is | New shape it proves |
 |---|---|---|---|
-| credentialed URL | all sixteen | in the URL | the original, unchanged |
+| plain URL | all sixteen — **eleven with a password, five with a bare username** | in the URL, where there is one | the original, unchanged |
 | `trust` | PostgreSQL | nowhere — the server does not ask | a server that *has* authentication and is told not to use it |
 | `env-password` | PostgreSQL | `PGPASSWORD` | a passwordless URL that still authenticates |
 | `pgpass-file` | PostgreSQL | a file libpq reads | a credential in a colon-separated file |
@@ -4812,17 +4821,23 @@ written one way are each uniform while the column is not, so a per-chunk boolean
 
 **What made this invisible to 1,203 tests**: the `INSTANTS` fixtures that drive the mixed-column
 work write their instants without the trailing `Z`, so they are non-canonical and take the
-rewriting branch. Two small fixtures do carry canonical `Z` values — `HALF_A_SECOND_APART` and
-`DATE_BESIDE_TIMESTAMP`, both deliberately not drawn from `INSTANTS` — but they test text
-ordering within one spelling, not the mixed-canonicality question. For *that*, the
-already-canonical branch — the one a file written the way the documentation recommends takes —
-had **no fixture at all**.
+rewriting branch. Canonical `Z` values do reach the tests, from three places, not two:
+`HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP`, neither drawn from `INSTANTS`; and
+`spell(fmt)` (`test_temporal.py:58-60`), which reformats `INSTANTS` *itself* into the canonical
+spelling for three tests. All of them test text ordering within one spelling, not the
+mixed-canonicality question. For *that*, the already-canonical branch — the one a file written
+the way the documentation recommends takes — had **no fixture at all**. It was found by driving
+the finished server over stdio against a corpus written the documented way, not by the suite.
 
-> **Amended 2026-08-05.** This paragraph said *"every temporal fixture … writes its instants
-> without the trailing `Z`"*, which is false of the two named above. The universal was written
-> from the fixtures the bug ran through rather than from the file's whole fixture set — which is
-> the same failure this very section is a post-mortem of, committed in the post-mortem. It was found by driving the finished server over
-stdio against a corpus written the documented way, not by the suite.
+> **Amended 2026-08-05, and corrected again the same day.** This paragraph first said *"every
+> temporal fixture … writes its instants without the trailing `Z`"*, which is false. The
+> amendment that replaced it then said **two** fixtures carry canonical values and that both are
+> drawn from outside `INSTANTS` — also false, and by three: `spell(fmt)` reformats `INSTANTS`
+> itself into the canonical spelling for three more tests. The substance survived both errors, since
+> none of those fixtures mixes widths inside one column and the gap is therefore real; what did not
+> survive was the count, twice. Each version was written from the fixtures in front of the writer
+> rather than from the file's whole fixture set — the same failure this section is a post-mortem
+> of, committed in the post-mortem, and then committed again in the correction to it.
 
 ### 28.5 The type verdict is rebuilt from raw text, and was checked against pandas
 
