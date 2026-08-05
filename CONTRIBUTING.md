@@ -40,6 +40,13 @@ source .venv/bin/activate   # macOS/Linux
 pip install -e ".[all,dev]"
 ```
 
+**The development instructions assume macOS or Linux**, and are written that way
+rather than claiming a portability nobody here has tested: every command below
+spells `.venv/bin/python`, which on Windows is `.venv\Scripts\python.exe`. The
+*user*-facing install routes are platform-neutral, and the configuration cascade
+documents `%APPDATA%`. Contributing from Windows should work with that one
+substitution; nobody has run it, so this says so instead of promising it.
+
 **`--all-extras`, not `--extra dev`, and never `--dev`.** Test tooling here is a
 project *extra*, not a uv dependency group, so `uv sync --dev` uninstalls pytest
 rather than installing it. And the `dev` extra is pytest and nothing else: every

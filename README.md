@@ -70,7 +70,7 @@ declared behind six extras (`parquet` covering all three columnar suffixes, `exc
 `duckdb`, `oracle`, …). One extra is for the write side only: `markdown`
 installs the table formatter `.md` output needs, and there is no `.md` reader.
 
-In practice a base install reads **ten** and writes nine, because `fastmcp`
+In practice a base install reads **ten of the eighteen** and writes nine, because `fastmcp`
 requires `PyYAML` unconditionally and `.yaml`/`.yml` therefore work without their
 extra. That is a fact about today's dependency graph and not a promise this
 project makes: `yaml` stays the declared extra, and code that needs YAML should
@@ -196,11 +196,12 @@ plugin: sqlalchemy.dialects:<name>` naming a SQLAlchemy dialect entry point —
 which for CockroachDB, openGauss and YDB is a composite name (`yql.ydb`) that is
 not importable as a module path at all.
 
-Which of the two you get is mostly whether SQLAlchemy ships the dialect itself,
-but not entirely: CrateDB and Exasol are third-party dialects that would raise
-`NoSuchModuleError` too, and give `ModuleNotFoundError` only because this server
-imports their driver eagerly to build a type converter, before the engine exists.
-So six of the eight are the plain case and two are ours. Either way the refusal
+Which of those two exceptions you get is mostly whether SQLAlchemy ships the
+dialect itself, but not entirely: CrateDB and Exasol are third-party dialects
+that would raise `NoSuchModuleError` too, and give `ModuleNotFoundError` only
+because this server imports their driver eagerly to build a type converter,
+before the engine exists. So six of the eight `ModuleNotFoundError` backends are
+the plain case and two are ours. Either way the refusal
 never names the extra, which is why the map is here. Two rows point at another
 backend's extra:
 
