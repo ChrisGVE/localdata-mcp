@@ -364,8 +364,12 @@ We follow semantic versioning:
 
 A version lives in **six** hand-edited places across five files, and they must
 move together — then `uv lock` has to be re-run, because `uv.lock` carries the
-project's own version too and a bump without a relock fails `uv lock --check`
-and every `uv sync --frozen`:
+project's own version too. A bump without a relock is caught by `uv lock --check`
+and by `uv sync --locked`, and by nothing else: `uv sync --frozen` is the flag
+that uses the lockfile without validating it, so it exits 0 and installs the
+bumped version against the stale lock. Every `uv sync` in this repository's
+workflows passes `--frozen`, and nothing here runs `uv lock --check` at all, so
+forgetting the relock is silent rather than self-announcing:
 
 | File | Field | Today |
 |---|---|---|

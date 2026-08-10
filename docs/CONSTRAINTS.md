@@ -896,6 +896,20 @@ no counterpart for this, which is the larger silent-wrong-answer class of the tw
 > the typed readers (parquet, feather, Excel) that arrive above level 0, and it is what will convert
 > a column that arrives already typed.
 
+**Correction, 2026-08-10 — the last sentence of that blockquote has expired.** The typed readers
+did not arrive above level 0; they shipped in level 0, and the conversion is reachable today.
+Driven against the server at `8a6a3c50`, a pandas datetime column written to `.parquet`,
+`.feather`, `.orc`, `.xlsx`, `.xlsm` and `.ods` and attached comes back
+`"type": "INTEGER", "temporal": "timestamp", "unit": "nanoseconds_since_epoch"` in all six, while
+the same frame written to `.csv` comes back `"type": "TEXT", "temporal": "iso8601_utc"`. So the
+epoch form the argument above rejects is what the typed path produces, and the three silent failure
+modes it names apply to it: `WHERE d > '2024-03-02'` against the `.parquet` copy returns
+`{"ok": true, "rows": [], "row_count": 0}` where the `.csv` copy returns the row. The argument
+itself is not withdrawn — it is about what the *text* path should do, and nothing here changes
+that. What is withdrawn is the claim that the conversion is unreachable and the implication that
+the decision was settled for both paths. Filed as
+[#87](https://github.com/ChrisGVE/localdata-mcp/issues/87).
+
 **The pattern, sixth instance and the sharpest yet.** `tests/test_binding.py` contains
 `test_same_instant_in_two_offsets_joins`, asserting `matched == 1`, and it passes — because it hands
 `insert_frame` two tz-aware `pd.Timestamp`s. Handed the same two instants *by a CSV*, the server
@@ -2672,7 +2686,7 @@ for the *other* reason a dialect earns an entry: three engines borrow it.
 
 Tenth endpoint dialect, and the seventh entry from the backend catalogue (task 22, worklist item 7).
 MonetDB is a **column store**, and not the first here in any sense: DuckDB (a file) and ClickHouse
-(a URL, whose tables are created as `MergeTree`) both came earlier, and Databend (§31) is a
+(a URL, whose tables are created as `MergeTree`) both came earlier, and Databend (§23) is a
 cloud-native columnar warehouse. The question it was taken to answer is whether the seam's generic
 answers are about SQL or about how a database keeps its bytes.
 

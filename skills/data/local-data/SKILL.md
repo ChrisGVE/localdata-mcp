@@ -206,7 +206,7 @@ by name rather than written as something else. Choose it rather than defaulting:
 | to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
 | to open it in LibreOffice specifically | `.ods` | same cap, and **6× slower than `.xlsx` at 20,000 rows, ~13× at 50,000** — the gap widens with rows; use `.xlsx` unless OpenDocument was asked for |
 | a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
-| something big, for another program | `.parquet` | smallest on most shapes, though **`.orc` beats it on some** — neither leads by more than about 1.5×; both write about as fast, and `.feather` is much larger |
+| something big, for another program | `.parquet` | the safe default, not a size winner: over seven shapes driven it was smallest on three — **by 100× or more where a column repeats few distinct values** — and eighth of fifteen on high-entropy text, where `.orc` won by about 1.2×. `.orc` and `.parquet` write within 8% of each other; `.feather` writes faster, and was the larger on every text shape but the smaller on both float shapes |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |
 
 `.yaml` is available and is **4.3× `.csv`** on the same million-row result,
@@ -381,11 +381,25 @@ the earliest date. Say so before quoting any number that came out of an
 `ORDER BY` or a `max()` over it. Unix timestamps are integers and are left
 untouched; integer comparison is already chronological.
 
+**A third case, and it is the one that will catch you.** All of the above is
+about dates that arrive as text. A `.parquet`, `.feather`, `.orc`, `.xlsx`,
+`.xlsm` or `.ods` column that is a real timestamp in the source arrives as an
+integer instead, marked `"temporal": "timestamp", "unit":
+"nanoseconds_since_epoch"`, and **no warning is raised about it**. Ordering and
+`max()` are right; comparing it to a date string is not — `WHERE d >
+'2024-03-02'` compares an integer to text and comes back `"ok": true` with zero
+rows. Read the column list from `attach` or `info` before writing a date
+predicate: if `unit` says nanoseconds, compare against a tick value or convert.
+The mark is also lost on export, so a column you wrote out with `query(path=…)`
+or `save()` and attached again is a bare `INTEGER` with nothing to tell you.
+
 ## Checking your own work
 
 Before reporting a number:
 
-- Did any warning come back from `attach` about the columns it touches?
+- Did any warning come back from `attach` about the columns it touches? A
+  nanosecond-timestamp column is the one problem that raises none, so check the
+  column's own `temporal` and `unit` fields too.
 - If it is a join, was the match complete — and did you say so either way?
 - Does the row count make sense against what `info` said was there?
 

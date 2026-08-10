@@ -444,8 +444,17 @@ for the whole column**: a single value carrying a time takes the column to
 > instant join. §1.4's evidence is about *offset-preserving* text and about
 > durations; canonical UTC text has neither problem, and SQLite's own date
 > functions all take ISO 8601 text.
+>
+> **This governs the text path only, and the typed readers do not take it.** A
+> `.parquet`, `.feather`, `.orc` or spreadsheet column that is a real timestamp
+> in the source arrives as integer nanoseconds since the epoch — reported as
+> `{"temporal": "timestamp", "unit": "nanoseconds_since_epoch"}` — and therefore
+> carries the exact failure this paragraph rejects, with no warning raised. The
+> reasoning above still holds for everything parsed out of text; it simply never
+> reached the readers that get a type handed to them. Whether that split is
+> intended is [#87](https://github.com/ChrisGVE/localdata-mcp/issues/87).
 
-**Anything else is left alone and reported.** A column that reads as dates in
+**Any other text is left alone and reported.** A column that reads as dates in
 no recognised standard comes back with the offending values named, saying that
 its comparisons are alphabetical rather than chronological. That is the same
 contract as the mixed-column signal: the server states the limitation, and the

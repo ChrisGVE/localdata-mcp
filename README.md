@@ -412,6 +412,11 @@ answer belongs to whoever wrote the file, it reports and carries on.
   one column named `a_b_c`, and the warning says exactly that and names the
   `delimiter` parameter. It does not re-read at a guessed separator: a guess that
   is usually right is the worst kind.
+- **A timestamp out of a typed format is reported only on the column itself**,
+  and this is the one entry here with **no warning attached**. It loads as an
+  integer count of nanoseconds since the epoch, which orders correctly and
+  compares wrongly against a date string; the `temporal` and `unit` fields on the
+  column say so and nothing else does. *Dates*, below, has the detail.
 
   The two directions differ deliberately. On the way in, `attach` and `create`
   **refuse** a `delimiter` for any suffix that has no separator. On the way out,
@@ -420,8 +425,8 @@ answer belongs to whoever wrote the file, it reports and carries on.
 
 ## Dates
 
-A file holds dates as text, and text compares as text — so `'30.11.2023'` sorts
-*after* `'01.03.2025'`, `ORDER BY` runs backwards and `max()` returns the
+A flat file holds dates as text, and text compares as text — so `'30.11.2023'`
+sorts *after* `'01.03.2025'`, `ORDER BY` runs backwards and `max()` returns the
 earliest instant. Measured across the spellings of five instants spanning
 three years, **every day-first and every month-name form ordered wrongly, and
 returned the earliest instant from `max()`** — silently, with no error and no
@@ -449,8 +454,35 @@ An offset is honoured and normalised, so the same instant written `+00:00` and
 `-05:00` compares equal. The original offset is **not** recoverable afterwards; a
 file that needs it must keep it in a column of its own. One spelling means one
 spelling for the whole column: a single value carrying a time takes the column to
-`…T00:00:00Z` throughout. Anything in no recognised standard is left alone and
+`…T00:00:00Z` throughout. Text in no recognised standard is left alone and
 reported, with the offending values named.
+
+All of that is the flat-file case, where the only thing a date can be is text. A
+**typed** format — `.parquet`, `.feather`, `.orc`, and the spreadsheet formats —
+carries a timestamp type of its own, and such a column arrives as an integer
+count of **nanoseconds since the Unix epoch**:
+
+```python
+{"name": "order_date", "type": "INTEGER", "temporal": "timestamp", "unit": "nanoseconds_since_epoch"}
+```
+
+Ordering and `max()` are correct on it, for the same reason Unix time is left
+untouched above. What is not correct is comparing it against a date string:
+`WHERE order_date > '2024-03-02'` compares an integer to text and returns **zero
+rows with no error** — the same silent wrong answer this section opens with,
+arrived at from the other direction. Compare against a tick value, or read `unit`
+and convert. Two things make this the sharpest edge in the tool:
+
+- **Nothing warns about it.** Every entry under *What it tells you rather than
+  fixing* pairs its problem with a warning; this one has no warning channel at
+  all, so the `temporal` and `unit` pair on the column is the only signal there
+  is.
+- **That signal does not survive a round trip.** A column written out with
+  `query(path=…)` or `save()` and attached again comes back as a bare `INTEGER`
+  with no temporal key, so the second reader cannot know what the integers mean.
+
+Whether the split is the right design is open —
+[#87](https://github.com/ChrisGVE/localdata-mcp/issues/87).
 
 ## Memory
 

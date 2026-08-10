@@ -626,11 +626,19 @@ def query(
             .xlsx, .ods);
             one this server cannot
             write is refused by name rather than written as something else.
+            Passing this changes what comes back: the response carries
+            rows_written and the column names instead of the rows themselves.
             For a very large result the suffix is worth choosing rather than
             defaulting to. .csv and .jsonl write row by row and never hold the
-            result; .parquet does hold it, and is among the fastest and the
-            smallest — though .feather writes faster and .orc is smaller on some
-            shapes, neither by more than about 1.5x. .yaml is slow (4.3x .csv on
+            result; .parquet does hold it. Which format is smallest depends on
+            the data far more than on the format: over seven shapes driven,
+            .parquet was smallest on three — by 100x or more where a column
+            repeats few distinct values — while on high-entropy text it was
+            eighth of fifteen and .orc was smallest. Where .orc wins it wins by
+            about 1.2x; where .parquet wins it can win by 190x. The two write
+            within 8% of each other. .feather writes faster and was larger than
+            .parquet on every text shape driven but smaller on both float
+            shapes. .yaml is slow (4.3x .csv on
             a million-row result) though it holds nothing, and .md holds the
             whole table because a Markdown column is only as wide as its widest
             value. A spreadsheet (.xlsx, .ods) refuses more than 65,535 rows
