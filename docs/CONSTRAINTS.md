@@ -1179,7 +1179,12 @@ depends on the shape of the result, not only its size.
 > **Re-driven twice on 2026-08-11, and the second run corrects the first — a nominal shape is
 > not a corpus.** The skill page printed this run's timings beside a *different* run's
 > `.ods`/`.xlsx` ratio, which is a real defect and is fixed by quoting the ratio these figures
-> give: 26.5 / 4.6 = **5.8×**, and 26.5 / 2.0 = **13×**. The run itself stands. A re-drive that
+> give: 26.5 / 4.6 = **5.8×**, and 26.5 / 2.0 = **13×**. The run itself stands. **The other
+> run is still in this document** — §10.7's range drive puts the same pair at the same nominal
+> 20,000 × 11 at **6.45×** (28.97 s against 4.49 s), and neither supersedes the other: they are
+> two corpora sharing a shape, which is the whole subject of this note. 5.8× is the figure the
+> shipped surfaces carry, because the ordinary-width corpus is the result an agent asks for.
+> A re-drive that
 > declared `.csv`'s 0.13 s superseded by a measured 0.45 s **used a different corpus while
 > calling it the same one**: `bench_wide_1m.csv` carries a `text_1000` column, so its first
 > 20,000 rows are **24.3 MB against about 2.1 MB** for an ordinary 20,000 × 11 corpus — 11×
@@ -1195,6 +1200,21 @@ depends on the shape of the result, not only its size.
 > and it was read as the error. A cross-check made only from insensitive instruments confirms
 > nothing. **Row count and column count do not fix a corpus** — the cell widths do, and any
 > timing quoted here needs them.
+>
+> **What that demands of a timing, since most of the ones below predate the rule.** A figure
+> has to be attributable to a corpus whose widths are written down — at the quote, or at the
+> section that owns it. Two corpora are written down, and between them they carry most of the
+> numbers here: the **wide 1M × 11** corpus, defined with its widths at the head of §10 (a
+> date, a datetime, an id, text at 10/100/1000 characters, small and large integers, floats),
+> which §10's step timings inherit — including the spreadsheet-cap table, which says so at the
+> table; and the **ordinary-width 20,000 × 11** corpus of about 2.1 MB described three
+> paragraphs above, which is the one the shipped surfaces quote. **Inheritance stops at the
+> corrections.** §10.7's two later drives — the `.ods`/`.xlsx` range across 10k/20k/50k, and
+> the 2026-08-11 re-drive — each ran their own corpus, which is why their 20,000-row points
+> disagree at 6.45× and 5.8×; a correction inside a section does not borrow the section's
+> corpus. A timing attributable to no written-down corpus fixes an *ordering* between writers
+> and not a *ratio* — the **50,000 × 40** figures are the ones in that state, and every claim
+> made from them here is an ordering. Re-drive before quoting one as a factor.
 
 So the group boundary now falls at **nine streaming suffixes and six materialising ones**
 (`.md` `.parquet` `.feather` `.orc` `.xlsx` `.ods`), and each of the six is deliberate.
@@ -1732,7 +1752,8 @@ into the export without producing a file at all.
 > property of odfpy rather than of scale"* — an inference from two points that sit next to each
 > other at the top of the range. Driven across the range, eleven columns, both writers in one
 > process at each point: **6.35x at 10,000 rows** (12.94 s against 2.04 s), **6.45x at 20,000**
-> (28.97 s against 4.49 s), **12.71x at 50,000** (96.71 s against 7.61 s). The ratio roughly
+> (28.97 s against 4.49 s — a different corpus from the 26.5 / 4.6 the shipped surfaces carry,
+> see the paragraph below), **12.71x at 50,000** (96.71 s against 7.61 s). The ratio roughly
 > doubles between 20,000 and 50,000 because `.ods` is superlinear in rows while `.xlsx` is
 > roughly linear. The anchor measurements above are right; the generalisation drawn from them
 > was not, and it is that generalisation that licensed an unconditional *"~13x"* in the shipped
