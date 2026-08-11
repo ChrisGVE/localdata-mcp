@@ -682,15 +682,34 @@ class Registry:
             path = resolve_read_path(source)
         except PathNotAllowed as exc:
             raise SlotError(str(exc)) from exc
+        # A suffix nothing reads is answered here rather than by the loader,
+        # because from `create` the honest answer is about the verb: it reads a
+        # data file, and a bare format list reads as "wrong suffix" to an agent
+        # that handed it a database.
+        if path.suffix.lower() not in READERS:
+            supported = ", ".join(sorted(READERS))
+            raise SlotError(
+                f"No reader for {path.suffix!r}. Supported: {supported}. create "
+                f"reads a data file, never a database — to bring rows out of "
+                f"another datasource, write them to a file with "
+                f"query(nickname, sql, path=…) first, then create that file."
+            )
         try:
             read = read_source(path, delimiter=delimiter)
             if len(read.tables) > 1:
+                # Both spellings, because this is the one message where the
+                # file's own names and the identifiers every later call needs
+                # sit side by side.
                 named = ", ".join(str(one.name) for one in read.tables)
+                arriving = ", ".join(
+                    _sanitize(str(one.name) or path.stem, "table")
+                    for one in read.tables
+                )
                 raise SlotError(
                     f"{Path(source).name} holds {len(read.tables)} tables "
                     f"({named}), and create makes one. Attach the file as its "
                     f"own datasource instead — it becomes a database with all "
-                    f"{len(read.tables)} in it."
+                    f"{len(read.tables)} in it, arriving as {arriving}."
                 )
             return self._workspace.insert_source(
                 read.tables[0],
@@ -846,13 +865,19 @@ class Registry:
         return target
 
     def _writable(self, nickname: str, action: str) -> Slot:
-        """The slot for a nickname, refusing if it may not be changed."""
+        """The slot for a nickname, refusing if it may not be changed.
+
+        The refusal has to say *detach first*. To reach it at all the caller
+        holds the slot open, and the same source attached twice is refused — so
+        an attach that only adds ``writable=true`` fails every time, and the
+        two-call route is the only one there is.
+        """
         slot = self.slot(nickname)
         if not slot.writable:
             raise NotWritable(
                 f"{nickname!r} was attached read-only, so this server will not "
-                f"{action} it. Attach {slot.source} again with writable=true if "
-                f"you meant to change the file itself."
+                f"{action} it. Detach it first, then attach {slot.source} again "
+                f"with writable=true, if you meant to change the file itself."
             )
         return slot
 

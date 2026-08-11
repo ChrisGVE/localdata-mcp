@@ -1046,7 +1046,10 @@ Recorded because a pass with findings should not read as a failing report.
 
 Measured in-process against the real tool functions, at Chris's direction: *"the next step will
 have to be memory footprint (along processing), stress testing (including the memory), and
-performance measurement."* Probes live in `tmp/perf/`.
+performance measurement."* Probes live in `tmp/perf/`, which is **untracked and does not ship** —
+every `tmp/perf/…` path in this document names a working file on the machine the measurement was
+taken on, not something a reader can open. What is reproducible from this repository is the
+figure, its corpus and its budget, all of which are written down beside it.
 
 **Nothing here is a pass/fail budget.** Every number is an observation. What counts as an
 acceptable footprint or latency is not a measurement's to decide, and none is asserted below.
@@ -1171,8 +1174,8 @@ a top-level sequence dumped in pieces concatenates into the same sequence, byte 
 on the same result, which is PyYAML serialising rather than anything about the peak. Confirmed at
 the full 1M × 11 corpus, where it writes 1.39 GB in **237.6 s adding no measurable RSS over its
 baseline** — the size at which the old writer held gigabytes (§10.7). **It is not, however, the
-slowest.** That superlative was never driven against the other writers: on a wide result
-(50,000 × 40) `.md` takes 20.3 s against `.yaml`'s 15.1 s, and under the spreadsheet cap at
+slowest.** That superlative was never driven against the other writers: on a forty-column
+result (50,000 × 40) `.md` takes 20.3 s against `.yaml`'s 15.1 s, and under the spreadsheet cap at
 20,000 rows both `.ods` (26.5 s) and `.xlsx` (4.6 s) are slower than `.yaml` (2.0 s). Slowest-of
 depends on the shape of the result, not only its size.
 
@@ -1207,8 +1210,11 @@ depends on the shape of the result, not only its size.
 > numbers here: the **wide 1M × 11** corpus, defined with its widths at the head of §10 (a
 > date, a datetime, an id, text at 10/100/1000 characters, small and large integers, floats),
 > which §10's step timings inherit — including the spreadsheet-cap table, which says so at the
-> table; and the **ordinary-width 20,000 × 11** corpus of about 2.1 MB described three
-> paragraphs above, which is the one the shipped surfaces quote. **Inheritance stops at the
+> table; and the **ordinary-width 20,000 × 11** corpus of about 2.1 MB described in the note
+> above, which is the one the shipped surfaces quote **for the 20,000-row spreadsheet
+> figures**. Their other timings — the 13.5× at the cap, the 4.3× on a million rows — come
+> from the wide corpus, and each is quoted with the cap or the row count that identifies it.
+> **Inheritance stops at the
 > corrections.** §10.7's two later drives — the `.ods`/`.xlsx` range across 10k/20k/50k, and
 > the 2026-08-11 re-drive — each ran their own corpus, which is why their 20,000-row points
 > disagree at 6.45× and 5.8×; a correction inside a section does not borrow the section's
@@ -1696,7 +1702,7 @@ reading" argument to bound it with.
 > whole by PyYAML, which has no chunk to ask for — so this cliff stands exactly as written. A very
 > large YAML this server writes is one it may not read back — **recorded here as a
 > documented cliff rather than papered over with a limit**. The 27 minutes is unchanged and is
-> PyYAML serialising, not memory: YAML remains slow on a large narrow result, and `.jsonl` is
+> PyYAML serialising, not memory: YAML remains slow on the wide 1M × 11 corpus, and `.jsonl` is
 > the format to ask for when the result is large and the shape is the same.
 >
 > > **Correction (2026-08-04) — "by an order of magnitude" was wrong, and the number
@@ -1720,8 +1726,11 @@ reading" argument to bound it with.
 > > `.yaml` re-run is 237.6 s — 1.05×, which is not a wide margin — and on a 50,000 × 40
 > > result `.md` (20.3 s) is slower than `.yaml` (15.1 s) outright. **Narrowing a superlative
 > > without driving the population it still quantifies over is how the same wrong claim
-> > survived two corrections**; what YAML is, is slow on a large narrow result, which is what
-> > the numbers here measure.
+> > survived two corrections**; what YAML is, is slow on the wide 1M × 11 corpus, which is what
+> > the numbers here measure. **"Wide" in this document is always that corpus** — wide by cell,
+> > carrying a 1,000-character text column — and the 50,000 × 40 result is called a
+> > forty-column result, because the two are wide on different axes and were being told apart
+> > by the same word.
 
 #### Spreadsheets are capped, and measured at the cap
 
@@ -1753,7 +1762,8 @@ into the export without producing a file at all.
 > other at the top of the range. Driven across the range, eleven columns, both writers in one
 > process at each point: **6.35x at 10,000 rows** (12.94 s against 2.04 s), **6.45x at 20,000**
 > (28.97 s against 4.49 s — a different corpus from the 26.5 / 4.6 the shipped surfaces carry,
-> see the paragraph below), **12.71x at 50,000** (96.71 s against 7.61 s). The ratio roughly
+> see the paragraph below), **12.71x at 50,000** (96.71 s against 7.61 s — this drive's own
+> corpus, not §10's, which is why it is not the 156.2 / 11.8 above). The ratio roughly
 > doubles between 20,000 and 50,000 because `.ods` is superlinear in rows while `.xlsx` is
 > roughly linear. The anchor measurements above are right; the generalisation drawn from them
 > was not, and it is that generalisation that licensed an unconditional *"~13x"* in the shipped
@@ -1977,9 +1987,9 @@ Both are reported upstream as one issue, since both are the same omission of the
 surface: [ClickHouse/clickhouse-connect#919](https://github.com/ClickHouse/clickhouse-connect/issues/919).
 
 Both are recorded on the backend as `unstorable_column_types()`. That axis also absorbed Oracle's
-"no time-of-day type", which had been a literal dialect-name branch in a test fixture — shared code
-stating a dialect fact, which this design forbids wherever it appears. A fixture is one place that
-can happen, not the only one: `loader.py:438-439` and `dialects.py:316-317` state the same
+"no time-of-day type", which had been a literal dialect-name branch in a test fixture — and a
+dialect fact belongs in the backend seam and nowhere else, in a fixture no less than in shared
+code. A fixture is one place that can happen, not the only one: `loader.py:438-439` and `dialects.py:316-317` state the same
 prohibition for the loader and for dialect dispatch, and §15.2 states it again for the retry axis.
 
 ### 11.5 `readonly=1` is the whole read-only guarantee, because there is no floor beneath it

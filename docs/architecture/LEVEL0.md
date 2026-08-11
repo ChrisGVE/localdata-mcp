@@ -197,14 +197,16 @@ engines named in the backend table.
 
 **`save`.** An occupied path is refused until `force` carries the user's consent, and a path
 a live slot sits on is refused regardless. It writes out a database this server holds, so it
-is refused on every backend but SQLite; the refusal names the route round it.
+is refused on every backend but SQLite; the refusal names the route round it, which is
+three calls — `query(path=…)`, `create` that file into a slot of your own, `save` that.
 
 ### Write is not the default
 
 Only databases **the MCP created** are read/write. A flat file becomes our own in-memory
 database, so it is writable by construction. Everything attached from outside is
 **read-only**. The caller can grant write on an external database at attach time
-(`writable=true`), and that grant is per-attach.
+(`writable=true`), and that grant is per-attach — changing it on an open slot means
+`detach` and attach again, since the same source attached twice is refused.
 
 The grant governs the three verbs that change a slot — `create`, `update` and `drop`
 — and only those, because **`query` never writes to anything**. A query reads: `INSERT`, `CREATE TABLE`, `CREATE VIEW`, `PRAGMA`

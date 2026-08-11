@@ -190,9 +190,10 @@ Firebird, openGauss, YDB, Databend and Exasol. Three things differ from a file:
   live in the engine. **Never offer `save` over a URL-attached datasource.** This
   also covers a DuckDB *file*, which is reached over DuckDB's own connection and
   is refused for the same reason. Offer `query(nickname, "SELECT …",
-  path="/path/result.parquet")` instead, or `create` the rows into a datasource
-  of your own — attach a small local file, land the result in it — and `save` it.
-  §6 has the rule in full.
+  path="/path/result.parquet")` instead — and if they want it back as a database,
+  that same file is the first of three calls: `create` it into a datasource of
+  your own, then `save` that. `create` reads a file, so it cannot copy rows out
+  of the engine directly. §6 has the rule in full.
 
 Two smaller refusals live here too: `create(type="index")` on the five engines
 listed in §2, and `update(type="table")` on **Firebird**, which has no
@@ -222,7 +223,7 @@ by name rather than written as something else. Choose it rather than defaulting:
 | They want | Ask for | Why |
 |---|---|---|
 | to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
-| to open it in LibreOffice specifically | `.ods` | same cap, and slow — **5.8× `.xlsx`** at 20,000 rows of eleven ordinary-width columns, **~13×** at 50,000; on a wide result it had not produced a file after half an hour (below). Use `.xlsx` unless OpenDocument was asked for |
+| to open it in LibreOffice specifically | `.ods` | same cap, and slow — **5.8× `.xlsx`** at 20,000 rows of eleven ordinary-width columns, and the gap widens with rows: **12.7×** at 50,000 on the range drive's own corpus. On a wide result it had not produced a file after half an hour (below). Use `.xlsx` unless OpenDocument was asked for |
 | a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
 | something big, for another program | `.parquet` | the safe default, not a size winner: over seven shapes driven it was smallest on three — **by 100× or more where a column repeats few distinct values** — and eighth of fifteen on high-entropy text, where `.orc` won by about 1.2×. `.orc` and `.parquet` write within 8% of each other; `.feather` writes faster, and was the larger on every text shape but the smaller on both float shapes |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |
@@ -233,11 +234,11 @@ time is. Reach for `.jsonl` unless YAML was specifically wanted.
 
 `.yaml` is not the slowest writer, though. **Which writer is slowest depends on
 the shape of the result, not only its size**, and the spreadsheet writers are in
-the same race rather than a separate one. On a wide result — 50,000 rows × 40
-columns — `.md` takes 20.3 s against `.yaml`'s 15.1 s, and `.ods`, still legal
-under its cap at that many rows, ran for over half an hour without producing a
-file; on a narrow one `.yaml` comes first, by about a quarter rather than by a
-wide margin. Under the 65,535-row cap, at 20,000 rows of eleven ordinary-width
+the same race rather than a separate one. On a forty-column result — 50,000 rows
+× 40 columns — `.md` takes 20.3 s against `.yaml`'s 15.1 s, and `.ods`, still
+legal under its cap at that many rows, ran for over half an hour without
+producing a file; on the million-row, eleven-column one `.yaml` is the slowest,
+but only by 5% over `.md` — not by a wide margin. Under the 65,535-row cap, at 20,000 rows of eleven ordinary-width
 columns: `.ods` 26.5 s, `.xlsx` 4.6 s, `.yaml` 2.0 s, `.md` 1.5 s, `.csv`
 0.13 s — so on a result an agent can actually ask for, `.ods` is the slowest,
 **5.8× `.xlsx` and 13× `.yaml`**, and `.yaml` is only the third slowest. Wide
@@ -277,10 +278,11 @@ comes back **read-only** unless they pass `writable=true`.
 Where `save` is refused, the answer is one of two things, and the refusal names
 the first:
 
-- **Land the rows in a datasource of your own and save that.** Attach or build a
-  local one, `create(…, type="table", source=…)` the pieces you want into it, and
-  `save` that. This is what to do when they want the *relationship* — several
-  tables they can come back to.
+- **Land the rows in a datasource of your own and save that.** `create` reads a
+  *file*, so the rows have to become one first: `query(nickname, "SELECT …",
+  path=…)`, then `create(…, type="table", source=<that file>)` into a local
+  datasource, then `save` it. This is what to do when they want the
+  *relationship* — several tables they can come back to.
 - **Send the result to a file** with `query(nickname, "SELECT …", path=…)`. This
   is what to do when they want one answer in a form they can open or mail on.
   The answer comes back as `rows_written` and the column names rather than the

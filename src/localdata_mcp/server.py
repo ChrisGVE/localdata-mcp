@@ -452,8 +452,8 @@ def attach(
 
     A flat file becomes a new database holding one table named after the file; a
     SQLite database arrives with the tables it already has. A file that holds
-    several tables — a workbook's sheets, a page's tables — becomes a database
-    holding all of them, under the names the file gives them.
+    several tables — a workbook's sheets — becomes a database holding all of
+    them, under the names the file gives them.
 
     For a file, the answer already carries what it loaded — columns, types, row
     count and any warning — so calling ``info`` straight afterwards returns the
@@ -470,6 +470,9 @@ def attach(
             nickname that comes back rather than the one you asked for.
         writable: Allow writes to a datasource that came from outside. Ignored
             for a flat file, whose database is built here and always writable.
+            The grant belongs to this attach, and the same source attached twice
+            is refused — so granting write to something already open means
+            ``detach`` first, then attach it again with this set.
         delimiter: The character separating fields, for .csv/.tsv/.txt only.
             Defaults to what the extension implies — comma for .csv and .txt,
             tab for .tsv. Set it when you know the file uses something else;
@@ -647,8 +650,9 @@ def query(
             whole table because a Markdown column is only as wide as its widest
             value. A spreadsheet (.xlsx, .ods) refuses more than 65,535 rows
             outright, and of those two .ods is 5.8x slower than .xlsx at 20,000
-            rows of eleven ordinary-width columns and ~13x at 50,000 of the same
-            shape, the gap widening with rows; on a wide result (50,000 x 40) it
+            rows of eleven ordinary-width columns, and the gap widens with rows:
+            driven across a range on one corpus it is 6.4x at 20,000 and 12.7x
+            at 50,000. On a forty-column result (50,000 x 40) it
             ran for over half an hour without producing a file — ask for it when
             OpenDocument is what was wanted, not by default.
         force: Replace the file if it is already there. Set this only after the
@@ -900,6 +904,13 @@ def save(nickname: str, path: str, force: bool = False) -> dict[str, Any]:
     The datasource stays open and unchanged; this writes a copy. Attaching that
     copy later is an ordinary attach, so it comes back read-only unless write is
     granted again.
+
+    Only a database this server holds is one it can write out, so this is
+    refused on every backend but SQLite — a database reached over a URL, and a
+    DuckDB file, included. Keeping rows from one of those takes three calls:
+    ``query(nickname, sql, path=…)`` to write them to a file, ``create`` to land
+    that file in a slot of your own, then ``save`` that slot. Offer that route
+    rather than this verb when the datasource is not SQLite.
 
     Args:
         nickname: The datasource to write out.

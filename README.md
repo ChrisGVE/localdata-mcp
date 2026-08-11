@@ -253,9 +253,10 @@ carried out on some engines, and the refusal says so and names the way round:
   — every CSV, workbook, Parquet file and the like — is an in-memory SQLite
   database, and `save` writes it out. **A slot reached over its own connection
   has no such database, so `save` is refused on all seventeen non-SQLite
-  backends, a local DuckDB file included.** The way to keep the result is
-  `create` the rows you want into a slot of your own and `save` that, or
-  `query(path=…)` straight to a file. The refusal says exactly this.
+  backends, a local DuckDB file included.** The way to keep the result is three
+  calls, because `create` reads a file and cannot copy rows out of a database:
+  `query(path=…)` writes the rows to a file, `create` lands that file in a slot
+  of your own, and `save` writes that slot out. The refusal says exactly this.
 - **`create(type="index")` is refused on ClickHouse, Trino, CrateDB, Databend
   and Exasol** — each for its own reason: indexes that cannot be reflected, no
   storage to index, every column indexed already, a statement that compiles to
@@ -381,8 +382,8 @@ Attaching that file again later is an ordinary attach, so it comes back
 **`save` only works on a slot this server built** — anything that came from a
 file, and SQLite. A slot reached over its own connection (PostgreSQL, a DuckDB
 file, any of the other sixteen backends) has no local database to write out, and
-`save` is refused there; `create` the rows into a slot of your own and save
-that, or send the result to a file with `query(path=…)`. See [Not every verb
+`save` is refused there; send the result to a file with `query(path=…)`, `create`
+that file into a slot of your own, and save that. See [Not every verb
 reaches every backend](#not-every-verb-reaches-every-backend).
 
 An existing file is refused. The destination is a name a person chose, so whether
@@ -400,8 +401,10 @@ These are deliberate. Some are forced by a measurement recorded in
   evicted when the limit is reached, and the eviction is *reported* in `evicted`
   with everything needed to rebuild it.
 - **Write is not the default.** Anything attached from outside is read-only; the
-  grant is per-attach and is carried by the connection itself. A database built
-  from a flat file is yours, and is writable.
+  grant is per-attach and is carried by the connection itself, so changing it
+  means `detach` and then attach again with `writable=true` — re-attaching a
+  source that is still open is refused by the rule below. A database built from
+  a flat file is yours, and is writable.
 - **The same file twice is refused**, naming the datasource already holding it
   and the tables it holds.
 - **Paths are confined** to the working directory and any configured roots.

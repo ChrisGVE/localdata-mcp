@@ -23,7 +23,7 @@ for pip and for GitHub Actions, capped at ten and five respectively, assigned to
 `ChristianBerclaz`. Its pull requests land against the default branch, so on this
 branch they arrive as noise rather than as updates.
 
-## The two v3 workflows that used to be here
+## What was deleted on 2026-08-11 — two workflows and two scripts
 
 Until 2026-08-11 this directory also held `v3-ci.yml` and `v3-nightly.yml`, and
 `scripts/` held `build_db_fixtures.py` and `build_oracle_datasets.py`. All four

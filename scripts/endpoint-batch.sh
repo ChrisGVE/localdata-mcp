@@ -80,7 +80,8 @@ batch_dialects() {
 #
 # Ask compose which containers it started rather than guessing their names: the
 # project prefix is a property of the directory, and a hand-written name went stale
-# once already (scripts/wait-for-databases.sh, which still names three services).
+# once already: the earlier scripts/wait-for-databases.sh named three services after
+# the compose file had grown past them, and was deleted rather than repaired.
 #
 # A container with no healthcheck counts as ready once it is running. Every service in
 # this compose file has one, so that branch is a safety net rather than a normal path.

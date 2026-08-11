@@ -275,9 +275,9 @@ each was reported against 2.x and none of the code carrying it survives:
   a local DuckDB file included. `save` writes out a database this server is
   holding, and a slot reached over its own connection has none: the rows live in
   the engine, not here. Every file-derived slot *is* SQLite, so `save` works on
-  all of them. For the rest, `create` the rows you want into a slot of your own
-  and save that, or send the result straight to a file with `query(path=…)`. The
-  refusal says so.
+  all of them. For the rest it takes three calls, since `create` reads a file
+  rather than a database: send the rows to a file with `query(path=…)`, `create`
+  that file into a slot of your own, and save that. The refusal says so.
 - **`create(type="index")` is refused on ClickHouse, Trino, CrateDB, Databend and
   Exasol**, each for its own reason — indexes that cannot be reflected, no
   storage to index, every column indexed already, a statement that compiles to
