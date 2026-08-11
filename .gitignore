@@ -141,8 +141,9 @@ validate_test_fixes.py
 # Downloaded test datasets
 tests/datasets/
 
-# Oracle datasets provisioned by scripts/build_oracle_datasets.py --out
-# (the committed manifest + .xls fixture are tracked; the CSVs are not).
+# Leftover working directory from the abandoned v3 tree, whose provisioning
+# script was deleted with it (.github/WORKFLOWS.md). Nothing tracked writes or
+# reads it; the rule stays so the stale CSVs on an old clone keep quiet.
 oracle-datasets/
 
 # Generated test fixtures

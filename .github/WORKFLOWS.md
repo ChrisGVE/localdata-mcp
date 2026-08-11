@@ -1,10 +1,8 @@
 # GitHub workflows
 
-**No workflow currently gates the `new-v3` branch.** Five workflow files exist;
-none of them runs on a push or a pull request to it, and the two that were
-written for a v3 tree reference source packages and scripts that are not in this
-repository. Read this before trusting a green check, and before adding a CI badge
-to a document.
+**No workflow currently gates the `new-v3` branch.** Three workflow files exist,
+and none of them runs on a push or a pull request to it. Read this before
+trusting a green check, and before adding a CI badge to a document.
 
 That state is a defect rather than a policy, and it is recorded here so nobody
 re-derives it from a workflow file that looks plausible.
@@ -16,8 +14,6 @@ re-derives it from a workflow file that looks plausible.
 | `codeql.yml` | push and PR to `main`; Tuesdays 14:43 UTC | Works. Runs against `main`, which still carries 2.x. |
 | `publish-to-pypi.yml` | push to `main`; tags `v*.*.*`; manual | Works, and the registry it publishes to is decided by **the ref, not the trigger** — `main` goes to TestPyPI, a `v*.*.*` tag goes to PyPI, and a manual dispatch goes to whichever of the two the ref it is run from satisfies. See below. |
 | `docker-publish.yml` | tags `v*.*.*`; manual | Builds and pushes the image. **The image itself is broken** — see below. |
-| `v3-ci.yml` | push and PR to `v3` or `main` | **Does not run and would not pass.** |
-| `v3-nightly.yml` | daily 04:17 UTC; manual | **Does not run to completion.** |
 
 There is no `ci.yml`, no `release.yml` and no `security.yml` in this repository.
 A badge pointing at any of them renders as "no status".
@@ -27,55 +23,29 @@ for pip and for GitHub Actions, capped at ten and five respectively, assigned to
 `ChristianBerclaz`. Its pull requests land against the default branch, so on this
 branch they arrive as noise rather than as updates.
 
-## Why the two v3 workflows do not work
+## The two v3 workflows that used to be here
 
-Both were written for an earlier, abandoned attempt at v3 — a tree of packages
+Until 2026-08-11 this directory also held `v3-ci.yml` and `v3-nightly.yml`, and
+`scripts/` held `build_db_fixtures.py` and `build_oracle_datasets.py`. All four
+were **deleted**, and this note exists so nobody restores them from history
+believing they were a starting point.
+
+They were written for an earlier, abandoned attempt at v3 — a tree of packages
 under `src/localdata_mcp/` named `nexus`, `ingest`, `explore`, `process`,
-`visualize`, `output`, `testbench`, and a `server` package. That last name is the
-one that matters: a `server/` package would shadow the live `server.py` this
-project actually ships. That tree was deleted. The package now has nine modules
-and no sub-packages at all, so:
+`visualize`, `output`, `testbench`, and a `server` package that would have
+shadowed the live `server.py` this project ships. That tree was never built; the
+package has nine modules and no sub-packages at all. So the two workflows
+type-checked eleven paths that do not exist, gated a coverage floor over six
+packages that do not exist, collected from a `tests/v3` that was never in the
+repository, and invoked eight scripts of which six were absent — while the two
+present ones died at import on `localdata_mcp.testbench`, the deleted
+sub-package. Neither workflow triggered on `new-v3`, so none of it was ever
+reported by a run. That closes
+[#85](https://github.com/ChrisGVE/localdata-mcp/issues/85) and
+[#89](https://github.com/ChrisGVE/localdata-mcp/issues/89).
 
-- `v3-ci.yml`'s mypy job type-checks **eleven** paths that do not exist
-  (`v3-ci.yml:40-50`) — the seven packages above, plus four files under
-  `src/localdata_mcp/server/`.
-- Between them the two files invoke **six** scripts that are not in `scripts/`.
-  Three are named by both files — `check_audit_severity.py`,
-  `cold_start_smoke.py`, `merge_battery_results.py`; two by `v3-ci.yml` alone —
-  `check_battery_run_trailer.py`, `check_pin_drift.py`; and one by
-  `v3-nightly.yml` alone — `compare_battery_runs.py`. They also name
-  `build_db_fixtures.py` and `build_oracle_datasets.py`, which are the only two
-  that are present. Eight paths referenced, two present, six missing.
-- **The two that are present do not run either.** Both import
-  `localdata_mcp.testbench` — named as one of the deleted sub-packages above —
-  and die at import with `ModuleNotFoundError` before reaching argument parsing.
-  `v3-nightly.yml` invokes `build_db_fixtures.py` in three separate steps, and
-  all three are dead — though on a real run only the last one gets far enough to
-  prove it, for the reason in the next bullet. So the count above understates it:
-  **eight paths referenced, eight unusable.** Tracked as
-  [#85](https://github.com/ChrisGVE/localdata-mcp/issues/85); whether the two
-  return with a v3 testbench or are deleted with the workflows is not decided.
-- **`v3-nightly.yml:119` asks for an extra that does not exist**, and this is the
-  first thing that fails in that job — before any of the causes above reach it.
-  The step runs `uv sync --frozen --extra dev --extra mssql --extra enterprise`;
-  `pyproject.toml` defines 26 extras and `enterprise` is not one of them, so `uv`
-  exits 2 with ``error: Extra `enterprise` is not defined in the
-  `optional-dependencies` table for `localdata-mcp` ``. It is a hard error, not a
-  warning, so the job aborts there and the two `build_db_fixtures.py` steps that
-  follow at `:121` and `:124` never execute at all; only the `:127` teardown runs,
-  because it carries `if: always()`. The name is another survival from the
-  abandoned tree — `scripts/build_db_fixtures.py:16` still speaks of the
-  `enterprise` extras.
-- `v3-ci.yml` gates a coverage floor of 85 measured over six deleted packages
-  (`--cov=src/localdata_mcp/{nexus,ingest,explore,process,visualize,testbench}`,
-  `v3-ci.yml:134-140`). It collects from six paths, one of which is `tests/v3`,
-  **which is not in the repository at all** — `git ls-files tests/v3` is empty,
-  and what is on disk is untracked leftovers. The job would run pytest over a
-  path a clean checkout does not have, and measure coverage of nothing.
-- Neither the mypy job nor the coverage job has the tool it invokes. Both run
-  `uv sync --frozen --extra dev`, and the `dev` extra is `pytest` and nothing
-  else, so `uv run mypy` and `--cov-fail-under` have no mypy and no pytest-cov.
-- Neither triggers on `new-v3`, so none of that has ever been reported.
+**Nothing was lost with them.** They described a tree, not this one; whatever CI
+this branch eventually gets has to be written against the package that exists.
 
 ## The Docker image
 
@@ -214,13 +184,12 @@ gap 1 below, since there is no passing check to require.
 
 These are the known gaps, stated so a release does not walk into them:
 
-1. `v3-ci.yml` and `v3-nightly.yml` need deleting or rewriting against the tree
-   that exists, and whichever survives needs to trigger on the release branch.
-   Budget for **eight** scripts, not six: the two that exist are dead on import
-   and need writing or removing along with the six that are absent (#85). The
-   scripts are not the whole of it — `v3-nightly.yml:119` also requests an
-   `enterprise` extra that `pyproject.toml` does not define, which fails the job
-   before a script is reached, so writing all eight still leaves that job red.
+1. **There is no test workflow at all, and no workflow triggers on `new-v3`.**
+   The two that claimed to were deleted on 2026-08-11 (above), which removed a
+   misleading file rather than a working gate. A release off this branch is
+   therefore gated by whatever was run locally and written into the pull request,
+   and by nothing else. Writing one is a matter of `uv sync --all-extras` and the
+   endpoint batches — not of restoring what was here.
 2. The `Dockerfile` needs rewriting or `docker-publish.yml` needs disabling
    before a `v3.0.0` tag is pushed. `docker-publish.yml` also moves the `latest`
    tag unconditionally, including on a `workflow_dispatch` run from any branch,

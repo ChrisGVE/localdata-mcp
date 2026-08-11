@@ -16,9 +16,9 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   # 3.13 is verified by installing the built wheel and importing it, not by a CI
-  # matrix — the two test workflows (`v3-ci.yml`, `v3-nightly.yml`) both pin
-  # UV_PYTHON to 3.12, `codeql.yml` uses 3.11 and `publish-to-pypi.yml` uses
-  # "3.x", so `requires-python` above is honoured by luck rather than by a gate.
+  # matrix — there is no test workflow, `codeql.yml` uses 3.11 and
+  # `publish-to-pypi.yml` uses "3.x", so `requires-python` above is honoured by
+  # luck rather than by a gate.
   "Programming Language :: Python :: 3.13",
   "Topic :: Database",
   "Topic :: Software Development :: Libraries :: Python Modules",
