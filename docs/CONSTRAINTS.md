@@ -1184,7 +1184,7 @@ depends on the shape of the result, not only its size.
 > calling it the same one**: `bench_wide_1m.csv` carries a `text_1000` column, so its first
 > 20,000 rows are **24.3 MB against about 2.1 MB** for an ordinary 20,000 × 11 corpus — 11×
 > the bytes at the same nominal shape. Driven on an ordinary one, `.csv` is **0.137 s**, and
-> round 8 measured 0.13 s at the same shape, so the figure reproduces twice and the outlier was
+> an earlier drive measured 0.13 s at the same shape, so the figure reproduces twice and the outlier was
 > the re-drive.
 >
 > **Why four figures "reproduced" and one did not is the finding worth keeping.** `.ods`,
@@ -2567,10 +2567,10 @@ which backends fold would be a dispatch on dialect name, and one that went stale
 On every non-folding backend the first line matches and the answer is unchanged.
 
 `Backend.folds_identifiers()` exists **only so a test can tell the two outcomes apart**, and it is in
-the seam rather than in the fixture for the same reason: a dialect fact may not be stated in a
-fixture. Asserting merely
-that the reported name is findable would let a genuine folding regression through on PostgreSQL;
-asserting case-insensitively would let all of them through.
+the seam rather than in the fixture for the same reason: a dialect fact belongs in the backend seam
+and nowhere else, in a fixture no less than in shared code. Asserting merely that the reported name
+is findable would let a genuine folding regression through on PostgreSQL; asserting
+case-insensitively would let all of them through.
 
 ### 16.5 No indexes whatsoever, which is not ClickHouse's answer
 
@@ -3067,8 +3067,8 @@ capability limit of the database, and it is the least interesting of them.
 ### 20.1 Two dialects, and the adapter that cannot be reached from here
 
 Firebird has two SQLAlchemy dialects on PyPI, so the eligibility rule — an open-source SQLAlchemy
-adapter exists — is satisfied twice over. Which one to use is a question about **addressing**, not eligibility, and it was
-decided by measurement rather than by maturity:
+adapter exists — is satisfied twice over. Which one to use is a question about **addressing**, not
+eligibility, and it was decided by measurement rather than by maturity:
 
 | Distribution | Version | Registers | Driver | License | Published |
 |---|---|---|---|---|---|
@@ -4928,8 +4928,8 @@ rewriting branch. Canonical `Z` values do reach the tests, from **at least five 
 three tests; and two parametrized literal lists, at `test_temporal.py:366-367` and `:388-390`.
 **Three of those five places put two canonical spellings in one column** — the question this
 section is about. `HALF_A_SECOND_APART` (20 characters beside 27) and `DATE_BESIDE_TIMESTAMP`
-(10 beside 20) are mixed by construction, in the file's own comment, and feed three tests each
-named `..._mixed_canonical_...`, one of them
+(10 beside 20) are mixed by construction, in the file's own comment, and each parametrizes the
+same three tests, all named `..._mixed_canonical_...` — one of them
 `test_a_mixed_canonical_column_is_rewritten_into_one_spelling`; and the literal series at
 `test_temporal.py:388-390` asserts `is_standard` on a column in two spellings. The other two
 write one spelling: `spell(fmt)` reformats `INSTANTS` into a single spelling for three tests,

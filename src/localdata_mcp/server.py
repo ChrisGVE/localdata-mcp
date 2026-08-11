@@ -728,6 +728,13 @@ def create(
     outlive the session. The answer describes the table it read, so ``info``
     straight afterwards tells you nothing new.
 
+    It makes **one** table, so a source holding more than one is refused, naming
+    them — a two-sheet workbook that ``attach`` opens happily as a database of
+    two tables cannot be read in here, and ``table`` does not select a sheet.
+    To land one sheet of a workbook beside tables you already have: ``attach``
+    the workbook as its own datasource, ``query(path=…)`` the sheet you want out
+    to a flat file, then ``create`` that file in.
+
     ``type="index"`` indexes columns of a table already there. Ask for one when
     you are about to join or filter on those columns and the table is large;
     nothing here guesses that for you, because which query is coming is yours to
@@ -744,7 +751,8 @@ def create(
         type: ``"table"`` or ``"index"``.
         table: For a table, its name — derived from the filename when omitted.
             For an index, the existing table to index; required.
-        source: For a table, the file to read in. Required for ``type="table"``.
+        source: For a table, the file to read in — one holding a single table.
+            Required for ``type="table"``.
         columns: For an index, the columns to index, in order. Required for
             ``type="index"``.
         delimiter: For a table read from .csv/.tsv/.txt, the character

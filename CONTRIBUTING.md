@@ -83,7 +83,9 @@ have installed with `uv tool list` or `pip show localdata-mcp`.
 
 ```
 localdata-mcp/
-├── src/localdata_mcp/            # The whole package — nine modules, no sub-packages
+├── src/localdata_mcp/            # The whole package — nine modules, no sub-packages,
+│                                 #   plus the package `__init__` and the typing marker
+│   ├── __init__.py               # `__version__` — one of the six version sites below
 │   ├── server.py                 # The eight MCP tools, and nothing else
 │   ├── slots.py                  # The registry: nicknames, lifecycle, eviction, spill
 │   ├── loader.py                 # Reading a datasource in, and describing it
@@ -92,9 +94,14 @@ localdata-mcp/
 │   ├── binding.py                # Type adapters — see CONSTRAINTS §1
 │   ├── config.py                 # Configuration discovery and validation
 │   ├── paths.py                  # Path containment at the trust boundary
-│   └── export.py                 # Writing a result out
-├── tests/                        # test_<module>.py for each of the nine, except export.py
+│   ├── export.py                 # Writing a result out
+│   └── py.typed                  # PEP 561 marker — what `Typing :: Typed` rests on
+├── tests/                        # 12 test modules — `test_<module>.py` for eight of the
+│                                 #   nine (`export.py` has none), plus test_concurrency,
+│                                 #   test_streaming, test_volume and test_endpoints
 │   ├── assets/                   # Deliberately hostile test files
+│   ├── conftest.py               # Shared fixtures
+│   ├── foreign.py                # Cross-backend helpers
 │   └── endpoints.py              # The endpoint catalogue and its auth-mode axis
 ├── docs/
 │   ├── architecture/LEVEL0.md    # The specification: premise, three arcs, eight verbs
@@ -103,12 +110,21 @@ localdata-mcp/
 ├── skills/data/local-data/       # The skill that ships with the server
 ├── .claude-plugin/plugin.json    # Claude Code plugin manifest
 ├── server.json                   # MCP registry entry
-├── scripts/                      # Test-data and fixture generation
+├── scripts/                      # Fixture and test-data generation, the endpoint
+│                                 #   batch runner, and the logo build
 ├── .github/                      # Workflows and issue templates — read .github/WORKFLOWS.md
 ├── pyproject.toml                # Project metadata and dependencies
+├── uv.lock                       # The resolved environment — carries the project
+│                                 #   version too, so a bump needs a relock
+├── MANIFEST.in                   # What the sdist carries beyond the package
+├── README.md                     # The product documentation
+├── CHANGELOG.md                  # Keep a Changelog format
+├── CONTRIBUTING.md               # This file
 ├── docker-compose.test.yml       # One container per endpoint, for the endpoint suite
 ├── Dockerfile                    # 2.x's, and broken — see .github/WORKFLOWS.md
 ├── docker-compose.yml            # 2.x's development stack, likewise
+├── .gitignore                    # Ignore rules
+├── .dockerignore                 # Build-context exclusions
 ├── LICENSE                       # Apache License 2.0
 └── NOTICE                        # Attribution notice required by Apache 2.0
 ```

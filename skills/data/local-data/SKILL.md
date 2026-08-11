@@ -89,6 +89,24 @@ Two reasons, and the second is the one that bites later:
   the relationship between them is gone. Landing the second file inside the
   first is what makes the lookup survivable.
 
+**One case does not go this way: a second file holding more than one table.**
+`create` makes one table, so a two-sheet workbook — or a JSON document with two
+candidate keys — is refused, naming what it holds, and `table=` does not select
+a sheet. The refusal says to attach the file as its own datasource, which is the
+arrangement this section calls the mistake; it is the right answer only if you
+wanted the whole workbook. To get one sheet in beside what you already have,
+take it out through a flat file:
+
+```
+attach("/path/book.xlsx")                                   # → "book"
+query("book", "SELECT * FROM prices", path="/path/prices.csv")
+create(nickname="shop", type="table", source="/path/prices.csv")
+```
+
+The sheet is addressed by the snake_cased name it arrived under, which the
+`attach` response lists — `Q2 Prices` is `q2_prices`. The directory `path`
+writes into has to exist already.
+
 The response describes the table it read in, so — as with `attach` — there is
 nothing for an `info` call straight afterwards to add.
 
@@ -204,7 +222,7 @@ by name rather than written as something else. Choose it rather than defaulting:
 | They want | Ask for | Why |
 |---|---|---|
 | to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
-| to open it in LibreOffice specifically | `.ods` | same cap, and slow: **5.8× `.xlsx` at 20,000 rows of eleven ordinary-width columns** (the timings below), **~13× at 50,000 of the same shape** — the gap widens with rows, and on a wide result, 50,000 × 40, it ran for over half an hour without producing a file (below); use `.xlsx` unless OpenDocument was asked for |
+| to open it in LibreOffice specifically | `.ods` | same cap, and slow — **5.8× `.xlsx`** at 20,000 rows of eleven ordinary-width columns, **~13×** at 50,000; on a wide result it had not produced a file after half an hour (below). Use `.xlsx` unless OpenDocument was asked for |
 | a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
 | something big, for another program | `.parquet` | the safe default, not a size winner: over seven shapes driven it was smallest on three — **by 100× or more where a column repeats few distinct values** — and eighth of fifteen on high-entropy text, where `.orc` won by about 1.2×. `.orc` and `.parquet` write within 8% of each other; `.feather` writes faster, and was the larger on every text shape but the smaller on both float shapes |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |

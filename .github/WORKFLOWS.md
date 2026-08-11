@@ -14,7 +14,7 @@ re-derives it from a workflow file that looks plausible.
 | File | Triggers on | State |
 |---|---|---|
 | `codeql.yml` | push and PR to `main`; Tuesdays 14:43 UTC | Works. Runs against `main`, which still carries 2.x. |
-| `publish-to-pypi.yml` | push to `main`; tags `v*.*.*`; manual | Works, and the two triggers publish to **different registries** — a push to `main` goes to TestPyPI, a `v*.*.*` tag goes to PyPI. See below. |
+| `publish-to-pypi.yml` | push to `main`; tags `v*.*.*`; manual | Works, and the registry it publishes to is decided by **the ref, not the trigger** — `main` goes to TestPyPI, a `v*.*.*` tag goes to PyPI, and a manual dispatch goes to whichever of the two the ref it is run from satisfies. See below. |
 | `docker-publish.yml` | tags `v*.*.*`; manual | Builds and pushes the image. **The image itself is broken** — see below. |
 | `v3-ci.yml` | push and PR to `v3` or `main` | **Does not run and would not pass.** |
 | `v3-nightly.yml` | daily 04:17 UTC; manual | **Does not run to completion.** |
@@ -121,8 +121,8 @@ different registries:
 
 | Job | Fires on | Registry |
 |---|---|---|
-| `publish-to-testpypi` | a push to `main` | **TestPyPI** — `https://test.pypi.org/legacy/`, `skip-existing: true` |
-| `publish-to-pypi` | a `refs/tags/v*` tag | **PyPI** |
+| `publish-to-testpypi` | `github.ref == 'refs/heads/main'` — a push to `main`, or a dispatch run from it | **TestPyPI** — `https://test.pypi.org/legacy/`, `skip-existing: true` |
+| `publish-to-pypi` | `startsWith(github.ref, 'refs/tags/v')` — a `v*` tag, pushed or dispatched | **PyPI** |
 
 Both use PyPI's trusted publishing, which carries no long-lived token — that is
 why it is used. It has two prerequisites, and **both must be in place before a
