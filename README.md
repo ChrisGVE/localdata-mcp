@@ -124,13 +124,19 @@ query("sales", "SELECT sku, sum(qty) AS qty FROM sales GROUP BY sku")
 ```
 
 `info()` with no arguments answers for the session rather than for a datasource —
-what is open, how much room is left, and which paths the server will accept:
+what is open, how many slots there are, and which paths the server will accept:
 
 ```python
 info()
 # → {"ok": true, "datasources": [], "slots_used": 0, "slots_available": 10,
 #    "roots": ["/path/to/your/project"], "path_limited": true}
 ```
+
+**`slots_available` is the slot limit, not the number of free slots.** It is
+constant for the session, so a full session reports `{"slots_used": 10,
+"slots_available": 10}` rather than zero. Free slots are the subtraction:
+`slots_available - slots_used`. The example above is an empty session, which is
+the one occupancy where the two readings give the same number.
 
 `attach` derives the nickname from the filename and **returns the one it actually
 used** — if that name was taken by a different source, you get `sales_2` and
@@ -279,6 +285,16 @@ not select a sheet — there is no way to take one sheet out of a workbook this
 way. The refusal says to attach the file as its own datasource, which gives you
 the workbook as a database of its own; it does not put those sheets beside the
 tables you already have.
+
+There is a route to one sheet beside them, and it takes three calls: attach the
+workbook, write the sheet you want out to a flat file with `query(path=…)`, then
+`create` a table in the open database from that file.
+
+```
+attach("/path/book.xlsx")                                   # → "book"
+query("book", "SELECT * FROM prices", path="/path/prices.csv")
+create(nickname="shop", type="table", source="/path/prices.csv")
+```
 
 The backend catalogue is closed rather than open-ended, and a database is in
 scope **if and only if an open-source SQLAlchemy adapter exists**. TiDB and

@@ -31,11 +31,14 @@ branch they arrive as noise rather than as updates.
 
 Both were written for an earlier, abandoned attempt at v3 — a tree of packages
 under `src/localdata_mcp/` named `nexus`, `ingest`, `explore`, `process`,
-`visualize` and `testbench`. That tree was deleted. The package now has nine
-modules and no sub-packages at all, so:
+`visualize`, `output`, `testbench`, and a `server` package. That last name is the
+one that matters: a `server/` package would shadow the live `server.py` this
+project actually ships. That tree was deleted. The package now has nine modules
+and no sub-packages at all, so:
 
-- `v3-ci.yml`'s mypy job type-checks `src/localdata_mcp/nexus`, which does not
-  exist.
+- `v3-ci.yml`'s mypy job type-checks **eleven** paths that do not exist
+  (`v3-ci.yml:40-50`) — the seven packages above, plus four files under
+  `src/localdata_mcp/server/`.
 - Between them the two files invoke **six** scripts that are not in `scripts/`.
   Three are named by both files — `check_audit_severity.py`,
   `cold_start_smoke.py`, `merge_battery_results.py`; two by `v3-ci.yml` alone —
@@ -63,10 +66,12 @@ modules and no sub-packages at all, so:
   because it carries `if: always()`. The name is another survival from the
   abandoned tree — `scripts/build_db_fixtures.py:16` still speaks of the
   `enterprise` extras.
-- `v3-ci.yml` gates a coverage floor of 85 over `tests/v3`, **which is not in the
-  repository at all** — `git ls-files tests/v3` is empty, and what is on disk is
-  untracked leftovers. The job would run pytest over a path a clean checkout does
-  not have.
+- `v3-ci.yml` gates a coverage floor of 85 measured over six deleted packages
+  (`--cov=src/localdata_mcp/{nexus,ingest,explore,process,visualize,testbench}`,
+  `v3-ci.yml:134-140`). It collects from six paths, one of which is `tests/v3`,
+  **which is not in the repository at all** — `git ls-files tests/v3` is empty,
+  and what is on disk is untracked leftovers. The job would run pytest over a
+  path a clean checkout does not have, and measure coverage of nothing.
 - Neither the mypy job nor the coverage job has the tool it invokes. Both run
   `uv sync --frozen --extra dev`, and the `dev` extra is `pytest` and nothing
   else, so `uv run mypy` and `--cov-fail-under` have no mypy and no pytest-cov.
@@ -110,8 +115,16 @@ detail, including why the catalogue cannot be run in one go
 `.github/ISSUE_TEMPLATE/` holds `bug_report.yml`, `feature_request.yml`,
 `security_report.md` and a `config.yml`; `.github/pull_request_template.md` is
 alongside them. GitHub serves all of these without a workflow. They predate this
-rewrite: the bug report's `database-info` field and the PR template's "Database
-Support" checklist were written for 2.x's thirteen database types.
+rewrite, and one field has gone stale with it: the bug report's **required**
+Python dropdown (`bug_report.yml:33-46`) offers 3.8 and 3.9, both below the
+`requires-python = ">=3.10"` this project declares, and omits the 3.13 that
+`pyproject.toml:21` claims support for. A reporter on 3.13 cannot answer it
+truthfully and cannot skip it.
+
+The bug report's `database-info` field and the PR template's "Database Support"
+checklist read as 2.x leftovers and are not: each names SQLite, PostgreSQL and
+MySQL — three backends this version still supports — plus a free-text catch-all
+for the rest.
 
 ## PyPI trusted publishing
 

@@ -316,8 +316,9 @@ more that are not obvious from the code:
 ### PR guidelines
 
 - Use a descriptive title following conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`, `perf:`); a `!` marks a breaking change
-- Fill out the PR template. It predates this rewrite and its "Database Support"
-  checklist names 2.x's database types — answer the spirit of it and say so
+- Fill out the PR template. Its "Database Support" checklist names SQLite,
+  PostgreSQL and MySQL, which this version still supports; tick "Other databases
+  tested" for any of the other fifteen
 - Reference related issues with `#issue_number`
 - One feature, one bug fix, or one improvement per PR
 - **There is no CI gating this branch.** `.github/WORKFLOWS.md` explains why, so

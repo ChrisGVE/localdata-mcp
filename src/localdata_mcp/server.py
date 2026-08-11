@@ -533,6 +533,10 @@ def info(nickname: str | None = None, table: str | None = None) -> dict[str, Any
     reported whoever made them, so an attached database arrives describing the
     indexes it already had.
 
+    ``slots_available`` is the slot **limit**, not the number of free slots — it
+    is constant for the session, so a full one reports ``slots_used`` and
+    ``slots_available`` equal rather than zero. Free slots are the subtraction.
+
     Args:
         nickname: Restrict to one datasource.
         table: With a nickname, describe this one table in full.
@@ -607,8 +611,8 @@ def query(
 
     **A query reads.** INSERT, UPDATE, CREATE TABLE, CREATE VIEW and PRAGMA are
     refused here whatever the datasource permits — the connection this runs on
-    is read-only from the moment it opens. To change a datasource use ``create``
-    and ``drop``; those are what ``writable=true`` governs.
+    is read-only from the moment it opens. To change a datasource use ``create``,
+    ``update`` and ``drop``; those are what ``writable=true`` governs.
 
     **The whole result comes back.** There is no row cap, because a row cap
     measures the wrong thing — a hundred rows of a two-hundred-column table is

@@ -41,7 +41,7 @@ that block is the current answer and the text above it is the record.
 | [§21] · [§22] · [§23] (2026-07-30) | openGauss; YDB; Databend |
 | [§24] · [§25] (2026-07-30) | Db2, eligible and unreachable; ten ways into one database |
 | [§26] · [§27] (2026-07-31) | OceanBase, eligible and stopped by one instruction; Exasol |
-| [§28] (2026-07-31) | The load half of task 21 — a file measured in one pass, inserted in another |
+| [§28] (2026-07-31) | The load half of the streaming gap — a file measured in one pass, inserted in another |
 
 [§7]: #7--driving-the-surface-as-an-agent-2026-07-26
 [§8]: #8--driving-the-live-server-through-a-real-client-2026-07-27
@@ -64,7 +64,7 @@ that block is the current answer and the text above it is the record.
 [§25]: #25--ten-ways-into-one-database-and-the-two-that-this-machine-cannot-take-2026-07-30
 [§26]: #26--oceanbase-eligible-on-the-rule-and-stopped-by-one-instruction-2026-07-31
 [§27]: #27--exasol-and-a-database-that-will-not-say-what-went-wrong-2026-07-31
-[§28]: #28--the-load-half-of-task-21-a-file-measured-in-one-pass-inserted-in-another-2026-07-31
+[§28]: #28--the-load-half-of-the-streaming-gap-a-file-measured-in-one-pass-inserted-in-another-2026-07-31
 
 Section numbers are cited from `README.md`, `LEVEL0.md` and `CONTRIBUTING.md` as `§N`, and
 every top-level section above is linked. **Sub-sections — `§8.1`, `§10.7`, `§5.1` — are cited
@@ -1138,7 +1138,7 @@ streaming format.**
 
 What does not exist for any of them is a way for `Workspace.query` to hand the writer an
 unmaterialised cursor. Closing that is a change to the read path, not a fix to the export — **open,
-and tracked as task 21**.
+and tracked as open work**.
 
 #### The correction (2026-07-28) — the cursor reaches the writer
 
@@ -1218,7 +1218,7 @@ peak — see §10.7.)
   has been set on it**: nothing has failed there, and the number above is on the record so the
   question can be settled with evidence rather than by analogy to the spreadsheets.
 
-**The read path still materialises**, and that was the other half of task 21: `read_file` builds the
+**The read path still materialises**, and that was the other half of that gap: `read_file` builds the
 whole pandas frame before a row is inserted (§10.6). A very large YAML this server writes is
 therefore one it may not be able to read back — the cliff belongs to loading, not to YAML. **Closed
 for the delimited formats on 2026-07-31 (§28); YAML is not one of them**, so this paragraph is
@@ -1566,7 +1566,7 @@ Two consequences worth carrying:
 Peak RSS **~3.0 GB**, against a 1.22 GB source. The load is the peak, not the extract: `read_file`
 builds the whole pandas frame before a single row is inserted, so the load peak tracks the *file*
 and no chunk size bounds it (§3.2a bounds the *insert*, which is a later step). **This is the read
-side of §9.2's gap and is tracked as task 21** — the memory budget bounds resting pages, not either
+side of §9.2's gap and is tracked as open work** — the memory budget bounds resting pages, not either
 transient peak, so no configuration closes it. **The export side of that gap was closed on
 2026-07-28** (§9.2); this side is what was left of the task, and it was the larger half: every
 reader produces a whole frame, so it is the loading of a large file — not the writing of one — that
@@ -1670,7 +1670,7 @@ reading" argument to bound it with.
 > been an arbitrary refusal dressed as a format fact.
 >
 > **What remains is the read side, and it is not a YAML defect.** `read_file` builds the whole
-> pandas frame before inserting a row, so the 16 GB is the load path (task 21's other half, §10.6);
+> pandas frame before inserting a row, so the 16 GB is the load path (the gap's other half, §10.6);
 > YAML is simply the format that reaches it soonest, being the bulkiest on disk. **That half closed
 > on 2026-07-31 for the delimited formats only (§28), and YAML is not one of them** — it is parsed
 > whole by PyYAML, which has no chunk to ask for — so this cliff stands exactly as written. A very
@@ -1738,6 +1738,12 @@ into the export without producing a file at all.
 > was not, and it is that generalisation that licensed an unconditional *"~13x"* in the shipped
 > skill and in `query`'s tool schema, where a reader at 20,000 rows would have been wrong by
 > more than a factor of two. Both now name the row count.
+>
+> **The row count is not enough either, and §10.6 measures why.** A later drive on 2026-08-11
+> puts the same pair at the same nominal 20,000 × 11 at **5.8×** (26.5 s against 4.6 s). Neither
+> run supersedes the other: they used different corpora at the same nominal shape, and cell
+> widths — not row and column counts — are what fix a corpus. Quote a ratio with the corpus it
+> came from, never with its shape alone.
 
 > **Decided 2026-07-28: `.ods` stays, and the cost is told to the caller instead.** Being slow is
 > not being wrong — the format is correct, the cap bounds its memory, and OpenDocument is what some
@@ -1799,7 +1805,7 @@ Nothing malfunctioned: the arm read `disk` throughout, so `relieve_memory` had s
 exactly as designed. **The DataFrame a materialising writer builds is not the slot**, and the budget
 governs slot residency. This is §10.6's gap restated on the *write* side — §10.6 records that the
 load peak tracks the file and no configuration bounds it; the same is true of the export peak.
-Task 21 covers the read side. Whether the export path should be admitted against the budget is a
+The tracked gap covers the read side. Whether the export path should be admitted against the budget is a
 design question, not a defect in what the budget claims to do.
 
 #### The two arms, and what spilling actually costs
@@ -1950,8 +1956,10 @@ Both are reported upstream as one issue, since both are the same omission of the
 surface: [ClickHouse/clickhouse-connect#919](https://github.com/ClickHouse/clickhouse-connect/issues/919).
 
 Both are recorded on the backend as `unstorable_column_types()`. That axis also absorbed Oracle's
-"no time-of-day type", which had been a literal dialect-name branch in a test fixture, which is
-exactly where a dialect fact may not be stated.
+"no time-of-day type", which had been a literal dialect-name branch in a test fixture — shared code
+stating a dialect fact, which this design forbids wherever it appears. A fixture is one place that
+can happen, not the only one: `loader.py:438-439` and `dialects.py:316-317` state the same
+prohibition for the loader and for dialect dispatch, and §15.2 states it again for the retry axis.
 
 ### 11.5 `readonly=1` is the whole read-only guarantee, because there is no floor beneath it
 
@@ -2087,7 +2095,7 @@ username and password in the URL — and it broke two tests that had quietly ass
   test failed on its own premise. It now skips, naming that.
 
 Neither was a defect in the server; both were the harness generalising from five endpoints that
-happened to share an auth mode. This is the coverage gap task 23 exists for, meeting the code from
+happened to share an auth mode. This is the auth-mode coverage gap, meeting the code from
 the other direction — and it is worth noting that adding a *backend* is what surfaced it, not adding
 an auth test.
 
@@ -2173,7 +2181,7 @@ because PostgreSQL itself needs nothing.
 
 The decision this needs — whether to resolve a backend by asking the server what it is, which
 requires a connection *before* the backend is chosen and so inverts the current
-`backend_for` → `open` order — is issue #45 and task 24. It was not made here, because making it
+`backend_for` → `open` order — is issue #45. It was not made here, because making it
 silently mid-worklist is how an architecture drifts.
 
 One thing worth doing whichever way that goes: a read posture that cannot be installed should reach
@@ -2314,7 +2322,7 @@ must keep doing that job against whichever field carries it.
 
 `fastmcp 4.0.0b1` is a beta. The pin stays `fastmcp>=3.0.0` and is deliberately **not** capped: the
 server genuinely runs on both majors, so capping would refuse users a working combination to protect
-a test. Adoption waits for a stable 4.x — task 25 names the two test changes it needs.
+a test. Adoption waits for a stable 4.x, and for the two test changes it needs.
 
 Three parts of the new spec are worth a second look then, none urgent:
 
@@ -2618,7 +2626,7 @@ image had already solved it.
 
 No credentials of any kind: with no authenticator configured Trino accepts whatever username the
 client offers and asks for no password. That makes it the **third** endpoint here reached with no
-password, after CockroachDB's `--insecure` and YugabyteDB's trust — so task 23's first auth mode is
+password, after CockroachDB's `--insecure` and YugabyteDB's trust — so the first auth mode of that gap is
 now covered three times over and the remaining ones are still untouched.
 
 ### 16.8 What this did not test
@@ -2710,7 +2718,7 @@ for the *other* reason a dialect earns an entry: three engines borrow it.
 
 ## §18 — MonetDB, a column store that needed nothing but cost a version ceiling (2026-07-29)
 
-Tenth endpoint dialect, and the seventh entry from the backend catalogue (task 22, worklist item 7).
+Tenth endpoint dialect, and the seventh entry from the backend catalogue.
 MonetDB is a **column store**, and not the first here in any sense: DuckDB (a file) and ClickHouse
 (a URL, whose tables are created as `MergeTree`) both came earlier, and Databend (§23) is a
 cloud-native columnar warehouse. The question it was taken to answer is whether the seam's generic
@@ -2857,7 +2865,7 @@ Nothing measured says how it behaves under the sizes §9 and §10 put through Du
 is one of the endpoints where that comparison would mean something — MonetDB, ClickHouse and
 Databend keep their bytes by column and are reached over a connection, DuckDB does so in a local
 file. Unmeasured, and still worth measuring: the load
-half of task 21 was taken up on 2026-07-31 (§28), but nothing in it was measured against an
+half of that gap was taken up on 2026-07-31 (§28), but nothing in it was measured against an
 endpoint database, so the comparison this paragraph asks for is exactly as open as it was.
 
 Its concurrency story is equally untouched: `SERIALIZABLE` with no other level available says a
@@ -2865,7 +2873,7 @@ single-statement harness will never see a conflict, not that conflicts resolve w
 
 ## §19 — CrateDB, where a write is durable before it is readable (2026-07-29)
 
-Eleventh endpoint dialect, eighth from the backend catalogue (task 22, worklist item 8), and the
+Eleventh endpoint dialect, eighth from the backend catalogue, and the
 first from the **search-engine lineage** rather than the database one — a distributed SQL layer over
 Lucene. Two of its properties have no precedent in this seam, and one of them found a fail-open in
 shared code that every dialect before it had been passing by luck.
@@ -3051,7 +3059,7 @@ the right trade at a million rows rather than at five.
 
 ## §20 — Firebird, whose strictness costs more than any laxity here (2026-07-30)
 
-Twelfth endpoint dialect, ninth from the backend catalogue (task 22, worklist item 9), and the oldest
+Twelfth endpoint dialect, ninth from the backend catalogue, and the oldest
 engine in it — an InterBase descendant whose lineage predates everything else in this harness. It is
 also the first entry whose difficulties come from a database being **stricter** than its neighbours
 rather than looser, and the first whose dialect is named after neither its engine nor another
@@ -3295,7 +3303,7 @@ endpoint. Events, external tables, and `PSQL` stored procedures are all untouche
 
 ## §21 — openGauss, and a banner that stopped the dialect before the query (2026-07-30)
 
-Thirteenth endpoint dialect, tenth from the backend catalogue (task 22, worklist item 11 — taken
+Thirteenth endpoint dialect, tenth from the backend catalogue (taken
 ahead of Db2, which the procedure permits). A PostgreSQL fork, and the **third** engine here on that
 wire after CockroachDB and YugabyteDB — but the first that cannot be addressed as PostgreSQL at all.
 
@@ -3443,7 +3451,7 @@ and the container's default is the only one measured.
 
 ## §22 — YDB, and a rollback that reports success over a write that stands (2026-07-30)
 
-Fourteenth endpoint dialect, eleventh from the backend catalogue (task 22, worklist item 16 — taken
+Fourteenth endpoint dialect, eleventh from the backend catalogue (taken
 ahead of Db2, OceanBase, Exasol, Databend and HyperSQL, which step 4 of the procedure permits). A
 distributed OLTP store from Yandex, and the first backend here reached through a dialect named after
 neither its engine nor its driver.
@@ -3740,7 +3748,7 @@ supported path — nothing here uses the driver directly.
 
 ## §23 — Databend, and a write that looks exactly like a read (2026-07-30)
 
-Fifteenth endpoint dialect, twelfth from the backend catalogue (task 22, worklist item 14). A
+Fifteenth endpoint dialect, twelfth from the backend catalogue. A
 cloud-native columnar warehouse, written in Rust, reached over its own HTTP query handler.
 
 Measured against `datafuselabs/databend:v1.2.925-patch-4`, server version
@@ -3794,7 +3802,7 @@ Given one variable and not the other, the user a URL names does not exist:
 | both set | **`User 'root'@'%' does not exist.`** | works |
 
 So both are set, and this endpoint is reached **with a credential** rather than becoming the sixth
-that is not — the coverage hole task 23's first item keeps being filled by accident. That the HTTP
+that is not — the coverage hole whose first item keeps being filled by accident. That the HTTP
 handler accepts a `double_sha1_password` user at all was measured rather than assumed: the scheme is
 MySQL's, and it is the MySQL-wire port that would obviously honour it.
 
@@ -4206,7 +4214,7 @@ Every endpoint in this harness was reached exactly one way until now: a plain UR
 over TCP to the loopback interface — carrying a username and a password on eleven of the sixteen,
 and a bare username on the five reached with no password at all (§25.1 below names them). That is
 one of the ways a caller reaches a database, and the others were code paths the server had never
-run — which is what task 23 was about and what this section measures.
+run — which is what that coverage gap was about and what this section measures.
 
 The axis is on the endpoint descriptor rather than in the tests: an `AuthMode` hangs off the
 `Endpoint` it varies, `TARGETS` is the product, and every endpoint test runs against every
@@ -4802,7 +4810,7 @@ harness has no way to reach.
 
 ---
 
-## §28 — The load half of task 21: a file measured in one pass, inserted in another (2026-07-31)
+## §28 — The load half of the streaming gap: a file measured in one pass, inserted in another (2026-07-31)
 
 §10.6 recorded that a load's peak tracks the **file** rather than any chunk size, because
 `read_file` builds every reader's whole pandas frame before a row is inserted. The export half
@@ -4969,13 +4977,16 @@ suite.
 >
 > **Corrected a fourth time, 2026-08-11 — the ordering sentence and the width sentence were both
 > false, and both were checkable in the file they describe.** *"Most of them test text ordering
-> within one spelling"* was true of **two** of the five places, not most: the 2026-08-05 amendment
+> within one spelling"* was true of **one** of the five places, not most: the 2026-08-05 amendment
 > named two counterexamples, wrote one of them in, and left the other. Driven over all five,
 > `HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP` are two spellings each **by the fixture's own
 > comment**, feeding three tests whose names all contain `mixed_canonical`; `:388-390` asserts
 > `is_standard` on a column in two spellings; `spell(fmt)` and the parametrized lists at
 > `:365-367` are the two that do write one spelling, and of those `:365-367` asserts byte-for-byte
-> identity rather than an ordering. **And *"none of those fixtures mixes widths
+> identity rather than an ordering — **two write one spelling, minus the one that asserts identity,
+> leaves the one above**. The count is of places testing *ordering within one spelling*, which is
+> narrower than the count of places writing one spelling, and reading the second as the first is
+> what moved this number. **And *"none of those fixtures mixes widths
 > inside one column"* — the clause carrying the first block's *"the substance survived"* — is
 > false of the same two fixtures**: 20 characters beside 27, and 10 beside 20.
 > `test_a_mixed_canonical_column_is_rewritten_into_one_spelling` asserts

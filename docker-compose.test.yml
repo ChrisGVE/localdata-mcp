@@ -435,7 +435,7 @@ services:
   # with `auth_type = "double_sha1_password"` when both are present — at which
   # point `root` does not exist at all (measured: `User 'root'@'%' does not
   # exist.`). Both are set here so this endpoint is reached with a credential
-  # rather than becoming the sixth that is not, which is the coverage hole task 23
+  # rather than becoming the sixth that is not, which is the coverage hole the auth sweep
   # keeps finding. That the HTTP handler accepts a `double_sha1_password` user at
   # all was measured rather than assumed — the scheme is MySQL's, and it is the
   # MySQL-wire port that would obviously honour it.

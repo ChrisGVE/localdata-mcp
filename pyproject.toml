@@ -16,8 +16,9 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   # 3.13 is verified by installing the built wheel and importing it, not by a CI
-  # matrix — both workflows pin UV_PYTHON to 3.12, so `requires-python` above is
-  # honoured by luck rather than by a gate.
+  # matrix — the two test workflows (`v3-ci.yml`, `v3-nightly.yml`) both pin
+  # UV_PYTHON to 3.12, `codeql.yml` uses 3.11 and `publish-to-pypi.yml` uses
+  # "3.x", so `requires-python` above is honoured by luck rather than by a gate.
   "Programming Language :: Python :: 3.13",
   "Topic :: Database",
   "Topic :: Software Development :: Libraries :: Python Modules",
@@ -34,10 +35,12 @@ keywords = [
 # Deliberately minimal. Every dependency here is load-bearing for the current
 # capability set; a file format we cannot read yet does not get a dependency yet.
 #
-# SQLAlchemy is the exception to that rule and is here from the start on purpose.
-# Additional database backends are a stated next step, and SQLAlchemy is a mature,
-# proven abstraction over exactly that: reaching PostgreSQL or MySQL becomes a
-# different URL and a driver package, not a rewrite of the connection layer.
+# SQLAlchemy is the exception to that rule and was here from the start on purpose,
+# before any backend but SQLite existed. It is a mature, proven abstraction over
+# exactly the axis this grew along, and the bet paid: eighteen backends later, each
+# one is a different URL and a driver package rather than a rewrite of the
+# connection layer. The drivers themselves are optional extras below, one per
+# backend, so the base install stays minimal.
 #
 # Its pool defaults do need care rather than trust — see docs/CONSTRAINTS.md §3.5,
 # where a shared connection under rollback-on-return silently discarded 79,807 of
