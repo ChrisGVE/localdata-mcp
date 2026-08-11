@@ -643,8 +643,10 @@ def query(
             whole table because a Markdown column is only as wide as its widest
             value. A spreadsheet (.xlsx, .ods) refuses more than 65,535 rows
             outright, and of those two .ods is about 6x slower than .xlsx at
-            20,000 rows and ~13x at 50,000, the gap widening with rows — ask for
-            it when OpenDocument is what was wanted, not by default.
+            20,000 rows of eleven columns and ~13x at 50,000 of the same width,
+            the gap widening with rows; on a wide result (50,000 x 40) it does
+            not finish at all — ask for it when OpenDocument is what was wanted,
+            not by default.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the path is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file

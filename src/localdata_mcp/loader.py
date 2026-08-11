@@ -435,10 +435,11 @@ def _run_again_once(read: Callable[[], _T]) -> _T:
     **Not a** :class:`~localdata_mcp.dialects.Backend` **axis, deliberately.**
     40001 means one thing everywhere: PostgreSQL raises it under SERIALIZABLE
     and every distributed SQL engine raises it routinely, so there is no
-    per-dialect answer to override. A dialect branch here would be the shape
-    standing instruction 1 forbids — and it would have nowhere to live in any
-    case, since YugabyteDB is reached through PostgreSQL's dialect and could
-    only get an answer of its own by changing PostgreSQL's (issue #45).
+    per-dialect answer to override. A dialect branch here would state a dialect
+    fact in shared code, which this design forbids — and it would have nowhere
+    to live in any case, since YugabyteDB is reached through PostgreSQL's
+    dialect and could only get an answer of its own by changing PostgreSQL's
+    (issue #45).
 
     **Once, and only for a read.** A catalog read is idempotent, so running it
     again carries no consequence, and one retry is all the refusal costs — this

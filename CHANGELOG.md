@@ -123,13 +123,13 @@ rebuild it.
   file, an empty password, and an ODBC data-source name in place of a host and
   port — ten routes in all, counting the plain URL that all sixteen endpoints
   still use, which carries a password on eleven of them and a bare username on
-  the other five (CockroachDB, YugabyteDB, Trino, CrateDB, YDB). Two of those
-  five have no authentication to ask for at all — CockroachDB runs `--insecure`
-  and YDB's image configures none — while the other three are databases with
-  authentication available and none configured, which is the same shape as
-  `trust`. `trust` is counted among the nine added modes because it is a named
-  PostgreSQL setting this suite sets deliberately, not because those three
-  differ in kind from it. **None of the ten is a setting of this server, and
+  the other five (CockroachDB, YugabyteDB, Trino, CrateDB, YDB). All five of
+  those are databases with authentication available and none of it configured,
+  which is the same shape as `trust` — CockroachDB's `--insecure` accepts any
+  password for `root`, and YDB's image configures none of the authentication it
+  supports. `trust` is counted among the nine added modes because it is a named
+  PostgreSQL setting this suite sets deliberately, not because those five differ
+  in kind from it. **None of the ten is a setting of this server, and
   there is no parameter for any of them**: `attach` takes a datasource string,
   and each mode is expressed in the URL or in the driver's own environment,
   which this server passes through untouched. What 3.0.0 adds is the evidence

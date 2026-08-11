@@ -1176,6 +1176,17 @@ slowest.** That superlative was never driven against the other writers: on a wid
 20,000 rows both `.ods` (26.5 s) and `.xlsx` (4.6 s) are slower than `.yaml` (2.0 s). Slowest-of
 depends on the shape of the result, not only its size.
 
+> **Re-driven (2026-08-11) — the shape of that 20,000-row run was never recorded, and it is
+> eleven columns.** The skill page printed this run's timings beside a *different* run's
+> `.ods`/`.xlsx` ratio, so the ratio was underivable from the figures next to it. Re-driven
+> through `query(path=…)` on the first 20,000 rows of the same eleven-column corpus, median of
+> three: **`.ods` 26.8 s, `.xlsx` 4.6 s, `.yaml` 2.2 s, `.md` 1.8 s, `.csv` 0.45 s** — so
+> `.ods` is **5.9× `.xlsx`** and **12× `.yaml`** at this shape, and the ordering above is
+> unchanged. Four of the five figures reproduce within a tenth; **`.csv`'s 0.13 s does not**
+> (0.45 s, three runs, spread under 3%), so that one figure is superseded rather than
+> confirmed. The skill page now carries the re-driven set and quotes the ratio its own figures
+> give.
+
 So the group boundary now falls at **nine streaming suffixes and six materialising ones**
 (`.md` `.parquet` `.feather` `.orc` `.xlsx` `.ods`), and each of the six is deliberate.
 (The measurements above were taken while `.html` and `.htm` were still in the catalogue; they
@@ -1183,9 +1194,14 @@ streamed, at 0.07 MB flat, and were removed later the same day for a reason unre
 peak — see §10.7.)
 
 * the **columnar three** must have every value before they write any of it, because a columnar file
-  stores each column contiguously. They are also the fastest writers here, and `.parquet` and
-  `.orc` the most compact — `.feather` is not, and is larger than plain `.csv` on most corpora
-  driven. A columnar file is still the right destination for a large result;
+  stores each column contiguously. They are also the fastest writers here. **Compactness is not
+  theirs by default**: over the seven shapes driven, `.parquet` is the smallest of fifteen writers
+  on three of them and `.orc` on three, and on 20,000 × 11 unique text **neither is in the top
+  two** — `.xlsx` (2.411 MB) and `.ods` (2.609) are, ahead of `.parquet` (3.214) and `.orc`
+  (3.941). Where `.parquet` wins it can win by 190× (a text column with few distinct values), and
+  where `.orc` wins it wins by about 1.2×. `.feather` is larger than plain `.csv` on five of the
+  seven, and is the *smaller* of the two on both float shapes. A columnar file is still the right
+  destination for a large result;
 * the **two workbooks** are capped at 65,535 rows (§10.7), so their peak is bounded by the cap;
 * **`.md`** builds a list of lists and one string, because a Markdown table's column widths are not
   known until the last row has been seen. It is the most expensive per row of anything measured —
@@ -1697,6 +1713,10 @@ million rows does not pay what writing them would have, and it leaves no partial
 
 **What the cap does not fix is `.ods` being slow.** 551 s for 65,535 rows is **13.5x `.xlsx`'s
 40.7 s** on identical input, and 50,000 rows gives the same ratio (156.2 s against 11.8 s, 13.2x).
+Nine minutes for a file a spreadsheet opens in seconds is the honest cost of the format, and it is
+only visible now: before §10.1's defect was fixed, `.ods` was writing XLSX, so every ODS timing
+this document ever carried was an XLSX timing. Uncapped, `.ods` crossed 16 GB about six minutes
+into the export without producing a file at all.
 
 > **Correction (2026-08-05) — that ratio is a property of scale, not of odfpy, and this
 > paragraph said the opposite.** It read *"the same ratio measured at 50,000 rows, so it is a
@@ -1710,18 +1730,14 @@ million rows does not pay what writing them would have, and it leaves no partial
 > skill and in `query`'s tool schema, where a reader at 20,000 rows would have been wrong by
 > more than a factor of two. Both now name the row count.
 
-Nine minutes for a file a spreadsheet opens in seconds is the honest cost of
-the format, and it is only visible now: before §10.1's defect was fixed, `.ods` was writing XLSX,
-so every ODS timing this document ever carried was an XLSX timing. Uncapped, `.ods` crossed 16 GB
-about six minutes into the export without producing a file at all.
-
 > **Decided 2026-07-28: `.ods` stays, and the cost is told to the caller instead.** Being slow is
 > not being wrong — the format is correct, the cap bounds its memory, and OpenDocument is what some
 > people actually need. Dropping a working format because it is slow would remove real capability
 > to save a wait the caller can decide about for themselves, and the comparison with `.xls` does
 > not hold: `.xls` is read-only here because no maintained writer exists, not because a writer was
-> judged too slow. So the 13.5x is now stated where it can be acted on — `query`'s own docstring
-> and the shipped skill both say to reach for `.xlsx` unless OpenDocument was specifically wanted.
+> judged too slow. So the cost is stated where it can be acted on — `query`'s own docstring and
+> the shipped skill both name the row count and the width the ratio holds at, and both say to
+> reach for `.xlsx` unless OpenDocument was specifically wanted.
 > This follows the standing shape of the server: it offers the primitive and reports the cost, and
 > the judging is the caller's.
 
@@ -1926,7 +1942,7 @@ surface: [ClickHouse/clickhouse-connect#919](https://github.com/ClickHouse/click
 
 Both are recorded on the backend as `unstorable_column_types()`. That axis also absorbed Oracle's
 "no time-of-day type", which had been a literal dialect-name branch in a test fixture — the one place
-standing instruction 1 says a dialect fact may never be stated.
+a dialect fact may never be stated.
 
 ### 11.5 `readonly=1` is the whole read-only guarantee, because there is no floor beneath it
 
@@ -2297,8 +2313,8 @@ Three parts of the new spec are worth a second look then, none urgent:
   process, so it can advertise a long TTL — a small, free win, and fastmcp's to implement.
 * **MRTR** (`resultType: "input_required"`) would let a tool ask mid-call instead of refusing. It is
   tempting for the ambiguous-source case, where a file with two candidate tables is currently refused
-  naming both. **It should be resisted by default**: standing instruction 4 says the server offers
-  primitives and the LLM does the judging, and a refusal that names both candidates already gives the
+  naming both. **It should be resisted by default**: the server offers primitives and the LLM does
+  the judging, and a refusal that names both candidates already gives the
   caller everything it needs to choose.
 * **The stateless core bounds where this server could ever be deployed**, not how it behaves today. A
   slot is memory or a temp file in *this* process, so several instances behind a load balancer would
@@ -2359,7 +2375,7 @@ It is **not** a seam axis, for a reason worth stating because every prior backen
 * **`40001` is standard.** `serialization_failure` means "this transaction was aborted, run it
   again" in every engine that raises it — PostgreSQL under SERIALIZABLE, CockroachDB, and every
   distributed SQL engine routinely. There is no per-dialect answer to override, so a dialect branch
-  would be the shape standing instruction 1 forbids.
+  would state a dialect fact in shared code, which this design forbids.
 * **There is nowhere to put one anyway.** YugabyteDB is reached through PostgreSQL's dialect, so an
   entry in `BACKENDS` keyed `postgresql` would change *PostgreSQL's* behaviour to serve YugabyteDB.
   That is issue #45 biting for real rather than in principle — see §15.4.
@@ -2542,7 +2558,8 @@ which backends fold would be a dispatch on dialect name, and one that went stale
 On every non-folding backend the first line matches and the answer is unchanged.
 
 `Backend.folds_identifiers()` exists **only so a test can tell the two outcomes apart**, and it is in
-the seam rather than in the fixture for the reason standing instruction 1 gives. Asserting merely
+the seam rather than in the fixture for the same reason: a dialect fact may not be stated in a
+fixture. Asserting merely
 that the reported name is findable would let a genuine folding regression through on PostgreSQL;
 asserting case-insensitively would let all of them through.
 
@@ -2790,8 +2807,8 @@ endpoint table "so a builder added later is covered the day it appears".
 
 It was not covered; it **errored**, with `KeyError: 'MDB_DB_ADMIN_PASS'`. The test synthesised its
 environment from a hardcoded list of the variable names the existing builders happened to read — a
-per-endpoint fact living in a fixture, which is the shape standing instruction 1 forbids in test
-fixtures as firmly as in shared code. Every password-bearing endpoint had silently extended that
+per-endpoint fact living in a fixture, which is forbidden in test fixtures as firmly as in shared
+code. Every password-bearing endpoint had silently extended that
 list; the four no-password endpoints exempted themselves through a `continue` and hid how much it had
 been growing.
 
@@ -3040,8 +3057,8 @@ capability limit of the database, and it is the least interesting of them.
 
 ### 20.1 Two dialects, and the adapter that cannot be reached from here
 
-Firebird has two SQLAlchemy dialects on PyPI, and the eligibility rule (standing instruction 10) is
-satisfied twice over. Which one to use is a question about **addressing**, not eligibility, and it was
+Firebird has two SQLAlchemy dialects on PyPI, so the eligibility rule — an open-source SQLAlchemy
+adapter exists — is satisfied twice over. Which one to use is a question about **addressing**, not eligibility, and it was
 decided by measurement rather than by maturity:
 
 | Distribution | Version | Registers | Driver | License | Published |
@@ -3886,7 +3903,7 @@ executes anything**:
 Step 3 exists because of a defect the first draft had: `SELECT * FROM nowhere` fails step 1 — for the
 table, not for writing — and was reported as "not a read", which sends an agent hunting for a verb
 when what it has is a typo. That is the wrong-explanation-attached-to-a-right-outcome class again
-(§22.5, standing instruction 14).
+(§22.5).
 
 What each statement does, measured:
 
@@ -4100,7 +4117,7 @@ this sentence is here so the next reader knows to look.
 ## §24 — Db2, eligible on the rule and unreachable on the machine (2026-07-30)
 
 Db2 is the first catalogue entry dropped for **reachability** rather than eligibility, and the two are
-separate questions. Standing instruction 10 says a database is eligible iff an open-source SQLAlchemy
+separate questions. The eligibility rule is that a database is eligible iff an open-source SQLAlchemy
 adapter exists. `ibm-db-sa` 0.4.4 exists and is Apache-2.0, so Db2 passes that test outright. What
 failed is the native stack underneath the adapter, on this host, before a single statement was
 composed — and nothing in the eligibility test looks there.
@@ -4195,7 +4212,7 @@ identified by its compose service and two rows sharing one collide in the probe 
 | Mode | Endpoint | Where the credential is | New shape it proves |
 |---|---|---|---|
 | plain URL | all sixteen — **eleven with a password, five with a bare username** | in the URL, where there is one | the original, unchanged |
-| `trust` | PostgreSQL | nowhere — the server does not ask | a server that *has* authentication and is told not to use it |
+| `trust` | PostgreSQL | nowhere — the server does not ask | authentication switched off by a named setting this harness sets, rather than absent |
 | `env-password` | PostgreSQL | `PGPASSWORD` | a passwordless URL that still authenticates |
 | `pgpass-file` | PostgreSQL | a file libpq reads | a credential in a colon-separated file |
 | `tls-verify-full` | PostgreSQL | in the URL, over verified TLS | the certificate is checked, and the name on it |
@@ -4206,11 +4223,10 @@ identified by its compose service and two rows sharing one collide in the probe 
 | `odbc-dsn` | SQL Server | in the URL; the *address* is in a file | a URL with no host and no port |
 
 Five endpoints were already reached with no password — CockroachDB, YugabyteDB, Trino, CrateDB and
-YDB. **Two of them have no authentication to ask for**: CockroachDB runs `--insecure`, and YDB's
-image configures none. The other three are servers with authentication available and none
-configured — Trino *"with no authenticator configured"*, CrateDB *"a fresh node has no users
-configured"*, and YugabyteDB, whose YSQL layer is PostgreSQL 15 and whose own docstring in
-`tests/endpoints.py:502` says a fresh cluster **authenticates by trust**.
+YDB. **All five are servers with authentication available and none of it configured**: CockroachDB
+runs `--insecure`, YDB's image configures none, Trino runs *"with no authenticator configured"*,
+CrateDB *"a fresh node has no users configured"*, and YugabyteDB, whose YSQL layer is PostgreSQL 15
+and whose own docstring in `tests/endpoints.py:502` says a fresh cluster **authenticates by trust**.
 
 > **Correction (2026-08-05) — "none of them is the same case" was wrong about three of the five.**
 > This paragraph said all five *"have no authentication to configure"*, and that `trust` is the
@@ -4220,6 +4236,23 @@ configured"*, and YugabyteDB, whose YSQL layer is PostgreSQL 15 and whose own do
 > password appears in the URL. `trust` remains counted among the nine added modes because it is a
 > named PostgreSQL setting this harness sets deliberately, not because the other three differ in
 > kind from it.
+
+> **Correction (2026-08-11) — that narrower distinction has no members either, and the paragraph
+> now says so.** The 2026-08-05 correction above split the five into two that *"have no
+> authentication to ask for"* (CockroachDB, YDB) and three that could ask and do not. **Both
+> members of the two are switches, not absences**, and this document had already measured one of
+> them: §12.2 records that **insecure mode accepts any password for `root`**, which is why
+> `test_a_failed_open_does_not_echo_the_password` succeeded on a deliberately wrong password and
+> had to be skipped. A server that accepts a password and does not check it has an authentication
+> step it has been told not to enforce. The configuration agrees — `docker-compose.test.yml:124`
+> is `command: start-single-node --insecure`, and the healthcheck at `:128` must pass `--insecure`
+> as well, because the secure path is CockroachDB's default. **YDB points the same way**: §22.9
+> lists, among what was *not* tried, *"authentication of any kind, since the image configures
+> none"* — a capability listed among the untried is a capability that exists, and "the image
+> configures none" is a statement about the image. So the surviving distinction is not "has a
+> mechanism at all" but simply **where the credential is**, which is what the table's first two
+> rows already carry. `trust` stays counted for the reason given above, unchanged: it is a named
+> setting this harness sets, not a shape no other endpoint has.
 
 ### 25.2 Three failures that named the wrong cause
 
@@ -4389,7 +4422,7 @@ written, no extra was added, and `.venv` was never touched.
 
 ### 26.1 Two adapters, and what the eligibility rule does with them
 
-Standing instruction 10 says a database is eligible iff an open-source SQLAlchemy adapter exists.
+The eligibility rule is that a database is eligible iff an open-source SQLAlchemy adapter exists.
 OceanBase has two, which is the first time step 1's "is the rival really a shim?" question has had a
 genuine second candidate to weigh.
 
@@ -4879,8 +4912,15 @@ rewriting branch. Canonical `Z` values do reach the tests, from **at least five 
 `HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP`, neither drawn from `INSTANTS`; `spell(fmt)`
 (`test_temporal.py:58-60`), which reformats `INSTANTS` *itself* into the canonical spelling for
 three tests; and two parametrized literal lists, at `test_temporal.py:366-367` and `:388-390`.
-Most of them test text ordering within one spelling — though not all, since
-`test_an_iso_column_is_reported_as_the_standard_it_is_in` asserts the reported standard rather
+**Four of those five places put two canonical spellings in one column** — the question this
+section is about. `HALF_A_SECOND_APART` (20 characters beside 27) and `DATE_BESIDE_TIMESTAMP`
+(10 beside 20) are mixed by construction, in the file's own comment, and feed three tests each
+named `..._mixed_canonical_...`, one of them
+`test_a_mixed_canonical_column_is_rewritten_into_one_spelling`; the parametrized list at
+`test_temporal.py:388-390` asserts `is_standard` on a two-spelling series; and the one at
+`:366-367` asserts byte-for-byte identity rather than an ordering. Only `spell(fmt)` writes one
+spelling, and one of its three tests
+(`test_an_iso_column_is_reported_as_the_standard_it_is_in`) asserts the reported standard rather
 than an ordering. For the mixed-canonicality question the already-canonical branch — the one a
 file written the way the documentation recommends takes — **did have a fixture, and that is
 worse than having none: it asserted the defect as the specification.** It was still found by
@@ -4910,6 +4950,22 @@ suite.
 > invisible to 1,203 tests"* is not an absent fixture but **a present test pinning the wrong
 > answer**, which is a materially different post-mortem finding: a silent gap is an oversight,
 > whereas a test asserting the defect is a specification that had to be re-decided.
+>
+> **Corrected a fourth time, 2026-08-11 — the ordering sentence and the width sentence were both
+> false, and both were checkable in the file they describe.** *"Most of them test text ordering
+> within one spelling"* was true of **one** of the five places, not most: the 2026-08-05 amendment
+> named two counterexamples, wrote one of them in, and left the other. Driven over all five,
+> `HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP` are two spellings each **by the fixture's own
+> comment**, feeding three tests whose names all contain `mixed_canonical`; `:366-367` asserts
+> byte-for-byte identity, not an ordering; `:388-390` asserts `is_standard` on a two-spelling
+> series. Only `spell(fmt)` writes one spelling. **And *"none of those fixtures mixes widths
+> inside one column"* — the clause carrying the first block's *"the substance survived"* — is
+> false of the same two fixtures**: 20 characters beside 27, and 10 beside 20.
+> `test_a_mixed_canonical_column_is_rewritten_into_one_spelling` asserts
+> `len({len(value) for value in stored(workspace)}) == 1`, an assertion that exists only because
+> the fixture arrives mixed-width. So the first block's "substance survived" verdict rested on a
+> false premise as well as a wrong count; the third block had already withdrawn the verdict on
+> other grounds. The paragraph above now states what the five places actually do.
 
 ### 28.5 The type verdict is rebuilt from raw text, and was checked against pandas
 

@@ -604,8 +604,8 @@ def _firebird(env: dict[str, str], port: int) -> str:
     machine has no way to obtain: measured, ``firebird-driver`` raises ``The
     location of Firebird Client Library could not be determined.`` Adapter
     *quality* would have argued for the older dialect; adapter *reach* decided it,
-    and under standing instruction 10 that is a question about addressing rather
-    than eligibility — the same distinction YugabyteDB's entry above turns on.
+    and under the eligibility rule — an open-source SQLAlchemy adapter exists —
+    that is a question about addressing rather than eligibility — the same distinction YugabyteDB's entry above turns on.
 
     Hence ``engine="firebird"`` on the entry below. This is the first endpoint
     whose dialect is named after neither the engine nor another engine, and the
@@ -1587,7 +1587,7 @@ def _handshake(url: str, warmup: float) -> None:
     **The probe is a Core expression, not a string** (issue #54). It used to be
     ``SELECT 1`` with a branch for Oracle, which needs a FROM clause — and that
     branch was two defects at once: a dialect fact stated in a test fixture, which
-    standing instruction 1 forbids as firmly as one in shared code, and a dialect
+    is forbidden as firmly as one in shared code, and a dialect
     sniffed out of a URL, which #45 established is not an identity. Firebird needs
     ``FROM RDB$DATABASE`` and would have been the second entry.
 

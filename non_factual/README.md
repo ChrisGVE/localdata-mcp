@@ -44,6 +44,23 @@ never implemented.
 > ships, so a correct Docker guide is wanted — it is just not this one, and a wrong guide
 > is worse than an absent one.
 
+> **Correction (2026-08-11) — "Nothing is published" is false, and this notice is the one
+> document that argues why that matters.** The deletion above happened on `new-v3` only.
+> `main` still carries `.readthedocs.yaml`, `docs/conf.py` and the eight `docs/domains/*.md`,
+> and Read the Docs still serves the site built from it: `https://localdata-mcp.readthedocs.io/en/latest/`
+> answers HTTP 200 today, and `tools-reference.html` on it names **58 distinct v2 tool
+> identifiers** (`analyze_regression`, `forecast_time_series`, `detect_anomalies`, …) and
+> **none of the eight verbs this server actually has** — `attach`, `detach`, `info`,
+> `update`, `drop` and `save` appear zero times each. Three published surfaces route readers
+> there: the docs badge and the documentation link in `main`'s `README.md`, and the
+> `Documentation` project URL in the published PyPI metadata.
+>
+> **Merging does not fix it.** Read the Docs serves the last successful build; a branch with
+> no `.readthedocs.yaml` produces a *failed* build, and a failed build does not unpublish
+> anything. So merging removes the ability to rebuild over the v2 site while leaving it
+> standing. What to do about the site — unpublish, redirect, or rebuild — is an outward-facing
+> decision and is not this file's to take; what is corrected here is the sentence.
+
 > **Amended (2026-08-04).** The Docker image ships and **does not work on this branch**:
 > the `Dockerfile` is 2.x's, and its `HEALTHCHECK` imports `localdata_mcp.localdata_mcp`,
 > a module that was deleted, so every container reports itself unhealthy. So the guide is

@@ -433,7 +433,7 @@ def _build_typed_table(live: Live) -> str:
     # Firebird, which prepares statements against committed metadata and so
     # cannot address the table it has just made (issue #53). Asked of the seam for
     # the same reason the three lines above are: a fixture that branched on the
-    # dialect name would be the defect standing instruction 1 forbids, and this
+    # dialect name would be a dialect fact stated in a fixture, and this
     # fixture writes below the verbs so `insert_frame`'s own split does not cover
     # it.
     together = backend.sees_new_tables_in_transaction()
