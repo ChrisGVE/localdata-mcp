@@ -155,9 +155,11 @@ because the totals looked plausible.
 
 A workbook's tables arrive under the names the *spreadsheet* chose, lowercased
 and snake_cased — `Sheet1` becomes `sheet1`, `Q2 Prices` becomes `q2_prices`.
-**Use the name `attach` reported, not the one on the tab**, or the rename is
-refused for naming no table. Then rename rather than re-reading the file; the
-rows, types and any index stay put:
+**Use the name `attach` reported, not the one on the tab.** A tab name that
+differs only in case resolves to the table anyway, so `Sheet1` finds `sheet1`;
+one the snake_casing did more to — `Q2 Prices` — does not, and is refused for
+naming no table. Then rename rather than re-reading the file; the rows, types
+and any index stay put:
 
 ```
 update(nickname="shop", type="table", name="sheet1", to="q2_sales")
@@ -317,6 +319,12 @@ Do **not** ask before attaching. Attach, see what you got, ask only if the
 result is genuinely ambiguous.
 
 ## Things that will bite
+
+**A refusal is an answer, not a failure.** Every call comes back as a payload
+carrying `ok`. A refused one is `{"ok": false, "error": "…"}` — the reason in
+plain words, and, where a name was wrong, the names that were right. Read the
+error and act on what it says; nothing here throws a call away, so there is
+never anything to retry blindly.
 
 **Mixed columns.** `attach` warns when a column holds both numbers and text.
 This is not pedantry: `avg()` over such a column silently counts the text rows

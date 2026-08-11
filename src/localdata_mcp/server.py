@@ -61,7 +61,7 @@ from . import config
 from .export import ExportError, export_rows
 from .loader import IndexInfo, TableInfo
 from .paths import PathNotAllowed, allowed_paths
-from .slots import Attachment, Registry, Slot, SlotError
+from .slots import Attachment, Registry, Slot, SlotError, SlotNotAvailable
 
 mcp = FastMCP(
     "localdata",
@@ -80,27 +80,34 @@ mcp = FastMCP(
         "type='table', source=...) to land it *inside* that database, then join "
         "the two tables there in an ordinary statement. Whether the join is "
         "complete is an anti-join you write yourself; if it is slow, "
-        "create(nickname, type='index', table=..., columns=[...]) first, and "
-        "info(nickname, table) says which indexes are already there.\n\n"
+        "create(nickname, type='index', table=..., columns=[...]) first — "
+        "refused on ClickHouse, Trino, CrateDB, Databend and Exasol, each for "
+        "its own reason, which the refusal names — and info(nickname, table) "
+        "says which indexes are already there.\n\n"
         "**query only reads.** INSERT, UPDATE, CREATE TABLE and every other write "
         "are refused there whatever the datasource allows — composition has its "
         "own verbs, create, update and drop, and those are the ones the writable "
         "grant governs. A table keeps the name its file gave it until you "
         "update(nickname, type='table', name=..., to=...), which matters for a "
-        "workbook whose sheets are named Sheet1. The whole result comes back, so "
-        "ask for what you want: use SQL "
-        "LIMIT, name your columns instead of SELECT *, or pass path= to write a "
-        "large result to a file rather than into the answer.\n\n"
+        "workbook whose sheets are named Sheet1; that one is refused on "
+        "Firebird, which has no rename-table statement. The whole result comes "
+        "back, so ask for what you want: use SQL LIMIT, name your columns "
+        "instead of SELECT *, or pass path= to write a large result to a file "
+        "rather than into the answer.\n\n"
         "Files you attach are read-only unless you pass writable=true; a database "
         "built from a flat file is yours and is always writable. Slots are limited "
         "and the oldest is evicted when the limit is reached, so check the "
         "'evicted' field an attach returns, and detach what you are done with. "
         "Nothing survives the session unless you save it — and save writes out "
         "only a database this server holds, so it is refused on every backend "
-        "but SQLite, a DuckDB file and a URL-attached database included. To "
+        "but SQLite — a DuckDB file and a URL-attached database included. To "
         "keep rows from one of those, write them to a file with "
         "query(nickname, sql, path=...), attach that file — a file-derived "
-        "datasource is yours and is writable — and save that."
+        "datasource is yours and is writable — and save that.\n\n"
+        "Every call answers with a payload, and a refusal is an ordinary answer "
+        'rather than an error: it comes back as {"ok": false, "error": "…"} '
+        "with the reason in plain words and, where a name was wrong, the names "
+        "that were right. Branch on 'ok'."
     ),
 )
 
@@ -465,11 +472,11 @@ def attach(
     same thing again. Go and ask the question instead.
 
     Args:
-        database: A tabular file (.csv, .tsv, .txt, .json, .jsonl,
-            .ndjson, .xml, .yaml, .yml, .fwf, .parquet, .feather, .orc,
-            .xlsx, .xlsm, .xls, .ods, .numbers), a
-            SQLite or DuckDB database file, or a database URL. A database file
-            is told apart from a flat file by its header, not by its suffix.
+        database: A tabular file (.csv, .tsv, .txt, .json, .jsonl, .ndjson,
+            .xml, .yaml, .yml, .fwf, .parquet, .feather, .orc, .xlsx, .xlsm,
+            .xls, .ods, .numbers), a SQLite or DuckDB database file, or a
+            database URL. A database file is told apart from a flat file by its
+            header, not by its suffix.
         nickname: The name this datasource answers to — pass it to every later
             call. Derived from the filename when omitted. If it collides with a
             slot already open, a numeric suffix is added — so always use the
@@ -507,6 +514,12 @@ def detach(nickname: str) -> dict[str, Any]:
 
     Everything the slot held is gone: tables added to it, and any rows not
     written out with ``save`` first.
+
+    The answer names what was closed — ``nickname``, ``source`` and the
+    ``tables`` it held — and the session's ``slots_used`` and
+    ``slots_available`` afterwards. ``slots_available`` is the slot **limit**
+    and not the number free, the same as in ``info``; the free slots are the
+    subtraction.
 
     Args:
         nickname: The datasource to close.
@@ -546,6 +559,10 @@ def info(nickname: str | None = None, table: str | None = None) -> dict[str, Any
     is constant for the session, so a full one reports ``slots_used`` and
     ``slots_available`` equal rather than zero. Free slots are the subtraction.
 
+    A ``table`` with no ``nickname`` is refused rather than dropped: it names
+    the third form and reaches the first, and answering the session listing
+    under ``ok: true`` would look like the question was understood.
+
     Args:
         nickname: Restrict to one datasource.
         table: With a nickname, describe this one table in full.
@@ -553,6 +570,13 @@ def info(nickname: str | None = None, table: str | None = None) -> dict[str, Any
     with _lock:
         registry = _session()
         try:
+            if nickname is None and table is not None:
+                raise SlotNotAvailable(
+                    f"info was asked for table {table!r} with no nickname, and a "
+                    f"table is addressed inside one datasource. Name the "
+                    f"datasource too, or call info() with neither argument for "
+                    f"the session."
+                )
             if nickname is not None and table is not None:
                 return _table_detail(registry, nickname, table)
             if nickname is not None:
@@ -634,36 +658,34 @@ def query(
         nickname: Which datasource executes the statement.
         sql: The SQL statement.
         path: Write the full result to this file instead of returning rows. The
-            suffix chooses the format (.csv, .tsv, .txt, .json,
-            .jsonl, .ndjson, .xml, .yaml, .yml, .md, .parquet, .feather, .orc,
-            .xlsx, .ods);
-            one this server cannot
-            write is refused by name rather than written as something else.
-            Passing this changes what comes back: the response carries
-            rows_written and the column names instead of the rows themselves.
-            For a very large result the suffix is worth choosing rather than
-            defaulting to. .csv and .jsonl write row by row and never hold the
-            result; .parquet does hold it. Which format is smallest depends on
-            the data far more than on the format: over seven shapes driven,
-            .parquet was smallest on three — by 100x or more where a column
-            repeats few distinct values — while on high-entropy text it was
-            eighth of fifteen and .orc was smallest. Where .orc wins it wins by
-            about 1.2x; where .parquet wins it can win by 190x. The two write
-            within 8% of each other. .feather writes faster and was larger than
-            .parquet on every text shape driven but smaller on both float
-            shapes. .yaml is slow (4.3x .csv on
-            a million-row result) though it holds nothing, and .md holds the
-            whole table because a Markdown column is only as wide as its widest
-            value. A spreadsheet (.xlsx, .ods) refuses more than 65,535 rows
-            outright, and of those two .ods is 5.8x slower than .xlsx at 20,000
-            rows of eleven ordinary-width columns. The gap widens with rows: a
-            separate drive on its own corpus puts the pair at 6.45x at 20,000
-            and 12.7x at 50,000, and two corpora at one nominal shape is why
-            its 20,000-row figure is not the 5.8x above — cell widths fix a
-            corpus, row and column counts do not. On a forty-column result
-            (50,000 x 40) it
-            ran for over half an hour without producing a file — ask for it when
-            OpenDocument is what was wanted, not by default.
+            suffix chooses the format (.csv, .tsv, .txt, .json, .jsonl,
+            .ndjson, .xml, .yaml, .yml, .md, .parquet, .feather, .orc, .xlsx,
+            .ods); one this server cannot write is refused by name rather than
+            written as something else. Passing this changes what comes back:
+            the response carries rows_written and the column names instead of
+            the rows themselves. For a very large result the suffix is worth
+            choosing rather than defaulting to. .csv and .jsonl write row by row
+            and never hold the result; .parquet does hold it. Which format is
+            smallest depends on the data far more than on the format: over seven
+            shapes driven, .parquet was smallest on three — by 100x or more
+            where a column repeats few distinct values — while on high-entropy
+            text it was eighth of fifteen and .orc was smallest. Where .orc wins
+            it wins by about 1.2x; where .parquet wins it can win by 190x. The
+            two write within 8% of each other. .feather writes faster and was
+            larger than .parquet on every text shape driven but smaller on both
+            float shapes. .yaml is slow (4.3x .csv on a million-row result)
+            though it holds nothing, and .md holds the whole table because a
+            Markdown column is only as wide as its widest value. A spreadsheet
+            (.xlsx, .ods) refuses more than 65,535 rows outright, and of those
+            two .ods is 5.8x slower than .xlsx at 20,000 rows of eleven
+            ordinary-width columns. The gap widens with rows: a separate drive
+            on its own corpus puts the pair at 6.45x at 20,000 and 12.7x at
+            50,000, and two corpora at one nominal shape is why that drive's
+            20,000-row figure is not the 5.8x above — cell widths fix a corpus,
+            row and column counts do not. On a forty-column result
+            (50,000 x 40) .ods ran for over half an hour without producing a
+            file — ask for it when OpenDocument is what was wanted, not by
+            default.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the path is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file
@@ -758,9 +780,11 @@ def create(
     know. The index is named for you and the name comes back — that is the name
     ``drop`` wants. ``info(nickname, table)`` lists the indexes that already
     exist, which is the cheaper way to find out than asking twice. Five engines
-    have no such statement to issue, so ``type="index"`` is refused outright on
-    ClickHouse, Trino, CrateDB, Databend and Exasol — the refusal arrives before
-    any work is done, and the join runs unindexed.
+    refuse ``type="index"`` outright — ClickHouse, Trino, CrateDB, Databend and
+    Exasol — each for its own reason: indexes that cannot be reflected, no
+    storage to index, every column indexed already, a statement that compiles to
+    nothing, or an engine that maintains its own. The refusal says which, and
+    arrives before any work is done.
 
     Whether a join actually lines up is not reported here. It is an anti-join
     over two tables in one database — ordinary SQL you can write, and better
@@ -789,9 +813,10 @@ def create(
                         "source=. To index an existing table, use type='index'."
                     )
                 return _table_created(
+                    nickname,
                     registry.create_table(
                         nickname, source=source, table=table, delimiter=delimiter
-                    )
+                    ),
                 )
             if type == "index":
                 if table is None or not columns:
@@ -814,8 +839,11 @@ def create(
         )
 
 
-def _table_created(info: TableInfo) -> dict[str, Any]:
-    payload: dict[str, Any] = {"ok": True, **_table_payload(info)}
+def _table_created(nickname: str, info: TableInfo) -> dict[str, Any]:
+    # `nickname` is carried here so both of `create`'s answers have the same
+    # keys at the front. The index branch always named the slot; this one did
+    # not, so one verb returned two shapes differing in a key.
+    payload: dict[str, Any] = {"ok": True, "nickname": nickname, **_table_payload(info)}
     if warnings := _table_warnings(info):
         payload["warnings"] = warnings
     return payload
@@ -824,6 +852,11 @@ def _table_created(info: TableInfo) -> dict[str, Any]:
 @mcp.tool
 def drop(nickname: str, type: str, name: str) -> dict[str, Any]:
     """Remove a table or an index from a datasource.
+
+    Dropping a table takes its indexes with it, and they are not listed in the
+    answer — so an index name that came back from ``create`` stops naming
+    anything the moment its table goes, and ``drop`` on it afterwards refuses as
+    a missing index rather than reporting one already gone.
 
     Args:
         nickname: The datasource holding it. Must be writable.
@@ -873,7 +906,13 @@ def update(nickname: str, type: str, name: str, to: str) -> dict[str, Any]:
     already built.
 
     Renaming onto a name that is taken is refused rather than allowed to replace
-    it, and the refusal says how many rows the other table holds.
+    it, and the refusal says how many rows the other table holds. So is renaming
+    to the same name in another case: an engine that folds case holds one name
+    for both, so that is not a free name.
+
+    The answer carries ``renamed`` — the name it had, as the database stored it,
+    which is not always the spelling you passed — alongside ``table``, the name
+    it has now.
 
     One engine has no rename statement this server can issue, so
     ``type="table"`` is refused outright on Firebird.
@@ -890,11 +929,16 @@ def update(nickname: str, type: str, name: str, to: str) -> dict[str, Any]:
         registry = _session()
         try:
             if type == "table":
+                # Asked before the rename, and not echoed from `name`: the
+                # database may store the old name in a case the caller did not
+                # use, and `renamed` is the field that has to match the listing
+                # this same payload replaces.
+                was = registry.stored_name(nickname, name)
                 info = registry.rename_table(nickname, name, to)
                 return {
                     "ok": True,
                     "nickname": nickname,
-                    "renamed": name,
+                    "renamed": was,
                     **_table_payload(info),
                     "tables": list(registry.tables(nickname)),
                 }

@@ -1481,3 +1481,114 @@ def test_attaching_a_database_poisoned_by_such_a_view_explains_itself(registry, 
 
     # A refusal costs nothing: no slot was taken by either attempt.
     assert registry.slots() == []
+
+
+# ---------------------------------------------------------------------------
+# A table name the database folds
+# ---------------------------------------------------------------------------
+
+
+def mixed_case_database(path: Path, table: str = "MyTable") -> Path:
+    """A SQLite file whose table is stored under a name that is not lowercase.
+
+    Built with ``sqlite3`` rather than from a flat file on purpose: the loader
+    lowercases a name it derives from a filename, which would hide the very
+    thing these tests are about.
+    """
+    connection = sqlite3.connect(path)
+    connection.execute(f'CREATE TABLE "{table}" (id INTEGER, val TEXT)')
+    connection.execute(f'INSERT INTO "{table}" VALUES (1, \'x\')')
+    connection.commit()
+    connection.close()
+    return path
+
+
+def test_a_table_query_can_read_is_not_reported_as_missing_by_the_other_verbs(
+    registry, root
+):
+    """The five table-taking verbs answer one question the same way.
+
+    SQLite resolves an unquoted identifier case-insensitively, so ``query``
+    reads ``mytable`` out of a table stored as ``MyTable``. A verb that takes
+    the same name as an *argument* and refuses it — while listing that table as
+    what the slot holds — is telling the caller two things at once.
+    """
+    mixed_case_database(root / "mixed.sqlite")
+    registry.attach(str(root / "mixed.sqlite"), "mixed", writable=True)
+
+    assert registry.query("mixed", "SELECT val FROM mytable")[1] == [("x",)]
+    assert registry.describe("mixed", "mytable").row_count == 1
+    registry.create_index("mixed", table="mytable", columns=["id"])
+    registry.rename_table("mixed", "mytable", "renamed")
+    registry.drop_table("mixed", "RENAMED")
+    assert registry.tables("mixed") == ()
+
+
+def test_a_verb_answers_under_the_name_the_database_stores(registry, root):
+    """The payload names the table, not the spelling the caller happened to use.
+
+    A caller who is handed back their own input has learned nothing, and the
+    name they were given will not match the slot's own listing.
+    """
+    mixed_case_database(root / "mixed.sqlite")
+    registry.attach(str(root / "mixed.sqlite"), "mixed", writable=True)
+
+    assert registry.describe("mixed", "mytable").name == "MyTable"
+    assert registry.rename_table("mixed", "MYTABLE", "renamed").name == "renamed"
+
+
+def test_a_genuinely_absent_table_is_still_refused_with_what_is_there(registry, root):
+    """Folding a name must not soften the refusal for a name that is not there."""
+    mixed_case_database(root / "mixed.sqlite")
+    registry.attach(str(root / "mixed.sqlite"), "mixed", writable=True)
+
+    for call in (
+        lambda: registry.describe("mixed", "nope"),
+        lambda: registry.rename_table("mixed", "nope", "other"),
+        lambda: registry.drop_table("mixed", "nope"),
+        lambda: registry.create_index("mixed", table="nope", columns=["id"]),
+    ):
+        with pytest.raises(SlotNotAvailable) as raised:
+            call()
+        assert str(raised.value) == "No such table: mixed.nope. In mixed: MyTable."
+
+
+def test_landing_a_table_beside_one_that_differs_only_in_case_is_a_collision(
+    registry, root
+):
+    """SQLite would not hold both, so the collision is answered here."""
+    mixed_case_database(root / "mixed.sqlite")
+    registry.attach(str(root / "mixed.sqlite"), "mixed", writable=True)
+    csv_at(root / "mytable.csv", "id,val\n2,y\n")
+
+    with pytest.raises(SlotError, match="already exists"):
+        registry.create_table("mixed", source=str(root / "mytable.csv"))
+
+
+def test_renaming_a_table_to_its_own_name_in_another_case_says_why_it_cannot(
+    registry, root
+):
+    """SQLite holds one name for both spellings, so this is not a free name."""
+    mixed_case_database(root / "mixed.sqlite")
+    registry.attach(str(root / "mixed.sqlite"), "mixed", writable=True)
+
+    with pytest.raises(SlotError, match="differ only in case"):
+        registry.rename_table("mixed", "MyTable", "mytable")
+    # And the table is untouched by the refusal.
+    assert registry.tables("mixed") == ("MyTable",)
+
+
+def test_two_stored_names_differing_only_in_case_resolve_to_neither(registry, root):
+    """A case-sensitive engine can hold both, and then a fold is a guess.
+
+    Modelled by handing the resolver the name list such an engine reports —
+    which is the whole of what it reads — since SQLite cannot store the pair.
+    """
+    mixed_case_database(root / "mixed.sqlite")
+    registry.attach(str(root / "mixed.sqlite"), "mixed", writable=True)
+    workspace = registry._workspace
+    workspace.table_names = lambda tag: ("MyTable", "mytable")
+
+    assert workspace.resolve_table("mixed", "MyTable") == "MyTable"
+    assert workspace.resolve_table("mixed", "mytable") == "mytable"
+    assert workspace.resolve_table("mixed", "MYTABLE") is None

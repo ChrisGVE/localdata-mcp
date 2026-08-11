@@ -109,6 +109,11 @@ logo*.svg
 !assets/logo.png
 
 # Temporary and test files
+# tmp/ is where every working file in this project goes — measurement probes,
+# build output, scratch corpora. docs/CONSTRAINTS.md states that those paths do
+# not ship, and this line is what makes that true on a fresh clone rather than
+# only on the machine the measurement was taken on.
+tmp/
 test_*.txt
 test_*.csv
 test_*.json

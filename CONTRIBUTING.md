@@ -61,8 +61,8 @@ they skip, which is worse, because the run still reports green.
 .venv/bin/python -m pytest -q -m 'not slow'
 ```
 
-At the time of writing that is `721 passed, 500 skipped, 5 deselected`, measured
-at 77 s on this machine. **Every one of the 500 skips is an endpoint test with no
+At the time of writing that is `731 passed, 500 skipped, 5 deselected`, measured
+at 76 s on this machine. **Every one of the 500 skips is an endpoint test with no
 container listening**, and each names the command that would start one — see
 "Endpoint tests" below.
 
@@ -106,6 +106,7 @@ localdata-mcp/
 ├── docs/
 │   ├── architecture/LEVEL0.md    # The specification: premise, three arcs, eight verbs
 │   └── CONSTRAINTS.md            # Measured behaviour, with the evidence
+├── assets/                       # The logo, referenced by absolute URL from the README
 ├── non_factual/                  # Quarantined prose — see its README before reading
 ├── skills/data/local-data/       # The skill that ships with the server
 ├── .claude-plugin/plugin.json    # Claude Code plugin manifest
@@ -120,7 +121,8 @@ localdata-mcp/
 ├── README.md                     # The product documentation
 ├── CHANGELOG.md                  # Keep a Changelog format
 ├── CONTRIBUTING.md               # This file
-├── docker-compose.test.yml       # One container per endpoint, for the endpoint suite
+├── docker-compose.test.yml       # 22 services for the endpoint suite: one per endpoint,
+│                                 #   plus the auth-axis variants and two helpers
 ├── Dockerfile                    # 2.x's, and broken — see .github/WORKFLOWS.md
 ├── docker-compose.yml            # 2.x's development stack, likewise
 ├── .gitignore                    # Ignore rules
@@ -335,8 +337,8 @@ more that are not obvious from the code:
 
 **Seven documents are maintained, and this is the list.** Each has one job.
 Update the one that owns what you changed, in the same commit as the change —
-documentation that lags is a defect, not a chore. (`non_factual/README.md` ships
-too, and is deliberately not on this list: it is a quarantine notice for the
+documentation that lags is a defect, not a chore. (`non_factual/README.md` is
+tracked too, and is deliberately not on this list: it is a quarantine notice for the
 abandoned v2 documents, not a document kept current.)
 
 - **`README.md`** — what the server is and how to use it. Any change to the tool

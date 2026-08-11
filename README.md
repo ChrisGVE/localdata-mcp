@@ -158,8 +158,8 @@ what every datasource becomes.
 | `detach(nickname)` | Close it and free the slot. Deletes the temp file if the slot had been spilled to disk (see [Memory](#memory)). |
 | `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format and answers `rows_written` and the column names instead of the rows. |
 | `info(nickname?, table?)` | Three levels of detail: bare → the session (see above); nickname → its tables; nickname and table → columns, row count and indexes. |
-| `create(nickname, type, table?, source?, columns?, delimiter?)` | `type="table"` lands a **file** *inside* an open database — one holding a single table, since `create` makes one; `type="index"` indexes columns of a table already there. |
-| `update(nickname, type, name, to)` | Rename a table, keeping its rows, types and indexes. For when the file chose the name — a workbook's `Sheet1`, which arrives as `sheet1`. |
+| `create(nickname, type, table?, source?, columns?, delimiter?)` | `type="table"` lands a **file** *inside* an open database — one holding a single table, since `create` makes one; `type="index"` indexes columns of a table already there — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
+| `update(nickname, type, name, to)` | Rename a table, keeping its rows, types and indexes. For when the file chose the name — a workbook's `Sheet1`, which arrives as `sheet1` — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
 | `drop(nickname, type, name)` | Remove a table or an index. |
 | `save(nickname, path, force?)` | Write the database out to a SQLite file you keep — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
 
@@ -398,6 +398,11 @@ either way, forced or not.
 These are deliberate. Some are forced by a measurement recorded in
 `docs/CONSTRAINTS.md`; the rest are decisions, and each bullet says which it is.
 
+**A refusal is an ordinary answer, not a transport failure.** Every call comes
+back as a payload carrying `ok`; a refused one is `{"ok": false, "error": "…"}`
+with the reason in plain words and, where a name was wrong, the names that were
+right. Branch on `ok`.
+
 - **Ten datasources at once.** A chosen number, not a forced one: each slot holds
   two live connections and, until it is spilled to disk, memory. The oldest is
   evicted when the limit is reached, and the eviction is *reported* in `evicted`
@@ -613,7 +618,8 @@ Those six and this file are the documents kept current;
 says which one owns what, so a change lands in exactly one of them.
 
 Everything else that used to live under `docs/` described a data-science platform
-that was never built, and now sits in [`non_factual/`](non_factual/README.md) —
+that was never built, and now sits in
+[`non_factual/`](https://github.com/ChrisGVE/localdata-mcp/blob/main/non_factual/README.md) —
 quarantined rather than deleted, and not to be cited or acted on until somebody
 has checked it against the code.
 

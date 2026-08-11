@@ -36,6 +36,7 @@ from localdata_mcp.dialects import (
     SQLiteBackend,
     UnsupportedOperation,
     YDBBackend,
+    article_for,
     backend_for,
     _DATABEND_NOT_A_QUERY,
     _FIREBIRD_VARCHAR_MAX,
@@ -547,9 +548,9 @@ def test_every_auth_mode_builder_round_trips_its_own_credentials():
             # certificates live where the CA service put them.
             for written in sorted(scratch.rglob("*")):
                 if written.is_file():
-                    assert written.stat().st_mode & 0o077 == 0, (
-                        f"{mode.mode} wrote {written.name} readable by others"
-                    )
+                    assert (
+                        written.stat().st_mode & 0o077 == 0
+                    ), f"{mode.mode} wrote {written.name} readable by others"
 
     assert swept, "no auth modes were swept, so this asserted nothing"
 
@@ -1565,3 +1566,11 @@ def test_exasol_declines_the_one_type_its_dialect_will_not_compile():
 
     assert unstorable == {"LargeBinary"}
     assert not {"Time", "Numeric", "Date", "DateTime", "Boolean", "Text"} & unstorable
+
+
+def test_the_article_holds_for_a_name_this_file_has_never_seen():
+    """Including the empty one — `"" in "aeiou"` is True, and would take `an`."""
+    assert article_for("") == "a"
+    assert article_for("exasol") == "an"
+    assert article_for("postgresql") == "a"
+    assert article_for("mssql") == "an"

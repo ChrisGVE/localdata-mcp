@@ -615,11 +615,16 @@ class Registry:
         """
         slot = self._writable(nickname, "add a table to")
         name = self._table_name(table, source)
-        if self._workspace.has_table(nickname, name):
+        # Under the name the database would store it: on an engine that folds
+        # case, landing `mytable` beside a stored `MyTable` is the same table,
+        # and the collision is answered here rather than at the storage layer,
+        # which would either refuse it late or shadow the existing rows.
+        existing = self._workspace.resolve_table(nickname, name)
+        if existing is not None:
             raise SlotError(
-                f"{nickname}.{name} already exists, holding "
-                f"{self._workspace.describe(nickname, name).row_count} rows. Drop "
-                f"it first if you meant to replace it."
+                f"{nickname}.{existing} already exists, holding "
+                f"{self._workspace.describe(nickname, existing).row_count} rows. "
+                f"Drop it first if you meant to replace it."
             )
         return self._read_into(slot, name, source, delimiter=delimiter)
 
@@ -634,15 +639,11 @@ class Registry:
         runs.
         """
         self._writable(nickname, "create an index in")
-        if not self._workspace.has_table(nickname, table):
-            # Named here rather than left to the index statement, which reports
-            # the missing table without saying what is present. This is the one
-            # verb whose whole premise is that the caller already knows the
-            # table name, so the list of what is there is the actionable half.
-            known = ", ".join(self._workspace.table_names(nickname)) or "none"
-            raise SlotNotAvailable(
-                f"No such table: {nickname}.{table}. In {nickname}: {known}."
-            )
+        # Named here rather than left to the index statement, which reports the
+        # missing table without saying what is present. This is the one verb
+        # whose whole premise is that the caller already knows the table name,
+        # so the list of what is there is the actionable half.
+        table = self.stored_name(nickname, table)
         if not columns:
             raise SlotError(
                 f"An index on {nickname}.{table} needs at least one column."
@@ -751,11 +752,7 @@ class Registry:
         rebuilding it — the rows, types and indexes all stay put.
         """
         slot = self._writable(nickname, "rename a table in")
-        if not self._workspace.has_table(nickname, table):
-            known = ", ".join(self._workspace.table_names(nickname)) or "none"
-            raise SlotNotAvailable(
-                f"No such table: {nickname}.{table}. In {nickname}: {known}."
-            )
+        table = self.stored_name(nickname, table)
         if to == table:
             raise SlotError(f"{nickname}.{table} is already called {table!r}.")
         if not _NICKNAME.match(to):
@@ -763,14 +760,30 @@ class Registry:
                 f"{to!r} cannot be a table name. Use a letter or underscore "
                 f"followed by letters, digits or underscores."
             )
-        if self._workspace.has_table(nickname, to):
+        clash = self._workspace.resolve_table(nickname, to)
+        if clash == table:
+            # The target resolves back to the table being renamed, so this is a
+            # change of spelling rather than a collision. SQLite refuses it
+            # outright — *"there is already another table or index with this
+            # name"* — and letting the engine answer would hand the caller that
+            # sentence about a table they can see is theirs. Refused here in
+            # words that name the actual obstacle. An engine that stores case
+            # distinctly would allow it; refusing everywhere costs that engine a
+            # two-step rename and costs no dialect knowledge, which is the trade
+            # `landed_as` makes for the same reason.
+            raise SlotError(
+                f"{nickname}.{table} and {to!r} differ only in case, and an "
+                f"engine that folds case holds one name for both. Rename it to "
+                f"a name that differs by more than case."
+            )
+        if clash is not None:
             # Refused rather than replaced: the database would let the rename
             # fail, but on a dialect that allowed it the other table would be
             # gone with nothing said.
             raise SlotError(
-                f"{nickname}.{to} already exists, holding "
-                f"{self._workspace.describe(nickname, to).row_count} rows. Drop "
-                f"it first, or rename to a name that is free."
+                f"{nickname}.{clash} already exists, holding "
+                f"{self._workspace.describe(nickname, clash).row_count} rows. "
+                f"Drop it first, or rename to a name that is free."
             )
 
         try:
@@ -801,11 +814,7 @@ class Registry:
     def drop_table(self, nickname: str, table: str) -> None:
         """Remove a table from a slot. Composition needs both directions."""
         self._writable(nickname, "drop a table from")
-        if not self._workspace.has_table(nickname, table):
-            known = ", ".join(self._workspace.table_names(nickname)) or "none"
-            raise SlotNotAvailable(
-                f"No such table: {nickname}.{table}. In {nickname}: {known}."
-            )
+        table = self.stored_name(nickname, table)
         try:
             self._workspace.drop_table(nickname, table)
         except LoadError as exc:
@@ -889,6 +898,24 @@ class Registry:
                 f"with writable=true, if you meant to change the file itself."
             )
         return slot
+
+    def stored_name(self, nickname: str, table: str) -> str:
+        """What the database calls a table the caller named, or a refusal.
+
+        The four verbs that take a table name as an argument ask this one
+        question and must answer it the way the database does — see
+        :meth:`Workspace.resolve_table`. The refusal is built here so that all
+        four say the same thing: the name that failed, and the names that would
+        not have, since a caller who reaches this verb at all is one who does
+        not know what is there.
+        """
+        landed = self._workspace.resolve_table(nickname, table)
+        if landed is None:
+            known = ", ".join(self._workspace.table_names(nickname)) or "none"
+            raise SlotNotAvailable(
+                f"No such table: {nickname}.{table}. In {nickname}: {known}."
+            )
+        return landed
 
     # -- staying inside the memory budget -----------------------------------
 
@@ -1097,11 +1124,7 @@ class Registry:
         in the shape every other verb uses, naming the tables that do exist.
         """
         slot = self.slot(nickname)
-        if not self._workspace.has_table(nickname, table):
-            known = ", ".join(self._workspace.table_names(nickname)) or "none"
-            raise SlotNotAvailable(
-                f"No such table: {nickname}.{table}. In {nickname}: {known}."
-            )
+        table = self.stored_name(nickname, table)
         try:
             return self._workspace.describe(nickname, table, source=slot.source)
         except LoadError as exc:

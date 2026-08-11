@@ -1647,3 +1647,51 @@ def test_a_renamed_table_is_saved_under_its_new_name(session):
 def test_the_surface_is_eight_verbs_now(session):
     assert {tool.name for tool in listed_tools()} == TOOLS
     assert "update" in TOOLS
+
+
+# ---------------------------------------------------------------------------
+# The answer's own shape
+# ---------------------------------------------------------------------------
+
+
+def test_info_refuses_a_table_with_no_nickname_rather_than_dropping_it(session):
+    """The third form was asked for; answering the first would look understood."""
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    answer = call("info", table="simple")
+
+    assert answer["ok"] is False
+    assert "simple" in answer["error"]
+    assert "nickname" in answer["error"]
+    assert "datasources" not in answer
+
+
+def test_both_of_creates_answers_name_the_datasource(session):
+    """One verb, two branches, one set of keys at the front."""
+    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    made_table = call(
+        "create", nickname="staff", type="table", source=str(session / "mixed_tabs.tsv")
+    )
+    made_index = call(
+        "create", nickname="staff", type="index", table="simple", columns=["salary"]
+    )
+
+    assert made_table["ok"] is True
+    assert made_table["nickname"] == "staff"
+    assert made_index["nickname"] == "staff"
+
+
+def test_update_reports_the_name_the_database_held_not_the_one_passed(session):
+    """`renamed` has to match the listing this same payload replaces."""
+    mixed = session / "mixed.sqlite"
+    connection = sqlite3.connect(mixed)
+    connection.execute('CREATE TABLE "MyTable" (id INTEGER)')
+    connection.commit()
+    connection.close()
+    call("attach", database=str(mixed), nickname="held", writable=True)
+
+    renamed = call("update", nickname="held", type="table", name="mytable", to="kept")
+
+    assert renamed["ok"] is True
+    assert renamed["renamed"] == "MyTable"
+    assert renamed["table"] == "kept"
+    assert renamed["tables"] == ["kept"]

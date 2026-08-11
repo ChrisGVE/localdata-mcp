@@ -173,10 +173,11 @@ Nothing walks a release for you, so this is the whole of it:
 4. Create the GitHub release from the tag, for the notes; the upload has already
    happened by then.
 5. Publish `server.json` to the MCP registry by hand. No workflow does it.
-6. **Un-write the prose the first five steps falsified.** Six passages state the
-   *current* publication state and stop being true the moment a release ships:
-   `README.md:12`, `:39-40`, `:43-45`, `:50-51` and `:59` — the badge note, the
-   not-on-PyPI note, the install-from-a-clone instruction — and this document's
+6. **Un-write the prose the first five steps falsified.** Six places, in four
+   passages, state the *current* publication state and stop being true the
+   moment a release ships: `README.md:12` (the badge note), `:39-40` and
+   `:43-45` (the not-on-PyPI note), `:50-51` and `:59` (the
+   install-from-a-clone instruction) — and this document's
    own claim at *Nothing publishes `server.json` either*, above, that the server
    *"has never appeared in the MCP registry"*, which step 5 makes false. Nothing
    checks any of them, which is why they are a step rather than a footnote.

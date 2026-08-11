@@ -1954,8 +1954,30 @@ class Workspace:
 
     # -- composing ---------------------------------------------------------
 
+    def resolve_table(self, tag: str, table: str) -> str | None:
+        """What this tag calls the table a caller named, or ``None`` for none.
+
+        Existence is the database's question and not Python's. SQLite resolves
+        an unquoted identifier case-insensitively, so a table stored as
+        ``MyTable`` is one ``query`` reads as ``mytable`` — and a verb that
+        takes the same name as an *argument* and compares it exactly would
+        refuse a table the slot beside it can read, while listing that table as
+        what the slot holds.
+
+        Exact match wins outright, so a backend that stores two names differing
+        only in case still resolves each of them to itself. A fold resolves only
+        when exactly one name matches: two candidates is genuine ambiguity on a
+        case-sensitive backend, and guessing between them would drop or rename
+        the wrong table.
+        """
+        names = self.table_names(tag)
+        if table in names:
+            return table
+        folded = [name for name in names if name.lower() == table.lower()]
+        return folded[0] if len(folded) == 1 else None
+
     def has_table(self, tag: str, table: str) -> bool:
-        return table in self.table_names(tag)
+        return self.resolve_table(tag, table) is not None
 
     def table_names(self, tag: str) -> tuple[str, ...]:
         """Everything in this tag's database that can be selected from.
@@ -1993,11 +2015,7 @@ class Workspace:
         does not recognise (a truncation, say) degrades to. That is the previous
         behaviour, so this can only improve an answer, never break one.
         """
-        names = self.table_names(tag)
-        if wanted in names:
-            return wanted
-        folded = [name for name in names if name.lower() == wanted.lower()]
-        return folded[0] if len(folded) == 1 else wanted
+        return self.resolve_table(tag, wanted) or wanted
 
     def rename_table(self, tag: str, table: str, to: str) -> str:
         """Rename a table, moving its cached description with it, and say to what.
@@ -2540,8 +2558,7 @@ class Workspace:
         ``CREATE TABLE``, ``CREATE VIEW``, ``ATTACH``, a ``PRAGMA`` — is refused
         here, whatever rights the datasource itself carries. Mutation has its own
         verbs (``create``, ``update``, ``drop``) which do not come through this
-        method, so
-        the refusal costs the surface nothing.
+        method, so the refusal costs the surface nothing.
 
         Enforced by the connection's posture rather than by reading the SQL: this
         engine's connections are read-only from the moment they are opened, so

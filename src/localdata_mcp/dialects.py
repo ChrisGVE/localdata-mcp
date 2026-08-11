@@ -183,7 +183,11 @@ def article_for(name: str) -> str:
     """
     if name.lower() in _SPOKEN_AS_INITIALS:
         return "an"
-    return "an" if name[:1].lower() in "aeiou" else "a"
+    # `first and` rather than the slice alone: `"" in "aeiou"` is True, so an
+    # empty name would take the vowel branch — the one string the rule above
+    # promises to hold for and the one it would not have.
+    first = name[:1].lower()
+    return "an" if first and first in "aeiou" else "a"
 
 
 @dataclass(frozen=True)
@@ -498,8 +502,9 @@ class Backend:
         open*, and the caller reading this refusal holds only the slot that
         just refused them.
         """
+        article = article_for(self.name).capitalize()
         raise UnsupportedOperation(
-            f"{article_for(self.name).capitalize()} {self.name} datasource is reached over its own connection, not "
+            f"{article} {self.name} datasource is reached over its own connection, not "
             f"held here, so there is no local database to write out. Write the "
             f"rows you want to a file with query(nickname, sql, path=…), attach "
             f"that file as a datasource of your own, and save that; further "
@@ -1450,13 +1455,15 @@ class ClickHouseBackend(Backend):
         reads as done and cannot be acted on. So this says what is true, and
         names the thing that actually orders a ClickHouse table.
         """
+        article = article_for(self.name).capitalize()
         raise UnsupportedOperation(
-            f"{article_for(self.name).capitalize()} {self.name} table is indexed by the ordering key it was created "
-            f"with, not by adding an index afterwards. Its secondary indexes are "
-            f"data-skipping indexes, which cannot be listed or dropped through "
-            f"this interface and do not answer a lookup the way an index does. "
-            f"To make {', '.join(columns)} fast to filter on, create the table "
-            f"ordered by those columns in {self.name} itself, and attach it here."
+            f"{article} {self.name} table is indexed by the ordering key it "
+            f"was created with, not by adding an index afterwards. Its "
+            f"secondary indexes are data-skipping indexes, which cannot be "
+            f"listed or dropped through this interface and do not answer a "
+            f"lookup the way an index does. To make {', '.join(columns)} fast "
+            f"to filter on, create the table ordered by those columns in "
+            f"{self.name} itself, and attach it here."
         )
 
 
@@ -1582,8 +1589,9 @@ class TrinoBackend(Backend):
         name handed back to the caller would be an answer that reads as done and
         cannot be acted on, which is what this refuses.
         """
+        article = article_for(self.name).capitalize()
         raise UnsupportedOperation(
-            f"{article_for(self.name).capitalize()} {self.name} datasource holds no data of its own, so it has no "
+            f"{article} {self.name} datasource holds no data of its own, so it has no "
             f"indexes to create — a filter is made fast by the catalog it reads "
             f"through, not here. To make {', '.join(columns)} fast to filter on, "
             f"index or partition {table.name} in the system behind the catalog, "
@@ -1738,11 +1746,12 @@ class CrateDBBackend(Backend):
         another kind, no data to index, and an index already there. The axis
         carries the fact; only the sentence differs.
         """
+        article = article_for(self.name).capitalize()
         raise UnsupportedOperation(
-            f"{article_for(self.name).capitalize()} {self.name} datasource indexes every column as it is written, so "
-            f"there is no index to add — {', '.join(columns)} on {table.name} is "
-            f"already fast to filter on. Creating one here would report work that "
-            f"was never done."
+            f"{article} {self.name} datasource indexes every column as it is "
+            f"written, so there is no index to add — {', '.join(columns)} on "
+            f"{table.name} is already fast to filter on. Creating one here "
+            f"would report work that was never done."
         )
 
 
@@ -1845,11 +1854,13 @@ class FirebirdBackend(Backend):
         :meth:`renames_tables` first, which is why it refuses rather than
         assuming the guard held.
         """
+        article = article_for(self.name).capitalize()
         raise UnsupportedOperation(
-            f"{article_for(self.name).capitalize()} {self.name} datasource has no statement that renames a table, so "
-            f"{table} cannot become {to}. Copy the rows into a table of the new "
-            f"name with create, then drop the old one — that is two tables and "
-            f"loses the indexes on the first, which is why it is not done for you."
+            f"{article} {self.name} datasource has no statement that renames a "
+            f"table, so {table} cannot become {to}. Copy the rows into a table "
+            f"of the new name with create, then drop the old one — that is two "
+            f"tables and loses the indexes on the first, which is why it is "
+            f"not done for you."
         )
 
     def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:

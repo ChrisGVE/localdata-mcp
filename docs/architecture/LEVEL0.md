@@ -167,6 +167,12 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 The table gives the shape and the one-line purpose. What each verb costs and why it is
 drawn where it is follows underneath.
 
+Every verb answers with a payload carrying `ok`, and a refusal is one of those answers
+rather than a protocol error: `{"ok": false, "error": "…"}`, the reason in plain words and,
+where a name was wrong, the names that were right. That is the envelope the whole surface
+shares, and it is why every refusal below is described as something the caller reads rather
+than something they catch.
+
 | Verb | Shape | What it is for |
 |---|---|---|
 | `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Open a datasource as a database — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. |
@@ -189,9 +195,14 @@ is the same overwrite consent `save` takes, for the same reason. `delimiter` sep
 fields on the way *out*, for `.csv`/`.tsv`/`.txt` only, and is ignored rather than refused
 elsewhere.
 
-**`update` and `drop`.** `update`'s `name` is the snake_cased name `info` lists, not the
-spelling in the spreadsheet; renaming onto a taken name is refused rather than allowed to
-replace. The index name `drop` takes is the one `create` returned and `info` lists.
+**`update` and `drop`.** `update`'s `name` is the snake_cased name `info` lists rather than
+the spelling in the spreadsheet, and case is the part of that the server closes: a name
+differing from the stored one only in case resolves to it, so these verbs answer the
+existence question the way the database does and the way `query` always did. A spelling the
+snake_casing changed by more than case — `Q2 Prices` — still names no table and is refused
+with the names that do. Renaming onto a taken name is refused rather than allowed to replace,
+and so is renaming to the same name in another case, which is not a free name on an engine
+that folds. The index name `drop` takes is the one `create` returned and `info` lists.
 `update(type='table')` is refused on Firebird, and `create(type='index')` on the five
 engines named in the backend table.
 

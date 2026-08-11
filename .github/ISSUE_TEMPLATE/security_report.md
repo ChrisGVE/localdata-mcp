@@ -7,11 +7,11 @@ assignees: ''
 
 ---
 
-## 🚨 Security Report
+## Security Report
 
-⚠️ **IMPORTANT**: For critical security vulnerabilities, please email privately to **christian@berclaz.org** instead of creating a public issue.
+**IMPORTANT**: For critical security vulnerabilities, please email privately to **christian@berclaz.org** instead of creating a public issue.
 
-## 🔒 Vulnerability Type
+## Vulnerability Type
 
 Select the type of security issue:
 
@@ -26,7 +26,7 @@ Select the type of security issue:
 - [ ] Connection/resource exhaustion
 - [ ] Other: ___________
 
-## 📊 Severity Assessment
+## Severity Assessment
 
 **Self-assessed severity level**:
 
@@ -35,7 +35,7 @@ Select the type of security issue:
 - [ ] **Medium** - Information disclosure, limited access, moderate impact
 - [ ] **Low** - Minor information disclosure, low impact
 
-## 🔍 Vulnerability Details
+## Vulnerability Details
 
 **Affected Component(s)**:
 - [ ] Path containment (which files the server may read and write)
@@ -51,7 +51,7 @@ Select the type of security issue:
 **Detailed Description**:
 A clear description of the security vulnerability. Include technical details but avoid full exploitation code if the issue is critical.
 
-## 🎯 Steps to Reproduce
+## Steps to Reproduce
 
 Provide minimal steps to demonstrate the vulnerability:
 
@@ -65,7 +65,7 @@ Provide minimal steps to demonstrate the vulnerability:
 - Operating System: [e.g., macOS, Linux, Windows]
 - Database Type: [e.g., PostgreSQL, SQLite]
 
-## 📋 Evidence
+## Evidence
 
 If applicable, provide:
 
@@ -77,7 +77,7 @@ If applicable, provide:
 Sanitized evidence here
 ```
 
-## 💥 Impact Assessment
+## Impact Assessment
 
 **What can an attacker achieve?**
 - [ ] Read arbitrary files from the filesystem
@@ -95,7 +95,7 @@ Sanitized evidence here
 - [ ] Specific database configuration required
 - [ ] Other: ___________
 
-## 🛡️ Affected Versions
+## Affected Versions
 
 Which versions are affected?
 - [ ] Current main branch
@@ -103,7 +103,7 @@ Which versions are affected?
 - [ ] All versions
 - [ ] Specific version: ___________
 
-## 🔧 Potential Mitigations
+## Potential Mitigations
 
 **Immediate Workarounds** (if known):
 - Avoid using specific features
@@ -114,7 +114,7 @@ Which versions are affected?
 **Suggested Fix Approach**:
 Brief, high-level suggestions for addressing the vulnerability.
 
-## 📚 References
+## References
 
 Any related security research, CVE numbers, or documentation:
 
@@ -122,14 +122,14 @@ Any related security research, CVE numbers, or documentation:
 - Security best practices:
 - Related issues: #___
 
-## 🤝 Responsible Disclosure
+## Responsible Disclosure
 
 - [ ] I understand this may be a security issue
 - [ ] I have not publicly disclosed details elsewhere
 - [ ] I am willing to work with maintainers on responsible disclosure
 - [ ] I would like to be credited in security advisories (optional)
 
-## 📞 Contact Information
+## Contact Information
 
 **Preferred contact method** (for follow-up):
 - [ ] GitHub username: @___________
