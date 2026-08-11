@@ -166,6 +166,26 @@ class Engines:
         self.write.dispose()
 
 
+#: Backend names spelled with a consonant but *spoken* with a vowel, because
+#: they are read out letter by letter: "an em-ess-cue-ell datasource". English
+#: takes its article from the sound, and these refusals are read by a person.
+#: Every other name this project ships agrees with its spelling — mysql and
+#: mariadb are read "my-" and "maria-", so they take "a" and are not listed.
+_SPOKEN_AS_INITIALS = frozenset({"mssql"})
+
+
+def article_for(name: str) -> str:
+    """``"a"`` or ``"an"`` for a backend name, by sound rather than spelling.
+
+    Its own function rather than inline because every generic refusal below
+    opens with this word, and an unregistered dialect brings a name nobody here
+    chose — so the rule has to hold for a string this file has never seen.
+    """
+    if name.lower() in _SPOKEN_AS_INITIALS:
+        return "an"
+    return "an" if name[:1].lower() in "aeiou" else "a"
+
+
 @dataclass(frozen=True)
 class Backend:
     """The per-dialect answers — and the generic ones are the whole answer.
@@ -479,7 +499,7 @@ class Backend:
         just refused them.
         """
         raise UnsupportedOperation(
-            f"A {self.name} datasource is reached over its own connection, not "
+            f"{article_for(self.name).capitalize()} {self.name} datasource is reached over its own connection, not "
             f"held here, so there is no local database to write out. Write the "
             f"rows you want to a file with query(nickname, sql, path=…), attach "
             f"that file as a datasource of your own, and save that; further "
@@ -1299,7 +1319,10 @@ class ClickHouseBackend(Backend):
     was established.
     """
 
-    name: str = "clickhousedb"
+    # The dialect registers itself as ``clickhousedb``; the engine is ClickHouse,
+    # and a refusal has to name what the caller opened, not the driver package
+    # that carries it — the same reason Firebird, YDB and Exasol carry a name.
+    name: str = "clickhouse"
     read_only_query: ClassVar[Mapping[str, str]] = {"readonly": "1"}
 
     def denies_write(self, exc: Exception) -> bool:
@@ -1428,7 +1451,7 @@ class ClickHouseBackend(Backend):
         names the thing that actually orders a ClickHouse table.
         """
         raise UnsupportedOperation(
-            f"A {self.name} table is indexed by the ordering key it was created "
+            f"{article_for(self.name).capitalize()} {self.name} table is indexed by the ordering key it was created "
             f"with, not by adding an index afterwards. Its secondary indexes are "
             f"data-skipping indexes, which cannot be listed or dropped through "
             f"this interface and do not answer a lookup the way an index does. "
@@ -1560,7 +1583,7 @@ class TrinoBackend(Backend):
         cannot be acted on, which is what this refuses.
         """
         raise UnsupportedOperation(
-            f"A {self.name} datasource holds no data of its own, so it has no "
+            f"{article_for(self.name).capitalize()} {self.name} datasource holds no data of its own, so it has no "
             f"indexes to create — a filter is made fast by the catalog it reads "
             f"through, not here. To make {', '.join(columns)} fast to filter on, "
             f"index or partition {table.name} in the system behind the catalog, "
@@ -1601,7 +1624,9 @@ class CrateDBBackend(Backend):
     the mistake ``docs/CONSTRAINTS.md`` §12 records for CockroachDB.
     """
 
-    name: str = "crate"
+    # The dialect key is ``crate``; the database is CrateDB, which is what a
+    # refusal says. See ClickHouse above for the same correction.
+    name: str = "cratedb"
 
     def connect_args(self) -> Mapping[str, Any]:
         """The driver's own type converter, without which a date arrives as a number.
@@ -1714,7 +1739,7 @@ class CrateDBBackend(Backend):
         carries the fact; only the sentence differs.
         """
         raise UnsupportedOperation(
-            f"A {self.name} datasource indexes every column as it is written, so "
+            f"{article_for(self.name).capitalize()} {self.name} datasource indexes every column as it is written, so "
             f"there is no index to add — {', '.join(columns)} on {table.name} is "
             f"already fast to filter on. Creating one here would report work that "
             f"was never done."
@@ -1821,7 +1846,7 @@ class FirebirdBackend(Backend):
         assuming the guard held.
         """
         raise UnsupportedOperation(
-            f"A {self.name} datasource has no statement that renames a table, so "
+            f"{article_for(self.name).capitalize()} {self.name} datasource has no statement that renames a table, so "
             f"{table} cannot become {to}. Copy the rows into a table of the new "
             f"name with create, then drop the old one — that is two tables and "
             f"loses the indexes on the first, which is why it is not done for you."

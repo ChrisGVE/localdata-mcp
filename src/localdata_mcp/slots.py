@@ -634,6 +634,15 @@ class Registry:
         runs.
         """
         self._writable(nickname, "create an index in")
+        if not self._workspace.has_table(nickname, table):
+            # Named here rather than left to the index statement, which reports
+            # the missing table without saying what is present. This is the one
+            # verb whose whole premise is that the caller already knows the
+            # table name, so the list of what is there is the actionable half.
+            known = ", ".join(self._workspace.table_names(nickname)) or "none"
+            raise SlotNotAvailable(
+                f"No such table: {nickname}.{table}. In {nickname}: {known}."
+            )
         if not columns:
             raise SlotError(
                 f"An index on {nickname}.{table} needs at least one column."
@@ -1078,8 +1087,21 @@ class Registry:
             streaming.__exit__(None, None, None)
 
     def describe(self, nickname: str, table: str) -> TableInfo:
-        """Describe one table inside a slot."""
+        """Describe one table inside a slot.
+
+        The missing-table check is made here rather than left to the reflection
+        below, because ``info`` is the verb a caller reaches for when they do
+        *not* know what is there — a wrong table name is its likeliest input,
+        and SQLAlchemy's own ``NoSuchTableError`` escapes the server as a
+        protocol error carrying nothing but the name. Refusing it here answers
+        in the shape every other verb uses, naming the tables that do exist.
+        """
         slot = self.slot(nickname)
+        if not self._workspace.has_table(nickname, table):
+            known = ", ".join(self._workspace.table_names(nickname)) or "none"
+            raise SlotNotAvailable(
+                f"No such table: {nickname}.{table}. In {nickname}: {known}."
+            )
         try:
             return self._workspace.describe(nickname, table, source=slot.source)
         except LoadError as exc:
