@@ -2062,7 +2062,7 @@ password, and every endpoint here still uses one auth mode — username and pass
 ## §12 — CockroachDB, the dialect that needed nothing (2026-07-28)
 
 Second entry from the backend catalogue, and the first from the wire-compatible tier. The reason
-that tier is in the worklist at all is that its members are cheap *because* they are compatible —
+that tier is in the catalogue at all is that its members are cheap *because* they are compatible —
 one `endpoints.py` entry, the generic `Backend`, no subclass — and **if they pass unchanged that is
 itself the result**, because it shows the seam generalises rather than having been fitted to the
 engines it was built against.
@@ -2143,7 +2143,7 @@ Third from the backend catalogue, and the first that was **backed out rather tha
 about TiDB is committed: no compose service, no URL builder, no `ENDPOINTS` entry. What follows is
 measured, and it is recorded because the measurement is about the *seam* rather than about TiDB.
 
-The worklist predicted this one would need no subclass and that the absence would be the finding.
+This one was expected to need no subclass, and the absence was to be the finding.
 The opposite happened, and it is a better finding.
 
 ### 13.1 TiDB refuses the statement MySQL's read-only posture is built on
@@ -2194,7 +2194,7 @@ This is the production-code twin of the harness defect fixed at `b6ee282c`, wher
 and the pytest ids made the same wrong assumption and would have run one container's suite under
 another container's name.
 
-It is a tier of the worklist rather than one database. TiDB and OceanBase inherit `MySQLBackend`,
+It is a tier of the catalogue rather than one database. TiDB and OceanBase inherit `MySQLBackend`,
 which carries real engine-specific behaviour, and that is where it breaks. YugabyteDB, Greenplum and
 OpenGauss inherit the *generic* `Backend` and are probably unaffected — which is not a guess but the
 CockroachDB result from §12 read forward: a different engine on PostgreSQL's wire needed nothing,
@@ -2203,7 +2203,7 @@ because PostgreSQL itself needs nothing.
 The decision this needs — whether to resolve a backend by asking the server what it is, which
 requires a connection *before* the backend is chosen and so inverts the current
 `backend_for` → `open` order — is issue #45. It was not made here, because making it
-silently mid-worklist is how an architecture drifts.
+silently part-way through the catalogue is how an architecture drifts.
 
 One thing worth doing whichever way that goes: a read posture that cannot be installed should reach
 the caller as "this datasource cannot be opened read-only" rather than as the driver's own sentence
@@ -2219,7 +2219,7 @@ WARNING: disk slowness detected: unable to sync log files within 10s
 ```
 
 The endpoint suite went from 1m25s to 6m02s with ten failures and ten errors, none of which were
-code. The catalogue is approaching what this machine holds concurrently, and a worklist with sixteen
+code. The catalogue is approaching what this machine holds concurrently, and a catalogue of sixteen
 entries will not fit at all — containers will need bringing up per-dialect rather than all at once.
 Recorded because a killed container looks exactly like a broken commit until the logs are read.
 
@@ -2474,7 +2474,7 @@ OceanBase's, and it is the same root — a dialect names a wire protocol and a d
 
 Here it was dodged rather than solved, because `40001` genuinely is generic and belonged in the
 generic path regardless. **The next PostgreSQL-wire engine needing something that is not generic has
-no such escape**, and Greenplum is on the worklist already needing `table_options()` for its
+no such escape**, and Greenplum is in the catalogue already needing `table_options()` for its
 `DISTRIBUTED BY` clause. Issue #45 is updated with this.
 
 ### 15.5 The healthcheck that lied, and what it cost
@@ -2679,7 +2679,7 @@ a dialect another engine wrote:
 
 §15.4 recorded YugabyteDB dodging this rather than solving it — its finding (`40001` wants a retry)
 turned out to be generic and belonged in the generic path anyway. **That was luck.** Greenplum has no
-such escape, and it is the next entry on the worklist.
+such escape, and it is the next entry in the catalogue.
 
 ### 17.1 The resolution, and where it does not happen
 
@@ -3115,7 +3115,7 @@ Exception: The location of Firebird Client Library could not be determined.
 ```
 
 The second needs no native library at all: `firebirdsql` speaks the wire protocol in Python. **It is
-not a shim** — step 1 of the adoption procedure exists to ask that question, and the answer here is
+not a shim** — that is the question a second adapter always has to answer, and the answer here is
 that it is the same dialect base ported, co-authored by `sqlalchemy-firebird`'s own author and
 maintained by the driver's. The cost it carries instead is youth: version 0.1.0, sdist only, no wheel.
 
@@ -3473,7 +3473,7 @@ and the container's default is the only one measured.
 ## §22 — YDB, and a rollback that reports success over a write that stands (2026-07-30)
 
 Fourteenth endpoint dialect, eleventh from the backend catalogue (taken
-ahead of Db2, OceanBase, Exasol, Databend and HyperSQL, which step 4 of the procedure permits). A
+ahead of Db2, OceanBase, Exasol, Databend and HyperSQL, since the order within a tier is free). A
 distributed OLTP store from Yandex, and the first backend here reached through a dialect named after
 neither its engine nor its driver.
 
@@ -4466,7 +4466,7 @@ written, no extra was added, and `.venv` was never touched.
 ### 26.1 Two adapters, and what the eligibility rule does with them
 
 The eligibility rule is that a database is eligible iff an open-source SQLAlchemy adapter exists.
-OceanBase has two, which is the first time step 1's "is the rival really a shim?" question has had a
+OceanBase has two, which is the first time the question *is the rival really a shim?* has had a
 genuine second candidate to weigh.
 
 | package | version | licence | uploaded | requires | mode | outcome here |
@@ -4633,8 +4633,8 @@ host, and it should not be read as a statement about the database.
 The sixteenth endpoint dialect and the thirteenth from the backend catalogue, which
 this entry closes. Exasol is reached through `sqlalchemy-exasol` 7.1.1 on `pyexasol`
 2.3.0 — both Exasol's own, both open source, and the first entry here where the
-adapter, the driver and the database come from one vendor, so step 1's "is the rival
-a shim?" question has no second candidate to weigh.
+adapter, the driver and the database come from one vendor, so the question *is the rival
+a shim?* has no second candidate to weigh.
 
 Nothing native is installed for it: the wire protocol is a WebSocket carrying JSON,
 so the client stack is `websocket-client` and `cryptography` and nothing that has to
@@ -5018,12 +5018,13 @@ suite.
 >
 > **Corrected a fifth time, same day, and the fifth error is the fourth one's own.** The
 > replacement written above first said **four** of the five places mix spellings. It is
-> **three**. The count was carried over from the audit table's column headed *"ordering within
-> one spelling?"*, in which four rows read "no" — but "not an ordering within one spelling" and
-> "mixes spellings" are different properties, and `:365-367` has the first without the second:
+> **three**. The count was carried over from a tally of a *different* property — how many of
+> the five places fail to assert an ordering within one spelling, which is four — but "not an
+> ordering within one spelling" and "mixes spellings" are different properties, and
+> `:365-367` has the first without the second:
 > each parametrized case is one spelling twice over (10 beside 10, 20 beside 20, 27 beside 27),
 > which is what `test_a_column_already_in_one_spelling_is_left_byte_for_byte` exists to assert.
-> **A count copied from a table is a count taken on whatever property that table's column
+> **A count carried over from another tally is a count of whatever property that tally
 > measured**, and this is the fifth wrong version of one sentence, the third written inside its
 > own post-mortem.
 
