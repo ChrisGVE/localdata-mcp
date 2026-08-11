@@ -190,10 +190,10 @@ Firebird, openGauss, YDB, Databend and Exasol. Three things differ from a file:
   live in the engine. **Never offer `save` over a URL-attached datasource.** This
   also covers a DuckDB *file*, which is reached over DuckDB's own connection and
   is refused for the same reason. Offer `query(nickname, "SELECT …",
-  path="/path/result.parquet")` instead — and if they want it back as a database,
-  that same file is the first of three calls: `create` it into a datasource of
-  your own, then `save` that. `create` reads a file, so it cannot copy rows out
-  of the engine directly. §6 has the rule in full.
+  path="/path/result.parquet")` instead — and if they want it back as a
+  database, `attach` that file: it becomes a datasource of your own, writable
+  because it came from a file, and `save` works on it. `create` is for adding
+  further tables to that new slot, not for making it. §6 has the rule in full.
 
 Two smaller refusals live here too: `create(type="index")` on the five engines
 listed in §2, and `update(type="table")` on **Firebird**, which has no
@@ -223,7 +223,7 @@ by name rather than written as something else. Choose it rather than defaulting:
 | They want | Ask for | Why |
 |---|---|---|
 | to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
-| to open it in LibreOffice specifically | `.ods` | same cap, and slow — **5.8× `.xlsx`** at 20,000 rows of eleven ordinary-width columns, and the gap widens with rows: **12.7×** at 50,000 on the range drive's own corpus. On a wide result it had not produced a file after half an hour (below). Use `.xlsx` unless OpenDocument was asked for |
+| to open it in LibreOffice specifically | `.ods` | same cap, and slow — **5.8× `.xlsx`** at 20,000 rows of eleven ordinary-width columns, and the gap widens with rows: **6.4×** at 20,000 and **12.7×** at 50,000 on the range drive's own corpus. On a forty-column result (50,000 × 40) it had not produced a file after half an hour (below). Use `.xlsx` unless OpenDocument was asked for |
 | a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
 | something big, for another program | `.parquet` | the safe default, not a size winner: over seven shapes driven it was smallest on three — **by 100× or more where a column repeats few distinct values** — and eighth of fifteen on high-entropy text, where `.orc` won by about 1.2×. `.orc` and `.parquet` write within 8% of each other; `.feather` writes faster, and was the larger on every text shape but the smaller on both float shapes |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |
@@ -278,11 +278,12 @@ comes back **read-only** unless they pass `writable=true`.
 Where `save` is refused, the answer is one of two things, and the refusal names
 the first:
 
-- **Land the rows in a datasource of your own and save that.** `create` reads a
-  *file*, so the rows have to become one first: `query(nickname, "SELECT …",
-  path=…)`, then `create(…, type="table", source=<that file>)` into a local
-  datasource, then `save` it. This is what to do when they want the
-  *relationship* — several tables they can come back to.
+- **Land the rows in a datasource of your own and save that.** The rows have to
+  become a file first: `query(nickname, "SELECT …", path=…)`, then `attach` that
+  file — it arrives as a database of your own, writable — and `save` it. Further
+  tables go in with `create(…, type="table", source=<another file>)` before you
+  save. This is what to do when they want the *relationship* — several tables
+  they can come back to.
 - **Send the result to a file** with `query(nickname, "SELECT …", path=…)`. This
   is what to do when they want one answer in a form they can open or mail on.
   The answer comes back as `rows_written` and the column names rather than the

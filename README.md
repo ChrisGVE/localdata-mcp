@@ -254,9 +254,10 @@ carried out on some engines, and the refusal says so and names the way round:
   database, and `save` writes it out. **A slot reached over its own connection
   has no such database, so `save` is refused on all seventeen non-SQLite
   backends, a local DuckDB file included.** The way to keep the result is three
-  calls, because `create` reads a file and cannot copy rows out of a database:
-  `query(path=…)` writes the rows to a file, `create` lands that file in a slot
-  of your own, and `save` writes that slot out. The refusal says exactly this.
+  calls: `query(path=…)` writes the rows to a file, `attach` on that file makes
+  a database of your own — file-derived, so writable — and `save` writes it
+  out. The middle verb is `attach`, not `create`: `create` lands a file inside a
+  slot that is already open. The refusal says exactly this.
 - **`create(type="index")` is refused on ClickHouse, Trino, CrateDB, Databend
   and Exasol** — each for its own reason: indexes that cannot be reflected, no
   storage to index, every column indexed already, a statement that compiles to
@@ -382,8 +383,8 @@ Attaching that file again later is an ordinary attach, so it comes back
 **`save` only works on a slot this server built** — anything that came from a
 file, and SQLite. A slot reached over its own connection (PostgreSQL, a DuckDB
 file, any of the other sixteen backends) has no local database to write out, and
-`save` is refused there; send the result to a file with `query(path=…)`, `create`
-that file into a slot of your own, and save that. See [Not every verb
+`save` is refused there; send the result to a file with `query(path=…)`, `attach`
+that file as a datasource of your own, and save that. See [Not every verb
 reaches every backend](#not-every-verb-reaches-every-backend).
 
 An existing file is refused. The destination is a name a person chose, so whether

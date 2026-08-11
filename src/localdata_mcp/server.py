@@ -908,9 +908,11 @@ def save(nickname: str, path: str, force: bool = False) -> dict[str, Any]:
     Only a database this server holds is one it can write out, so this is
     refused on every backend but SQLite — a database reached over a URL, and a
     DuckDB file, included. Keeping rows from one of those takes three calls:
-    ``query(nickname, sql, path=…)`` to write them to a file, ``create`` to land
-    that file in a slot of your own, then ``save`` that slot. Offer that route
-    rather than this verb when the datasource is not SQLite.
+    ``query(nickname, sql, path=…)`` writes them to a file, ``attach`` on that
+    file makes a datasource of your own (file-derived, so writable), and
+    ``save`` writes that one out. ``create`` is for adding further tables to
+    that new slot, not for making it. Offer that route rather than this verb
+    when the datasource is not SQLite.
 
     Args:
         nickname: The datasource to write out.

@@ -470,18 +470,20 @@ class Backend:
 
         Refused generically, and the refusal is the truthful answer rather than
         a gap: a database this server merely *reaches* is not one it holds, and
-        there is no local file to write out. The route round it is three calls,
-        not two — ``create`` reads a *file*, so the rows have to become one
-        first: ``query(…, path=…)``, then ``create`` that file into a slot of
-        our own, then ``save`` that slot. Naming only the middle call sends the
-        caller to a format-registry refusal, which reads as a wrong suffix
-        rather than as a verb that cannot do this at all.
+        there is no local file to write out. The route round it is three calls:
+        ``query(…, path=…)`` writes the rows to a file, ``attach`` on that file
+        makes a database of our own — file-derived, so writable and saveable —
+        and ``save`` writes it out. The middle verb is ``attach`` and not
+        ``create``: ``create`` lands a file *inside a slot that is already
+        open*, and the caller reading this refusal holds only the slot that
+        just refused them.
         """
         raise UnsupportedOperation(
             f"A {self.name} datasource is reached over its own connection, not "
             f"held here, so there is no local database to write out. Write the "
-            f"rows you want to a file with query(nickname, sql, path=…), then "
-            f"land that file in a slot of your own with create, and save that."
+            f"rows you want to a file with query(nickname, sql, path=…), attach "
+            f"that file as a datasource of your own, and save that; further "
+            f"tables go into it with create before you save."
         )
 
     def renames_tables(self) -> bool:

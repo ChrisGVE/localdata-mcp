@@ -198,7 +198,7 @@ engines named in the backend table.
 **`save`.** An occupied path is refused until `force` carries the user's consent, and a path
 a live slot sits on is refused regardless. It writes out a database this server holds, so it
 is refused on every backend but SQLite; the refusal names the route round it, which is
-three calls — `query(path=…)`, `create` that file into a slot of your own, `save` that.
+three calls — `query(path=…)`, `attach` that file as a datasource of your own, `save` that.
 
 ### Write is not the default
 
