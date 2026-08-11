@@ -1,6 +1,16 @@
 include README.md
 include LICENSE
 include pyproject.toml
+# The README points at these by relative path, so a reader who opens the sdist's
+# README finds what it names rather than nine dead links. assets/logo.png and
+# non_factual/ are deliberately not here: a 2 MB hero image is paid for by every
+# download, and a quarantine notice has no business in a distribution — both are
+# referenced by absolute URL from the README instead.
+include CHANGELOG.md
+include CONTRIBUTING.md
+recursive-include docs *.md
+recursive-include skills *.md
+recursive-include .github *.md
 recursive-include src *.py
 recursive-include src *.typed
 exclude tests/*

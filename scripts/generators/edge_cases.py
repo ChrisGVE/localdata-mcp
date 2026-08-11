@@ -6,7 +6,7 @@ import os
 
 import numpy as np
 import pandas as pd
-from generators._common import sub_dir
+from generators.common import sub_dir
 
 
 def _write_empty_csv(d: str) -> str:

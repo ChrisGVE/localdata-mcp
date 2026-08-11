@@ -7,7 +7,7 @@ import os
 
 import numpy as np
 import pandas as pd
-from generators._common import RowCounts, sub_dir
+from generators.common import RowCounts, sub_dir
 
 
 def _build_dataframe(n_rows: int) -> pd.DataFrame:

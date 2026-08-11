@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from generators._common import sub_dir, write_text
+from generators.common import sub_dir, write_text
 
 _DOT = """\
 digraph test {

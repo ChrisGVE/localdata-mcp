@@ -219,6 +219,11 @@ all = [
 Homepage = "https://github.com/chrisgve/localdata-mcp"
 Repository = "https://github.com/chrisgve/localdata-mcp"
 "Bug Tracker" = "https://github.com/chrisgve/localdata-mcp/issues"
+# The README is this package's long description, where every one of its links to
+# a sibling document is relative and therefore dead. These are the channel a
+# package index renders instead, and unlike MANIFEST.in they reach the wheel.
+Changelog = "https://github.com/chrisgve/localdata-mcp/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/chrisgve/localdata-mcp/blob/main/docs/architecture/LEVEL0.md"
 
 [project.scripts]
 localdata-mcp = "localdata_mcp.server:main"

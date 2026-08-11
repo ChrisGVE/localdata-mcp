@@ -389,10 +389,12 @@ tree with the version bumped and `uv.lock` untouched: `uv lock --check` and
 flag nothing refuses. `uv sync --frozen` uses the lockfile without validating
 it, so it exits 0 and installs the bumped version against the stale lock, and a
 bare `uv run` is worse than silent: it exits 0 having **rewritten `uv.lock`**,
-which is the relock you forgot, performed where nobody is looking at it. Every
-`uv sync` in this repository's workflows passes `--frozen`, bare `uv run` is
-used throughout them, and nothing here runs `uv lock --check` at all, so
-forgetting the relock is silent rather than self-announcing:
+which is the relock you forgot, performed where nobody is looking at it. No
+workflow in this repository runs `uv` at all — the two that did were deleted on
+2026-08-11 (see `.github/WORKFLOWS.md`) — and nothing here runs `uv lock
+--check`, so forgetting the relock is silent rather than self-announcing. The
+one bare `uv run` that still executes is `.claude-plugin/plugin.json`'s launch
+command, on a user's machine rather than in CI:
 
 | File | Field | Today |
 |---|---|---|
