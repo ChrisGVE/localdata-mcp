@@ -152,7 +152,7 @@ what every datasource becomes.
 | `detach(nickname)` | Close it and free the slot. Deletes the temp file if the slot had been spilled to disk (see [Memory](#memory)). |
 | `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format and answers `rows_written` and the column names instead of the rows. |
 | `info(nickname?, table?)` | Three levels of detail: bare → the session (see above); nickname → its tables; nickname and table → columns, row count and indexes. |
-| `create(nickname, type, table?, source?, columns?, delimiter?)` | `type="table"` lands a datasource *inside* an open database; `type="index"` indexes columns of a table already there. |
+| `create(nickname, type, table?, source?, columns?, delimiter?)` | `type="table"` lands a **file** *inside* an open database — one holding a single table, since `create` makes one; `type="index"` indexes columns of a table already there. |
 | `update(nickname, type, name, to)` | Rename a table, keeping its rows, types and indexes. For when the file chose the name — a workbook's `Sheet1`, which arrives as `sheet1`. |
 | `drop(nickname, type, name)` | Remove a table or an index. |
 | `save(nickname, path, force?)` | Write the database out to a SQLite file you keep — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
@@ -270,6 +270,15 @@ collision. `update` renames one, keeping its rows and indexes. A JSON, YAML or
 XML document is the other way round: one candidate table loads with a note naming
 the key it came from, and **two are refused, naming both**, rather than one being
 picked silently.
+
+`create(type="table")` is stricter than `attach` about the same file, and for a
+reason worth stating: **it makes one table, so a source holding more than one is
+refused**, naming them. A two-sheet workbook that attaches happily as a database
+of two tables cannot be read into an open database as a table, and `table=` does
+not select a sheet — there is no way to take one sheet out of a workbook this
+way. The refusal says to attach the file as its own datasource, which gives you
+the workbook as a database of its own; it does not put those sheets beside the
+tables you already have.
 
 The backend catalogue is closed rather than open-ended, and a database is in
 scope **if and only if an open-source SQLAlchemy adapter exists**. TiDB and

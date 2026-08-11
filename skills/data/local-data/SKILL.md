@@ -204,7 +204,7 @@ by name rather than written as something else. Choose it rather than defaulting:
 | They want | Ask for | Why |
 |---|---|---|
 | to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
-| to open it in LibreOffice specifically | `.ods` | same cap, and slow: **5.9× `.xlsx` at 20,000 rows of eleven columns** (the timings below), **~13× at 50,000 of the same width** — the gap widens with rows, and on a wide result, 50,000 × 40, it does not finish at all (below); use `.xlsx` unless OpenDocument was asked for |
+| to open it in LibreOffice specifically | `.ods` | same cap, and slow: **5.8× `.xlsx` at 20,000 rows of eleven ordinary-width columns** (the timings below), **~13× at 50,000 of the same shape** — the gap widens with rows, and on a wide result, 50,000 × 40, it ran for over half an hour without producing a file (below); use `.xlsx` unless OpenDocument was asked for |
 | a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
 | something big, for another program | `.parquet` | the safe default, not a size winner: over seven shapes driven it was smallest on three — **by 100× or more where a column repeats few distinct values** — and eighth of fifteen on high-entropy text, where `.orc` won by about 1.2×. `.orc` and `.parquet` write within 8% of each other; `.feather` writes faster, and was the larger on every text shape but the smaller on both float shapes |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |
@@ -219,10 +219,13 @@ the same race rather than a separate one. On a wide result — 50,000 rows × 40
 columns — `.md` takes 20.3 s against `.yaml`'s 15.1 s, and `.ods`, still legal
 under its cap at that many rows, ran for over half an hour without producing a
 file; on a narrow one `.yaml` comes first, by about a quarter rather than by a
-wide margin. Under the 65,535-row cap, at 20,000 rows of eleven columns, median
-of three runs: `.ods` 26.8 s, `.xlsx` 4.6 s, `.yaml` 2.2 s, `.md` 1.8 s, `.csv`
-0.45 s — so on a result an agent can actually ask for, `.ods` is the slowest,
-**5.9× `.xlsx` and 12× `.yaml`**, and `.yaml` is only the third slowest.
+wide margin. Under the 65,535-row cap, at 20,000 rows of eleven ordinary-width
+columns: `.ods` 26.5 s, `.xlsx` 4.6 s, `.yaml` 2.0 s, `.md` 1.5 s, `.csv`
+0.13 s — so on a result an agent can actually ask for, `.ods` is the slowest,
+**5.8× `.xlsx` and 13× `.yaml`**, and `.yaml` is only the third slowest. Wide
+text columns move these apart: `.csv`'s cost tracks bytes while the other four
+track cells, so on a corpus with a 1,000-character column `.csv` alone is
+several times slower.
 
 This is also the answer when a result is simply too big to return — say so and
 offer it, rather than returning tens of thousands of rows through the

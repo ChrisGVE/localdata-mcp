@@ -173,7 +173,7 @@ drawn where it is follows underneath.
 | `detach` | `nickname` | Close a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if it had spilled. |
 | `query` | `nickname`, `sql`, `path?`, `force?`, `delimiter?` | Run SQL. **Reads only.** Returns the whole result, or writes it to `path` when it is too large to return. |
 | `info` | — \| `nickname` \| `nickname`+`table` | Three levels of detail: bare → every slot and the path posture; nickname → its tables; nickname and table → schema, row count and indexes. |
-| `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a datasource in beside the tables already there, which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
+| `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a **file** in beside the tables already there — one holding a single table, since `create` makes one — which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
 | `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes — the answer to a file that named its own tables. |
 | `drop` | `nickname`, `type`, `name` | Remove a table or an index. Composition needs both directions, for both types. |
 | `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. |
@@ -206,8 +206,8 @@ database, so it is writable by construction. Everything attached from outside is
 **read-only**. The caller can grant write on an external database at attach time
 (`writable=true`), and that grant is per-attach.
 
-The grant governs `create` and `drop` — and only those, because **`query` never
-writes to anything**. A query reads: `INSERT`, `CREATE TABLE`, `CREATE VIEW`, `PRAGMA`
+The grant governs the three verbs that change a slot — `create`, `update` and `drop`
+— and only those, because **`query` never writes to anything**. A query reads: `INSERT`, `CREATE TABLE`, `CREATE VIEW`, `PRAGMA`
 and the rest are refused there even on a database the caller owns outright. So there is
 exactly one way to change a slot, and it is a named verb rather than a clause buried in
 a statement.

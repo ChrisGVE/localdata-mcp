@@ -56,8 +56,8 @@ modules and no sub-packages at all, so:
   first thing that fails in that job — before any of the causes above reach it.
   The step runs `uv sync --frozen --extra dev --extra mssql --extra enterprise`;
   `pyproject.toml` defines 26 extras and `enterprise` is not one of them, so `uv`
-  exits 2 with `error: Extra `enterprise` is not defined in the
-  `optional-dependencies` table for `localdata-mcp``. It is a hard error, not a
+  exits 2 with ``error: Extra `enterprise` is not defined in the
+  `optional-dependencies` table for `localdata-mcp` ``. It is a hard error, not a
   warning, so the job aborts there and the two `build_db_fixtures.py` steps that
   follow at `:121` and `:124` never execute at all; only the `:127` teardown runs,
   because it carries `if: always()`. The name is another survival from the

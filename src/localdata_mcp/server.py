@@ -642,11 +642,11 @@ def query(
             a million-row result) though it holds nothing, and .md holds the
             whole table because a Markdown column is only as wide as its widest
             value. A spreadsheet (.xlsx, .ods) refuses more than 65,535 rows
-            outright, and of those two .ods is about 6x slower than .xlsx at
-            20,000 rows of eleven columns and ~13x at 50,000 of the same width,
-            the gap widening with rows; on a wide result (50,000 x 40) it does
-            not finish at all — ask for it when OpenDocument is what was wanted,
-            not by default.
+            outright, and of those two .ods is 5.8x slower than .xlsx at 20,000
+            rows of eleven ordinary-width columns and ~13x at 50,000 of the same
+            shape, the gap widening with rows; on a wide result (50,000 x 40) it
+            ran for over half an hour without producing a file — ask for it when
+            OpenDocument is what was wanted, not by default.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the path is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file

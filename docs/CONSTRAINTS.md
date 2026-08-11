@@ -1176,16 +1176,25 @@ slowest.** That superlative was never driven against the other writers: on a wid
 20,000 rows both `.ods` (26.5 s) and `.xlsx` (4.6 s) are slower than `.yaml` (2.0 s). Slowest-of
 depends on the shape of the result, not only its size.
 
-> **Re-driven (2026-08-11) — the shape of that 20,000-row run was never recorded, and it is
-> eleven columns.** The skill page printed this run's timings beside a *different* run's
-> `.ods`/`.xlsx` ratio, so the ratio was underivable from the figures next to it. Re-driven
-> through `query(path=…)` on the first 20,000 rows of the same eleven-column corpus, median of
-> three: **`.ods` 26.8 s, `.xlsx` 4.6 s, `.yaml` 2.2 s, `.md` 1.8 s, `.csv` 0.45 s** — so
-> `.ods` is **5.9× `.xlsx`** and **12× `.yaml`** at this shape, and the ordering above is
-> unchanged. Four of the five figures reproduce within a tenth; **`.csv`'s 0.13 s does not**
-> (0.45 s, three runs, spread under 3%), so that one figure is superseded rather than
-> confirmed. The skill page now carries the re-driven set and quotes the ratio its own figures
-> give.
+> **Re-driven twice on 2026-08-11, and the second run corrects the first — a nominal shape is
+> not a corpus.** The skill page printed this run's timings beside a *different* run's
+> `.ods`/`.xlsx` ratio, which is a real defect and is fixed by quoting the ratio these figures
+> give: 26.5 / 4.6 = **5.8×**, and 26.5 / 2.0 = **13×**. The run itself stands. A re-drive that
+> declared `.csv`'s 0.13 s superseded by a measured 0.45 s **used a different corpus while
+> calling it the same one**: `bench_wide_1m.csv` carries a `text_1000` column, so its first
+> 20,000 rows are **24.3 MB against about 2.1 MB** for an ordinary 20,000 × 11 corpus — 11×
+> the bytes at the same nominal shape. Driven on an ordinary one, `.csv` is **0.137 s**, and
+> round 8 measured 0.13 s at the same shape, so the figure reproduces twice and the outlier was
+> the re-drive.
+>
+> **Why four figures "reproduced" and one did not is the finding worth keeping.** `.ods`,
+> `.xlsx`, `.yaml` and `.md` are cell-bound — their cost tracks the number of cells, which both
+> corpora share — while `.csv` is byte-bound. The four that agreed are precisely the four that
+> **cannot discriminate** between the two corpora, so their agreement was not evidence that the
+> corpora matched; the single disagreement was the only measurement carrying that information,
+> and it was read as the error. A cross-check made only from insensitive instruments confirms
+> nothing. **Row count and column count do not fix a corpus** — the cell widths do, and any
+> timing quoted here needs them.
 
 So the group boundary now falls at **nine streaming suffixes and six materialising ones**
 (`.md` `.parquet` `.feather` `.orc` `.xlsx` `.ods`), and each of the six is deliberate.
@@ -1518,8 +1527,8 @@ way the surface intends — `create` lands the second table in the first's datab
 single join, and by **12.1x** on every join after. All 10,000,000 rows matched, which is the correct
 answer and confirms the join is doing real work rather than failing to.
 
-**Nothing in the server says any of this** — principle 3 holds, no index is inferred and no join key
-is guessed. What changes is that the numbers now exist for an agent to reason with.
+**Nothing in the server says any of this** — no index is inferred and no join key is guessed; the
+server offers the primitive and the caller does the judging. What changes is that the numbers now exist for an agent to reason with.
 
 ### 10.5 The round trip is value-exact and format-lossy
 
@@ -1941,8 +1950,8 @@ Both are reported upstream as one issue, since both are the same omission of the
 surface: [ClickHouse/clickhouse-connect#919](https://github.com/ClickHouse/clickhouse-connect/issues/919).
 
 Both are recorded on the backend as `unstorable_column_types()`. That axis also absorbed Oracle's
-"no time-of-day type", which had been a literal dialect-name branch in a test fixture — the one place
-a dialect fact may never be stated.
+"no time-of-day type", which had been a literal dialect-name branch in a test fixture, which is
+exactly where a dialect fact may not be stated.
 
 ### 11.5 `readonly=1` is the whole read-only guarantee, because there is no floor beneath it
 
@@ -2955,8 +2964,8 @@ dialect, which is the precedent `unstorable_column_types` already set.
 CrateDB's HTTP protocol carries values untyped, with the column types beside them, and the driver
 spells a value as a Python object only if it is asked to. Unasked, a `TIMESTAMP` reached the caller as
 `1709251200000` — epoch milliseconds. JSON carries that perfectly happily and an agent reads it as a
-quantity, which is precisely the failure standing rule 7 exists to prevent: **dates are canonical UTC
-ISO 8601 text, never epoch integers.**
+quantity, which is precisely the failure the temporal contract exists to prevent: **dates are
+canonical UTC ISO 8601 text, never epoch integers.**
 
 It is not reachable through SQLAlchemy's typing. A Core `select()` over a reflected table converts
 correctly, because SQLAlchemy knows the column types; `query` runs the caller's own text, where it
@@ -3153,7 +3162,7 @@ Same rows, same server, one variable — the column type:
 A BLOB also cannot be indexed at all — `CREATE INDEX … ON t (dept)` fails with `unsuccessful metadata
 update`, which is what broke the index test here.
 
-This is Oracle's problem (§ on `column_type`) by a different mechanism and with the same remedy:
+This is Oracle's `column_type` problem by a different mechanism and with the same remedy:
 there `CLOB` refuses to be grouped **out loud**, here `BLOB` agrees and gets it wrong. The fix is
 `VARCHAR` sized from the widest value the column actually holds.
 
@@ -3485,7 +3494,7 @@ whose published port may not be offset.** Every other one publishes well away fr
 default so a locally-installed copy cannot be reached by accident. Here the published port must equal
 the advertised one, so it is 2136 on both sides.
 
-The measured fact underneath: `SELECT * FROM \`.sys/nodes\`` reports the node's host as `localhost`
+The measured fact underneath: ``SELECT * FROM `.sys/nodes` `` reports the node's host as `localhost`
 once the container is given that hostname, which is what makes the address reachable.
 
 The first route's failure is a defect of its own — a connect keyword the driver neither honours nor
@@ -4205,7 +4214,7 @@ mode without one being written for them. There were nineteen such tests when thi
 was written; a twentieth landed afterwards and inherited the whole axis without being
 touched, which is the property this arrangement was for. A mode is **not** a new `Endpoint`, because an `Endpoint` is
 identified by its compose service and two rows sharing one collide in the probe cache exactly the way
-§ on issue #44 records — the same defect, one axis further out.
+issue #44 records — the same defect, one axis further out.
 
 ### 25.1 What is now exercised
 
@@ -4231,11 +4240,13 @@ and whose own docstring in `tests/endpoints.py:502` says a fresh cluster **authe
 > **Correction (2026-08-05) — "none of them is the same case" was wrong about three of the five.**
 > This paragraph said all five *"have no authentication to configure"*, and that `trust` is the
 > distinct case of *"a server that could ask and does not"*. Three of the five are exactly that
-> case: they could ask and do not. The distinction that survives is narrower and is the one now
-> stated above — **whether the server has an authentication mechanism at all**, not whether a
-> password appears in the URL. `trust` remains counted among the nine added modes because it is a
-> named PostgreSQL setting this harness sets deliberately, not because the other three differ in
-> kind from it.
+> case: they could ask and do not. The distinction that survives is narrower — **whether the
+> server has an authentication mechanism at all**, not whether a password appears in the URL.
+> `trust` remains counted among the nine added modes because it is a named PostgreSQL setting
+> this harness sets deliberately, not because the other three differ in kind from it.
+> *(Superseded by the 2026-08-11 correction below: the narrower distinction has no members
+> either, so the paragraph above no longer states it and the split into two and three is gone.
+> Only the reason `trust` stays counted survives from this block.)*
 
 > **Correction (2026-08-11) — that narrower distinction has no members either, and the paragraph
 > now says so.** The 2026-08-05 correction above split the five into two that *"have no
@@ -4251,8 +4262,11 @@ and whose own docstring in `tests/endpoints.py:502` says a fresh cluster **authe
 > none"* — a capability listed among the untried is a capability that exists, and "the image
 > configures none" is a statement about the image. So the surviving distinction is not "has a
 > mechanism at all" but simply **where the credential is**, which is what the table's first two
-> rows already carry. `trust` stays counted for the reason given above, unchanged: it is a named
-> setting this harness sets, not a shape no other endpoint has.
+> rows already carry. **One clause of the block above survives and the rest does not**: `trust`
+> stays counted because it is a named setting this harness sets, not because it is a shape no
+> other endpoint has. Its split of the five into two and three, and its *"the one now stated
+> above"*, are both withdrawn — the paragraph above now says all five are the same shape, and
+> `CHANGELOG.md` was changed with it, so no surface still carries the two-and-three reading.
 
 ### 25.2 Three failures that named the wrong cause
 
@@ -4912,16 +4926,18 @@ rewriting branch. Canonical `Z` values do reach the tests, from **at least five 
 `HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP`, neither drawn from `INSTANTS`; `spell(fmt)`
 (`test_temporal.py:58-60`), which reformats `INSTANTS` *itself* into the canonical spelling for
 three tests; and two parametrized literal lists, at `test_temporal.py:366-367` and `:388-390`.
-**Four of those five places put two canonical spellings in one column** — the question this
+**Three of those five places put two canonical spellings in one column** — the question this
 section is about. `HALF_A_SECOND_APART` (20 characters beside 27) and `DATE_BESIDE_TIMESTAMP`
 (10 beside 20) are mixed by construction, in the file's own comment, and feed three tests each
 named `..._mixed_canonical_...`, one of them
-`test_a_mixed_canonical_column_is_rewritten_into_one_spelling`; the parametrized list at
-`test_temporal.py:388-390` asserts `is_standard` on a two-spelling series; and the one at
-`:366-367` asserts byte-for-byte identity rather than an ordering. Only `spell(fmt)` writes one
-spelling, and one of its three tests
-(`test_an_iso_column_is_reported_as_the_standard_it_is_in`) asserts the reported standard rather
-than an ordering. For the mixed-canonicality question the already-canonical branch — the one a
+`test_a_mixed_canonical_column_is_rewritten_into_one_spelling`; and the literal series at
+`test_temporal.py:388-390` asserts `is_standard` on a column in two spellings. The other two
+write one spelling: `spell(fmt)` reformats `INSTANTS` into a single spelling for three tests,
+one of which (`test_an_iso_column_is_reported_as_the_standard_it_is_in`) asserts the reported
+standard rather than an ordering, and the parametrized lists at `:365-367` are one spelling per
+case — 10 beside 10, 20 beside 20, 27 beside 27 — feeding
+`test_a_column_already_in_one_spelling_is_left_byte_for_byte`, which asserts byte-for-byte
+identity rather than an ordering. For the mixed-canonicality question the already-canonical branch — the one a
 file written the way the documentation recommends takes — **did have a fixture, and that is
 worse than having none: it asserted the defect as the specification.** It was still found by
 driving the finished server over stdio against a corpus written the documented way, not by the
@@ -4953,12 +4969,13 @@ suite.
 >
 > **Corrected a fourth time, 2026-08-11 — the ordering sentence and the width sentence were both
 > false, and both were checkable in the file they describe.** *"Most of them test text ordering
-> within one spelling"* was true of **one** of the five places, not most: the 2026-08-05 amendment
+> within one spelling"* was true of **two** of the five places, not most: the 2026-08-05 amendment
 > named two counterexamples, wrote one of them in, and left the other. Driven over all five,
 > `HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP` are two spellings each **by the fixture's own
-> comment**, feeding three tests whose names all contain `mixed_canonical`; `:366-367` asserts
-> byte-for-byte identity, not an ordering; `:388-390` asserts `is_standard` on a two-spelling
-> series. Only `spell(fmt)` writes one spelling. **And *"none of those fixtures mixes widths
+> comment**, feeding three tests whose names all contain `mixed_canonical`; `:388-390` asserts
+> `is_standard` on a column in two spellings; `spell(fmt)` and the parametrized lists at
+> `:365-367` are the two that do write one spelling, and of those `:365-367` asserts byte-for-byte
+> identity rather than an ordering. **And *"none of those fixtures mixes widths
 > inside one column"* — the clause carrying the first block's *"the substance survived"* — is
 > false of the same two fixtures**: 20 characters beside 27, and 10 beside 20.
 > `test_a_mixed_canonical_column_is_rewritten_into_one_spelling` asserts
@@ -4966,6 +4983,17 @@ suite.
 > the fixture arrives mixed-width. So the first block's "substance survived" verdict rested on a
 > false premise as well as a wrong count; the third block had already withdrawn the verdict on
 > other grounds. The paragraph above now states what the five places actually do.
+>
+> **Corrected a fifth time, same day, and the fifth error is the fourth one's own.** The
+> replacement written above first said **four** of the five places mix spellings. It is
+> **three**. The count was carried over from the audit table's column headed *"ordering within
+> one spelling?"*, in which four rows read "no" — but "not an ordering within one spelling" and
+> "mixes spellings" are different properties, and `:365-367` has the first without the second:
+> each parametrized case is one spelling twice over (10 beside 10, 20 beside 20, 27 beside 27),
+> which is what `test_a_column_already_in_one_spelling_is_left_byte_for_byte` exists to assert.
+> **A count copied from a table is a count taken on whatever property that table's column
+> measured**, and this is the fifth wrong version of one sentence, the third written inside its
+> own post-mortem.
 
 ### 28.5 The type verdict is rebuilt from raw text, and was checked against pandas
 

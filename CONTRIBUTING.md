@@ -364,11 +364,17 @@ We follow semantic versioning:
 
 A version lives in **six** hand-edited places across five files, and they must
 move together — then `uv lock` has to be re-run, because `uv.lock` carries the
-project's own version too. A bump without a relock is caught by `uv lock --check`
-and by `uv sync --locked`, and by nothing else: `uv sync --frozen` is the flag
-that uses the lockfile without validating it, so it exits 0 and installs the
-bumped version against the stale lock. Every `uv sync` in this repository's
-workflows passes `--frozen`, and nothing here runs `uv lock --check` at all, so
+project's own version too. **`--locked` is what catches a bump without a relock,
+and it is a general flag rather than a `sync` one.** Measured on a copy of this
+tree with the version bumped and `uv.lock` untouched: `uv lock --check` and
+`uv sync --locked` exit 1, and `uv run --locked`, `uv export --locked` and
+`uv tree --locked` exit 2 — five commands, all of them refusing. Without the
+flag nothing refuses. `uv sync --frozen` uses the lockfile without validating
+it, so it exits 0 and installs the bumped version against the stale lock, and a
+bare `uv run` is worse than silent: it exits 0 having **rewritten `uv.lock`**,
+which is the relock you forgot, performed where nobody is looking at it. Every
+`uv sync` in this repository's workflows passes `--frozen`, bare `uv run` is
+used throughout them, and nothing here runs `uv lock --check` at all, so
 forgetting the relock is silent rather than self-announcing:
 
 | File | Field | Today |

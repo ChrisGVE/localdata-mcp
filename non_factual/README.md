@@ -69,10 +69,9 @@ never implemented.
 > publish it as it stands.
 
 **One file was removed rather than quarantined:** `docs/architecture/FIRST_PRINCIPLES.md`,
-the v2 "constitutional foundation". This is a public repository and that filename is on
-the leak-guard denylist, so it cannot be committed here under any path. It described the
-abandoned data-science platform and was wrong regardless; `git log` still has it if any of
-it is ever wanted back.
+the v2 "constitutional foundation". It described the abandoned data-science platform and was
+wrong regardless, and it is not kept under any path here; `git log` still has it if any of it
+is ever wanted back.
 
 ## Coming back
 
