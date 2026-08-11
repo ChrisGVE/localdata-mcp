@@ -68,7 +68,7 @@ mcp = FastMCP(
     instructions=(
         "SQL over local data files and databases.\n\n"
         "Attach each datasource with attach(database) — a tabular file (CSV, "
-        "TSV, JSON, YAML, XML, Parquet and more), a SQLite "
+        "TSV, JSON, YAML, XML, Parquet and more), a SQLite or DuckDB "
         "database file, or a database URL. **Every datasource becomes a database, "
         "named by a nickname**, so even a single CSV holds its rows in a table. "
         "attach returns the nickname it actually used, which may not be the one "
@@ -95,7 +95,12 @@ mcp = FastMCP(
         "built from a flat file is yours and is always writable. Slots are limited "
         "and the oldest is evicted when the limit is reached, so check the "
         "'evicted' field an attach returns, and detach what you are done with. "
-        "Nothing survives the session unless you save it."
+        "Nothing survives the session unless you save it — and save writes out "
+        "only a database this server holds, so it is refused on every backend "
+        "but SQLite, a DuckDB file and a URL-attached database included. To "
+        "keep rows from one of those, write them to a file with "
+        "query(nickname, sql, path=...), attach that file — a file-derived "
+        "datasource is yours and is writable — and save that."
     ),
 )
 
@@ -451,9 +456,9 @@ def attach(
     """Attach a datasource as a database, and return the nickname it got.
 
     A flat file becomes a new database holding one table named after the file; a
-    SQLite database arrives with the tables it already has. A file that holds
-    several tables — a workbook's sheets — becomes a database holding all of
-    them, under the names the file gives them.
+    SQLite or DuckDB database arrives with the tables it already has. A file that
+    holds several tables — a workbook's sheets, a ``.numbers`` document's tables —
+    becomes a database holding all of them, under the names the file gives them.
 
     For a file, the answer already carries what it loaded — columns, types, row
     count and any warning — so calling ``info`` straight afterwards returns the
@@ -463,7 +468,8 @@ def attach(
         database: A tabular file (.csv, .tsv, .txt, .json, .jsonl,
             .ndjson, .xml, .yaml, .yml, .fwf, .parquet, .feather, .orc,
             .xlsx, .xlsm, .xls, .ods, .numbers), a
-            SQLite database file, or a database URL.
+            SQLite or DuckDB database file, or a database URL. A database file
+            is told apart from a flat file by its header, not by its suffix.
         nickname: The name this datasource answers to — pass it to every later
             call. Derived from the filename when omitted. If it collides with a
             slot already open, a numeric suffix is added — so always use the
@@ -650,9 +656,12 @@ def query(
             whole table because a Markdown column is only as wide as its widest
             value. A spreadsheet (.xlsx, .ods) refuses more than 65,535 rows
             outright, and of those two .ods is 5.8x slower than .xlsx at 20,000
-            rows of eleven ordinary-width columns, and the gap widens with rows:
-            driven across a range on one corpus it is 6.4x at 20,000 and 12.7x
-            at 50,000. On a forty-column result (50,000 x 40) it
+            rows of eleven ordinary-width columns. The gap widens with rows: a
+            separate drive on its own corpus puts the pair at 6.45x at 20,000
+            and 12.7x at 50,000, and two corpora at one nominal shape is why
+            its 20,000-row figure is not the 5.8x above — cell widths fix a
+            corpus, row and column counts do not. On a forty-column result
+            (50,000 x 40) it
             ran for over half an hour without producing a file — ask for it when
             OpenDocument is what was wanted, not by default.
         force: Replace the file if it is already there. Set this only after the
@@ -748,7 +757,10 @@ def create(
     nothing here guesses that for you, because which query is coming is yours to
     know. The index is named for you and the name comes back — that is the name
     ``drop`` wants. ``info(nickname, table)`` lists the indexes that already
-    exist, which is the cheaper way to find out than asking twice.
+    exist, which is the cheaper way to find out than asking twice. Five engines
+    have no such statement to issue, so ``type="index"`` is refused outright on
+    ClickHouse, Trino, CrateDB, Databend and Exasol — the refusal arrives before
+    any work is done, and the join runs unindexed.
 
     Whether a join actually lines up is not reported here. It is an anti-join
     over two tables in one database — ordinary SQL you can write, and better
@@ -862,6 +874,9 @@ def update(nickname: str, type: str, name: str, to: str) -> dict[str, Any]:
 
     Renaming onto a name that is taken is refused rather than allowed to replace
     it, and the refusal says how many rows the other table holds.
+
+    One engine has no rename statement this server can issue, so
+    ``type="table"`` is refused outright on Firebird.
 
     Args:
         nickname: The datasource holding it. Must be writable.

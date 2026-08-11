@@ -1210,8 +1210,8 @@ depends on the shape of the result, not only its size.
 > numbers here: the **wide 1M × 11** corpus, defined with its widths at the head of §10 (a
 > date, a datetime, an id, text at 10/100/1000 characters, small and large integers, floats),
 > which §10's step timings inherit — including the spreadsheet-cap table, which says so at the
-> table; and the **ordinary-width 20,000 × 11** corpus of about 2.1 MB described in the note
-> above, which is the one the shipped surfaces quote **for the 20,000-row spreadsheet
+> table; and the **ordinary-width 20,000 × 11** corpus of about 2.1 MB described at the top of
+> this note, which is the one the shipped surfaces quote **for the 20,000-row spreadsheet
 > figures**. Their other timings — the 13.5× at the cap, the 4.3× on a million rows — come
 > from the wide corpus, and each is quoted with the cap or the row count that identifies it.
 > **Inheritance stops at the
@@ -1989,8 +1989,9 @@ surface: [ClickHouse/clickhouse-connect#919](https://github.com/ClickHouse/click
 Both are recorded on the backend as `unstorable_column_types()`. That axis also absorbed Oracle's
 "no time-of-day type", which had been a literal dialect-name branch in a test fixture — and a
 dialect fact belongs in the backend seam and nowhere else, in a fixture no less than in shared
-code. A fixture is one place that can happen, not the only one: `loader.py:438-439` and `dialects.py:316-317` state the same
-prohibition for the loader and for dialect dispatch, and §15.2 states it again for the retry axis.
+code. A fixture is one place that can happen, not the only one:
+`loader.py:438-439` and `dialects.py:316-317` state the same prohibition for the
+loader and for dialect dispatch, and §15.2 states it again for the retry axis.
 
 ### 11.5 `readonly=1` is the whole read-only guarantee, because there is no floor beneath it
 
@@ -3335,7 +3336,7 @@ endpoint. Events, external tables, and `PSQL` stored procedures are all untouche
 ## §21 — openGauss, and a banner that stopped the dialect before the query (2026-07-30)
 
 Thirteenth endpoint dialect, tenth from the backend catalogue (taken
-ahead of Db2, which the procedure permits). A PostgreSQL fork, and the **third** engine here on that
+ahead of Db2, since the order within a tier is free). A PostgreSQL fork, and the **third** engine here on that
 wire after CockroachDB and YugabyteDB — but the first that cannot be addressed as PostgreSQL at all.
 
 Measured against the openGauss project's own `opengauss/opengauss-server:7.0.0-RC3.B025`, server
@@ -4964,7 +4965,7 @@ work write their instants without the trailing `Z`, so they are non-canonical an
 rewriting branch. Canonical `Z` values do reach the tests, from **at least five places**:
 `HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP`, neither drawn from `INSTANTS`; `spell(fmt)`
 (`test_temporal.py:58-60`), which reformats `INSTANTS` *itself* into the canonical spelling for
-three tests; and two parametrized literal lists, at `test_temporal.py:366-367` and `:388-390`.
+three tests; and two parametrized literal lists, at `test_temporal.py:365-367` and `:388-390`.
 **Three of those five places put two canonical spellings in one column** — the question this
 section is about. `HALF_A_SECOND_APART` (20 characters beside 27) and `DATE_BESIDE_TIMESTAMP`
 (10 beside 20) are mixed by construction, in the file's own comment, and each parametrizes the

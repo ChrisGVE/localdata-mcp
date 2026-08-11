@@ -2539,7 +2539,8 @@ class Workspace:
         A query reads. Anything that would change the database — ``INSERT``,
         ``CREATE TABLE``, ``CREATE VIEW``, ``ATTACH``, a ``PRAGMA`` — is refused
         here, whatever rights the datasource itself carries. Mutation has its own
-        verbs (``create``, ``drop``) which do not come through this method, so
+        verbs (``create``, ``update``, ``drop``) which do not come through this
+        method, so
         the refusal costs the surface nothing.
 
         Enforced by the connection's posture rather than by reading the SQL: this
@@ -2653,7 +2654,8 @@ class Workspace:
                 f"query reads; it does not write. This statement asks to "
                 f"{denied}, which is refused here even on a writable "
                 f"datasource. To add a table or an index use create, to remove "
-                f"one use drop; there is no verb for arbitrary DDL by design."
+                f"one use drop, to rename one use update; there is no verb for "
+                f"arbitrary DDL by design."
             )
 
         if entry.backend.denies_write(exc):

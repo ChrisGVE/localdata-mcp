@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="LocalData MCP Server" width="250">
+  <img src="https://raw.githubusercontent.com/ChrisGVE/localdata-mcp/main/assets/logo.png" alt="LocalData MCP Server" width="250">
 </p>
 
 # LocalData MCP Server
@@ -154,7 +154,7 @@ what every datasource becomes.
 
 | Verb | What it does |
 | --- | --- |
-| `attach(database, nickname?, writable?, delimiter?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. A workbook or `.numbers` document becomes a database holding all its sheets. |
+| `attach(database, nickname?, writable?, delimiter?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. A workbook becomes a database holding a table per sheet, and a `.numbers` document one per table. |
 | `detach(nickname)` | Close it and free the slot. Deletes the temp file if the slot had been spilled to disk (see [Memory](#memory)). |
 | `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format and answers `rows_written` and the column names instead of the rows. |
 | `info(nickname?, table?)` | Three levels of detail: bare → the session (see above); nickname → its tables; nickname and table → columns, row count and indexes. |
@@ -324,7 +324,8 @@ query("sales", "SELECT s.sku, s.qty * p.price AS total "
 ```
 query reads; it does not write. This statement asks to INSERT, which is refused
 here even on a writable datasource. To add a table or an index use create, to
-remove one use drop; there is no verb for arbitrary DDL by design.
+remove one use drop, to rename one use update; there is no verb for arbitrary
+DDL by design.
 ```
 
 Changing a slot goes through `create`, `update` and `drop`, which is what
@@ -382,7 +383,7 @@ Attaching that file again later is an ordinary attach, so it comes back
 
 **`save` only works on a slot this server built** — anything that came from a
 file, and SQLite. A slot reached over its own connection (PostgreSQL, a DuckDB
-file, any of the other sixteen backends) has no local database to write out, and
+file, any of the other fifteen backends) has no local database to write out, and
 `save` is refused there; send the result to a file with `query(path=…)`, `attach`
 that file as a datasource of your own, and save that. See [Not every verb
 reaches every backend](#not-every-verb-reaches-every-backend).

@@ -57,8 +57,12 @@ batch_services() {
 	esac
 }
 
-# Batch E's services sit behind compose profiles, and compose starts what a named
-# service *depends on* — so the CA and the KDC come up with them (CONSTRAINTS §27.2).
+# Batch E's four services are ordinary entries in docker-compose.test.yml — the
+# file defines no profiles at all, so the flags below are inert and the batch
+# works because a service with no `profiles:` key always starts. They are kept
+# only so the flag shape is ready if profiles are ever introduced. What does the
+# real work is that compose starts what a named service *depends on*, so the CA
+# and the KDC come up with them (CONSTRAINTS §27.2).
 batch_profiles() {
 	case "$1" in
 	e) echo "--profile tls --profile krb" ;;

@@ -223,7 +223,7 @@ by name rather than written as something else. Choose it rather than defaulting:
 | They want | Ask for | Why |
 |---|---|---|
 | to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
-| to open it in LibreOffice specifically | `.ods` | same cap, and slow — **5.8× `.xlsx`** at 20,000 rows of eleven ordinary-width columns, and the gap widens with rows: **6.4×** at 20,000 and **12.7×** at 50,000 on the range drive's own corpus. On a forty-column result (50,000 × 40) it had not produced a file after half an hour (below). Use `.xlsx` unless OpenDocument was asked for |
+| to open it in LibreOffice specifically | `.ods` | same cap, and slow — **5.8× `.xlsx`** at 20,000 rows of eleven ordinary-width columns, and slower still as rows grow (below). Use `.xlsx` unless OpenDocument was asked for |
 | a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
 | something big, for another program | `.parquet` | the safe default, not a size winner: over seven shapes driven it was smallest on three — **by 100× or more where a column repeats few distinct values** — and eighth of fifteen on high-entropy text, where `.orc` won by about 1.2×. `.orc` and `.parquet` write within 8% of each other; `.feather` writes faster, and was the larger on every text shape but the smaller on both float shapes |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |
@@ -237,11 +237,17 @@ the shape of the result, not only its size**, and the spreadsheet writers are in
 the same race rather than a separate one. On a forty-column result — 50,000 rows
 × 40 columns — `.md` takes 20.3 s against `.yaml`'s 15.1 s, and `.ods`, still
 legal under its cap at that many rows, ran for over half an hour without
-producing a file; on the million-row, eleven-column one `.yaml` is the slowest,
-but only by 5% over `.md` — not by a wide margin. Under the 65,535-row cap, at 20,000 rows of eleven ordinary-width
-columns: `.ods` 26.5 s, `.xlsx` 4.6 s, `.yaml` 2.0 s, `.md` 1.5 s, `.csv`
-0.13 s — so on a result an agent can actually ask for, `.ods` is the slowest,
-**5.8× `.xlsx` and 13× `.yaml`**, and `.yaml` is only the third slowest. Wide
+producing a file; on the million-row, eleven-column one `.yaml` and `.md` are
+within a few percent of each other — closer than that run's own
+repeat-to-repeat spread, so neither is shown to be slower. Under the
+65,535-row cap, at 20,000 rows of eleven ordinary-width columns: `.ods`
+26.5 s, `.xlsx` 4.6 s, `.yaml` 2.0 s, `.md` 1.5 s, `.csv` 0.13 s — so on a
+result an agent can actually ask for, `.ods` is the slowest, **5.8× `.xlsx`
+and 13× `.yaml`**, and `.yaml` is only the third slowest. `.ods` also loses
+ground as rows grow: a separate drive on its own corpus puts that pair at
+**6.45×** at 20,000 rows and **12.7×** at 50,000. Its 20,000-row figure is not
+the 5.8× above because the two runs used different corpora at the same nominal
+shape — cell widths fix a corpus, row and column counts do not. Wide
 text columns move these apart: `.csv`'s cost tracks bytes while the other four
 track cells, so on a corpus with a 1,000-character column `.csv` alone is
 several times slower.
