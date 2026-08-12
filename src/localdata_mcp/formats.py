@@ -43,19 +43,19 @@ from .readers import (
     read_json,
     read_jsonl,
     read_numbers,
-    read_workbook,
     read_xml,
     read_yaml,
+    workbook,
 )
 from .writers import (
     Writer,
+    workbook_writer,
     write_columnar,
     write_csv,
     write_json,
     write_jsonl,
     write_markdown,
     write_tsv,
-    write_workbook,
     write_xml,
     write_yaml,
 )
@@ -114,6 +114,16 @@ class Format:
             )
 
 
+#: The workbook libraries, as ``(module, extra)``: what pandas dispatches on
+#: and what the module is imported as, then this project's optional-dependency
+#: group, which is what a refusal tells the user to install. They differ — the
+#: `ods` extra installs `odfpy`, whose module is `odf` — so both are carried.
+#: Each is written here once and reaches the reader and the writer alike.
+_OPENPYXL = ("openpyxl", "excel")
+_ODF = ("odf", "ods")
+_XLRD = ("xlrd", "xls")
+
+
 def _format(suffix: str, **known: object) -> tuple[str, Format]:
     """One entry, with the suffix said once rather than as key and field."""
     return suffix, Format(suffix=suffix, **known)  # type: ignore[arg-type]
@@ -163,13 +173,19 @@ FORMATS: dict[str, Format] = dict(
         _format(".parquet", reader=read_columnar, writer=write_columnar),
         _format(".feather", reader=read_columnar, writer=write_columnar),
         _format(".orc", reader=read_columnar, writer=write_columnar),
-        # Workbooks. `.xls` and `.xlsm` are read-only: xlrd dropped writing,
-        # and `.xlsm` is simply absent from the writers — its library could
-        # write it (docs/CONSTRAINTS.md).
-        _format(".xlsx", reader=read_workbook, writer=write_workbook),
-        _format(".ods", reader=read_workbook, writer=write_workbook),
-        _format(".xlsm", reader=read_workbook),
-        _format(".xls", reader=read_workbook),
+        # Workbooks. The engine each one needs is spelled once and reaches both
+        # sides from here — it used to be a table on the read side and a ternary
+        # on the write side, which is how `.ods` exports were silently openpyxl
+        # workbooks for as long as they were (#99, docs/CONSTRAINTS.md).
+        #
+        # `.xls` and `.xlsm` are read-only: xlrd dropped writing, and `.xlsm` is
+        # simply absent from the writers though openpyxl could write it.
+        _format(
+            ".xlsx", reader=workbook(*_OPENPYXL), writer=workbook_writer(*_OPENPYXL)
+        ),
+        _format(".ods", reader=workbook(*_ODF), writer=workbook_writer(*_ODF)),
+        _format(".xlsm", reader=workbook(*_OPENPYXL)),
+        _format(".xls", reader=workbook(*_XLRD)),
         # Apple Numbers: read through its own library, no writer.
         _format(".numbers", reader=read_numbers),
         # Write-only, deliberately: a Markdown table has no types and no

@@ -314,56 +314,63 @@ def write_columnar(
 SPREADSHEET_ROW_LIMIT = 65_535
 
 
-def write_workbook(
-    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
-) -> int:
-    """One sheet, named for the file.
+def workbook_writer(module: str, extra: str) -> Writer:
+    """A writer for one workbook format, bound to the library that writes it.
 
-    A result is one table, so it is one sheet — writing a workbook of several
-    would need several results, which is not what this verb is handed. ``.xls``
-    is absent from the writers on purpose: xlrd dropped writing and nothing
-    maintained replaces it, so it is read-only here.
-
-    ``engine`` is passed explicitly, and that is not belt-and-braces. Pandas
-    infers the engine from the suffix of a ``str`` path but **not** of a
-    ``Path`` — measured on pandas 3.0.2 — and this function is handed a
-    ``Path``, so inference quietly fell back to openpyxl and every ``.ods``
-    export was a workbook wearing an OpenDocument name. It was invisible for as
-    long as it was because both formats are Zip archives that open ``PK\\x03\\x04``,
-    and because pandas reads a workbook back by sniffing its contents rather
-    than trusting the suffix, so the round trip returned the right rows out of
-    the wrong file. We already know which engine we want here — the ``_require``
-    check above names it — so saying so costs one argument and cannot regress.
+    The mirror of ``readers.workbook``, and a factory for the same reason: the
+    engine is declared once per format in ``formats`` and reaches both sides
+    from there. It used to be chosen here by a ternary on the suffix, with
+    openpyxl as the fallback for anything unrecognised — which is how a
+    silently-wrong file gets written (#99).
     """
-    suffix = path.suffix.lower()
-    module, package, extra = (
-        ("odf", "odfpy", "ods")
-        if suffix == ".ods"
-        else ("openpyxl", "openpyxl", "excel")
-    )
-    _require(module, extra, f"Writing {suffix}")
-    import pandas as pd
 
-    # Take one row more than the limit and no further. Both spreadsheet writers
-    # build the entire document in memory before a byte reaches the disk, so the
-    # count has to be settled *before* the frame is built or the refusal costs
-    # the same memory as the export it is refusing. Measured at a million rows
-    # of eleven columns: `.xlsx` reached 12.9 GB, and `.ods` crossed 16 GB
-    # without producing a file at all.
-    collected = list(islice(rows, SPREADSHEET_ROW_LIMIT + 1))
-    if len(collected) > SPREADSHEET_ROW_LIMIT:
-        raise ExportError(
-            f"More than {SPREADSHEET_ROW_LIMIT:,} rows will not be written to "
-            f"{suffix}. A spreadsheet is a format for reading, and both writers "
-            f"build the whole document in memory before writing any of it, so a "
-            f"result this size costs gigabytes and produces a file no "
-            f"spreadsheet opens comfortably. Ask for .csv, .parquet or .jsonl, "
-            f"none of which have a row limit — or narrow the result with LIMIT "
-            f"if a spreadsheet is what you need."
+    def write_workbook(
+        columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+    ) -> int:
+        """One sheet, named for the file.
+
+        A result is one table, so it is one sheet — writing a workbook of several
+        would need several results, which is not what this verb is handed. ``.xls``
+        is absent from the writers on purpose: xlrd dropped writing and nothing
+        maintained replaces it, so it is read-only here.
+
+        ``engine`` is passed explicitly, and that is not belt-and-braces. Pandas
+        infers the engine from the suffix of a ``str`` path but **not** of a
+        ``Path`` — measured on pandas 3.0.2 — and this function is handed a
+        ``Path``, so inference quietly fell back to openpyxl and every ``.ods``
+        export was a workbook wearing an OpenDocument name. It was invisible for as
+        long as it was because both formats are Zip archives that open ``PK\\x03\\x04``,
+        and because pandas reads a workbook back by sniffing its contents rather
+        than trusting the suffix, so the round trip returned the right rows out of
+        the wrong file. We already know which engine we want here — the ``_require``
+        check above names it — so saying so costs one argument and cannot regress.
+        """
+        suffix = path.suffix.lower()
+        _require(module, extra, f"Writing {suffix}")
+        import pandas as pd
+
+        # Take one row more than the limit and no further. Both spreadsheet writers
+        # build the entire document in memory before a byte reaches the disk, so the
+        # count has to be settled *before* the frame is built or the refusal costs
+        # the same memory as the export it is refusing. Measured at a million rows
+        # of eleven columns: `.xlsx` reached 12.9 GB, and `.ods` crossed 16 GB
+        # without producing a file at all.
+        collected = list(islice(rows, SPREADSHEET_ROW_LIMIT + 1))
+        if len(collected) > SPREADSHEET_ROW_LIMIT:
+            raise ExportError(
+                f"More than {SPREADSHEET_ROW_LIMIT:,} rows will not be written to "
+                f"{suffix}. A spreadsheet is a format for reading, and both writers "
+                f"build the whole document in memory before writing any of it, so a "
+                f"result this size costs gigabytes and produces a file no "
+                f"spreadsheet opens comfortably. Ask for .csv, .parquet or .jsonl, "
+                f"none of which have a row limit — or narrow the result with LIMIT "
+                f"if a spreadsheet is what you need."
+            )
+
+        frame = pd.DataFrame(collected, columns=list(columns))
+        frame.to_excel(
+            path, sheet_name=path.stem[:31] or "Sheet1", index=False, engine=module
         )
+        return len(frame)
 
-    frame = pd.DataFrame(collected, columns=list(columns))
-    frame.to_excel(
-        path, sheet_name=path.stem[:31] or "Sheet1", index=False, engine=module
-    )
-    return len(frame)
+    return write_workbook

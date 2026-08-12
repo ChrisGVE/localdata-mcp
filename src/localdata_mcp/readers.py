@@ -272,46 +272,52 @@ def read_columnar(path: Path) -> ReadResult:
     return _one(frame)
 
 
-#: Which library reads which workbook, and which extra installs it. Every one of
-#: them is reached through ``pandas.read_excel``, which dispatches on the engine.
-_WORKBOOKS = {
-    ".xlsx": ("openpyxl", "openpyxl", "excel"),
-    ".xlsm": ("openpyxl", "openpyxl", "excel"),
-    ".xls": ("xlrd", "xlrd", "xls"),
-    ".ods": ("odf", "odfpy", "ods"),
-}
+def workbook(module: str, extra: str) -> Reader:
+    """A reader for one workbook format, bound to the library that reads it.
 
+    A factory rather than a lookup, for the same reason ``delimited`` is one:
+    which library handles a format is a fact about the format, so it is declared
+    once in ``formats`` and reaches both this reader and the matching writer
+    from there. Held here as a table instead it was written down a second time
+    on the write side, where the two could disagree without anything noticing
+    (#99).
 
-def read_workbook(path: Path) -> ReadResult:
-    """Every sheet of a workbook, each as a table under its own sheet name.
-
-    ``sheet_name=None`` rather than the default ``0``: the default reads the
-    first sheet and says nothing about the others, which leaves data that is
-    present in the file unreachable through the server. A workbook is a database
-    and its sheets are its tables, so all of them land.
+    ``module`` is what pandas dispatches on and what is imported to check the
+    library is here; ``extra`` is this project's optional-dependency group, and
+    the two differ, so both have to be carried.
     """
-    suffix = path.suffix.lower()
-    module, package, extra = _WORKBOOKS[suffix]
-    _require(module, extra, f"Reading {suffix}")
 
-    try:
-        sheets = pd.read_excel(path, sheet_name=None)
-    except LoadError:
-        raise
-    except Exception as exc:
-        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+    def read_workbook(path: Path) -> ReadResult:
+        """Every sheet of a workbook, each as a table under its own sheet name.
 
-    # A workbook may carry a sheet that is entirely empty; it is a sheet with no
-    # table in it, and dropping it is not loss. Refusing the whole file over one
-    # would be, so only a workbook with nothing in any sheet is refused.
-    tables = tuple(
-        NamedFrame(frame, name)
-        for name, frame in sheets.items()
-        if not frame.empty or len(frame.columns)
-    )
-    if not tables:
-        raise LoadError(f"Could not read {path.name}: every sheet in it is empty.")
-    return ReadResult(tables)
+        ``sheet_name=None`` rather than the default ``0``: the default reads the
+        first sheet and says nothing about the others, which leaves data that is
+        present in the file unreachable through the server. A workbook is a database
+        and its sheets are its tables, so all of them land.
+        """
+        suffix = path.suffix.lower()
+        _require(module, extra, f"Reading {suffix}")
+
+        try:
+            sheets = pd.read_excel(path, sheet_name=None)
+        except LoadError:
+            raise
+        except Exception as exc:
+            raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+        # A workbook may carry a sheet that is entirely empty; it is a sheet with no
+        # table in it, and dropping it is not loss. Refusing the whole file over one
+        # would be, so only a workbook with nothing in any sheet is refused.
+        tables = tuple(
+            NamedFrame(frame, name)
+            for name, frame in sheets.items()
+            if not frame.empty or len(frame.columns)
+        )
+        if not tables:
+            raise LoadError(f"Could not read {path.name}: every sheet in it is empty.")
+        return ReadResult(tables)
+
+    return read_workbook
 
 
 def read_numbers(path: Path) -> ReadResult:

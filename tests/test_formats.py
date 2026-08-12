@@ -99,6 +99,44 @@ def test_a_delimited_format_can_be_read_back_at_the_separator_it_was_written_wit
         assert fmt.writer is not None, suffix
 
 
+def _engine_bound_into(fn):
+    """The (module, extra) a workbook reader or writer closed over.
+
+    Read off the closure by free-variable name rather than by cell order, which
+    Python does not promise. Returns None for anything that is not one of the
+    two workbook factories.
+    """
+    if fn is None or not fn.__closure__:
+        return None
+    cells = dict(zip(fn.__code__.co_freevars, fn.__closure__))
+    if not {"module", "extra"} <= cells.keys():
+        return None
+    return tuple(cells[name].cell_contents for name in ("module", "extra"))
+
+
+def test_a_workbook_is_read_and_written_by_the_same_library():
+    """The whole content of #99, asserted rather than commented.
+
+    Reader and writer are built from one declaration in the table, so this can
+    only fail if someone spells the engine twice again. It matters because the
+    failure it guards is silent: both formats are Zip archives, and pandas reads
+    a workbook back by sniffing its contents rather than trusting the suffix, so
+    a `.ods` written by openpyxl round-trips the right rows out of the wrong
+    file.
+    """
+    checked = 0
+    for suffix, fmt in FORMATS.items():
+        reading = _engine_bound_into(fmt.reader)
+        writing = _engine_bound_into(fmt.writer)
+        if reading is None or writing is None:
+            continue
+        assert (
+            reading == writing
+        ), f"{suffix} reads with {reading}, writes with {writing}"
+        checked += 1
+    assert checked, "no workbook format carried an engine — the probe stopped working"
+
+
 def test_every_streamed_format_is_one_whose_rows_arrive_in_order():
     """Columnar files and workbooks cannot be handed out a chunk at a time.
 
