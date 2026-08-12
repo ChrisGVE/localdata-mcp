@@ -1423,10 +1423,8 @@ fix and is also the seam every new format arrives through.
 > | Written only (1) | `.md` |
 >
 > **The sixteen-suffix overlap is the round-trip property, not a coincidence**: a file this server
-> writes is one it can read back, and `DELIMITED` — which suffixes a separator means anything for
-> — is one set for the same reason: `export.DELIMITED` **is** `loader.DELIMITED`, re-exported rather
-> than restated (they were two equal literals until 2026-08-12, `localdata#98`). The five that do
-> not overlap each name a real asymmetry — `.xls` lost its writer when xlrd
+> writes is one it can read back, and the two `DELIMITED` sets are held identical for the same
+> reason. The five that do not overlap each name a real asymmetry — `.xls` lost its writer when xlrd
 > dropped writing, `.numbers` and `.fwf` have no writer worth having, and Markdown is deliberately
 > write-only because a Markdown table has no types and no quoting, so no reader could return what
 > went in.
@@ -1465,6 +1463,12 @@ fix and is also the seam every new format arrives through.
 > **Real ODS costs about thirteen times what the workbook did**, which is the measure of how much
 > was being skipped: 50,000 rows extracted in **156.2 s** against **11.8 s**, and read back in
 > **66.3 s** against **13.4 s**. Any ODS timing recorded before `f5668f4e` is a timing of XLSX.
+>
+> **Amended 2026-08-12: there are no longer "two `DELIMITED` sets" to hold identical.** The
+> sentence above was true when written and describes the arrangement that `localdata#98` closed:
+> the set was stated twice, once per module, and kept in agreement by a comment. `export.DELIMITED`
+> **is** `loader.DELIMITED` now — re-exported, not restated — so the round-trip property it was
+> cited for is structural rather than maintained. Equal by construction, not by inspection.
 >
 > **Corrected again 2026-07-28: `.html` and `.htm` were removed from both registries**, so the
 > counts above now read **18 suffixes across 9 readers** and **15 across 8 writers**, and the
