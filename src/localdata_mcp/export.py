@@ -34,22 +34,13 @@ from typing import Iterable, Mapping, Sequence
 # format layer below raises it. Imported into this namespace deliberately — the
 # tests and `server` both say `export.ExportError`.
 from .errors import ExportError
-from .loader import DELIMITED as _DELIMITED
+
+# The one table of formats, and the two views of it this module works from.
+# Imported into this namespace deliberately: the tests and the docs say
+# `export.WRITERS` and `export.DELIMITED`, and they name the same objects here.
+from .formats import DELIMITED, WRITERS
 from .paths import resolve_write_path
-from .writers import (
-    SPREADSHEET_ROW_LIMIT,
-    Writer,
-    _delimited_writer,
-    _write_columnar,
-    _write_csv,
-    _write_json,
-    _write_jsonl,
-    _write_markdown,
-    _write_tsv,
-    _write_workbook,
-    _write_xml,
-    _write_yaml,
-)
+from .writers import SPREADSHEET_ROW_LIMIT, Writer, delimited_writer
 
 __all__ = [
     "DELIMITED",
@@ -69,36 +60,6 @@ class ExportResult:
     path: str
     row_count: int
     columns: list[str]
-
-
-#: Extension to writer, the counterpart of ``loader.READERS``. A new output
-#: format is one entry here; nothing upstream of it needs to know.
-WRITERS: dict[str, Writer] = {
-    ".xlsx": _write_workbook,
-    ".ods": _write_workbook,
-    ".csv": _write_csv,
-    ".tsv": _write_tsv,
-    ".xml": _write_xml,
-    ".yaml": _write_yaml,
-    ".yml": _write_yaml,
-    ".md": _write_markdown,
-    ".parquet": _write_columnar,
-    ".feather": _write_columnar,
-    ".orc": _write_columnar,
-    # As on the read side, `.txt` is treated as comma-separated. The two
-    # registries agree, so a file this server writes is a file it can read back.
-    ".txt": _write_csv,
-    ".json": _write_json,
-    ".jsonl": _write_jsonl,
-    ".ndjson": _write_jsonl,
-}
-
-#: The output formats a delimiter means anything for — the read side's set, not
-#: a copy of it. The two sides describe one fact about a file, so a format this
-#: server writes with a separator is one it can read back with it, and holding
-#: the fact twice is how that stops being true. Re-exported rather than left to
-#: callers to reach through `loader`, so `export.DELIMITED` keeps working.
-DELIMITED = _DELIMITED
 
 
 def export_rows(
@@ -134,7 +95,7 @@ def export_rows(
             raise ExportError(
                 f"delimiter must be a single character, not {delimiter!r}."
             )
-        writer = _delimited_writer(delimiter)
+        writer = delimited_writer(delimiter)
 
     path = resolve_write_path(raw_path, force=force, claimed=claimed)
 

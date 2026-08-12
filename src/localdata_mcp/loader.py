@@ -85,14 +85,8 @@ from .paths import resolve_read_path
 # The readers and the shapes they hand back. Imported into this namespace on
 # purpose, not merely used: `loader.READERS` and `loader.DELIMITED` are what the
 # tests, the docs and `export` all say, and they name the same objects here.
-from .readers import (
-    DELIMITED,
-    READERS,
-    NamedFrame,
-    ReadResult,
-    _delimited,
-    _fat_column_note,
-)
+from .formats import DELIMITED, READERS, STREAMED
+from .readers import NamedFrame, ReadResult, delimited, fat_column_note
 
 __all__ = [
     "ColumnInfo",
@@ -710,7 +704,7 @@ def read_file(path: Path, *, delimiter: str | None = None) -> ReadResult:
     """
     suffix = _readable_suffix(path)
     _check_delimiter(path, suffix, delimiter)
-    reader = _delimited(delimiter) if delimiter is not None else READERS[suffix]
+    reader = delimited(delimiter) if delimiter is not None else READERS[suffix]
 
     try:
         result = reader(path)
@@ -1109,14 +1103,6 @@ class SourceRead:
     notes: tuple[str, ...] = ()
 
 
-#: The formats read a chunk at a time. Each is read by a pandas entry point that
-#: takes a ``chunksize``, and each is a format whose rows are *lines* — which is
-#: what makes reading part of one meaningful. A workbook, a JSON document, XML,
-#: YAML and ``.numbers`` are parsed whole by the libraries that read them, so
-#: they stay materialised and the limit is stated rather than worked around.
-STREAMED = {".csv", ".tsv", ".txt", ".fwf"}
-
-
 def _chunk_reader(
     path: Path, suffix: str, delimiter: str | None
 ) -> Callable[[], Iterator[pd.DataFrame]]:
@@ -1145,7 +1131,7 @@ def _streamed_notes(
             f"in the file declares them. Check the columns are the ones you "
             f"expect before relying on the split.",
         )
-    return _fat_column_note(first, sep, path.name)
+    return fat_column_note(first, sep, path.name)
 
 
 def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:

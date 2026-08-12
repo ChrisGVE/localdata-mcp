@@ -39,7 +39,7 @@ __all__ = ["SPREADSHEET_ROW_LIMIT", "Writer"]
 Writer = Callable[[Sequence[str], Iterable[Sequence[object]], Path], int]
 
 
-def _write_delimited(
+def write_delimited(
     columns: Sequence[str],
     rows: Iterable[Sequence[object]],
     path: Path,
@@ -56,10 +56,10 @@ def _write_delimited(
     return written
 
 
-def _delimited_writer(delimiter: str) -> Writer:
+def delimited_writer(delimiter: str) -> Writer:
     """A writer for character-separated text, at a given separator.
 
-    The mirror of ``loader._delimited``: the suffix picks the default — comma
+    The mirror of ``readers.delimited``: the suffix picks the default — comma
     for ``.csv`` and ``.txt``, tab for ``.tsv`` — and an explicit delimiter
     substitutes the writer rather than being threaded through every other
     format's signature.
@@ -68,16 +68,16 @@ def _delimited_writer(delimiter: str) -> Writer:
     def write(
         columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
     ) -> int:
-        return _write_delimited(columns, rows, path, delimiter=delimiter)
+        return write_delimited(columns, rows, path, delimiter=delimiter)
 
     return write
 
 
-_write_csv = _delimited_writer(",")
-_write_tsv = _delimited_writer("\t")
+write_csv = delimited_writer(",")
+write_tsv = delimited_writer("\t")
 
 
-def _write_json(
+def write_json(
     columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
 ) -> int:
     """An array of row objects, one per line.
@@ -85,7 +85,7 @@ def _write_json(
     One object per line rather than indented: this is the format a large result
     is written in, and indentation costs bytes per value on a file whose whole
     reason for existing is that it was too big to return. It stays the shape
-    ``_read_json`` takes back, which is what makes the round trip exact.
+    ``readers.read_json`` takes back, which is what makes the round trip exact.
     """
     written = 0
     with path.open("w", encoding="utf-8") as handle:
@@ -99,7 +99,7 @@ def _write_json(
     return written
 
 
-def _write_jsonl(
+def write_jsonl(
     columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
 ) -> int:
     written = 0
@@ -133,7 +133,7 @@ def _unserializable(value: object) -> str:
 _XML_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.\-]*\Z")
 
 
-def _write_xml(
+def write_xml(
     columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
 ) -> int:
     """``<rows><row><column>value</column></row></rows>``.
@@ -192,7 +192,7 @@ def _require(module: str, extra: str, doing: str):
 _YAML_CHUNK = 1_000
 
 
-def _write_yaml(
+def write_yaml(
     columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
 ) -> int:
     """A sequence of mappings, dumped a chunk at a time.
@@ -246,7 +246,7 @@ def _write_yaml(
     return written
 
 
-def _write_markdown(
+def write_markdown(
     columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
 ) -> int:
     """A GitHub-flavoured table.
@@ -266,7 +266,7 @@ def _write_markdown(
     return len(materialised)
 
 
-def _write_columnar(
+def write_columnar(
     columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
 ) -> int:
     """Parquet, Feather/Arrow or ORC, chosen by the suffix.
@@ -314,7 +314,7 @@ def _write_columnar(
 SPREADSHEET_ROW_LIMIT = 65_535
 
 
-def _write_workbook(
+def write_workbook(
     columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
 ) -> int:
     """One sheet, named for the file.

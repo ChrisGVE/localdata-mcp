@@ -35,7 +35,7 @@ import pandas as pd
 
 from .errors import LoadError
 
-__all__ = ["DELIMITED", "READERS", "NamedFrame", "ReadResult", "Reader"]
+__all__ = ["NamedFrame", "ReadResult", "Reader"]
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ Reader = Callable[[Path], ReadResult]
 _COMMON_DELIMITERS = {";": "';'", "\t": "a tab", "|": "'|'", ",": "','"}
 
 
-def _delimited(separator: str) -> Reader:
+def delimited(separator: str) -> Reader:
     """A reader for character-separated text, at a given separator.
 
     The default separator comes from the extension — comma for ``.csv`` and
@@ -102,12 +102,12 @@ def _delimited(separator: str) -> Reader:
         # `keep_default_na` is left on: pandas' blank/NA handling is what turns
         # an empty cell into NULL rather than the string "".
         frame = pd.read_csv(path, sep=separator)
-        return _one(frame, _fat_column_note(frame, separator, path.name))
+        return _one(frame, fat_column_note(frame, separator, path.name))
 
     return read
 
 
-def _fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str, ...]:
+def fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str, ...]:
     """Say when a file has plainly been read at the wrong separator.
 
     The parameter alone does not fix the silent failure: a caller who does not
@@ -141,7 +141,7 @@ def _fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[st
     )
 
 
-def _read_json(path: Path) -> ReadResult:
+def read_json(path: Path) -> ReadResult:
     """Read a JSON document that holds one table.
 
     A JSON file is only *sometimes* tabular, so this reader says which shapes it
@@ -166,7 +166,7 @@ def _read_json(path: Path) -> ReadResult:
     return _frame_of_records(records, notes)
 
 
-def _read_jsonl(path: Path) -> ReadResult:
+def read_jsonl(path: Path) -> ReadResult:
     """Read JSON Lines: one object per line, blank lines ignored.
 
     No shape ambiguity exists here — the format *is* a sequence of records — so
@@ -211,7 +211,7 @@ def _require(module: str, extra: str, doing: str):
         ) from exc
 
 
-def _read_yaml(path: Path) -> ReadResult:
+def read_yaml(path: Path) -> ReadResult:
     """YAML parses to the same structures JSON does, so it gets the same rules.
 
     ``safe_load``, never ``load``: the full loader constructs arbitrary Python
@@ -227,7 +227,7 @@ def _read_yaml(path: Path) -> ReadResult:
     return _frame_of_records(records, notes)
 
 
-def _read_fwf(path: Path) -> ReadResult:
+def read_fwf(path: Path) -> ReadResult:
     """Fixed-width text, whose column boundaries are inferred from alignment.
 
     Nothing in the file states where the columns are, so pandas finds them by
@@ -246,7 +246,7 @@ def _read_fwf(path: Path) -> ReadResult:
     )
 
 
-def _read_columnar(path: Path) -> ReadResult:
+def read_columnar(path: Path) -> ReadResult:
     """Parquet, Feather/Arrow and ORC — typed formats, so nothing is inferred.
 
     Feather goes through ``pyarrow.ipc`` rather than ``pandas.read_feather``,
@@ -282,7 +282,7 @@ _WORKBOOKS = {
 }
 
 
-def _read_workbook(path: Path) -> ReadResult:
+def read_workbook(path: Path) -> ReadResult:
     """Every sheet of a workbook, each as a table under its own sheet name.
 
     ``sheet_name=None`` rather than the default ``0``: the default reads the
@@ -314,7 +314,7 @@ def _read_workbook(path: Path) -> ReadResult:
     return ReadResult(tables)
 
 
-def _read_numbers(path: Path) -> ReadResult:
+def read_numbers(path: Path) -> ReadResult:
     """Apple Numbers, whose sheets each hold their own named tables.
 
     Two levels rather than one: a Numbers sheet is a canvas that may carry
@@ -387,7 +387,7 @@ def _without_grid_padding(rows: Sequence[Sequence[Any]]):
     return [header[index] for index in keep], kept_body
 
 
-def _read_xml(path: Path) -> ReadResult:
+def read_xml(path: Path) -> ReadResult:
     """Read an XML document whose root holds one repeated element per row.
 
     Written rather than delegated to ``pandas.read_xml``, which is fail-open on
@@ -615,34 +615,3 @@ def _json_kind(value: object) -> str:
         list: "an array",
         dict: "an object",
     }.get(type(value), f"a {type(value).__name__}")
-
-
-#: Extension to reader. The seam through which new formats arrive — a new entry
-#: is the whole change, because everything downstream works from the DataFrame.
-READERS: dict[str, Reader] = {
-    ".csv": _delimited(","),
-    ".tsv": _delimited("\t"),
-    ".txt": _delimited(","),
-    ".json": _read_json,
-    ".jsonl": _read_jsonl,
-    ".ndjson": _read_jsonl,
-    ".xml": _read_xml,
-    ".yaml": _read_yaml,
-    ".yml": _read_yaml,
-    ".fwf": _read_fwf,
-    ".parquet": _read_columnar,
-    ".feather": _read_columnar,
-    ".orc": _read_columnar,
-    ".xlsx": _read_workbook,
-    ".xlsm": _read_workbook,
-    ".xls": _read_workbook,
-    ".ods": _read_workbook,
-    ".numbers": _read_numbers,
-}
-
-#: The formats a delimiter means anything for. Everything else carries its own
-#: structure, so being handed a separator for one is a caller's mistake. The
-#: write side imports this rather than restating it — one fact about a file,
-#: read and written at the same separator — so adding a suffix here adds it to
-#: both sides at once.
-DELIMITED = {".csv", ".tsv", ".txt"}
