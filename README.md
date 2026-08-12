@@ -547,7 +547,7 @@ ask for and no line that is a row — so their peak still tracks the file.
 
 Optional. **`$LOCALDATA_CONFIG_PATH` is not the head of the search — it replaces it.** Set it and
 the three locations below are not consulted at all, and a value naming something that is not a
-file is refused rather than skipped, on the first tool call. Unset it to use the search.
+file is refused rather than skipped, at startup. Unset it to use the search.
 
 With it unset, discovery is a cascade — **first found wins**, not a merge:
 
@@ -576,11 +576,13 @@ belong to the operating system and name a directory, not a setting.)
 **An unknown section or key is refused rather than ignored, and the refusal is
 not silent.** A mistyped `path_limitted = false` that silently kept the safe
 default would be a security setting you believe you have changed. What the
-refusal looks like in practice: the configuration is read on the **first tool
-call**, not at startup, so the server launches and the MCP handshake completes
-normally, and then the first `attach` fails with a message naming the bad key and
-the keys that section does know. If a client shows the tools but every call
-fails, read the error text — it names the typo.
+refusal looks like in practice: the configuration is read **at startup**, before
+the server serves anything, so a file it will not run under stops it starting —
+the client reports the server as failed rather than listing tools, and the
+message naming the bad key and the keys that section does know is in the
+client's server log. Read that log; it names the typo. Refusing to start is
+deliberate: a server that came up under a configuration it could not read would
+be one whose path boundary is not the one you wrote.
 
 ## Claude Code plugin
 

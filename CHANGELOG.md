@@ -74,10 +74,11 @@ There are three sections and five settings in total — `workspace.slots`,
 `workspace.memory_budget_mb`, `paths.roots`, `paths.path_limited` and
 `network.enabled`. **An unknown section or key is refused rather than ignored**,
 because a mistyped `path_limitted = false` that silently kept the safe default is
-a security switch you believe you have thrown. The file is read on the first tool
-call rather than at startup, so the server launches and the handshake completes;
-the refusal arrives on that first call, naming the bad key and the keys the
-section does know. No 2.x configuration file is readable, and none is migrated.
+a security switch you believe you have thrown. The file is read at startup, so a
+configuration the server will not run under stops it starting rather than
+surfacing inside a tool call — the refusal names the bad key and the keys the
+section does know, and it arrives in the client's server log. No 2.x
+configuration file is readable, and none is migrated.
 
 **Nothing survives the session unless you `save` it.** 2.x persisted staging
 databases and buffers across calls with their own eviction policies and disk

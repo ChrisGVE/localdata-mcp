@@ -908,7 +908,18 @@ class Registry:
         four say the same thing: the name that failed, and the names that would
         not have, since a caller who reaches this verb at all is one who does
         not know what is there.
+
+        The slot is resolved here rather than left to the caller, even though
+        every caller inside this class has already done it. Asking the workspace
+        about a tag it does not hold raises a ``LoadError``, which is not a
+        ``SlotError`` and so is not the refusal any verb catches — so this
+        method reached without a slot check turns a stale nickname into a
+        protocol error. That is not hypothetical: ``update`` called this before
+        its own check and escaped that way for a release (issue #92). A check a
+        caller must remember to do first is one a later caller will not do, so
+        the guard lives with the thing it guards.
         """
+        self.slot(nickname)
         landed = self._workspace.resolve_table(nickname, table)
         if landed is None:
             known = ", ".join(self._workspace.table_names(nickname)) or "none"

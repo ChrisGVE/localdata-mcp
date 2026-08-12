@@ -997,6 +997,18 @@ def save(nickname: str, path: str, force: bool = False) -> dict[str, Any]:
 
 
 def main() -> None:
+    """Read the configuration, then serve.
+
+    Reading it *here* is what makes a mistyped setting refuse to start. The
+    configuration decides what this server may reach on the filesystem and the
+    network, and :mod:`config` refuses an unknown key rather than ignoring it
+    for exactly that reason — but it loads on first use, so without this line
+    the refusal surfaced inside whichever tool call first happened to read it,
+    as a protocol error, with the server already serving under a boundary the
+    user did not set. Failing here puts the message in the client's server log,
+    which is where the person who wrote the file will look.
+    """
+    config.active()
     mcp.run()
 
 
