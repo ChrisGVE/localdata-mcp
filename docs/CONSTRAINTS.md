@@ -4966,7 +4966,7 @@ rewriting branch. Canonical `Z` values do reach the tests, from **at least five 
 `HALF_A_SECOND_APART` and `DATE_BESIDE_TIMESTAMP`, neither drawn from `INSTANTS`; `spell(fmt)`
 (`test_temporal.py:58-60`), which reformats `INSTANTS` *itself* into the canonical spelling for
 three tests; and two parametrized literal lists, at `test_temporal.py:365-367` and `:388-390`.
-**Three of those five places put two canonical spellings in one column** — the question this
+**Three of the five named here put two canonical spellings in one column** — the question this
 section is about. `HALF_A_SECOND_APART` (20 characters beside 27) and `DATE_BESIDE_TIMESTAMP`
 (10 beside 20) are mixed by construction, in the file's own comment, and each parametrizes the
 same three tests, all named `..._mixed_canonical_...` — one of them
