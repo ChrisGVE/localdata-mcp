@@ -36,6 +36,10 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 from xml.sax.saxutils import escape
 
+# Defined in `errors` rather than here, for the same reason `LoadError` is: the
+# format layer below raises it. Imported into this namespace deliberately — the
+# tests and `server` both say `export.ExportError`.
+from .errors import ExportError
 from .loader import DELIMITED as _DELIMITED
 from .paths import resolve_write_path
 
@@ -43,10 +47,6 @@ __all__ = ["DELIMITED", "ExportError", "ExportResult", "WRITERS", "export_rows"]
 
 #: Owner read/write only.
 _EXPORT_MODE = 0o600
-
-
-class ExportError(ValueError):
-    """A result this server will not write in the form it was asked for."""
 
 
 @dataclass(frozen=True)

@@ -77,6 +77,12 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from . import binding, temporal
 from .dialects import Backend, Engines, backend_for, backend_for_url
+
+# Defined in `errors` rather than here so the format layer below this module can
+# raise it without importing `loader`. Imported into this namespace deliberately:
+# `slots`, the tests and the docs all say `loader.LoadError`, and there is one
+# class whichever name reaches it.
+from .errors import LoadError
 from .paths import resolve_read_path
 
 __all__ = [
@@ -100,10 +106,6 @@ __all__ = [
 #: :func:`_run_again_once` uses it, to keep its caller's return type rather than
 #: flattening every catalog read to ``Any``.
 _T = TypeVar("_T")
-
-
-class LoadError(RuntimeError):
-    """A source that could not be loaded."""
 
 
 #: Rows handed to Core in one execute. Bounds the insert's peak allocation; see
