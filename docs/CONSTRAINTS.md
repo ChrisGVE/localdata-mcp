@@ -1423,8 +1423,10 @@ fix and is also the seam every new format arrives through.
 > | Written only (1) | `.md` |
 >
 > **The sixteen-suffix overlap is the round-trip property, not a coincidence**: a file this server
-> writes is one it can read back, and the two `DELIMITED` sets are held identical for the same
-> reason. The five that do not overlap each name a real asymmetry — `.xls` lost its writer when xlrd
+> writes is one it can read back, and `DELIMITED` — which suffixes a separator means anything for
+> — is one set for the same reason: `export.DELIMITED` **is** `loader.DELIMITED`, re-exported rather
+> than restated (they were two equal literals until 2026-08-12, `localdata#98`). The five that do
+> not overlap each name a real asymmetry — `.xls` lost its writer when xlrd
 > dropped writing, `.numbers` and `.fwf` have no writer worth having, and Markdown is deliberately
 > write-only because a Markdown table has no types and no quoting, so no reader could return what
 > went in.

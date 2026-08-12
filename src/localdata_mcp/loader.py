@@ -1263,7 +1263,10 @@ READERS: dict[str, Reader] = {
 }
 
 #: The formats a delimiter means anything for. Everything else carries its own
-#: structure, so being handed a separator for one is a caller's mistake.
+#: structure, so being handed a separator for one is a caller's mistake. The
+#: write side imports this rather than restating it — one fact about a file,
+#: read and written at the same separator — so adding a suffix here adds it to
+#: both sides at once.
 DELIMITED = {".csv", ".tsv", ".txt"}
 
 

@@ -309,9 +309,8 @@ def test_vacuum_into_produces_a_database_that_still_answers(workspace, root, tmp
             tuple(r)
             for r in copied.execute("SELECT name, salary FROM simple ORDER BY name")
         ] == [tuple(r) for r in original[1]]
-        assert (
-            copied.execute("SELECT sum(salary) FROM simple").fetchone()[0]
-            == (workspace.query("scratch", "SELECT sum(salary) FROM simple")[1][0][0])
+        assert copied.execute("SELECT sum(salary) FROM simple").fetchone()[0] == (
+            workspace.query("scratch", "SELECT sum(salary) FROM simple")[1][0][0]
         )
     finally:
         copied.close()
@@ -1242,6 +1241,19 @@ def test_a_tsv_written_without_a_delimiter_is_still_tab_separated(workspace, roo
     assert target.read_text().splitlines()[0] == "a\tb"
 
 
+def test_both_sides_read_the_delimited_set_from_one_place():
+    """Which suffixes a separator means anything for is one fact, not two.
+
+    Held as two literals, the sides can drift, and the drift is quiet on the
+    write side: `export_rows` ignores a delimiter for a suffix outside its own
+    set, so a format the reader had learned to split would come back written
+    with the separator its suffix implied instead. Identity rather than
+    equality, because two sets that happen to be equal today is the shape that
+    let them diverge.
+    """
+    assert export_module.DELIMITED is loader_module.DELIMITED
+
+
 # ---------------------------------------------------------------------------
 # A catalog read the database asked us to run again
 # ---------------------------------------------------------------------------
@@ -1470,9 +1482,9 @@ def test_the_added_key_is_explained_rather_than_merely_present(
 
     (info,) = workspace.load_file(str(root / "simple.csv"), "scratch")
 
-    assert any("_row" in note and "primary key" in note for note in info.notes), (
-        info.notes
-    )
+    assert any(
+        "_row" in note and "primary key" in note for note in info.notes
+    ), info.notes
 
 
 def test_nothing_is_added_where_the_backend_does_not_demand_it(workspace, root):

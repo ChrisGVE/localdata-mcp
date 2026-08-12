@@ -36,9 +36,10 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 from xml.sax.saxutils import escape
 
+from .loader import DELIMITED as _DELIMITED
 from .paths import resolve_write_path
 
-__all__ = ["ExportError", "ExportResult", "WRITERS", "export_rows"]
+__all__ = ["DELIMITED", "ExportError", "ExportResult", "WRITERS", "export_rows"]
 
 #: Owner read/write only.
 _EXPORT_MODE = 0o600
@@ -413,10 +414,12 @@ WRITERS: dict[str, Writer] = {
     ".ndjson": _write_jsonl,
 }
 
-#: The output formats a delimiter means anything for. Deliberately the same set
-#: as `loader.DELIMITED`: the two sides describe one fact about a file, so a
-#: format this server writes with a separator is one it can read back with it.
-DELIMITED = {".csv", ".tsv", ".txt"}
+#: The output formats a delimiter means anything for — the read side's set, not
+#: a copy of it. The two sides describe one fact about a file, so a format this
+#: server writes with a separator is one it can read back with it, and holding
+#: the fact twice is how that stops being true. Re-exported rather than left to
+#: callers to reach through `loader`, so `export.DELIMITED` keeps working.
+DELIMITED = _DELIMITED
 
 
 def export_rows(
