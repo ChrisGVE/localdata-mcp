@@ -248,6 +248,53 @@ def test_a_type_the_verb_does_not_have_is_refused_with_the_types_it_does(root):
         assert "table" in reason, f"{verb} did not name the types it has: {reason}"
 
 
+def test_an_unexpected_failure_below_is_still_an_answer_at_every_verb(
+    root, monkeypatch
+):
+    """The envelope has to be total, or the promise is one an agent cannot use.
+
+    The columns above cover the wrong inputs that are known and refused by name.
+    This one covers everything else: a driver that raises something new, a
+    filesystem that fails mid-call, a bug. ``query`` already answered those as
+    payloads and the other seven let them out as protocol errors — one promise
+    made by the shipped instructions, stated seven ways underneath.
+
+    The type name is asserted, not just the shape. An unexpected failure must
+    not be *disguised* as an ordinary refusal: the caller cannot fix it and the
+    maintainer needs to know it happened, so it comes back saying what it was.
+    """
+    csv = people_csv(root)
+    succeeds("attach", database=str(csv), nickname="live")
+
+    class Boom(RuntimeError):
+        pass
+
+    def explode(*args: Any, **kwargs: Any):
+        raise Boom("the layer below came apart")
+
+    monkeypatch.setattr(server_module, "_session", explode)
+
+    cells = [
+        ("attach", {"database": str(csv)}),
+        ("detach", {"nickname": "live"}),
+        ("info", {}),
+        ("query", {"nickname": "live", "sql": "SELECT 1"}),
+        (
+            "create",
+            {"nickname": "live", "type": "table", "source": str(other_csv(root))},
+        ),
+        ("update", {"nickname": "live", "type": "table", "name": "people", "to": "u"}),
+        ("drop", {"nickname": "live", "type": "table", "name": "people"}),
+        ("save", {"nickname": "live", "path": str(root / "out.db")}),
+    ]
+    assert {verb for verb, _ in cells} == set(VERBS), "a verb is missing from the table"
+
+    for verb, arguments in cells:
+        reason = refusal(verb, **arguments)
+        assert "Boom" in reason, f"{verb} hid what went wrong: {reason}"
+        assert "came apart" in reason, f"{verb} dropped the message: {reason}"
+
+
 def test_a_configuration_that_will_not_be_run_under_stops_the_server_starting(
     tmp_path, monkeypatch
 ):

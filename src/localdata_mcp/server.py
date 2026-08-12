@@ -50,8 +50,10 @@ therefore guarded by a lock rather than assumed to be reached from one thread.
 from __future__ import annotations
 
 import datetime as _dt
+import functools
 import threading
 from decimal import Decimal
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -448,12 +450,46 @@ def _failed(exc: Exception) -> dict[str, Any]:
     return {"ok": False, "error": str(exc)}
 
 
+def _answers(tool: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """Make a verb answer whatever happens, since that is what was promised.
+
+    The instructions this server ships tell the caller that a refusal is an
+    ordinary answer and to branch on ``ok``. An agent reads that once. So the
+    promise has to hold for the failures nobody enumerated too — a driver that
+    raises something new, a filesystem that goes away mid-call, a bug in here —
+    or the one shape an agent was told would never arrive is the one it gets.
+
+    Each verb still catches the failures it *expects* and refuses them in its
+    own words; those are the answers a caller can act on. This is the outer net
+    under all eight, and it exists as one decorator rather than as eight
+    ``except`` clauses because the same promise stated eight times is a promise
+    that will soon be stated seven ways: ``query`` carried this catch-all alone
+    for a release while its seven siblings let the same failures out as protocol
+    errors (issue #92).
+
+    The exception type is named in the message. An unexpected failure that reads
+    like an ordinary refusal is worse than one that escapes — the caller cannot
+    fix it, will try, and nobody learns it happened. ``BaseException`` is
+    deliberately not caught: an interrupt is not this server's to answer.
+    """
+
+    @functools.wraps(tool)
+    def answered(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            return tool(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - the envelope is the point
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    return answered
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool
+@_answers
 def attach(
     database: str,
     nickname: str | None = None,
@@ -509,6 +545,7 @@ def attach(
 
 
 @mcp.tool
+@_answers
 def detach(nickname: str) -> dict[str, Any]:
     """Close a datasource and free its slot.
 
@@ -541,6 +578,7 @@ def detach(nickname: str) -> dict[str, Any]:
 
 
 @mcp.tool
+@_answers
 def info(nickname: str | None = None, table: str | None = None) -> dict[str, Any]:
     """Describe what is attached, at whichever altitude you need.
 
@@ -627,6 +665,7 @@ def _session_detail(registry: Registry) -> dict[str, Any]:
 
 
 @mcp.tool
+@_answers
 def query(
     nickname: str,
     sql: str,
@@ -750,6 +789,7 @@ def query(
 
 
 @mcp.tool
+@_answers
 def create(
     nickname: str,
     type: str,
@@ -850,6 +890,7 @@ def _table_created(nickname: str, info: TableInfo) -> dict[str, Any]:
 
 
 @mcp.tool
+@_answers
 def drop(nickname: str, type: str, name: str) -> dict[str, Any]:
     """Remove a table or an index from a datasource.
 
@@ -891,6 +932,7 @@ def drop(nickname: str, type: str, name: str) -> dict[str, Any]:
 
 
 @mcp.tool
+@_answers
 def update(nickname: str, type: str, name: str, to: str) -> dict[str, Any]:
     """Rename something inside a datasource, keeping what it holds.
 
@@ -953,6 +995,7 @@ def update(nickname: str, type: str, name: str, to: str) -> dict[str, Any]:
 
 
 @mcp.tool
+@_answers
 def save(nickname: str, path: str, force: bool = False) -> dict[str, Any]:
     """Write a datasource out to a SQLite file the user keeps.
 
