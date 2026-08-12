@@ -319,13 +319,26 @@ database, **read-only by default** until the caller says otherwise.
 
 ## Sources and targets
 
-Reading and writing are two registries keyed on the file suffix — `loader.READERS` and
-`export.WRITERS` — and a format is one entry in each. Adding one touches nothing else,
-because everything downstream of a reader works from a DataFrame and everything upstream
-of a writer works from columns and rows.
+Everything keyed on a file suffix is declared once, in `formats.FORMATS`: a format is one
+`Format` naming its reader, its writer, whether a delimiter means anything for it and
+whether it can be read in chunks. Adding one is that single entry, because everything
+downstream of a reader works from a DataFrame and everything upstream of a writer works
+from columns and rows. `READERS`, `WRITERS`, `DELIMITED` and `STREAMED` still exist as the
+names the rest of the code uses, but they are **views** of that table now rather than four
+tables that could disagree — which they had begun to (`localdata#98`, `#99`).
+
+Read-only and write-only are a missing callable rather than membership of some other set.
+`.md` has no reader, because a Markdown table has no types and no quoting; `.xls` has no
+writer, because xlrd dropped writing.
+
+**The table is closed-world, deliberately unlike `dialects.BACKENDS`.** An unregistered
+dialect there gets a generic `Backend` that works, since an unknown database still speaks
+SQL. An unregistered suffix has no such fallback — there is no generic way to read a file
+whose format nobody declared, and guessing produces exactly the answer this server exists
+to prevent: data that loaded, looks fine, and is wrong. Absence here is a refusal by name.
 
 **A delimited file is read twice rather than held once.** `.csv`, `.tsv`, `.txt` and
-`.fwf` — `loader.STREAMED` — go through a measuring pass and then an inserting pass, so
+`.fwf` — the formats declaring `streamed` — go through a measuring pass and then an inserting pass, so
 the load's peak stops tracking the file: 4,286 MB → 803 MB against a 1.22 GB CSV
 (CONSTRAINTS §28). The file is read twice and that costs 1.4–1.75x wall clock, which is
 the whole of the trade.

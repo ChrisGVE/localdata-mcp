@@ -61,8 +61,8 @@ they skip, which is worse, because the run still reports green.
 .venv/bin/python -m pytest -q -m 'not slow'
 ```
 
-At the time of writing that is `731 passed, 500 skipped, 5 deselected`, measured
-at 76 s on this machine. **Every one of the 500 skips is an endpoint test with no
+At the time of writing that is `768 passed, 500 skipped, 5 deselected`, measured
+at 64 s on this machine. **Every one of the 500 skips is an endpoint test with no
 container listening**, and each names the command that would start one — see
 "Endpoint tests" below.
 
@@ -83,22 +83,26 @@ have installed with `uv tool list` or `pip show localdata-mcp`.
 
 ```
 localdata-mcp/
-├── src/localdata_mcp/            # The whole package — nine modules, no sub-packages,
+├── src/localdata_mcp/            # The whole package — thirteen modules, no sub-packages,
 │                                 #   plus the package `__init__` and the typing marker
 │   ├── __init__.py               # `__version__` — one of the six version sites below
-│   ├── server.py                 # The eight MCP tools, and nothing else
+│   ├── server.py                 # The nine MCP tools, and nothing else
 │   ├── slots.py                  # The registry: nicknames, lifecycle, eviction, spill
 │   ├── loader.py                 # Reading a datasource in, and describing it
 │   ├── dialects.py               # What differs per backend, and only that
+│   ├── formats.py                # The one table of what a file suffix means
+│   ├── readers.py                # One function per input format
+│   ├── writers.py                # One function per output format
+│   ├── errors.py                 # LoadError and ExportError, below both sides
 │   ├── temporal.py               # Recognising and canonicalising date columns
 │   ├── binding.py                # Type adapters — see CONSTRAINTS §1
 │   ├── config.py                 # Configuration discovery and validation
 │   ├── paths.py                  # Path containment at the trust boundary
 │   ├── export.py                 # Writing a result out
 │   └── py.typed                  # PEP 561 marker — what `Typing :: Typed` rests on
-├── tests/                        # 12 test modules — `test_<module>.py` for eight of the
-│                                 #   nine (`export.py` has none), plus test_concurrency,
-│                                 #   test_streaming, test_volume and test_endpoints
+├── tests/                        # 15 test modules — `test_<module>.py` for nine of the
+│                                 #   thirteen, plus test_concurrency, test_streaming,
+│                                 #   test_volume, test_endpoints and test_answer_shape
 │   ├── assets/                   # Deliberately hostile test files
 │   ├── conftest.py               # Shared fixtures
 │   ├── foreign.py                # Cross-backend helpers
@@ -131,13 +135,18 @@ localdata-mcp/
 └── NOTICE                        # Attribution notice required by Apache 2.0
 ```
 
-**`export.py` is the one module with no test module of its own.** It is exercised
-from `test_loader.py`, `test_server.py` and `test_volume.py`, which is where the
-writers are reached from. A test for a new writer goes in whichever of those
-matches how it is reached; do not add a `test_export.py` for one writer alone.
+**`export.py`, `readers.py`, `writers.py` and `errors.py` have no test module of
+their own.** They are exercised from `test_loader.py`, `test_server.py` and
+`test_volume.py`, which is where a reader or a writer is actually reached from —
+through a verb, against the hostile corpus, rather than called directly. A test
+for a new reader or writer goes in whichever of those matches how it is reached;
+do not add a `test_writers.py` for one writer alone. `formats.py` does have one,
+because what it asserts is about the table itself rather than about reading any
+particular file.
 
 There are no sub-packages and no plugin registry: a new format is one entry in
-`loader.READERS` and one in `export.WRITERS`, and a new backend is a
+`formats.FORMATS` — the reader, the writer, and whether a delimiter or chunked
+reading mean anything for it, all on the one `Format` — and a new backend is a
 `dialects.Backend` subclass **only if** the generic SQLAlchemy answer means
 something different for it — several backends needed no subclass at all, which is
 the result rather than an omission.
