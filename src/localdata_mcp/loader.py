@@ -1800,9 +1800,6 @@ class Workspace:
 
     # -- the tag dict ------------------------------------------------------
 
-    def tags(self) -> tuple[str, ...]:
-        return tuple(self._tags)
-
     def entry(self, tag: str) -> Tagged:
         """The tag's entry, or an error naming what is actually here."""
         found = self._tags.get(tag)
@@ -1878,7 +1875,7 @@ class Workspace:
         where the dialect is one somebody else borrows. See issue #45.
 
         A tag opened this way is a tag like any other: the same ``query``, the
-        same ``describe``, the same ``insert_frame``. There is deliberately no
+        same ``describe``, the same ``insert_source``. There is deliberately no
         second code path for "remote" datasources, because a second path is how
         one of them silently stops supporting a verb the other has.
         """
@@ -1977,6 +1974,13 @@ class Workspace:
         return folded[0] if len(folded) == 1 else None
 
     def has_table(self, tag: str, table: str) -> bool:
+        """Whether a name resolves, for a caller that does not need the spelling.
+
+        Nothing in the server asks it this way: every production caller wants
+        the name the database actually stored and so calls
+        :meth:`resolve_table`, which answers both questions at once. This is the
+        yes/no reading of the same call, and the tests are what read it.
+        """
         return self.resolve_table(tag, table) is not None
 
     def table_names(self, tag: str) -> tuple[str, ...]:
@@ -2163,6 +2167,19 @@ class Workspace:
         A list, because a file is not always one table: a workbook's sheets are
         each a table, and returning only the first would leave the rest present
         in the file and unreachable through the server.
+
+        **No production path calls this.** The server sequences the two steps
+        itself — :func:`read_source` then :meth:`insert_source` — in
+        ``Registry._attach_source`` and ``Registry._read_into``, because the two
+        verbs want *different* answers to the multi-table case: ``attach`` opens
+        every table in the file, while ``create`` makes one and refuses the rest
+        by name. So the refusal below is a third wording that no caller of this
+        server can reach, and this method's value is that a test can load a file
+        in one call.
+
+        Naming that here rather than leaving it to be rediscovered: read as an
+        ordinary public method, this looks like the load path, and a change made
+        to it in the belief that it is one would ship nothing.
         """
         path = resolve_read_path(raw_path)
         read = read_source(path, delimiter=delimiter)
@@ -2202,6 +2219,14 @@ class Workspace:
         A source of exactly one chunk, so that a frame and a file read in chunks
         travel the same path from here on. Kept as its own method because a
         caller holding a frame should not have to build the wrapper.
+
+        **No production path calls this either**, for the same reason as
+        :meth:`load_file`: nothing in the server ever holds a whole frame — a
+        file arrives as chunks and goes straight to :meth:`insert_source`. What
+        holds frames is the test suite, and this is the wrapper it uses. Five
+        docstrings in :mod:`dialects` named this method as the one that splits
+        the write transaction and fills the surrogate key; both are
+        :meth:`insert_source`, and they were corrected when this note was added.
         """
         return self.insert_source(
             SourceTable(
@@ -2349,7 +2374,7 @@ class Workspace:
     ) -> None:
         """Put the source's rows into a table that already exists, then settle it.
 
-        Extracted from :meth:`insert_frame` when Firebird made the transaction
+        Extracted from :meth:`insert_source` when Firebird made the transaction
         boundary a per-backend question (#53), and extracted rather than
         duplicated so that both answers write rows the *same* way. The thing that
         varies between them is which transaction this runs in; nothing about the

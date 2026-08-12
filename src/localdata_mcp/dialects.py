@@ -435,7 +435,7 @@ class Backend:
         before it is visible. CrateDB writes into a Lucene index refreshed on a
         timer, so a table counted immediately after an insert answers **0** and
         answers correctly a second later. Left alone, that turns every write into
-        a race: ``insert_frame`` reports the row count it read, and the number it
+        a race: ``insert_source`` reports the row count it read, and the number it
         would report is whatever the timer happened to have done — which is not a
         flaky test so much as a payload that is wrong for a reason the caller
         cannot see.
@@ -463,7 +463,7 @@ class Backend:
         ``CREATE`` on one connection fails with ``-204 Table unknown``, and the
         identical pair succeeds when the DDL commits in between.
 
-        :meth:`loader.Workspace.insert_frame` asks this and splits its one write
+        :meth:`loader.Workspace.insert_source` asks this and splits its one write
         block into two where the answer is ``False``. **The split has a cost, and
         naming it here is the point of the docstring:** with the DDL committed
         first, a failure part-way through the rows leaves an empty table behind
@@ -647,7 +647,7 @@ class Backend:
         have an order and no key: nothing in a CSV is guaranteed unique, so there
         is no column that could be nominated without the loader inventing a
         constraint the data does not have. Where this answers ``True``,
-        :meth:`loader.Workspace.insert_frame` adds a surrogate key holding each
+        :meth:`loader.Workspace.insert_source` adds a surrogate key holding each
         row's ordinal, and **says so in the table's notes** — the column is real,
         it will show up in ``info`` and in ``SELECT *``, and a caller told
         nothing would rightly call that a lie.
@@ -1684,7 +1684,7 @@ class CrateDBBackend(Backend):
 
         The default refresh interval is a second, which is *fast* and entirely
         beside the point: the question is not how long the wrong answer lasts
-        but whether this server ever gives one. ``insert_frame`` counts the rows
+        but whether this server ever gives one. ``insert_source`` counts the rows
         it just wrote and puts that number in the payload, so without this the
         number reported is whatever the timer had done by then — 0 on a fast
         machine, correct on a slow one, and no way for the caller to tell which
@@ -1831,7 +1831,7 @@ class FirebirdBackend(Backend):
         ``DROP … checkfirst`` then ``CREATE``        accepted together
         ==========================================  ========================
 
-        The third row is why :meth:`loader.Workspace.insert_frame` splits at the
+        The third row is why :meth:`loader.Workspace.insert_source` splits at the
         DDL→DML boundary and not before it: schema statements are free to share a
         transaction with each other, so the drop-and-create pair stays atomic.
         """
