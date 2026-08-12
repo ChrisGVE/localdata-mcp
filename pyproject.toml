@@ -1,7 +1,7 @@
 [project]
 name = "localdata-mcp"
 version = "3.0.0.dev0"
-description = "MCP server giving LLM agents SQL access to local files and databases: eight verbs over 18 file formats and 18 SQL backends."
+description = "MCP server giving LLM agents SQL access to local files and databases: nine verbs over 18 file formats and 18 SQL backends."
 readme = "README.md"
 authors = [
   { name = "Christian C. Berclaz", email = "christian.berclaz@mac.com" },

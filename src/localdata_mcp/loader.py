@@ -54,7 +54,7 @@ import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Iterator, Sequence, TypeVar
+from typing import Any, Callable, Iterator, Mapping, Sequence, TypeVar
 from uuid import uuid4
 from xml.etree import ElementTree
 
@@ -71,6 +71,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy import types as sqltypes
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -81,6 +82,7 @@ from .paths import resolve_read_path
 __all__ = [
     "ColumnInfo",
     "ColumnMeasurement",
+    "ColumnProfile",
     "IndexInfo",
     "ReadResult",
     "SourceRead",
@@ -350,6 +352,43 @@ class IndexInfo:
     #: for the ordinary case, and only ever populated at creation — an index
     #: read back by inspection says nothing about how it came to be.
     notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ColumnProfile:
+    """One column's statistics, holding only what the engine actually answered.
+
+    Every optional field is ``None`` when it was not asked for, and the reason it
+    was not asked for is never "we forgot". There are exactly three:
+
+    * the statistic is not free on this engine, so it is not reported at all
+      (:meth:`dialects.Backend.optional_aggregates`);
+    * the statistic does not apply to this kind of column — an average of dates
+      is not a date, and a string gets its null count and nothing more;
+    * the column is one an aggregate would **lie** about, in which case
+      :attr:`withheld` says so in words.
+
+    That third case is the one worth reading twice. A mixed column's ``avg()``
+    coerces its text values to 0 and keeps them in the denominator; an
+    unrecognised date column's ``min()`` compares alphabetically and answers with
+    the wrong instant. Both return a real number from a real column, which is
+    what makes them worse than silence under a verb whose promise is that the
+    numbers are true.
+    """
+
+    name: str
+    declared_type: str
+    nulls: int
+    non_nulls: int
+    minimum: Any = None
+    maximum: Any = None
+    average: float | None = None
+    #: Keyed by the name the surface reports — ``"median"``, ``"stddev"`` — and
+    #: holding only what this backend offered. Open rather than two fields, so a
+    #: backend gaining a third costs no change here.
+    optional: Mapping[str, Any] = field(default_factory=dict)
+    #: Why the aggregates were deliberately not computed, or ``None``.
+    withheld: str | None = None
 
 
 @dataclass
@@ -2544,6 +2583,143 @@ class Workspace:
                 )
                 for name, sql_type in zip(columns, declared)
             ]
+
+    def profile(
+        self, tag: str, table: str, described: TableInfo, columns: Sequence[str]
+    ) -> list[ColumnProfile]:
+        """Compute the statistics this engine gives away, in one pass over the table.
+
+        Every aggregate for every requested column goes into a **single**
+        ``SELECT``, so the cost of a profile is one scan whatever its width. The
+        alternative — a statement per column — multiplies the scan by the column
+        count, which is the shape that turns a free measurement into an expensive
+        one and is exactly what the cost rule forbids.
+
+        Which aggregates each column gets is decided *before* any SQL is built,
+        by :meth:`_aggregates_for`, and the decision is made from what this
+        server already measured about the column rather than from its type name
+        alone.
+        """
+        entry = self.entry(tag)
+        reflected = Table(table, MetaData(), autoload_with=entry.engines.write)
+        signals = {column.name: column for column in described.columns}
+        offered = entry.backend.optional_aggregates()
+
+        plans = [
+            self._aggregates_for(reflected.c[name], signals.get(name), offered)
+            for name in columns
+        ]
+
+        # Labelled positionally rather than by name: a column called "min" would
+        # otherwise collide with the label of an aggregate over it, and a file is
+        # perfectly entitled to name a column anything.
+        selected = [func.count().label("total")]
+        for index, plan in enumerate(plans):
+            for key, expression in plan.items():
+                selected.append(expression.label(f"c{index}_{key}"))
+
+        with entry.engines.read.connect() as conn:
+            row = (
+                conn.execute(select(*selected).select_from(reflected)).mappings().one()
+            )
+
+        return [
+            self._profiled(name, signals.get(name), reflected.c[name], plan, row, index)
+            for index, (name, plan) in enumerate(zip(columns, plans))
+        ]
+
+    @staticmethod
+    def _aggregates_for(
+        column: Any, signal: ColumnInfo | None, offered: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Which aggregates this one column may truthfully be asked for.
+
+        The null count is unconditional — ``count(col)`` against the table's own
+        ``count(*)`` is stock SQL everywhere, and it is the measurement this verb
+        was built for (issue #94).
+
+        Everything beyond it is gated on the column being one an aggregate tells
+        the truth about:
+
+        * a **mixed** column and a column of **dates in no recognised standard**
+          get nothing further, because on those two the aggregate is not merely
+          imprecise but wrong in a way that reads like an answer;
+        * a **numeric** column gets its range and average, plus whatever the
+          backend offers on top;
+        * a **canonical date** column — normalised to one ISO 8601 UTC spelling,
+          so its text order *is* chronological order — gets its range and no
+          average, an average of instants not being an instant;
+        * anything else, a string, gets the null count alone.
+
+        Numeric-ness is read off SQLAlchemy's own type hierarchy rather than
+        matched against type names. The names differ by engine and the hierarchy
+        does not, so a ``BIGINT`` reflected from an attached database and a
+        ``REAL`` created from a CSV answer the same question the same way.
+        """
+        counted = {"non_nulls": func.count(column)}
+        if signal is not None and (signal.is_mixed or signal.is_unparsed_temporal):
+            return counted
+
+        if isinstance(column.type, (sqltypes.Numeric, sqltypes.Integer)):
+            ranged = {
+                **counted,
+                "min": func.min(column),
+                "max": func.max(column),
+                "avg": func.avg(column),
+            }
+            return {
+                **ranged,
+                **{name: build(column) for name, build in offered.items()},
+            }
+
+        canonical = signal is not None and signal.temporal_standard is not None
+        if canonical or isinstance(column.type, (sqltypes.Date, sqltypes.DateTime)):
+            return {**counted, "min": func.min(column), "max": func.max(column)}
+
+        return counted
+
+    @staticmethod
+    def _profiled(
+        name: str,
+        signal: ColumnInfo | None,
+        column: Any,
+        plan: Mapping[str, Any],
+        row: Mapping[str, Any],
+        index: int,
+    ) -> ColumnProfile:
+        """Read one column's answers back out of the single result row."""
+        answered = {key: row[f"c{index}_{key}"] for key in plan}
+        non_nulls = int(answered["non_nulls"])
+        withheld = None
+        if signal is not None and signal.is_mixed:
+            withheld = (
+                "this column is mixed, and an aggregate over it coerces its "
+                "non-numeric values to 0 while keeping them in the denominator, "
+                "so the number would be wrong rather than approximate"
+            )
+        elif signal is not None and signal.is_unparsed_temporal:
+            withheld = (
+                "this column reads as dates in no standard this server "
+                "recognises, so it is compared as text — min() and max() would "
+                "return the alphabetically first and last value, not the "
+                "earliest and latest instant"
+            )
+
+        return ColumnProfile(
+            name=name,
+            declared_type=signal.declared_type if signal else str(column.type),
+            nulls=int(row["total"]) - non_nulls,
+            non_nulls=non_nulls,
+            minimum=answered.get("min"),
+            maximum=answered.get("max"),
+            average=None if answered.get("avg") is None else float(answered["avg"]),
+            optional={
+                key: value
+                for key, value in answered.items()
+                if key not in {"non_nulls", "min", "max", "avg"}
+            },
+            withheld=withheld,
+        )
 
     def _described_from(
         self,

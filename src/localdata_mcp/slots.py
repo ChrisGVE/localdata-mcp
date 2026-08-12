@@ -59,6 +59,7 @@ from . import config
 from .dialects import UnsupportedOperation
 from .loader import (
     READERS,
+    ColumnProfile,
     IndexInfo,
     LoadError,
     SourceRead,
@@ -1140,6 +1141,44 @@ class Registry:
             return self._workspace.describe(nickname, table, source=slot.source)
         except LoadError as exc:
             raise SlotNotAvailable(str(exc)) from exc
+
+    def profile(
+        self, nickname: str, table: str, columns: Sequence[str] | None = None
+    ) -> tuple[TableInfo, list[ColumnProfile]]:
+        """Profile one table's columns, returning the description alongside.
+
+        Both halves come back because the caller needs both and asking twice
+        would describe the table twice: the profile is computed *from* the
+        description — which columns are mixed, which hold canonical dates — and
+        the surface reports the same description's warnings beside the numbers.
+
+        A column name that matches nothing is refused rather than skipped. It is
+        the likeliest wrong input to a verb whose whole purpose is to narrow, and
+        answering with a profile of the other columns under ``ok: true`` would
+        look like the question was understood.
+        """
+        described = self.describe(nickname, table)
+        available = [column.name for column in described.columns]
+
+        if columns is None:
+            chosen = available
+        else:
+            missing = [name for name in columns if name not in available]
+            if missing:
+                raise SlotNotAvailable(
+                    f"No such column in {nickname}.{described.name}: "
+                    f"{', '.join(repr(name) for name in missing)}. "
+                    f"The columns are {', '.join(available)}."
+                )
+            chosen = list(columns)
+
+        try:
+            profiled = self._workspace.profile(
+                nickname, described.name, described, chosen
+            )
+        except LoadError as exc:
+            raise SlotNotAvailable(str(exc)) from exc
+        return described, profiled
 
     def tables(self, nickname: str) -> tuple[str, ...]:
         """Refresh and return the table names inside a slot.

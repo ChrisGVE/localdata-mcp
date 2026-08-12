@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.0.0] - unreleased
 
 A ground-up rewrite. **Every one of the 71 tools 2.1.0 registered is gone**, and
-eight verbs stand where they were. Nothing a 2.x client calls by name resolves,
+nine verbs stand where they were. Nothing a 2.x client calls by name resolves,
 and no alias, shim or compatibility layer is provided — the names are not
 deprecated, they are absent.
 
@@ -90,10 +90,21 @@ rebuild it.
 
 ### Added
 
-- Eight MCP tools — **verbs**, the word used for them throughout: `attach`,
-  `detach`, `query`, `info`, `create`, `update`, `drop`, `save`. Few and
+- Nine MCP tools — **verbs**, the word used for them throughout: `attach`,
+  `detach`, `query`, `info`, `create`, `update`, `drop`, `save`, `stats`. Few and
   multi-faceted rather than many and narrow — `info` alone absorbs six 2.x tools
   by varying on its two optional arguments.
+- **`stats(nickname, table, columns?)` — the profile, and the only call that
+  reports a missing value.** Every column answers with `nulls` and `non_nulls`, a
+  numeric one adds `min`, `max` and `avg`, and a date column normalised to ISO
+  8601 adds `min` and `max`. `median` and `stddev` are reported only where the
+  engine computes them itself — never emulated, never approximated, never a
+  second pass in Python — so they appear on DuckDB and not on SQLite. A **mixed**
+  column and a column of **dates in no recognised standard** are profiled to
+  their null count alone, each saying why in `withheld`, because an aggregate
+  over either returns a real number that is not the number asked for. It is a
+  verb rather than a flag on `info` because a directory that reports statistics
+  stops being one.
 - **Eighteen file formats read** (`.csv` `.tsv` `.txt` `.fwf` `.json` `.jsonl`
   `.ndjson` `.xml` `.yaml` `.yml` `.xlsx` `.xlsm` `.xls` `.ods` `.numbers`
   `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less `.fwf`,
@@ -114,7 +125,7 @@ rebuild it.
 - **Eighteen database backends**: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
   SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB,
   CrateDB, Firebird, openGauss, YDB, Databend and Exasol. Sixteen are exercised
-  against a container of their own in `docker-compose.test.yml`. The eight verbs
+  against a container of their own in `docker-compose.test.yml`. The nine verbs
   are the whole surface on all of them; three verbs are refused on some engines,
   and those refusals are listed under *Known limitations* below.
 - **Nine further ways of authenticating an endpoint are exercised by the test

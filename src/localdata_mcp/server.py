@@ -14,9 +14,16 @@ something that falls out of how the databases happen to be connected.
 
 Because a slot is a database rather than a view over a file, it has the verbs a
 database has: lifecycle (``attach``, ``detach``, ``save``), composition
-(``create``, ``update``, ``drop``), and introspection (``info``). Eight in total,
-several of them multi-faceted — **few and multi-faceted beats many and narrow**,
-because the model has less to choose between and each choice is obvious.
+(``create``, ``update``, ``drop``), introspection (``info``) and the profile that
+says whether the values inside can be trusted (``stats``). Nine in total, several
+of them multi-faceted — **few and multi-faceted beats many and narrow**, because
+the model has less to choose between and each choice is obvious.
+
+``stats`` is the newest and is a verb rather than a flag on ``info`` because they
+answer different questions: ``info`` is a directory — what is attached, what
+tables, what shape — and a directory that reports statistics stops being one.
+Nothing else here reports a missing value, which is what made an empty
+``mixed_columns`` readable as a clean bill of health (issue #94).
 
 ``update`` completes the composition triad and arrived with the formats that name
 their own tables: a workbook's sheets land under the names the spreadsheet chose,
@@ -61,7 +68,7 @@ from fastmcp import FastMCP
 
 from . import config
 from .export import ExportError, export_rows
-from .loader import IndexInfo, TableInfo
+from .loader import ColumnProfile, IndexInfo, TableInfo
 from .paths import PathNotAllowed, allowed_paths
 from .slots import Attachment, Registry, Slot, SlotError, SlotNotAvailable
 
@@ -106,6 +113,13 @@ mcp = FastMCP(
         "keep rows from one of those, write them to a file with "
         "query(nickname, sql, path=...), attach that file — a file-derived "
         "datasource is yours and is writable — and save that.\n\n"
+        "**stats(nickname, table) says whether the data is any good.** It is the "
+        "only call reporting missing values: every column comes back with nulls "
+        "and non_nulls, a numeric one adds min, max and avg, and median and "
+        "stddev appear only where the database computes them itself. Read nulls "
+        "before reporting an average — avg() skips them silently. A column "
+        "answering with 'withheld' and no statistics is one where an aggregate "
+        "would be wrong rather than approximate, and it says which.\n\n"
         "Every call answers with a payload, and a refusal is an ordinary answer "
         'rather than an error: it comes back as {"ok": false, "error": "…"} '
         "with the reason in plain words and, where a name was wrong, the names "
@@ -622,6 +636,93 @@ def info(nickname: str | None = None, table: str | None = None) -> dict[str, Any
             return _session_detail(registry)
         except SlotError as exc:
             return _failed(exc)
+
+
+@mcp.tool
+@_answers
+def stats(
+    nickname: str, table: str, columns: list[str] | None = None
+) -> dict[str, Any]:
+    """Profile a table's columns — how many values are missing, and their range.
+
+    This is the verb that answers *"can I trust this data?"*. ``info`` is a
+    directory — what is attached, what tables it holds, what shape they are —
+    and it says nothing about the values inside them. In particular **nothing
+    else here reports a missing value**: a column can be half empty and appear
+    in ``info`` looking perfectly ordinary.
+
+    Every column reports ``nulls`` and ``non_nulls``. A numeric column also
+    reports ``min``, ``max`` and ``avg``, and a date column normalised to ISO
+    8601 reports ``min`` and ``max``. ``median`` and ``stddev`` appear only where
+    the database computes them itself — nothing here approximates a statistic the
+    engine does not have, so their absence is a fact about the datasource rather
+    than about the column.
+
+    Two kinds of column are deliberately reported with their null count and
+    nothing else, and each says why in ``withheld``: a **mixed** column, where an
+    average silently coerces text to 0 and keeps it in the denominator, and a
+    column of **dates in no recognised standard**, where ``min`` and ``max``
+    compare alphabetically and return the wrong instant. Both would answer with a
+    real number that is not the number asked for.
+
+    Args:
+        nickname: The datasource holding the table.
+        table: The table to profile, by the name ``info`` lists.
+        columns: Restrict the profile to these columns. All of them by default;
+            a name matching nothing is refused, naming the columns that exist.
+
+    Refuses an unattached nickname, a missing table and a missing column, each
+    naming what was available instead.
+    """
+    with _lock:
+        registry = _session()
+        try:
+            described, profiled = registry.profile(nickname, table, columns)
+        except SlotError as exc:
+            return _failed(exc)
+
+        payload: dict[str, Any] = {
+            "ok": True,
+            "nickname": nickname,
+            "table": described.name,
+            "rows": described.row_count,
+            "columns": [_profile_payload(column) for column in profiled],
+        }
+        if warnings := _table_warnings(described):
+            payload["warnings"] = warnings
+        return payload
+
+
+def _profile_payload(profile: ColumnProfile) -> dict[str, Any]:
+    """One column's statistics, carrying only what was actually computed.
+
+    A statistic that was not asked for is **absent** rather than ``null``. The
+    two would be indistinguishable to a caller otherwise, and they mean opposite
+    things here: a missing ``avg`` says this server did not compute one, while
+    ``avg: null`` would say the engine computed one over no rows.
+    """
+    payload: dict[str, Any] = {
+        "name": profile.name,
+        "type": profile.declared_type,
+        "nulls": profile.nulls,
+        "non_nulls": profile.non_nulls,
+    }
+    optional = {
+        "min": profile.minimum,
+        "max": profile.maximum,
+        "avg": profile.average,
+        **profile.optional,
+    }
+    payload.update(
+        {
+            key: _wire_value(value)
+            for key, value in optional.items()
+            if value is not None
+        }
+    )
+    if profile.withheld:
+        payload["withheld"] = profile.withheld
+    return payload
 
 
 def _table_detail(registry: Registry, nickname: str, table: str) -> dict[str, Any]:

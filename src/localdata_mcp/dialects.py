@@ -78,6 +78,7 @@ from sqlalchemy import (
     Text,
     create_engine,
     event,
+    func,
     text,
 )
 from sqlalchemy.engine import URL, make_url
@@ -739,6 +740,39 @@ class Backend:
         """
         return {}
 
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """Statistics beyond the universal floor that this engine can compute.
+
+        A mapping from the name ``stats`` reports to something that turns a
+        column expression into the aggregate over it. **Empty generically**, and
+        that is the whole of the cost rule this verb is governed by: *free we
+        take, expensive we leave.* A function the engine lacks is simply not
+        reported — never emulated, never approximated, and never computed in a
+        second pass in Python.
+
+        The floor needs nothing from here. ``count``, ``min``, ``max`` and
+        ``avg`` are in every dialect this server reaches, so they are issued
+        generically and are the same four everywhere; a column's null count is
+        ``count(*) - count(col)``, which is stock SQL and is what the design
+        rests on.
+
+        Empty rather than full is the safe direction to default in. A backend
+        nobody has measured under-reports — the caller sees no median and knows
+        it, which is a true statement about what this server offers. Defaulting
+        the other way would have an unsubclassed dialect fail a statement mid
+        profile, turning "we do not report this" into "the verb does not work
+        here". So an entry appears only where it has been driven against the
+        engine, and the backends still to be measured are recorded as a coverage
+        gap rather than assumed.
+
+        A mapping rather than a set of flags because each name is also *how* the
+        aggregate is spelled, and the two are not separable: a median is
+        ``median(col)`` on one engine and ``percentile_cont(0.5) WITHIN GROUP
+        (ORDER BY col)`` on the next. Keeping the spelling beside the capability
+        is what stops a second dispatch on dialect name growing somewhere else.
+        """
+        return {}
+
 
 # ---------------------------------------------------------------------------
 # SQLite
@@ -1034,10 +1068,24 @@ class DuckDBBackend(Backend):
     Everything else here is still the generic answer. This class deliberately
     holds one fact; it used to live in :mod:`loader` as a dictionary keyed by
     dialect name, which is a dispatch on dialect name wearing a different hat.
+
+    It now holds a second: the two statistics DuckDB computes that SQLite does
+    not. See :meth:`optional_aggregates`.
     """
 
     name: str = "duckdb"
     read_only_query: ClassVar[Mapping[str, str]] = {"access_mode": "read_only"}
+
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """Both of them, driven against the engine rather than read about.
+
+        DuckDB spells the median ``median(col)`` directly, so no
+        ``WITHIN GROUP`` clause is needed here even though it also accepts
+        ``percentile_cont``. ``stddev_samp`` is the sample standard deviation,
+        which is the one worth reporting over a loaded file: a table is a sample
+        of the thing it describes far more often than it is the whole population.
+        """
+        return {"median": func.median, "stddev": func.stddev_samp}
 
 
 # ---------------------------------------------------------------------------

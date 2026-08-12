@@ -150,7 +150,7 @@ used throughout this document and in `docs/architecture/LEVEL0.md`, which states
 the same premise from the other end — *a slot **is** a database*, since that is
 what every datasource becomes.
 
-## The eight verbs
+## The nine verbs
 
 | Verb | What it does |
 | --- | --- |
@@ -162,6 +162,7 @@ what every datasource becomes.
 | `update(nickname, type, name, to)` | Rename a table, keeping its rows, types and indexes. For when the file chose the name — a workbook's `Sheet1`, which arrives as `sheet1` — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
 | `drop(nickname, type, name)` | Remove a table or an index. |
 | `save(nickname, path, force?)` | Write the database out to a SQLite file you keep — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
+| `stats(nickname, table, columns?)` | Profile a table's columns: how many values are **missing**, and the range of the ones that are there. Nothing else reports a missing value — see [What stats will and will not tell you](#what-stats-will-and-will-not-tell-you). |
 
 ## What it reads, writes and connects to
 
@@ -244,9 +245,33 @@ SQLite needs no extra and MariaDB and YugabyteDB share another backend's.
 `formats` installs the seven format extras (the six for reading, plus `markdown`
 for `.md` output), and `all` installs both.
 
+### What stats will and will not tell you
+
+`stats(nickname, table)` is the only call that reports **missing values**, which
+is the failure most likely to make a confident answer wrong. Every column comes
+back with `nulls` and `non_nulls`; a numeric column adds `min`, `max` and `avg`,
+and a date column normalised to ISO 8601 adds `min` and `max`.
+
+It is governed by one rule — **free we take, expensive we leave.** A statistic
+the engine does not compute itself is **not reported**, never emulated and never
+approximated in a second pass, so `median` and `stddev` appear on DuckDB and not
+on SQLite. Their absence is a fact about the datasource, not about the column.
+Strings get the null count and nothing more. Every aggregate goes into one
+`SELECT`, so a profile costs one scan of the table whatever its width.
+
+**Two kinds of column are reported with their null count and nothing else**, each
+saying why in `withheld`, because an aggregate over them returns a real number
+that is not the number asked for:
+
+- a **mixed** column, where `avg()` coerces the text values to 0 and keeps them
+  in the denominator — the average of 1..5 plus two text rows is 2.14, not 3.0;
+- a column of **dates in no recognised standard**, where `min` and `max` compare
+  alphabetically, so `30.11.2023` sorts after `01.03.2025` and `max()` answers
+  with the earliest instant in the table.
+
 ### Not every verb reaches every backend
 
-The eight verbs are the whole surface everywhere. Three of them cannot be
+The nine verbs are the whole surface everywhere. Three of them cannot be
 carried out on some engines, and the refusal says so and names the way round:
 
 - **`save` writes out a database this server is holding.** A file-derived slot
@@ -609,7 +634,7 @@ path depends on `uv sync --all-extras` having been run in the clone first.
 
 ## Documentation
 
-- [Level 0 specification](docs/architecture/LEVEL0.md) — the premise, the three user journeys, the eight verbs
+- [Level 0 specification](docs/architecture/LEVEL0.md) — the premise, the three user journeys, the nine verbs
 - [Measured constraints](docs/CONSTRAINTS.md) — the behaviour that shapes the design, with the numbers behind it
 - [The shipped skill](skills/data/local-data/SKILL.md) — how an agent should talk to a user about their data
 - [Changelog](CHANGELOG.md) — and read the 3.0.0 entry before upgrading from 2.x, because none of that tool surface survived

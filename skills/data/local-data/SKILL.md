@@ -1,7 +1,7 @@
 ---
 name: local-data
 description: Answer questions about local data files and databases with SQL. Attach a spreadsheet, CSV, Parquet file, SQLite or DuckDB file, or a database URL, then look one source up against another and keep the result. Use whenever someone points at a data file or a database and asks what is in it.
-allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save
+allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save mcp__localdata__stats
 argument-hint: "<file-path> [and what you want to know]"
 ---
 
@@ -175,7 +175,7 @@ better for it, and so does the file if they `save` it.
 
 ### 4. "It's in our Postgres, not a file"
 
-A database URL attaches exactly like a file, and the same eight verbs address it:
+A database URL attaches exactly like a file, and the same nine verbs address it:
 
 ```
 attach(database="postgresql://user:pass@host:5432/sales")
@@ -330,6 +330,41 @@ retry for you — say what is in the way and ask. Once they say replace it, pass
 including the file this very datasource came from — and `force` does not change
 that. If you hit it, the path is wrong, not the flag.
 
+## Knowing whether the data is any good
+
+`stats(nickname, table)` profiles the columns. It is the only call that reports
+**missing values**, and a missing value is the failure people actually hit:
+
+```
+stats(nickname="sales", table="sales")
+```
+
+Every column comes back with `nulls` and `non_nulls`. A numeric one adds `min`,
+`max` and `avg`; a date column normalised to ISO 8601 adds `min` and `max`.
+`median` and `stddev` appear only when the database itself has them — SQLite
+does not, DuckDB does — so their absence says something about the datasource,
+not about the column. Narrow a wide table with `columns=["amount"]`.
+
+**Read `nulls` before you report an average.** `avg()` skips nulls silently, so
+an average over a column that is a tenth empty is an average of the other nine
+tenths and looks exactly like one that is not. This is worth saying to the user
+in their own words: *"the average is 41.20, but 52 of the 3,000 rows have no
+amount recorded — that average is over the 2,948 that do."*
+
+**A column that comes back with `withheld` and nothing else is a warning, not a
+gap.** Two kinds of column get their null count and no statistics, because an
+aggregate over them would return a real number that is not the number you asked
+for:
+
+- a **mixed** column, where `avg()` counts its text values as 0 and keeps them
+  in the denominator;
+- a column of **dates in no recognised standard**, where `min` and `max` compare
+  alphabetically and hand back the wrong instant.
+
+In both cases `withheld` says which it is. Fix the column — filter the text
+values out, or compare the dates with an expression that reorders the parts —
+rather than reaching for the number a different way.
+
 ## The naming conversation
 
 The server never asks a question; it takes a sensible default and moves on. You
@@ -464,13 +499,13 @@ Before reporting a number:
   column's own `temporal` and `unit` fields too.
 - If it is a join, was the match complete — and did you say so either way?
 - Does the row count make sense against what `info` said was there?
-- **Is the column you are summing actually populated?** `mixed_columns` answers
-  one question only — whether a column holds both numbers and text — so an empty
-  `mixed_columns` is not a clean bill of health, and nothing else reports missing
-  values. `SELECT COUNT(*) FROM t WHERE c IS NULL` is the whole check. It matters
-  because `avg()` and `sum()` skip nulls silently, so an average over a column
-  that is a tenth empty is an average of the other nine tenths and looks
-  identical to one that is not.
+- **Is the column you are summing actually populated?** `stats(nickname, table)`
+  is the whole check — it reports `nulls` and `non_nulls` per column, and nothing
+  else does. `mixed_columns` answers one question only, whether a column holds
+  both numbers and text, so an empty `mixed_columns` is **not** a clean bill of
+  health and never was. It matters because `avg()` and `sum()` skip nulls
+  silently, so an average over a column that is a tenth empty is an average of
+  the other nine tenths and looks identical to one that is not.
 - **If you are reporting a trend, does every period actually cover a whole
   period?** A last month that stops on the 29th makes flat usage read as a
   decline. `SELECT MIN(c), MAX(c) FROM t GROUP BY period` says so in one call.

@@ -104,7 +104,7 @@ localdata-mcp/
 │   ├── foreign.py                # Cross-backend helpers
 │   └── endpoints.py              # The endpoint catalogue and its auth-mode axis
 ├── docs/
-│   ├── architecture/LEVEL0.md    # The specification: premise, three arcs, eight verbs
+│   ├── architecture/LEVEL0.md    # The specification: premise, three arcs, nine verbs
 │   └── CONSTRAINTS.md            # Measured behaviour, with the evidence
 ├── assets/                       # The logo, referenced by absolute URL from the README
 ├── non_factual/                  # Quarantined prose — see its README before reading

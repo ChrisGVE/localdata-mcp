@@ -9,7 +9,7 @@ and more backends are **still level 0**, because they are nothing new — the sa
 pointed at more kinds of source. Formats are done. The backends are a **closed** catalogue
 of **eighteen**, worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
 SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB, Firebird,
-openGauss, YDB, Databend and Exasol. Each is reached by the same eight verbs, and each is
+openGauss, YDB, Databend and Exasol. Each is reached by the same nine verbs, and each is
 exercised against a container of its own — except SQLite and DuckDB, which are files and
 need none. **The catalogue is worked through**: every entry that can be reached on this
 machine is landed.
@@ -42,7 +42,7 @@ dialects it never reached stay silent (issue #46).
 nickname. A CSV becomes a fresh in-memory database holding one table named after the
 file; a workbook becomes one holding a table per sheet; a SQLite or DuckDB file arrives
 with the tables it already has; a service URL becomes its own engine. Because all of
-them are databases, the same eight verbs work on any of them. Each call names one
+them are databases, the same nine verbs work on any of them. Each call names one
 datasource and the SQL addresses tables inside it by their own names; putting two
 datasources together is `create`, which copies one into the other so the join is an
 ordinary statement.
@@ -80,9 +80,10 @@ they were file verbs wearing database names. Attach made a database, and after t
 could only read it. A thing you can only read is a view over a file, which is the model
 this design leaves behind.
 
-So the surface grows the verbs a database actually needs — lifecycle, composition, and
-introspection — and it grows them as **few and multi-faceted** rather than many and
-narrow. The LLM has less to choose between, and each choice is obvious.
+So the surface grows the verbs a database actually needs — lifecycle, composition,
+introspection and, since 2026-08-12, the profile that says whether the values inside can be
+trusted — and it grows them as **few and multi-faceted** rather than many and narrow. The
+LLM has less to choose between, and each choice is obvious.
 
 ## The three arcs
 
@@ -162,7 +163,32 @@ not inferred, and freelist-corrected because `page_count` does not shrink after 
 Temp-file lifecycle: deleted on **eviction**, on **detach**, and on **termination with
 connections live**. Nothing more. Richer heuristics are possible and not worth the time.
 
-## The eight verbs
+## The nine verbs
+
+> **Amended (2026-08-12) — the surface gained a ninth verb, `stats`, and this document
+> counted eight everywhere.** The count was never the principle. What this design states is
+> *"few and multi-faceted rather than many and narrow"*, and nine is still few; eight was an
+> observation about the surface rather than a constraint on it. Both numbers are updated
+> throughout rather than left to disagree.
+>
+> **Why it is a verb and not a flag on `info`.** The trigger was
+> [#94](https://github.com/ChrisGVE/localdata-mcp/issues/94): a cold agent read `info`'s
+> `mixed_columns: []` as a clean bill of health and reported 3,000 rows as trustworthy,
+> while 52 values in a `REAL` column were null. Nothing in `attach`, `info` or the documented
+> checklist would ever have said so. The framing the issue proposed — *should `attach` or
+> `info` report a null count* — is the wrong question, and both halves of it are refused:
+> **`attach` reports load-time facts** and why a format could not be read, **`info` is a
+> directory** — sources, tables, schema — and a directory that reports statistics stops
+> being one. A profile is a third role, so it is a third verb. An `info(stats=true)` flag
+> would re-import exactly the confusion this split exists to remove.
+>
+> **Why it is still level 0**, given this document's own test — *nothing new, the same
+> building blocks pointed at more kinds of source*. Under the cost rule below, `stats` adds
+> no statistics engine, no second pass, and no dependency: it is SQL aggregates the engine
+> already computes, issued over the same slot machinery, and refused per-dialect through the
+> same capability declaration `builds_indexes` and `renames_tables` already use. Anything
+> needing emulation is level 1 — and that line is drawn *through* the verb rather than
+> around it, which is what keeps the verb here and the statistics platform above.
 
 The table gives the shape and the one-line purpose. What each verb costs and why it is
 drawn where it is follows underneath.
@@ -183,6 +209,7 @@ than something they catch.
 | `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes — the answer to a file that named its own tables. |
 | `drop` | `nickname`, `type`, `name` | Remove a table or an index. Composition needs both directions, for both types. |
 | `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. |
+| `stats` | `nickname`, `table`, `columns?` | Profile a table's columns — missing values, and the range of the ones that are there. The verb that answers *"can I trust this data?"*, which no other verb does. |
 
 **`attach`.** A workbook becomes a database holding a table per sheet and a `.numbers`
 document one per table, snake_cased. `delimiter` applies to character-separated text only
@@ -210,6 +237,33 @@ engines named in the backend table.
 a live slot sits on is refused regardless. It writes out a database this server holds, so it
 is refused on every backend but SQLite; the refusal names the route round it, which is
 three calls — `query(path=…)`, `attach` that file as a datasource of your own, `save` that.
+
+**`stats`.** Governed by one rule — **cost: free we take, expensive we leave.** Every column
+reports `nulls` and `non_nulls`, because `count(*) - count(col)` is stock SQL on every engine
+here and that is the floor the whole design rests on. A numeric column adds `min`, `max` and
+`avg`; a date column normalised to ISO 8601 adds `min` and `max`, its text order being
+chronological order. **A function the engine lacks is simply not reported** — never emulated,
+never approximated, never a second pass in Python — so `median` and `stddev` appear only where
+the database computes them itself, and their absence is a fact about the datasource rather
+than about the column. Strings get the null count and nothing more; length statistics are
+level 1. Every aggregate for every column goes into one `SELECT`, so a profile costs one scan
+whatever its width.
+
+**Two kinds of column are deliberately profiled to their null count and no further**, each
+saying why in `withheld`, and they are the reason this verb is not merely a convenience. A
+**mixed** column's `avg()` coerces its text values to 0 and keeps them in the denominator, so
+the average of 1..5 plus two text rows is 2.14 rather than 3.0. A column of **dates in no
+recognised standard** compares alphabetically, so `min()` and `max()` answer with the
+alphabetically first and last value rather than the earliest and latest instant. Both return
+a real number from a real column, which is what makes them worse than silence under a verb
+whose whole promise is that the numbers are true — the same judgement `snapshot` and
+`builds_indexes` make about an answer that would be a lie the caller then builds on.
+
+Which statistics a backend offers is declared per-dialect and **defaults to none**, so a
+dialect nobody has measured under-reports rather than failing a statement mid-profile.
+Measured so far: SQLite has neither `median` nor `stddev`; DuckDB has both. The other
+sixteen are a declared coverage gap and are left at the floor until a container run measures
+them.
 
 ### Write is not the default
 
