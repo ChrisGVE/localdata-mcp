@@ -1140,6 +1140,16 @@ class MySQLBackend(Backend):
         and ample. A prefix index still answers a query over the whole value —
         MySQL narrows on the prefix and rechecks the rest — so what it costs is
         selectivity, and that is what the note is for.
+
+        **The budget is the whole key, not the part of it that needs a prefix.**
+        A bounded ``VARCHAR`` in the same index spends the same 3072 bytes, so
+        what it spends is subtracted before the rest is divided. Dividing the
+        whole limit among the unbounded columns alone put a ``VARCHAR(600)``
+        beside a ``TEXT`` at 3420 bytes and InnoDB refused the statement with
+        error 1071 — measured, localdata#93. Only columns that declare a length
+        can be charged for here; a fixed-width scalar is left at zero, which
+        keeps this an estimate that can still be a little low, and the estimate
+        is the one MySQL's own limit is written in.
         """
         unbounded = [
             column
@@ -1149,9 +1159,24 @@ class MySQLBackend(Backend):
         if not unbounded:
             return super().build_index(name, table, columns)
 
-        prefix = max(
-            1, min(_TEXT_PREFIX_CHARS, _INNODB_KEY_BYTES // (4 * len(unbounded)))
-        )
+        bounded = {
+            column: length
+            for column in columns
+            if column not in unbounded
+            and (length := getattr(table.c[column].type, "length", None))
+        }
+        budget = _INNODB_KEY_BYTES - 4 * sum(bounded.values())
+        if budget < 4 * len(unbounded):
+            widest = max(bounded, key=bounded.__getitem__)
+            raise UnsupportedOperation(
+                f"Cannot index {', '.join(columns)} together on {self.name}: "
+                f"{widest} alone is declared {bounded[widest]} characters wide, "
+                f"which leaves nothing of the {_INNODB_KEY_BYTES}-byte key for "
+                f"{', '.join(unbounded)}. Drop {widest} from the index, or index "
+                f"it on its own."
+            )
+
+        prefix = max(1, min(_TEXT_PREFIX_CHARS, budget // (4 * len(unbounded))))
         index = Index(
             name,
             *[table.c[column] for column in columns],

@@ -1615,3 +1615,100 @@ def test_the_article_holds_for_a_name_this_file_has_never_seen():
     assert article_for("exasol") == "an"
     assert article_for("postgresql") == "a"
     assert article_for("mssql") == "an"
+
+
+# ---------------------------------------------------------------------------
+# MySQL's index key budget
+# ---------------------------------------------------------------------------
+
+
+def _mysql_key_bytes(table, columns, lengths):
+    """What InnoDB will charge for this key, on the code's own utf8mb4 basis.
+
+    Four bytes a character, the figure `dialects.py` derives its prefix from —
+    a prefixed column costs its prefix, a `VARCHAR(n)` costs all `n`, and the
+    point of the test is that both land in the same key.
+    """
+    total = 0
+    for column in columns:
+        kind = table.c[column].type
+        if column in lengths:
+            total += 4 * lengths[column]
+        elif getattr(kind, "length", None):
+            total += 4 * kind.length
+    return total
+
+
+def test_a_mysql_prefix_is_budgeted_against_the_whole_key_not_its_unbounded_part():
+    """A bounded column in the same index still spends the key, so it must count.
+
+    Confirmed against MySQL 8.0.46 (localdata#93): a `VARCHAR(600)` beside a
+    `TEXT` was indexed as `(wide_varchar, some_text(255))`, because the 3072-byte
+    budget was divided among the unbounded columns *alone* and the 2400 bytes the
+    `VARCHAR` costs were never subtracted. 2400 + 1020 = 3420, and InnoDB refused
+    with error 1071.
+
+    The assertion is the budget rather than a particular prefix: what has to hold
+    is that the key fits, not that the arithmetic picked any one number.
+    """
+    from sqlalchemy import Column, MetaData, String, Table, Text
+
+    backend = backend_for("mysql")
+    table = Table(
+        "wide",
+        MetaData(),
+        Column("wide_varchar", String(600)),
+        Column("some_text", Text),
+    )
+
+    index, notes = backend.build_index("ix_wide", table, ["wide_varchar", "some_text"])
+
+    lengths = index.kwargs["mysql_length"]
+    assert _mysql_key_bytes(table, ["wide_varchar", "some_text"], lengths) <= 3072
+    # And the note still says what was shortened, since that is why it exists.
+    assert "some_text" in " ".join(notes)
+
+
+def test_a_mysql_index_with_room_to_spare_still_gets_the_conventional_prefix():
+    """The control: narrowing must not become the answer to every index.
+
+    Without this, the fix above passes just as well by clamping every prefix to
+    one character. A lone `TEXT` column has the whole budget and should keep the
+    255 characters the dialect calls conventional and ample.
+    """
+    from sqlalchemy import Column, MetaData, Table, Text
+
+    backend = backend_for("mysql")
+    table = Table("narrow", MetaData(), Column("some_text", Text))
+
+    index, _ = backend.build_index("ix_narrow", table, ["some_text"])
+
+    assert index.kwargs["mysql_length"] == {"some_text": 255}
+
+
+def test_a_mysql_index_with_no_room_left_is_refused_naming_the_column_to_drop():
+    """When the bounded column eats the key, say which one, not how many bytes.
+
+    What MySQL returns in this case is `1071, Specified key was too long` and a
+    byte count, which does not name the column a caller would have to remove.
+    Every other engine that cannot build an index refuses in this server's own
+    words, and this is the one MySQL case where the arithmetic can see the
+    answer before the statement is sent.
+    """
+    from sqlalchemy import Column, MetaData, String, Table, Text
+
+    backend = backend_for("mysql")
+    table = Table(
+        "huge",
+        MetaData(),
+        Column("enormous", String(800)),
+        Column("some_text", Text),
+    )
+
+    with pytest.raises(UnsupportedOperation) as refused:
+        backend.build_index("ix_huge", table, ["enormous", "some_text"])
+
+    message = str(refused.value)
+    assert "enormous" in message, "the caller is not told which column to drop"
+    assert "800" in message
+    assert "3072" in message
