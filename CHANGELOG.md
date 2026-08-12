@@ -292,8 +292,8 @@ each was reported against 2.x and none of the code carrying it survives:
     stands. DML still rolls back, so the guarantee holds everywhere it can.
   - **CrateDB** has no transactions at all, so **both** DDL *and* DML survive:
     a refused `INSERT` stands. It is the worse of the two, and the refusal text
-    names only `CREATE`/`DROP`, which reads as *this was not DDL, therefore
-    nothing happened*
+    says so — it is composed from whichever axis survives on the backend it
+    came from, so there it names the rows as well as `CREATE`/`DROP`
     ([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
 
   These are the limitations where following the documentation can still leave

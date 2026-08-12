@@ -338,8 +338,9 @@ to withhold. **Two are exceptions.** Oracle commits DDL before anything
 can object and has no session-level read-only posture, so a `CREATE` sent to
 `query` there really does take effect; its DML still rolls back. CrateDB has no
 transactions at all, so **both** a refused `CREATE` and a refused `INSERT` stand
-— the worse of the two, and the refusal names only `CREATE`/`DROP`, so on
-CrateDB it must not be read as meaning nothing happened
+— the worse of the two. The refusal names what survived on the backend that
+issued it, so on CrateDB it says the rows stand as well as the schema, and on
+neither engine may a refusal be read as meaning nothing happened
 ([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
 
 Landing the second file inside the first database is not just tidier. **`save`

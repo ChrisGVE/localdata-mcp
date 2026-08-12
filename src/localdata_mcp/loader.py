@@ -143,14 +143,30 @@ _NOT_A_READ = (
     "either. A statement that does read returns rows even when it matches none."
 )
 
-#: Added where the refusal arrives too late to be the whole truth. Only Oracle
-#: needs it today; the wording is the backend's name and this sentence, so a
-#: second such dialect says the same thing without a second message.
-_DDL_ALREADY_RAN = (
-    "One caveat specific to {name}: it commits a CREATE or a DROP as it runs it, "
-    "before anything here can object, so if that is what this was then it has "
-    "already taken effect and this refusal did not undo it. Check with info, and "
-    "use drop to remove what it made."
+#: Added where the refusal arrives too late to be the whole truth. Two backends
+#: need it, and they arrive by different routes: Oracle commits a CREATE or a
+#: DROP as it runs it, while CrateDB never had a transaction to withhold at all.
+#: The wording is about the *consequence* rather than the mechanism, so one
+#: sentence is true of both and of the next dialect that answers either way —
+#: which is the same reason the axis is asked instead of the dialect named.
+_ARRIVED_TOO_LATE = (
+    "One caveat specific to {name}: this refusal reaches the statement after the "
+    "database has. {survived}"
+)
+
+#: What may have survived, asked separately for schema and for rows because a
+#: backend can answer differently for each — Oracle's DDL survives and its DML
+#: does not. Naming only the axis that happens to be consulted is how a refused
+#: INSERT on CrateDB came to be handed a caveat about CREATE and DROP, which
+#: reads as *this was not DDL, so nothing happened*, while the row stands.
+_DDL_SURVIVED = (
+    "If this was a CREATE or a DROP it has already taken effect and this refusal "
+    "did not undo it — check with info, and use drop to remove what it made."
+)
+_DML_SURVIVED = (
+    "If it wrote rows, those rows have already taken effect and are in the table "
+    "— check with query. Nothing on this surface deletes rows, so undoing that "
+    "means drop on the table and create again."
 )
 
 
@@ -459,14 +475,26 @@ def _run_again_once(read: Callable[[], _T]) -> _T:
 def _not_a_read(entry: Tagged) -> str:
     """The refusal, plus the caveat where the refusal cannot be the whole truth.
 
-    On a backend that commits DDL as it runs it, a ``CREATE`` sent here has
-    already happened by the time anything can object, and saying only "refused"
-    would be the same lie in the other direction as calling a rolled-back write
-    a success.
+    Where a statement reaches the data before anything here can object, saying
+    only "refused" is the same lie in the other direction as calling a
+    rolled-back write a success. Both axes are consulted and the caveat is
+    composed from whichever survive on this backend, because a caveat that names
+    the wrong one points the caller away from what actually happened — worse
+    than no caveat, which at least leaves them to check.
     """
-    if entry.backend.ddl_survives_refusal():
-        return f"{_NOT_A_READ} {_DDL_ALREADY_RAN.format(name=entry.backend.name)}"
-    return _NOT_A_READ
+    backend = entry.backend
+    survived = [
+        clause
+        for asked, clause in (
+            (backend.ddl_survives_refusal(), _DDL_SURVIVED),
+            (backend.dml_survives_refusal(), _DML_SURVIVED),
+        )
+        if asked
+    ]
+    if not survived:
+        return _NOT_A_READ
+    caveat = _ARRIVED_TOO_LATE.format(name=backend.name, survived=" ".join(survived))
+    return f"{_NOT_A_READ} {caveat}"
 
 
 def _objected_to_the_leading_verb(message: str, sql: str) -> bool:

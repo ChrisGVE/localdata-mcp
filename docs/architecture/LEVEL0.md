@@ -250,8 +250,10 @@ which is not equally far:
   the one backend where the floor is absent on **both** axes: `dml_survives_refusal()` and
   `ddl_survives_refusal()` are both `True`, and a refused `INSERT` is in the index before
   this server has anything to say about it. It is worse than Oracle, which loses only the
-  DDL half. The refusal text names `CREATE`/`DROP` for both, which on CrateDB points a
-  reader away from what happened ([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
+  DDL half. Both halves of the axis are read when the refusal is composed, so on CrateDB it
+  names the rows as well as `CREATE`/`DROP`: a caveat that names the wrong half points a
+  reader away from what happened, which is worse than none at all
+  ([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
 
 Underneath all of them is one dialect-free rule: **a statement that returns no rows is not
 a read**, and is refused on that ground. No SQL is parsed to decide it — a `SELECT` returns

@@ -1422,6 +1422,47 @@ def test_the_transactionless_backends_do_not_all_answer_the_same_way():
     assert crate.ddl_survives_refusal() is True
 
 
+def test_the_refusal_names_whichever_axis_actually_survives():
+    """Both halves of the axis are read, and the caveat is built from the answer.
+
+    Only the DDL half used to be consulted, so a refused ``INSERT`` on CrateDB —
+    where the row really does land — came back with a caveat about ``CREATE``
+    and ``DROP``. To a caller that reads as *this was not DDL, so nothing
+    happened*, which points away from the row instead of at it: worse than no
+    caveat at all, since no caveat at least leaves them to check (issue #84).
+
+    Driven through :func:`loader._not_a_read` rather than through a live
+    connection, because what is under test is the composition and the three
+    backends below give it its three distinct answers. That the row genuinely
+    survives on CrateDB is the container test's job, and it asserts it.
+    """
+    from types import SimpleNamespace
+
+    from localdata_mcp.loader import _not_a_read
+
+    def refusal_for(name: str) -> str:
+        return _not_a_read(SimpleNamespace(backend=backend_for(name)))
+
+    # Neither axis: the plain refusal, with nothing to qualify it.
+    plain = refusal_for("sqlite")
+    assert "caveat" not in plain
+    assert "already taken effect" not in plain
+
+    # DDL only. The wording the container test pins is kept verbatim.
+    oracle = refusal_for("oracle")
+    assert "One caveat specific to oracle:" in oracle
+    assert "If this was a CREATE or a DROP" in oracle
+    assert "already taken effect" in oracle
+    assert "rows" not in oracle.split("One caveat")[1]
+
+    # Both. The row is what the caller has to be told about, and the remedy is
+    # not `drop` on what a CREATE made — there is no verb here that deletes rows.
+    crate = refusal_for("crate")
+    assert "If this was a CREATE or a DROP" in crate
+    assert "If it wrote rows, those rows have already taken effect" in crate
+    assert "drop on the table and create again" in crate
+
+
 # ---------------------------------------------------------------------------
 # Exasol
 # ---------------------------------------------------------------------------
