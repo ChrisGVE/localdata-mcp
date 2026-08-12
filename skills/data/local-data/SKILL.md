@@ -155,6 +155,10 @@ because the totals looked plausible.
 
 A workbook's tables arrive under the names the *spreadsheet* chose, lowercased
 and snake_cased — `Sheet1` becomes `sheet1`, `Q2 Prices` becomes `q2_prices`.
+A tab whose name **starts with a digit** gets a `table_` in front of it, because
+no SQL identifier may begin with one: a year-per-tab workbook of `2025` and
+`2026` arrives as `table_2025` and `table_2026`. A tab whose name survives the
+snake_casing as nothing at all — `...` — arrives as plain `table`.
 **Use the name `attach` reported, not the one on the tab.** A tab name that
 differs only in case resolves to the table anyway, so `Sheet1` finds `sheet1`;
 one the snake_casing did more to — `Q2 Prices` — does not, and is refused for
@@ -288,6 +292,20 @@ save(nickname, path="/path/analysis.db")
 Writes the whole database — every table added — to a file they own. It stays
 open afterwards. Attaching it again another day is an ordinary `attach`, so it
 comes back **read-only** unless they pass `writable=true`.
+
+**`save` keeps the tables, not the answer you worked out.** A result you reached
+with a `query` lives in the reply and nowhere else, so give it a table of its own
+before saving — write it out, then read it back in under a name you choose:
+
+```
+query(nickname, "SELECT region, COUNT(*) AS n FROM orders GROUP BY region",
+      path="/path/by_region.csv")
+create(nickname, type="table", table="by_region", source="/path/by_region.csv")
+save(nickname, path="/path/analysis.db")
+```
+
+Without the middle call the saved database holds what they started with and not
+what you found, and they have to redo the work to see it again.
 
 Where `save` is refused, the answer is one of two things, and the refusal names
 the first:
@@ -446,5 +464,15 @@ Before reporting a number:
   column's own `temporal` and `unit` fields too.
 - If it is a join, was the match complete — and did you say so either way?
 - Does the row count make sense against what `info` said was there?
+- **Is the column you are summing actually populated?** `mixed_columns` answers
+  one question only — whether a column holds both numbers and text — so an empty
+  `mixed_columns` is not a clean bill of health, and nothing else reports missing
+  values. `SELECT COUNT(*) FROM t WHERE c IS NULL` is the whole check. It matters
+  because `avg()` and `sum()` skip nulls silently, so an average over a column
+  that is a tenth empty is an average of the other nine tenths and looks
+  identical to one that is not.
+- **If you are reporting a trend, does every period actually cover a whole
+  period?** A last month that stops on the 29th makes flat usage read as a
+  decline. `SELECT MIN(c), MAX(c) FROM t GROUP BY period` says so in one call.
 
 A wrong number delivered confidently is worse than a slow answer.
