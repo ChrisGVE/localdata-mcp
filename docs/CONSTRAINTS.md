@@ -742,13 +742,13 @@ Each of these is fixed; they are recorded because the *class* recurs.
 
 | Found | Where the fix belonged |
 |---|---|
-| `info` raised a driver error for **every** table inside an attached database — schema inspection ran on the read engine, whose authorizer refuses the `PRAGMA` the inspector speaks | the code: inspect over the write engine, as residency already does |
+| `directory` raised a driver error for **every** table inside an attached database — schema inspection ran on the read engine, whose authorizer refuses the `PRAGMA` the inspector speaks | the code: inspect over the write engine, as residency already does |
 | The mixed-column warning prescribed `typeof(col)='integer'`, which cannot discriminate on the column that produced it (§1.5) | the code and the skill, and §1.5 above, which is where the advice came from |
 | `query`'s docstring advertised writes it refuses, contradicting the server instructions | the docstring |
 | The README taught `nickname.table` in both worked examples | the README, plus a test that greps for it |
-| All three skill-less agents called `info` immediately after `attach`, for a payload they already held | the docstrings — the skill already said it, and its readers mostly skipped the call |
+| All three skill-less agents called `directory` immediately after `attach`, for a payload they already held | the docstrings — the skill already said it, and its readers mostly skipped the call |
 
-**The two that matter beyond themselves.** The `info` failure had been shipped and green for a
+**The two that matter beyond themselves.** The `directory` failure had been shipped and green for a
 session: every table the test suite describes is one the loader *remembered loading*, so the branch
 that asks the database was never entered. A suite can be exhaustive over the path its fixtures
 build and blind to the path a user takes. And the mixed-column advice was correct where it was
@@ -946,7 +946,7 @@ went unnamed:
   wrong**, because re-attaching the source restores only the source's own table;
 - the duplicate-attach refusal, which sends the caller to a slot it under-describes.
 
-`detach` and `info` were correct throughout — they call `Registry.tables()`. Fixed 2026-07-27 at all
+`detach` and `directory` were correct throughout — they call `Registry.tables()`. Fixed 2026-07-27 at all
 three sites, with tests that compose before they evict.
 
 **Why the suite missed it**, and it is the §7.2 shape exactly: the covering test is named
@@ -1031,7 +1031,7 @@ Recorded because a pass with findings should not read as a failing report.
   overriding a spare file but **not** a file a live slot sits on, both written `0600` (§4.1).
 - **Arc 2 end to end.** `create` → join → anti-join in both directions (4 and 6 orphans, exact) →
   index → `save` → re-attach: 300/61 rows, aggregate to the cent, index survived, read-only again.
-- **The §7.2 fixes hold.** `info` on a table inside an attached database works; the mixed-column
+- **The §7.2 fixes hold.** `directory` on a table inside an attached database works; the mixed-column
   warning now names the offending value, and the remedy it prescribes was run verbatim and returned
   the true mean (20.6407) against the naive 20.2967 it prevents.
 - **Nicknames.** Leading digit prefixed, spaces snake_cased, duplicate source refused by name,
@@ -2025,7 +2025,7 @@ Three separate things fail, and only the first is about syntax:
    a caller asking for an index is asking.
 3. **The dialect reflects no indexes at all.** After creating one, `system.data_skipping_indices`
    shows `('probe4_ix', 'minmax', 'salary')` while `get_indexes()` and a reflected `Table.indexes`
-   both return empty. So one created here could afterwards be neither listed by `info` nor found by
+   both return empty. So one created here could afterwards be neither listed by `directory` nor found by
    `drop`.
 
 Creating one anyway, under a name handed back to the caller, would produce an answer that reads as
@@ -2597,7 +2597,7 @@ connector rather than in the parser:
 | column `"Dept"` | `dept` | — |
 
 Nothing breaks: both spellings still find the table. What breaks is the *answer*. `update` reported
-the table as `Mixed` while `info`, in the very next payload, listed it as `mixed` — one response
+the table as `Mixed` while `directory`, in the very next payload, listed it as `mixed` — one response
 naming a table the other says is not there.
 
 **The fix is generic and needed no dialect fact at all.** `Workspace.landed_as` asks the database
@@ -2828,7 +2828,7 @@ A column store had no obligation to keep them and does.
 
 **Case survives.** Trino folds every identifier to lower case at the connector whether quoted or not,
 which is what made issue #48 the bad kind of defect — both spellings resolved, so nothing failed while
-`update` and `info` disagreed about a table's name one payload apart. MonetDB preserves what it is
+`update` and `directory` disagreed about a table's name one payload apart. MonetDB preserves what it is
 given, so `landed_as` reports back the name that was asked for, and the assertion that a rename keeps
 its case holds without the seam being consulted.
 
@@ -3646,7 +3646,7 @@ is recorded because it changes the shape of a table the caller gets back:
 | **add a surrogate key holding the row's position** | chosen |
 
 So `insert_frame` prepends `_row`, an integer key holding each row's position in the file, and
-**reports it**: the column appears in `info` like any other, and the table's notes say why it is
+**reports it**: the column appears in `directory` like any other, and the table's notes say why it is
 there. A column the caller did not ask for and cannot account for would be a table shape they have to
 reverse-engineer.
 
@@ -3984,7 +3984,7 @@ table_schema = %(schema_name)s`, and two more like it), all table-valued and all
 are proved *as the driver will send them* — parameters substituted through the cursor's own `mogrify` —
 because the unbound text is SQL the server never sees.
 
-**Two costs, both real.** `SHOW` and `DESCRIBE` cannot be sent through `query` on this backend; `info`
+**Two costs, both real.** `SHOW` and `DESCRIBE` cannot be sent through `query` on this backend; `directory`
 answers what they were for, and the refusal says so. And every read pays a planning round trip:
 
 | Read | No posture | With posture | Repeat (no posture / posture) |
@@ -4016,7 +4016,7 @@ if not operation:
 ```
 
 Afterwards `inspect(conn).get_indexes(t)` and `SHOW INDEXES` are both empty. An index reported under a
-name the caller is handed, which `info` cannot list and `drop` cannot remove, is the fail-open shape
+name the caller is handed, which `directory` cannot list and `drop` cannot remove, is the fail-open shape
 this server refuses to pass on — so `builds_indexes()` is `False` and the verb refuses, naming what
 Databend really offers. Both measured on the live server:
 
@@ -4045,7 +4045,7 @@ CREATE TABLE probe (clock TIME)
 
 The dialect renders `Time` as `DATETIME`, and the substitution is **invisible from Core**: a typed
 `select()` hands back `time(14, 30)`, because SQLAlchemy's own `Time` re-derives it. Read as text —
-which is what `query` does — the same column is `datetime(1970, 1, 1, 14, 30, tzinfo=utc)`, and `info`
+which is what `query` does — the same column is `datetime(1970, 1, 1, 14, 30, tzinfo=utc)`, and `directory`
 reports the column as `DATETIME`. CrateDB's shape (§19.5), not Oracle's: the column *is* made, and
 holds something else.
 

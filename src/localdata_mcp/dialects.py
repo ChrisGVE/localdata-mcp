@@ -650,7 +650,7 @@ class Backend:
         constraint the data does not have. Where this answers ``True``,
         :meth:`loader.Workspace.insert_source` adds a surrogate key holding each
         row's ordinal, and **says so in the table's notes** — the column is real,
-        it will show up in ``info`` and in ``SELECT *``, and a caller told
+        it will show up in ``directory`` and in ``SELECT *``, and a caller told
         nothing would rightly call that a lie.
 
         The alternative shapes were measured and rejected. Nominating *every*
@@ -706,7 +706,7 @@ class Backend:
         """Whether ``create(type='index')`` means anything on this backend.
 
         ``True`` for every backend whose indexes are created by naming columns
-        and can afterwards be found by reflection — which is what ``info``
+        and can afterwards be found by reflection — which is what ``directory``
         listing one and ``drop`` removing one both depend on.
 
         ``False`` says the whole verb does not apply here, and it is reported
@@ -960,7 +960,7 @@ class SQLiteBackend(Backend):
 
         A column's declared type decides its affinity, and affinity decides
         whether ``'42'`` and ``42`` compare equal — so ``REAL`` and ``DOUBLE``
-        are not two spellings of one thing here, and neither is what ``info``
+        are not two spellings of one thing here, and neither is what ``directory``
         reports the column to be. The portable types are right everywhere the
         declaration is only a declaration; this is the one place it is not.
         """
@@ -1519,7 +1519,7 @@ class ClickHouseBackend(Backend):
         *data-skipping* index: it prunes granules that cannot match, and it
         offers neither the point lookup nor the uniqueness a caller asking for an
         index is asking for. And the dialect reflects no indexes at all, so one
-        created that way could not afterwards be listed by ``info`` nor found by
+        created that way could not afterwards be listed by ``directory`` nor found by
         ``drop`` — measured, ``system.data_skipping_indices`` shows it while
         reflection returns nothing.
 
@@ -2022,7 +2022,7 @@ _YDB_SCHEME_IN_TRANSACTION = 400120
 #: The name YDB gives a column that a loaded file did not bring. Prefixed with an
 #: underscore so it cannot collide with a sanitised CSV header — ``_sanitize``
 #: never produces a leading underscore — and named for what it holds rather than
-#: for why it exists, because the caller reading ``info`` sees the column and not
+#: for why it exists, because the caller reading ``directory`` sees the column and not
 #: this comment.
 _YDB_SURROGATE_KEY = "_row"
 
@@ -2166,11 +2166,11 @@ class YDBBackend(Backend):
 #: What a Databend read connection says it refused, in the words
 #: :meth:`Workspace._explain` puts after "This statement asks to". It cannot name
 #: the action — nothing here parses the SQL — so it names the *test* the statement
-#: failed, and it names ``info`` because a ``SHOW`` or a ``DESCRIBE`` fails that
+#: failed, and it names ``directory`` because a ``SHOW`` or a ``DESCRIBE`` fails that
 #: test too and the caller needs somewhere to go.
 _DATABEND_NOT_A_QUERY = (
     "run something Databend will not accept as a query — a write, or a SHOW or "
-    "DESCRIBE, which info answers"
+    "DESCRIBE, which directory answers"
 )
 
 
@@ -2268,7 +2268,7 @@ class DatabendBackend(Backend):
         round trip, including each statement reflection issues (those are
         ``information_schema`` selects and pass). And ``SHOW`` and ``DESCRIBE``
         cannot be sent through ``query`` on this backend at all: they read, but
-        they are not queries, so step 2 refuses them. ``info`` answers what they
+        they are not queries, so step 2 refuses them. ``directory`` answers what they
         were for, which is why the refusal names it.
 
         The closing parenthesis goes on its own line so a statement ending in a
@@ -2349,7 +2349,7 @@ class DatabendBackend(Backend):
         refused on an integer one, which is why the wording confines it to text.
 
         Neither is reachable through this verb, because neither can afterwards be
-        found by reflection: ``info`` could not list it and ``drop`` could not
+        found by reflection: ``directory`` could not list it and ``drop`` could not
         remove it. So the honest answer is that the verb does not apply here, with
         the statement a caller can run in Databend itself.
         """
@@ -2375,7 +2375,7 @@ class DatabendBackend(Backend):
         ``time(14, 30)``, because SQLAlchemy's own ``Time`` re-derives it. Read the
         same column as text — which is what ``query`` does — and it is
         ``datetime(1970, 1, 1, 14, 30, tzinfo=utc)``. So what the column holds is
-        a timestamp on the epoch, ``info`` reports it as ``DATETIME``, and only the
+        a timestamp on the epoch, ``directory`` reports it as ``DATETIME``, and only the
         typed path hides that. Excluded for CrateDB's reason rather than Oracle's:
         not because the column cannot be made, but because it can be made and
         holds something else.

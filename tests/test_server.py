@@ -35,7 +35,17 @@ ASSETS = Path(__file__).parent / "assets"
 
 #: The whole surface. Named here so a tool added or removed without thinking
 #: about the shape of the surface fails a test rather than passing quietly.
-TOOLS = {"attach", "detach", "info", "query", "create", "update", "drop", "save"}
+TOOLS = {
+    "attach",
+    "detach",
+    "directory",
+    "query",
+    "create",
+    "update",
+    "drop",
+    "save",
+    "stats",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -91,7 +101,7 @@ def write_csv(path: Path, text: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_the_surface_is_eight_verbs_each_with_a_description():
+def test_the_surface_is_nine_verbs_each_with_a_description():
     tools = listed_tools()
     assert {tool.name for tool in tools} == TOOLS
 
@@ -130,9 +140,9 @@ def test_the_nickname_is_required_everywhere_it_routes():
         assert "nickname" in by_name[name].inputSchema["required"], name
 
     # The two exceptions, and both are deliberate: attach *derives* a nickname,
-    # and info with none reports the whole session.
+    # and directory with none reports the whole session.
     assert "nickname" not in by_name["attach"].inputSchema.get("required", [])
-    assert "nickname" not in by_name["info"].inputSchema.get("required", [])
+    assert "nickname" not in by_name["directory"].inputSchema.get("required", [])
 
 
 def test_the_instructions_teach_the_premise_where_the_model_reads_it():
@@ -205,17 +215,17 @@ def test_a_colliding_nickname_is_disambiguated_and_both_slots_survive(session):
         "nickname": "slot",
         "source": str(session / "simple.csv"),
     }
-    assert call("info")["slots_used"] == 2
+    assert call("directory")["slots_used"] == 2
 
 
 # ---------------------------------------------------------------------------
-# info: one verb, three altitudes
+# directory: one verb, three altitudes
 # ---------------------------------------------------------------------------
 
 
-def test_info_with_nothing_reports_every_datasource_and_the_posture(session):
+def test_directory_with_nothing_reports_every_datasource_and_the_posture(session):
     call("attach", database=str(session / "simple.csv"), nickname="staff")
-    listing = call("info")
+    listing = call("directory")
 
     assert listing["ok"] is True
     assert listing["datasources"] == [
@@ -234,13 +244,13 @@ def test_info_with_nothing_reports_every_datasource_and_the_posture(session):
     assert listing["path_limited"] is True
 
 
-def test_info_with_a_nickname_reports_that_datasources_tables(session):
+def test_directory_with_a_nickname_reports_that_datasources_tables(session):
     call("attach", database=str(session / "simple.csv"), nickname="staff")
     call(
         "create", nickname="staff", type="table", source=str(session / "mixed_tabs.tsv")
     )
 
-    detail = call("info", nickname="staff")
+    detail = call("directory", nickname="staff")
 
     assert detail["ok"] is True
     assert detail["nickname"] == "staff"
@@ -251,9 +261,9 @@ def test_info_with_a_nickname_reports_that_datasources_tables(session):
     }
 
 
-def test_info_with_a_table_describes_its_columns_and_types(session):
+def test_directory_with_a_table_describes_its_columns_and_types(session):
     call("attach", database=str(session / "simple.csv"), nickname="staff")
-    described = call("info", nickname="staff", table="simple")
+    described = call("directory", nickname="staff", table="simple")
 
     assert described["ok"] is True
     assert described["table"] == "simple"
@@ -263,8 +273,8 @@ def test_info_with_a_table_describes_its_columns_and_types(session):
     assert types["department"] == "TEXT"
 
 
-def test_info_reports_an_unknown_nickname_as_an_answer(session):
-    answer = call("info", nickname="nothing")
+def test_directory_reports_an_unknown_nickname_as_an_answer(session):
+    answer = call("directory", nickname="nothing")
     assert answer["ok"] is False
     assert "nothing" in answer["error"]
 
@@ -664,7 +674,7 @@ def test_the_whole_lookup_arc_runs_over_the_protocol(session):
     assert made["index"] == "ix_prices_sku"
 
     # And the caller can see it is there without having to remember making it.
-    assert call("info", nickname="shop", table="prices")["indexes"] == [
+    assert call("directory", nickname="shop", table="prices")["indexes"] == [
         {
             "index": "ix_prices_sku",
             "table": "prices",
@@ -692,7 +702,7 @@ def test_an_index_is_dropped_by_the_name_creation_gave_it(session):
     assert dropped["ok"] is True
     assert dropped["dropped"] == made["index"]
     assert dropped["table"] == "simple"
-    assert call("info", nickname="staff", table="simple")["indexes"] == []
+    assert call("directory", nickname="staff", table="simple")["indexes"] == []
 
 
 def test_create_and_drop_name_the_two_types_when_given_another(session):
@@ -777,7 +787,7 @@ def test_detaching_frees_the_slot_and_reports_what_went(session):
     assert closed["ok"] is True
     assert closed["tables"] == ["simple"]
     assert closed["slots_used"] == 0
-    assert call("info")["datasources"] == []
+    assert call("directory")["datasources"] == []
 
 
 def test_saving_then_attaching_again_brings_the_whole_session_back(session):
@@ -846,10 +856,10 @@ def test_a_database_moved_to_disk_says_nothing_and_answers_the_same(session):
 
     call("attach", database=str(session / "big.csv"), nickname="big")
     before = call("query", nickname="big", sql="SELECT count(*), sum(amount) FROM big")
-    described_before = call("info", nickname="big")
+    described_before = call("directory", nickname="big")
 
     # The next call is the one that pays for the overshoot, whatever it is.
-    call("info")
+    call("directory")
 
     after = call("query", nickname="big", sql="SELECT count(*), sum(amount) FROM big")
     assert after["rows"] == before["rows"]
@@ -857,8 +867,8 @@ def test_a_database_moved_to_disk_says_nothing_and_answers_the_same(session):
 
     # Described exactly as before: same kind, same source, same rights, same
     # tables, same row counts. A caller has no way to tell the move happened.
-    assert call("info", nickname="big") == described_before
-    assert "spill" not in json.dumps(call("info"))
+    assert call("directory", nickname="big") == described_before
+    assert "spill" not in json.dumps(call("directory"))
 
 
 def test_the_next_call_after_the_budget_is_crossed_is_the_one_that_spills(session):
@@ -891,7 +901,7 @@ def test_the_next_call_after_the_budget_is_crossed_is_the_one_that_spills(sessio
         "meant to be tolerated exactly once"
     )
 
-    call("info")
+    call("directory")
 
     spilled = registry.slot("big").spill_path
     assert spilled is not None, "the next tool call did not relieve the pressure"
@@ -1048,9 +1058,9 @@ def test_mixed_columns_are_flagged_on_attach(session):
     assert any("In messy, table messy_mixed_types" in w for w in attached["warnings"])
 
 
-def test_the_mixed_column_detail_is_available_from_info(session):
+def test_the_mixed_column_detail_is_available_from_directory(session):
     call("attach", database=str(session / "messy_mixed_types.csv"), nickname="messy")
-    described = call("info", nickname="messy", table="messy_mixed_types")
+    described = call("directory", nickname="messy", table="messy_mixed_types")
     assert "id" in described["mixed_columns"]
 
 
@@ -1121,7 +1131,7 @@ def test_storage_class_mixture_still_gets_the_typeof_remedy(session):
         conn.executemany("INSERT INTO t VALUES (?)", [(1,), (2,), ("pending",)])
 
     call("attach", database=str(external), nickname="ext")
-    warning = call("info", nickname="ext", table="t")["warnings"][0]
+    warning = call("directory", nickname="ext", table="t")["warnings"][0]
     assert "typeof" in warning
 
 
@@ -1146,8 +1156,8 @@ def test_query_does_not_advertise_writes_it_refuses(session):
     assert "does not write" in refused["error"]
 
 
-def test_attach_and_create_say_their_answer_needs_no_info_call(session):
-    """Three of three skill-less agents called ``info`` straight after ``attach``.
+def test_attach_and_create_say_their_answer_needs_no_directory_call(session):
+    """Three of three skill-less agents called ``directory`` straight after ``attach``.
 
     Every one of them reported the call as waste: the payload was identical to
     what they already held. The skill says not to; the docstrings — all a bare
@@ -1155,7 +1165,9 @@ def test_attach_and_create_say_their_answer_needs_no_info_call(session):
     """
     documented = {tool.name: tool.description for tool in listed_tools()}
     for name in ("attach", "create"):
-        assert "info" in documented[name], f"{name} never mentions the redundant call"
+        assert (
+            "directory" in documented[name]
+        ), f"{name} never mentions the redundant call"
 
 
 def test_readme_never_teaches_a_qualified_table_name(session):
@@ -1172,7 +1184,7 @@ def test_readme_never_teaches_a_qualified_table_name(session):
     assert not taught, f"README still teaches qualified table names: {taught}"
 
 
-def test_info_describes_a_table_inside_an_attached_database(session):
+def test_directory_describes_a_table_inside_an_attached_database(session):
     """The whole "attach a SQLite file" datasource class had no describe at all.
 
     Found by driving the surface as an agent rather than by a test: every table
@@ -1190,13 +1202,13 @@ def test_info_describes_a_table_inside_an_attached_database(session):
 
     call("attach", database=str(external), nickname="kept")
 
-    detail = call("info", nickname="kept", table="notes")
+    detail = call("directory", nickname="kept", table="notes")
     assert detail["ok"] is True
     assert [column["name"] for column in detail["columns"]] == ["id", "note"]
     assert detail["rows"] == 2
 
     # And at the altitude above it, which describes every table in the slot.
-    slot = call("info", nickname="kept")
+    slot = call("directory", nickname="kept")
     assert slot["ok"] is True
     assert slot["contents"] == [{"table": "notes", "rows": 2}]
 
@@ -1213,7 +1225,7 @@ def test_a_saved_database_can_be_described_when_it_comes_back(session):
     call("detach", nickname=attached["nickname"])
 
     reopened = call("attach", database=str(session / "kept.db"), nickname="lastweek")
-    described = call("info", nickname="lastweek", table=reopened["tables"][0])
+    described = call("directory", nickname="lastweek", table=reopened["tables"][0])
     assert described["ok"] is True
     assert described["columns"]
 
@@ -1267,7 +1279,7 @@ def test_no_shipped_document_offers_a_tool_that_is_gone():
             continue
         text = (root / name).read_text()
         # Call-shaped, so a document may still *refer* to a departed tool where
-        # that is the point — LEVEL0 records that `info` absorbed `list_tables`,
+        # that is the point — LEVEL0 records that `directory` absorbed `list_tables`,
         # which is history rather than an offer. Followed by an open paren, it
         # is being held out as callable.
         named = sorted(set(re.findall(DEPARTED_CALL, text)))
@@ -1320,7 +1332,7 @@ def test_a_json_file_with_two_tables_is_refused_over_the_wire(session):
 
     assert refused["ok"] is False
     assert "employees" in refused["error"] and "departments" in refused["error"]
-    assert call("info")["slots_used"] == 0
+    assert call("directory")["slots_used"] == 0
 
 
 def test_the_delimiter_reaches_attach_over_the_wire(session):
@@ -1560,7 +1572,10 @@ def test_a_sheet_can_be_renamed_after_it_lands(session):
 
     assert renamed["ok"] is True
     assert renamed["table"] == "people"
-    assert sorted(call("info", nickname="book")["tables"]) == ["departments", "people"]
+    assert sorted(call("directory", nickname="book")["tables"]) == [
+        "departments",
+        "people",
+    ]
 
     answer = call("query", nickname="book", sql="SELECT sum(salary) AS t FROM people")
     assert answer["rows"][0][0] == 353000
@@ -1587,7 +1602,10 @@ def test_renaming_onto_a_name_already_taken_is_refused(session):
 
     assert refused["ok"] is False
     assert "departments" in refused["error"]
-    assert sorted(call("info", nickname="book")["tables"]) == ["departments", "staff"]
+    assert sorted(call("directory", nickname="book")["tables"]) == [
+        "departments",
+        "staff",
+    ]
 
 
 def test_renaming_a_table_that_is_not_there_names_what_is(session):
@@ -1644,7 +1662,7 @@ def test_a_renamed_table_is_saved_under_its_new_name(session):
     assert reattached["tables"] == ["people"]
 
 
-def test_the_surface_is_eight_verbs_now(session):
+def test_the_surface_is_nine_verbs_now(session):
     assert {tool.name for tool in listed_tools()} == TOOLS
     assert "update" in TOOLS
 
@@ -1654,10 +1672,10 @@ def test_the_surface_is_eight_verbs_now(session):
 # ---------------------------------------------------------------------------
 
 
-def test_info_refuses_a_table_with_no_nickname_rather_than_dropping_it(session):
+def test_directory_refuses_a_table_with_no_nickname_rather_than_dropping_it(session):
     """The third form was asked for; answering the first would look understood."""
     call("attach", database=str(session / "simple.csv"), nickname="staff")
-    answer = call("info", table="simple")
+    answer = call("directory", table="simple")
 
     assert answer["ok"] is False
     assert "simple" in answer["error"]

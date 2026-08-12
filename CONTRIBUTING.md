@@ -284,7 +284,7 @@ dialect it never reached.
 - **Never evaluate a caller's string as code.** The v2 tool that did was a host
   RCE ([#42](https://github.com/ChrisGVE/localdata-mcp/issues/42)).
 - Handle errors without exposing sensitive information — a datasource URL is
-  reported with its password masked, in the refusal and in `info` alike.
+  reported with its password masked, in the refusal and in `directory` alike.
 
 ### Testing
 

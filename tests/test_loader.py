@@ -1460,7 +1460,7 @@ def test_the_added_key_is_explained_rather_than_merely_present(
 ):
     """A column the caller did not ask for and cannot account for is a defect.
 
-    ``info`` lists it either way, so the outcome looks identical whether or not
+    ``directory`` lists it either way, so the outcome looks identical whether or not
     anything explains it — the class of failure that passes every test asserting
     on the outcome. The note is therefore asserted, and asserted to name both the
     column and the reason.

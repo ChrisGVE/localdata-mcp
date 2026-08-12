@@ -1246,11 +1246,11 @@ def test_the_refusal_names_a_verb_that_does_the_job_and_a_verb_for_schema():
     ``Refusal`` is what :meth:`Workspace._explain` puts after "This statement
     asks to", so this has to read as a phrase in that sentence *and* point
     somewhere. Both halves are asserted because a ``SHOW`` fails this posture too
-    — it reads, but it is not a query — and ``info`` is where that caller has to
+    — it reads, but it is not a query — and ``directory`` is where that caller has to
     be sent.
     """
     assert "write" in _DATABEND_NOT_A_QUERY
-    assert "info" in _DATABEND_NOT_A_QUERY
+    assert "directory" in _DATABEND_NOT_A_QUERY
     assert "SHOW" in _DATABEND_NOT_A_QUERY
 
 

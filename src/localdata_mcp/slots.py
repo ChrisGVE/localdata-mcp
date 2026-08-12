@@ -1129,7 +1129,7 @@ class Registry:
         """Describe one table inside a slot.
 
         The missing-table check is made here rather than left to the reflection
-        below, because ``info`` is the verb a caller reaches for when they do
+        below, because ``directory`` is the verb a caller reaches for when they do
         *not* know what is there — a wrong table name is its likeliest input,
         and SQLAlchemy's own ``NoSuchTableError`` escapes the server as a
         protocol error carrying nothing but the name. Refusing it here answers

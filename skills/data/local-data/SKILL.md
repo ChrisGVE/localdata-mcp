@@ -1,7 +1,7 @@
 ---
 name: local-data
 description: Answer questions about local data files and databases with SQL. Attach a spreadsheet, CSV, Parquet file, SQLite or DuckDB file, or a database URL, then look one source up against another and keep the result. Use whenever someone points at a data file or a database and asks what is in it.
-allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__info mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save mcp__localdata__stats
+allowed-tools: mcp__localdata__attach mcp__localdata__detach mcp__localdata__directory mcp__localdata__query mcp__localdata__create mcp__localdata__update mcp__localdata__drop mcp__localdata__save mcp__localdata__stats
 argument-hint: "<file-path> [and what you want to know]"
 ---
 
@@ -58,12 +58,12 @@ when asked, when the result is surprising, or when they need to trust it.
 
 ```
 attach(database="/path/sales.csv")        → note the nickname it returns
-info(nickname, table)                      → columns, types, row count
+directory(nickname, table)                      → columns, types, row count
 query(nickname, "SELECT …")                → the answer
 ```
 
 `attach` already returns the columns and row count for a file, so do not call
-`info` straight after it — you have that. Go and answer the question.
+`directory` straight after it — you have that. Go and answer the question.
 
 **Nothing here is permanent.** It lives until `detach`, or until this server
 stops. If the work is worth keeping, say so and offer to keep it — do not let
@@ -108,7 +108,7 @@ The sheet is addressed by the snake_cased name it arrived under, which the
 writes into has to exist already.
 
 The response describes the table it read in, so — as with `attach` — there is
-nothing for an `info` call straight afterwards to add.
+nothing for an `directory` call straight afterwards to add.
 
 If the join is slow because both sides are large, index the column you are
 joining on first. Nothing guesses this for you, because which query is coming is
@@ -118,7 +118,7 @@ yours to know:
 create(nickname="shop", type="index", table="prices", columns=["sku"])
 ```
 
-`info(nickname, table)` lists the indexes already there — cheaper than asking
+`directory(nickname, table)` lists the indexes already there — cheaper than asking
 for one twice. The name comes back, and that is the name `drop` wants.
 
 **Five backends refuse an index** — ClickHouse, Trino, CrateDB, Databend and
@@ -459,7 +459,7 @@ list; which did you want, or shall we do both as separate files?"* — because t
 answer is theirs and splitting the file is the fix.
 
 **Dates.** A column of ISO 8601 dates is rewritten into one canonical UTC
-spelling and stays text; `attach` and `info` mark it
+spelling and stays text; `attach` and `directory` mark it
 `"temporal": "iso8601_utc", "normalized": "UTC"`. It orders, ranges and joins
 correctly as it stands — do not reach for a conversion. Two things to tell the
 user about:
@@ -485,7 +485,7 @@ integer instead, marked `"temporal": "timestamp", "unit":
 "nanoseconds_since_epoch"`, and **no warning is raised about it**. Ordering and
 `max()` are right; comparing it to a date string is not — `WHERE d >
 '2024-03-02'` compares an integer to text and comes back `"ok": true` with zero
-rows. Read the column list from `attach` or `info` before writing a date
+rows. Read the column list from `attach` or `directory` before writing a date
 predicate: if `unit` says nanoseconds, compare against a tick value or convert.
 The mark is also lost on export, so a column you wrote out with `query(path=…)`
 or `save()` and attached again is a bare `INTEGER` with nothing to tell you.
@@ -498,7 +498,7 @@ Before reporting a number:
   nanosecond-timestamp column is the one problem that raises none, so check the
   column's own `temporal` and `unit` fields too.
 - If it is a join, was the match complete — and did you say so either way?
-- Does the row count make sense against what `info` said was there?
+- Does the row count make sense against what `directory` said was there?
 - **Is the column you are summing actually populated?** `stats(nickname, table)`
   is the whole check — it reports `nulls` and `non_nulls` per column, and nothing
   else does. `mixed_columns` answers one question only, whether a column holds

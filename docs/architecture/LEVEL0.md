@@ -171,15 +171,15 @@ connections live**. Nothing more. Richer heuristics are possible and not worth t
 > observation about the surface rather than a constraint on it. Both numbers are updated
 > throughout rather than left to disagree.
 >
-> **Why it is a verb and not a flag on `info`.** The trigger was
-> [#94](https://github.com/ChrisGVE/localdata-mcp/issues/94): a cold agent read `info`'s
+> **Why it is a verb and not a flag on `directory`.** The trigger was
+> [#94](https://github.com/ChrisGVE/localdata-mcp/issues/94): a cold agent read `directory`'s
 > `mixed_columns: []` as a clean bill of health and reported 3,000 rows as trustworthy,
-> while 52 values in a `REAL` column were null. Nothing in `attach`, `info` or the documented
+> while 52 values in a `REAL` column were null. Nothing in `attach`, `directory` or the documented
 > checklist would ever have said so. The framing the issue proposed — *should `attach` or
-> `info` report a null count* — is the wrong question, and both halves of it are refused:
-> **`attach` reports load-time facts** and why a format could not be read, **`info` is a
+> `directory` report a null count* — is the wrong question, and both halves of it are refused:
+> **`attach` reports load-time facts** and why a format could not be read, **`directory` is a
 > directory** — sources, tables, schema — and a directory that reports statistics stops
-> being one. A profile is a third role, so it is a third verb. An `info(stats=true)` flag
+> being one. A profile is a third role, so it is a third verb. An `directory(stats=true)` flag
 > would re-import exactly the confusion this split exists to remove.
 >
 > **Why it is still level 0**, given this document's own test — *nothing new, the same
@@ -204,7 +204,7 @@ than something they catch.
 | `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Open a datasource as a database — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. |
 | `detach` | `nickname` | Close a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if it had spilled. |
 | `query` | `nickname`, `sql`, `path?`, `force?`, `delimiter?` | Run SQL. **Reads only.** Returns the whole result, or writes it to `path` when it is too large to return. |
-| `info` | — \| `nickname` \| `nickname`+`table` | Three levels of detail: bare → every slot and the path posture; nickname → its tables; nickname and table → schema, row count and indexes. |
+| `directory` | — \| `nickname` \| `nickname`+`table` | Three levels of detail: bare → every slot and the path posture; nickname → its tables; nickname and table → schema, row count and indexes. |
 | `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a **file** in beside the tables already there — one holding a single table, since `create` makes one — which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
 | `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes — the answer to a file that named its own tables. |
 | `drop` | `nickname`, `type`, `name` | Remove a table or an index. Composition needs both directions, for both types. |
@@ -222,14 +222,14 @@ is the same overwrite consent `save` takes, for the same reason. `delimiter` sep
 fields on the way *out*, for `.csv`/`.tsv`/`.txt` only, and is ignored rather than refused
 elsewhere.
 
-**`update` and `drop`.** `update`'s `name` is the snake_cased name `info` lists rather than
+**`update` and `drop`.** `update`'s `name` is the snake_cased name `directory` lists rather than
 the spelling in the spreadsheet, and case is the part of that the server closes: a name
 differing from the stored one only in case resolves to it, so these verbs answer the
 existence question the way the database does and the way `query` always did. A spelling the
 snake_casing changed by more than case — `Q2 Prices` — still names no table and is refused
 with the names that do. Renaming onto a taken name is refused rather than allowed to replace,
 and so is renaming to the same name in another case, which is not a free name on an engine
-that folds. The index name `drop` takes is the one `create` returned and `info` lists.
+that folds. The index name `drop` takes is the one `create` returned and `directory` lists.
 `update(type='table')` is refused on Firebird, and `create(type='index')` on the five
 engines named in the backend table.
 
@@ -456,7 +456,7 @@ text.
 > broken today: the slot opens a read engine carrying `access_mode=read_only` and a write
 > engine without it, and DuckDB refuses two connections to one file under different
 > configurations. Measured through the shipped surface — `attach` and `query` succeed,
-> `info` and `create` raise, `update` and `drop` return a refusal naming the driver error,
+> `directory` and `create` raise, `update` and `drop` return a refusal naming the driver error,
 > and `save` is refused for the unrelated reason above. The read-only arm is clean. The two
 > ways out point different directions: open one engine and carry the posture per statement,
 > or refuse `writable=true` on a DuckDB file outright and say why. Filed as
@@ -547,7 +547,7 @@ Collision is judged on the *derived* nickname, and **the URI decides what it mea
 
 Not the parent directory folded into the name — `q1_sales` is longer without being
 self-explanatory, and the thing that actually distinguishes the two is the source, which
-`attach` returns and `info` lists.
+`attach` returns and `directory` lists.
 
 **`attach` always returns the nickname it actually used**, along with what it collided
 with and that source's URI. The caller must never assume the name derived from the

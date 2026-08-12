@@ -19,7 +19,7 @@ SQL over your local data files and databases, for LLM agents.
 **Every datasource becomes a database.** A CSV, a workbook, a Parquet file, a
 SQLite or DuckDB file, a PostgreSQL URL — each is attached under a nickname, and
 each call names the nickname it is for. That one idea is why a spreadsheet and a
-warehouse are the same kind of thing here, and why there are eight tools —
+warehouse are the same kind of thing here, and why there are nine tools —
 **verbs**, the word this repository uses for them throughout — rather than
 seventy: a database already has verbs, and they are the same verbs whatever
 filled it.
@@ -123,11 +123,11 @@ query("sales", "SELECT sku, sum(qty) AS qty FROM sales GROUP BY sku")
 #    "row_count": 3}
 ```
 
-`info()` with no arguments answers for the session rather than for a datasource —
+`directory()` with no arguments answers for the session rather than for a datasource —
 what is open, how many slots there are, and which paths the server will accept:
 
 ```python
-info()
+directory()
 # → {"ok": true, "datasources": [], "slots_used": 0, "slots_available": 10,
 #    "roots": ["/path/to/your/project"], "path_limited": true}
 ```
@@ -142,7 +142,7 @@ the one occupancy where the two readings give the same number.
 used** — if that name was taken by a different source, you get `sales_2` and
 `collided_with` names the slot that forced it. Always read it back rather than
 assuming. The answer for a file already carries its columns, types, row count and
-any warning, so there is nothing for an `info` call straight afterwards to add.
+any warning, so there is nothing for an `directory` call straight afterwards to add.
 
 **A slot is one attached datasource** — its database, the two connections that
 reach it, and the nickname it answers to. There are ten of them; the word is
@@ -157,7 +157,7 @@ what every datasource becomes.
 | `attach(database, nickname?, writable?, delimiter?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. A workbook becomes a database holding a table per sheet, and a `.numbers` document one per table. |
 | `detach(nickname)` | Close it and free the slot. Deletes the temp file if the slot had been spilled to disk (see [Memory](#memory)). |
 | `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format and answers `rows_written` and the column names instead of the rows. |
-| `info(nickname?, table?)` | Three levels of detail: bare → the session (see above); nickname → its tables; nickname and table → columns, row count and indexes. |
+| `directory(nickname?, table?)` | Three levels of detail: bare → the session (see above); nickname → its tables; nickname and table → columns, row count and indexes. |
 | `create(nickname, type, table?, source?, columns?, delimiter?)` | `type="table"` lands a **file** *inside* an open database — one holding a single table, since `create` makes one; `type="index"` indexes columns of a table already there — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
 | `update(nickname, type, name, to)` | Rename a table, keeping its rows, types and indexes. For when the file chose the name — a workbook's `Sheet1`, which arrives as `sheet1` — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
 | `drop(nickname, type, name)` | Remove a table or an index. |
@@ -382,7 +382,7 @@ query("sales", "SELECT sku FROM prices WHERE sku NOT IN (SELECT sku FROM sales)"
 ```
 
 If either drags, index the key first and ask again. Nothing is indexed unless you
-say so, and `info` tells you what already is:
+say so, and `directory` tells you what already is:
 
 ```python
 create("sales", type="index", table="prices", columns=["sku"])
@@ -505,7 +505,7 @@ time**, which is left untouched because integer comparison already is
 chronological comparison.
 
 A recognised column is rewritten into one canonical UTC spelling and stays text.
-`attach` and `info` report it:
+`attach` and `directory` report it:
 
 ```python
 {"name": "order_date", "type": "TEXT", "temporal": "iso8601_utc", "normalized": "UTC"}

@@ -2338,9 +2338,9 @@ class Workspace:
         # The *fact* is the backend's and the *response* is this module's — one
         # response, the same for any dialect that ever states the fact, which is
         # what keeps the answer from being written twice. The added column is
-        # **reported**: it is described in `info` like any other column and the
-        # notes say why it is there, rather than surprising somebody who later
-        # runs `SELECT *`.
+        # **reported**: it is described in `directory` like any other column
+        # and the notes say why it is there, rather than surprising somebody
+        # who later runs `SELECT *`.
         keyed = entry.backend.requires_primary_key()
 
         if keyed:

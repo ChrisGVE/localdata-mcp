@@ -11,8 +11,9 @@ as a protocol error with no ``ok`` in it at all.
 That promise had never been tested **across** the verbs. Each verb had tests for
 its own refusals, so each was internally consistent, and the one check that
 compares them to each other was missing — which is how ``update`` came to escape
-with a ``LoadError`` on an unattached nickname while its seven siblings returned
-a refusal for the same input (issue #92). The defect was introduced by a fix to
+with a ``LoadError`` on an unattached nickname while all seven of the siblings it
+had then returned a refusal for the same input (issue #92). The defect was
+introduced by a fix to
 another verb, and a suite of 731 passing tests did not see it, because no test
 drove two verbs at the same wrong input and compared the answers.
 
@@ -34,11 +35,13 @@ the wrong reason, and the table would pass while testing nothing.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fastmcp import Client
 
 from localdata_mcp import config as config_module
 from localdata_mcp import server as server_module
@@ -47,13 +50,35 @@ from localdata_mcp.config import Config, ConfigError
 VERBS = {
     "attach": server_module.attach,
     "detach": server_module.detach,
-    "info": server_module.info,
+    "directory": server_module.directory,
     "query": server_module.query,
     "create": server_module.create,
     "update": server_module.update,
     "drop": server_module.drop,
     "save": server_module.save,
+    "stats": server_module.stats,
 }
+
+
+def test_the_table_covers_the_whole_surface():
+    """The guard that makes this file's promise true rather than aspirational.
+
+    The docstring above says a verb added later fails here. It did not: ``stats``
+    shipped as the ninth verb and every column in this file went on passing,
+    because :data:`VERBS` is written by hand and the one assertion that checks a
+    column against it compares the table to *itself*. A self-referential guard
+    cannot notice an absence.
+
+    So the surface is read from the server rather than restated here, and the
+    table is asserted against it. Adding a verb without giving it a row now fails
+    at this line, which is what the paragraph above always claimed happened.
+    """
+
+    async def _names():
+        async with Client(server_module.mcp) as client:
+            return {tool.name for tool in await client.list_tools()}
+
+    assert set(VERBS) == asyncio.run(_names())
 
 
 @pytest.fixture
@@ -129,7 +154,7 @@ def test_a_nickname_that_is_not_attached_is_refused_by_every_verb_that_takes_one
 
     A nickname goes stale in ordinary use — the slot was evicted to make room,
     or the agent used the name it asked for rather than the one ``attach``
-    returned. Seven verbs said so; ``update`` raised.
+    returned. When #92 was found, seven verbs said so and ``update`` raised.
     """
     source = str(other_csv(root))
     exports = str(root / "out.csv")
@@ -137,8 +162,8 @@ def test_a_nickname_that_is_not_attached_is_refused_by_every_verb_that_takes_one
 
     cells = [
         ("detach", {"nickname": "nope"}),
-        ("info", {"nickname": "nope"}),
-        ("info", {"nickname": "nope", "table": "people"}),
+        ("directory", {"nickname": "nope"}),
+        ("directory", {"nickname": "nope", "table": "people"}),
         ("query", {"nickname": "nope", "sql": "SELECT 1"}),
         ("query", {"nickname": "nope", "sql": "SELECT 1", "path": exports}),
         ("create", {"nickname": "nope", "type": "table", "source": source}),
@@ -150,6 +175,7 @@ def test_a_nickname_that_is_not_attached_is_refused_by_every_verb_that_takes_one
         ("drop", {"nickname": "nope", "type": "table", "name": "t"}),
         ("drop", {"nickname": "nope", "type": "index", "name": "t_a"}),
         ("save", {"nickname": "nope", "path": saved}),
+        ("stats", {"nickname": "nope", "table": "people"}),
     ]
 
     for verb, arguments in cells:
@@ -165,7 +191,7 @@ def test_a_table_that_is_not_there_is_refused_by_every_verb_that_names_one(root)
     succeeds("attach", database=str(csv), nickname="live")
 
     cells = [
-        ("info", {"nickname": "live", "table": "ghost"}),
+        ("directory", {"nickname": "live", "table": "ghost"}),
         ("query", {"nickname": "live", "sql": "SELECT * FROM ghost"}),
         (
             "create",
@@ -178,6 +204,7 @@ def test_a_table_that_is_not_there_is_refused_by_every_verb_that_names_one(root)
         ),
         ("update", {"nickname": "live", "type": "table", "name": "ghost", "to": "u"}),
         ("drop", {"nickname": "live", "type": "table", "name": "ghost"}),
+        ("stats", {"nickname": "live", "table": "ghost"}),
     ]
 
     for verb, arguments in cells:
@@ -200,6 +227,11 @@ def test_an_index_and_a_column_that_are_not_there_are_refused_by_name(root):
     # know what is in the table.
     assert "name" in reason and "age" in reason
 
+    # ``stats`` names columns too, and refuses an unknown one the same way.
+    reason = refusal("stats", nickname="live", table="people", columns=["ghost"])
+    assert "ghost" in reason
+    assert "name" in reason and "age" in reason
+
 
 def test_a_slot_attached_read_only_refuses_every_verb_that_would_change_it(root):
     database = root / "readonly.db"
@@ -210,7 +242,7 @@ def test_a_slot_attached_read_only_refuses_every_verb_that_would_change_it(root)
     succeeds("attach", database=str(database), nickname="ro")
     # The control that matters for this column specifically: the slot is live
     # and readable, so a refusal below is about write access and nothing else.
-    succeeds("info", nickname="ro")
+    succeeds("directory", nickname="ro")
 
     cells = [
         ("create", {"nickname": "ro", "type": "table", "source": str(other_csv(root))}),
@@ -256,8 +288,9 @@ def test_an_unexpected_failure_below_is_still_an_answer_at_every_verb(
     The columns above cover the wrong inputs that are known and refused by name.
     This one covers everything else: a driver that raises something new, a
     filesystem that fails mid-call, a bug. ``query`` already answered those as
-    payloads and the other seven let them out as protocol errors — one promise
-    made by the shipped instructions, stated seven ways underneath.
+    payloads while every other verb of the day — seven of them — let them out as
+    protocol errors: one promise made by the shipped instructions, stated
+    separately underneath by each verb that had to keep it.
 
     The type name is asserted, not just the shape. An unexpected failure must
     not be *disguised* as an ordinary refusal: the caller cannot fix it and the
@@ -277,7 +310,7 @@ def test_an_unexpected_failure_below_is_still_an_answer_at_every_verb(
     cells = [
         ("attach", {"database": str(csv)}),
         ("detach", {"nickname": "live"}),
-        ("info", {}),
+        ("directory", {}),
         ("query", {"nickname": "live", "sql": "SELECT 1"}),
         (
             "create",
@@ -286,6 +319,7 @@ def test_an_unexpected_failure_below_is_still_an_answer_at_every_verb(
         ("update", {"nickname": "live", "type": "table", "name": "people", "to": "u"}),
         ("drop", {"nickname": "live", "type": "table", "name": "people"}),
         ("save", {"nickname": "live", "path": str(root / "out.db")}),
+        ("stats", {"nickname": "live", "table": "people"}),
     ]
     assert {verb for verb, _ in cells} == set(VERBS), "a verb is missing from the table"
 
@@ -302,8 +336,9 @@ def test_a_configuration_that_will_not_be_run_under_stops_the_server_starting(
 
     A mistyped setting used to be discovered inside the first tool call that
     happened to read the configuration, because :func:`config.active` loads on
-    first use. Once the registry existed every verb reached it — measured: all
-    eight raised ``ConfigError``, including the two an agent calls first.
+    first use. Once the registry existed every verb reached it — measured at the
+    time against the eight verbs there were, all eight raising ``ConfigError``,
+    including the two an agent calls first.
 
     Answering those as refusals would be the wrong fix, and ``config.py`` says
     why in its own module docstring: *"Failing to start is the louder, better

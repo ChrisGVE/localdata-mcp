@@ -14,13 +14,13 @@ something that falls out of how the databases happen to be connected.
 
 Because a slot is a database rather than a view over a file, it has the verbs a
 database has: lifecycle (``attach``, ``detach``, ``save``), composition
-(``create``, ``update``, ``drop``), introspection (``info``) and the profile that
+(``create``, ``update``, ``drop``), introspection (``directory``) and the profile that
 says whether the values inside can be trusted (``stats``). Nine in total, several
 of them multi-faceted — **few and multi-faceted beats many and narrow**, because
 the model has less to choose between and each choice is obvious.
 
-``stats`` is the newest and is a verb rather than a flag on ``info`` because they
-answer different questions: ``info`` is a directory — what is attached, what
+``stats`` is the newest and is a verb rather than a flag on ``directory`` because they
+answer different questions: ``directory`` is a directory — what is attached, what
 tables, what shape — and a directory that reports statistics stops being one.
 Nothing else here reports a missing value, which is what made an empty
 ``mixed_columns`` readable as a clean bill of health (issue #94).
@@ -91,7 +91,7 @@ mcp = FastMCP(
         "complete is an anti-join you write yourself; if it is slow, "
         "create(nickname, type='index', table=..., columns=[...]) first — "
         "refused on ClickHouse, Trino, CrateDB, Databend and Exasol, each for "
-        "its own reason, which the refusal names — and info(nickname, table) "
+        "its own reason, which the refusal names — and directory(nickname, table) "
         "says which indexes are already there.\n\n"
         "**query only reads.** INSERT, UPDATE, CREATE TABLE and every other write "
         "are refused there whatever the datasource allows — composition has its "
@@ -430,7 +430,7 @@ def _attachment_payload(attachment: Attachment, registry: Registry) -> dict[str,
 
     # A slot we built ourselves was described as it was read, so its shape and
     # its mixed-column signal are already known — returning them here saves the
-    # caller an immediate info() round trip.
+    # caller an immediate directory() round trip.
     if slot.kind == "file":
         described, warnings = _described(registry, slot.nickname, slot.tables)
         payload["loaded"] = [_table_payload(info) for info in described]
@@ -518,7 +518,7 @@ def attach(
     becomes a database holding all of them, under the names the file gives them.
 
     For a file, the answer already carries what it loaded — columns, types, row
-    count and any warning — so calling ``info`` straight afterwards returns the
+    count and any warning — so calling ``directory`` straight afterwards returns the
     same thing again. Go and ask the question instead.
 
     Args:
@@ -569,7 +569,7 @@ def detach(nickname: str) -> dict[str, Any]:
     The answer names what was closed — ``nickname``, ``source`` and the
     ``tables`` it held — and the session's ``slots_used`` and
     ``slots_available`` afterwards. ``slots_available`` is the slot **limit**
-    and not the number free, the same as in ``info``; the free slots are the
+    and not the number free, the same as in ``directory``; the free slots are the
     subtraction.
 
     Args:
@@ -593,7 +593,7 @@ def detach(nickname: str) -> dict[str, Any]:
 
 @mcp.tool
 @_answers
-def info(nickname: str | None = None, table: str | None = None) -> dict[str, Any]:
+def directory(nickname: str | None = None, table: str | None = None) -> dict[str, Any]:
     """Describe what is attached, at whichever altitude you need.
 
     Three forms, and the arguments choose between them:
@@ -624,10 +624,10 @@ def info(nickname: str | None = None, table: str | None = None) -> dict[str, Any
         try:
             if nickname is None and table is not None:
                 raise SlotNotAvailable(
-                    f"info was asked for table {table!r} with no nickname, and a "
-                    f"table is addressed inside one datasource. Name the "
-                    f"datasource too, or call info() with neither argument for "
-                    f"the session."
+                    f"directory was asked for table {table!r} with no nickname, "
+                    f"and a table is addressed inside one datasource. Name the "
+                    f"datasource too, or call directory() with neither argument "
+                    f"for the session."
                 )
             if nickname is not None and table is not None:
                 return _table_detail(registry, nickname, table)
@@ -645,11 +645,11 @@ def stats(
 ) -> dict[str, Any]:
     """Profile a table's columns — how many values are missing, and their range.
 
-    This is the verb that answers *"can I trust this data?"*. ``info`` is a
+    This is the verb that answers *"can I trust this data?"*. ``directory`` is a
     directory — what is attached, what tables it holds, what shape they are —
     and it says nothing about the values inside them. In particular **nothing
     else here reports a missing value**: a column can be half empty and appear
-    in ``info`` looking perfectly ordinary.
+    in ``directory`` looking perfectly ordinary.
 
     Every column reports ``nulls`` and ``non_nulls``. A numeric column also
     reports ``min``, ``max`` and ``avg``, and a date column normalised to ISO
@@ -667,7 +667,7 @@ def stats(
 
     Args:
         nickname: The datasource holding the table.
-        table: The table to profile, by the name ``info`` lists.
+        table: The table to profile, by the name ``directory`` lists.
         columns: Restrict the profile to these columns. All of them by default;
             a name matching nothing is refused, naming the columns that exist.
 
@@ -905,7 +905,7 @@ def create(
     rather than attaching a second slot — when a new file is meant to be looked
     up against one already loaded: ``save`` writes one database rather than a
     join, so landing both sides in the same slot is what makes the lookup
-    outlive the session. The answer describes the table it read, so ``info``
+    outlive the session. The answer describes the table it read, so ``directory``
     straight afterwards tells you nothing new.
 
     It makes **one** table, so a source holding more than one is refused, naming
@@ -919,7 +919,7 @@ def create(
     you are about to join or filter on those columns and the table is large;
     nothing here guesses that for you, because which query is coming is yours to
     know. The index is named for you and the name comes back — that is the name
-    ``drop`` wants. ``info(nickname, table)`` lists the indexes that already
+    ``drop`` wants. ``directory(nickname, table)`` lists the indexes that already
     exist, which is the cheaper way to find out than asking twice. Five engines
     refuse ``type="index"`` outright — ClickHouse, Trino, CrateDB, Databend and
     Exasol — each for its own reason: indexes that cannot be reflected, no
@@ -1004,7 +1004,7 @@ def drop(nickname: str, type: str, name: str) -> dict[str, Any]:
         nickname: The datasource holding it. Must be writable.
         type: ``"table"`` or ``"index"``.
         name: The table name, unqualified — or the index name, as ``create``
-            returned it and as ``info`` lists it.
+            returned it and as ``directory`` lists it.
     """
     with _lock:
         registry = _session()

@@ -18,22 +18,23 @@ deprecated, they are absent.
 `list_databases`, `describe_table`, `analyze_regression`, `forecast_time_series`,
 `analyze_spatial_autocorrelation`, `get_node`, `export_graph` — all 71. A client
 that names a tool explicitly will find nothing there; an agent that discovers
-tools at runtime will simply see eight.
+tools at runtime will simply see nine.
 
 The seventy-one divide three ways: **sixteen map onto four of the new verbs**,
 **forty-six have no successor at all**, and **nine managed machinery that no
-longer exists**. The other four verbs are new in 3.0.0 and replace nothing.
+longer exists**. The other five verbs are new in 3.0.0 and replace nothing.
 
 | 3.0.0 verb | What it replaces from 2.x |
 |---|---|
 | `attach` | `connect_database` |
 | `detach` | `disconnect_database` |
 | `query` | `execute_query`, `analyze_query_preview`, `next_chunk`, `request_data_chunk`, `request_multiple_chunks`, `get_query_metadata`, `export_structured`, `search_data` |
-| `info` | `list_databases`, `describe_database`, `describe_table`, `find_table`, `export_schema`, `get_data_quality_report` |
+| `directory` | `list_databases`, `describe_database`, `describe_table`, `find_table`, `export_schema`, `get_data_quality_report` |
 | `create` | **new in 3.0.0** — reading a second datasource *into* an open one had no 2.x counterpart |
 | `update` | **new in 3.0.0** |
 | `drop` | **new in 3.0.0** |
 | `save` | **new in 3.0.0** — 2.x had staging databases, which were not the user's to keep |
+| `stats` | **new in 3.0.0** — 2.x reported no missing value under any tool |
 
 That table accounts for sixteen 2.x tools: 1 + 1 + 8 + 6.
 
@@ -91,8 +92,8 @@ rebuild it.
 ### Added
 
 - Nine MCP tools — **verbs**, the word used for them throughout: `attach`,
-  `detach`, `query`, `info`, `create`, `update`, `drop`, `save`, `stats`. Few and
-  multi-faceted rather than many and narrow — `info` alone absorbs six 2.x tools
+  `detach`, `query`, `directory`, `create`, `update`, `drop`, `save`, `stats`. Few and
+  multi-faceted rather than many and narrow — `directory` alone absorbs six 2.x tools
   by varying on its two optional arguments.
 - **`stats(nickname, table, columns?)` — the profile, and the only call that
   reports a missing value.** Every column answers with `nulls` and `non_nulls`, a
@@ -103,7 +104,7 @@ rebuild it.
   column and a column of **dates in no recognised standard** are profiled to
   their null count alone, each saying why in `withheld`, because an aggregate
   over either returns a real number that is not the number asked for. It is a
-  verb rather than a flag on `info` because a directory that reports statistics
+  verb rather than a flag on `directory` because a directory that reports statistics
   stops being one.
 - **Eighteen file formats read** (`.csv` `.tsv` `.txt` `.fwf` `.json` `.jsonl`
   `.ndjson` `.xml` `.yaml` `.yml` `.xlsx` `.xlsm` `.xls` `.ods` `.numbers`
@@ -195,7 +196,7 @@ rebuild it.
 
 ### Changed
 
-- **Every datasource is a database**, whatever it came from, and the same eight
+- **Every datasource is a database**, whatever it came from, and the same nine
   verbs address all of them. In 2.x a CSV and a PostgreSQL connection were
   different kinds of thing: `connect_database` took both, and which of the
   seventy-one tools then worked depended on which you had handed it, with nothing

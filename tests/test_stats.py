@@ -1,10 +1,10 @@
 """``stats`` — the per-column profile, and the two columns it must stay quiet about.
 
 This verb exists because of one measured failure. A cold agent, given only the
-skill and a live server, read ``info``'s ``mixed_columns: []`` as a clean bill of
+skill and a live server, read ``directory``'s ``mixed_columns: []`` as a clean bill of
 health and reported 3,000 rows as trustworthy; 52 values in a ``REAL`` column
-were null, and nothing in ``attach``, ``info`` or the documented checklist would
-ever have said so (issue #94). ``info`` is a directory — sources, tables, schema
+were null, and nothing in ``attach``, ``directory`` or the documented checklist would
+ever have said so (issue #94). ``directory`` is a directory — sources, tables, schema
 — and a directory that reports statistics stops being one, so the profile is a
 verb of its own.
 
@@ -95,11 +95,11 @@ def test_a_numeric_column_reports_its_range_and_average(root):
     assert amount["avg"] == 20
 
 
-def test_the_null_count_that_info_never_reported(root):
+def test_the_null_count_that_directory_never_reported(root):
     """Issue #94, stated as the measurement that was missing.
 
-    The positive control is the whole point: ``info`` is asserted to call this
-    table clean *first*. Without it a regression that made ``info`` report nulls
+    The positive control is the whole point: ``directory`` is asserted to call this
+    table clean *first*. Without it a regression that made ``directory`` report nulls
     would leave this passing while testing nothing, and the finding it encodes —
     that a caller following the documented checklist is told nothing — would
     quietly stop being true.
@@ -109,10 +109,10 @@ def test_the_null_count_that_info_never_reported(root):
     rows = "\n".join(f"s{n}," + ("" if n % 10 == 0 else "1.5") for n in range(1, 101))
     nickname = attach_csv(root, "readings.csv", f"sensor,reading\n{rows}\n")
 
-    directory = server_module.info(nickname=nickname, table="readings")
+    directory = server_module.directory(nickname=nickname, table="readings")
     assert directory["ok"] is True
     assert directory["mixed_columns"] == [], (
-        "positive control failed — info is expected to report this column as "
+        "positive control failed — directory is expected to report this column as "
         "unmixed, which is the misreading #94 is about."
     )
     assert not any("null" in str(v).lower() for v in directory.get("warnings", []))

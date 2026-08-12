@@ -522,16 +522,16 @@ def test_every_value_reaches_the_wire_as_something_json_can_hold(live):
         assert row["clock"] in ("14:30:00", "PT14H30M0S")
 
 
-def test_info_describes_a_table_the_endpoint_holds(live):
+def test_directory_describes_a_table_the_endpoint_holds(live):
     """The file's columns, and anything the backend made this server add.
 
     The list was once exactly the CSV's three columns, which was true of every
     backend until one refused to make a table without a primary key. A file has
     no key to offer, so ``create`` supplies a surrogate — a real column, which
-    ``SELECT *`` will return and which ``info`` must therefore name. Asked of the
+    ``SELECT *`` will return and which ``directory`` must therefore name. Asked of the
     seam rather than of the dialect, for the reason the other fixtures here are.
 
-    **The note is asserted, not just the column.** An added column that ``info``
+    **The note is asserted, not just the column.** An added column that ``directory``
     lists but does not explain is a table shape the caller has to
     reverse-engineer; a wrong explanation attached to a right outcome passes
     every test that only checks the outcome.
@@ -539,7 +539,7 @@ def test_info_describes_a_table_the_endpoint_holds(live):
     attach_writable(live)
     table = land_people(live)
 
-    described = call("info", nickname="endpoint", table=table)
+    described = call("directory", nickname="endpoint", table=table)
 
     assert described["ok"] is True, described
     assert described["rows"] == 5
@@ -566,7 +566,7 @@ def test_the_slot_lists_the_table_that_was_added_to_it(live):
     attach_writable(live)
     table = land_people(live)
 
-    listed = call("info", nickname="endpoint")
+    listed = call("directory", nickname="endpoint")
 
     assert table in listed["tables"]
     assert {entry["table"]: entry["rows"] for entry in listed["contents"]}[table] == 5
@@ -598,7 +598,7 @@ def test_an_index_can_be_created_and_dropped(live):
         # What each says instead is the backend's own words, not this fixture's.
         assert made["ok"] is False, made
         assert backend.name in made["error"]
-        assert call("info", nickname="endpoint", table=table)["indexes"] == []
+        assert call("directory", nickname="endpoint", table=table)["indexes"] == []
         return
 
     assert made["ok"] is True, made
@@ -606,12 +606,12 @@ def test_an_index_can_be_created_and_dropped(live):
     for warning in made.get("warnings", []):
         assert "first" in warning and "characters" in warning
 
-    listed = call("info", nickname="endpoint", table=table)
+    listed = call("directory", nickname="endpoint", table=table)
     assert made["index"] in [index["index"] for index in listed["indexes"]]
 
     gone = call("drop", nickname="endpoint", type="index", name=made["index"])
     assert gone["ok"] is True, gone
-    assert call("info", nickname="endpoint", table=table)["indexes"] == []
+    assert call("directory", nickname="endpoint", table=table)["indexes"] == []
 
 
 def test_a_table_can_be_renamed_and_keeps_its_rows(live):
@@ -632,7 +632,7 @@ def test_a_table_can_be_renamed_and_keeps_its_rows(live):
         # half-renamed something would pass the first two assertions.
         assert answer["ok"] is False, answer
         assert backend.name in answer["error"]
-        listed = call("info", nickname="endpoint")["tables"]
+        listed = call("directory", nickname="endpoint")["tables"]
         assert table in listed and renamed not in listed
         assert call(
             "query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}"
@@ -682,7 +682,7 @@ def test_a_rename_onto_a_name_that_needs_quoting_keeps_the_case(live):
         assert answer["table"] == mixed
     # The part that holds everywhere, and the one an agent's next statement
     # depends on: what came back is findable under exactly that spelling.
-    listed = call("info", nickname="endpoint")["tables"]
+    listed = call("directory", nickname="endpoint")["tables"]
     assert answer["table"] in listed
     assert table not in listed
 
@@ -836,7 +836,7 @@ def test_a_read_only_attach_refuses_create_and_drop(live):
     dropped = call("drop", nickname="endpoint", type="table", name=table)
     assert dropped["ok"] is False
     # And the table is still there, which is the part that matters.
-    assert table in call("info", nickname="endpoint")["tables"]
+    assert table in call("directory", nickname="endpoint")["tables"]
 
 
 # ---------------------------------------------------------------------------
