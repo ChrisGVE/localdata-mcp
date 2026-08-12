@@ -227,8 +227,14 @@ by name rather than written as something else. Choose it rather than defaulting:
 | to open it in Excel or Numbers | `.xlsx` | **refused above 65,535 rows** — narrow it with `LIMIT` or send `.csv` |
 | to open it in LibreOffice specifically | `.ods` | same cap, and slow — **5.8× `.xlsx`** at 20,000 rows of eleven ordinary-width columns, and slower still as rows grow (below). Use `.xlsx` unless OpenDocument was asked for |
 | a normal file, any size | `.csv`, `.tsv`, `.jsonl` | written row by row, so size costs nothing |
-| something big, for another program | `.parquet` | the safe default, not a size winner: over seven shapes driven it was smallest on three — **by 100× or more where a column repeats few distinct values** — and eighth of fifteen on high-entropy text, where `.orc` won by about 1.2×. `.orc` and `.parquet` write within 8% of each other; `.feather` writes faster, and was the larger on every text shape but the smaller on both float shapes |
+| something big, for another program | `.parquet` | the safe default, not a size winner — **smallest by 100× or more where a column repeats few distinct values**, mid-field otherwise (below) |
 | it pasted into a document | `.md` | small results only — it builds the whole table in memory |
+
+**Where `.parquet` lands when the column does not repeat**: over seven shapes
+driven it was smallest on three, and eighth of fifteen on high-entropy text,
+where `.orc` won by about 1.2×. `.orc` and `.parquet` write within 8% of each
+other; `.feather` writes faster, and was the larger on every text shape but the
+smaller on both float shapes.
 
 `.yaml` is available and is **4.3× `.csv`** on the same million-row result,
 237.6 s against 55.5 s. It holds nothing in memory, so size is not the problem;
