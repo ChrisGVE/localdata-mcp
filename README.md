@@ -475,11 +475,6 @@ answer belongs to whoever wrote the file, it reports and carries on.
   Declared wrongly, a single column whose *name* still holds a common delimiter
   says exactly that — it reports what it sees and does not re-read at a guessed
   separator, because a guess that is usually right is the worst kind.
-- **A timestamp out of a typed format is reported only on the column itself**,
-  and this is the one entry here with **no warning attached**. It loads as an
-  integer count of nanoseconds since the epoch, which orders correctly and
-  compares wrongly against a date string; the `temporal` and `unit` fields on the
-  column say so and nothing else does. *Dates*, below, has the detail.
 
   **Both directions require it**, and that is not decoration: while the suffix
   supplied the separator it supplied it to reader and writer alike, so a file
@@ -490,6 +485,11 @@ answer belongs to whoever wrote the file, it reports and carries on.
   because the caller has misread the file. On the way out, `query(path=…)`
   **ignores** it, so one value can be carried across a mixed batch of
   destinations without the caller stripping it per file.
+- **A timestamp out of a typed format is reported only on the column itself**,
+  and this is the one entry here with **no warning attached**. It loads as an
+  integer count of nanoseconds since the epoch, which orders correctly and
+  compares wrongly against a date string; the `temporal` and `unit` fields on the
+  column say so and nothing else does. *Dates*, below, has the detail.
 
 ## Dates
 
