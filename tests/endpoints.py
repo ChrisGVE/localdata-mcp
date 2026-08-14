@@ -1356,6 +1356,9 @@ ENDPOINTS = (
         driver="clickhouse_connect",
         extra="clickhouse",
         url=_clickhouse,
+        # The dialect ships inside `clickhouse-connect` and registers itself as
+        # `clickhousedb`; the engine answering is ClickHouse.
+        engine="clickhouse",
         auth=(
             AuthMode(
                 mode="empty-password",
@@ -1412,6 +1415,9 @@ ENDPOINTS = (
         driver="crate",
         extra="cratedb",
         url=_cratedb,
+        # `sqlalchemy-cratedb` registers the dialect as `crate`, the product is
+        # CrateDB, and a refusal has to say CrateDB.
+        engine="cratedb",
         warmup=60.0,
     ),
     # `engine` differs from `dialect` for the second time here, and for a new
