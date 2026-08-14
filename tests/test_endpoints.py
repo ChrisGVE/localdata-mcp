@@ -189,7 +189,14 @@ def land_people(live: Live, nickname: str = "endpoint") -> str:
     an endpoint is one of the things in question.
     """
     table = live.table()
-    made = call("create", nickname=nickname, type="table", source=live.csv, table=table)
+    made = call(
+        "create",
+        nickname=nickname,
+        type="table",
+        source=live.csv,
+        table=table,
+        delimiter=",",
+    )
     assert made["ok"] is True, made
     return table
 
@@ -342,6 +349,7 @@ def test_a_gap_in_a_text_column_arrives_as_null(live):
         type="table",
         source=str(gapped),
         table=table,
+        delimiter=",",
     )
     assert made["ok"] is True, made
 
@@ -831,8 +839,15 @@ def test_a_read_only_attach_refuses_create_and_drop(live):
 
     call("attach", database=live.url, nickname="endpoint")
 
+    # No delimiter is declared here, and that is deliberate: the grant is
+    # checked before the source is ever read, so this refuses on the grant —
+    # verified by running it both ways, which produced the same refusal. The
+    # reason is asserted rather than just `ok is False`, because that is the
+    # part which would go quiet if some other refusal ever started arriving
+    # first, and a bare falsity cannot tell two refusals apart.
     refused = call("create", nickname="endpoint", type="table", source=live.csv)
     assert refused["ok"] is False
+    assert "read-only" in refused["error"], refused
     dropped = call("drop", nickname="endpoint", type="table", name=table)
     assert dropped["ok"] is False
     # And the table is still there, which is the part that matters.
@@ -860,13 +875,15 @@ def test_rows_can_be_copied_into_a_slot_that_saves(live):
     """The documented route for a datasource this server reaches but cannot hold."""
     attach_writable(live)
     table = land_people(live)
-    call("attach", database=live.csv, nickname="local")
+    call("attach", database=live.csv, nickname="local", delimiter=",")
 
     exported = call(
         "query",
         nickname="endpoint",
         sql=f"SELECT * FROM {table}",
-        path=str(live.root / "out.csv"), delimiter=",")
+        path=str(live.root / "out.csv"),
+        delimiter=",",
+    )
     assert exported["ok"] is True, exported
 
     added = call(
@@ -874,7 +891,9 @@ def test_rows_can_be_copied_into_a_slot_that_saves(live):
         nickname="local",
         type="table",
         source=str(live.root / "out.csv"),
-        table="copied", delimiter=",")
+        table="copied",
+        delimiter=",",
+    )
     assert added["ok"] is True, added
     assert added["rows"] == 5
 
