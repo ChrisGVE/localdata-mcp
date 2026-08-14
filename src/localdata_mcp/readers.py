@@ -134,26 +134,48 @@ def fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str
     This states what it found; it does not re-read the file at the character it
     spotted. Sniffing is the fail-open shape this project keeps being bitten by,
     and a guess that is usually right is the worst kind.
+
+    **What it quotes is the header line, not the column name the caller ends up
+    with.** Identifier sanitisation runs downstream of every reader, and it
+    replaces exactly the characters this note is about, so the stored name never
+    contains the one being reported. Citing it named evidence the answer no
+    longer held (#101); the header is the same evidence and the caller can check
+    it against the file.
     """
     if len(frame.columns) != 1:
         return ()
 
-    column = str(frame.columns[0])
+    header = str(frame.columns[0])
     found = [
         spelling
         for character, spelling in _COMMON_DELIMITERS.items()
-        if character != separator and character in column
+        if character != separator and character in header
     ]
     if not found:
         return ()
 
     return (
         f"{name} was read at {_COMMON_DELIMITERS[separator]} and loaded as a "
-        f"single column whose name contains {' and '.join(found)} — which is "
-        f"what a file separated by one of those looks like when it is read at "
-        f"{_COMMON_DELIMITERS[separator]}. If that is the case, attach it again "
-        f"with delimiter set to the right character. Nothing here guesses it.",
+        f"single column, from a header line reading {_shortened(header)} — "
+        f"which contains {' and '.join(found)}, what a file separated by one of "
+        f"those looks like when it is read at {_COMMON_DELIMITERS[separator]}. "
+        f"The stored column name is that header sanitised, so it is not the "
+        f"string quoted here. If that is the case, attach it again with "
+        f"delimiter set to the right character. Nothing here guesses it.",
     )
+
+
+#: How much of a header line a warning quotes. A file read at the wrong
+#: separator turns its whole first line into one name, and a wide file's is
+#: hundreds of characters — long enough to bury the sentence explaining it.
+_QUOTED_HEADER_LIMIT = 60
+
+
+def _shortened(text: str) -> str:
+    """The header as a quoted string, cut to something a sentence can carry."""
+    if len(text) <= _QUOTED_HEADER_LIMIT:
+        return repr(text)
+    return repr(text[:_QUOTED_HEADER_LIMIT] + "…")
 
 
 def read_json(path: Path) -> ReadResult:

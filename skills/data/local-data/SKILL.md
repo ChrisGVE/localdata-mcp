@@ -420,10 +420,11 @@ attach(database="/path/sales.csv", delimiter=";")
 
 Find out what it is instead of trying `,` first. A file written by a European
 tool is usually semicolon-separated whatever it is called, and declared wrongly
-it loads as **a single column whose name is the whole header line** — `a_b_c` —
-with a warning saying exactly that. `ok: true` comes back and every number you
-compute from it is wrong, so this is one to notice rather than work around. If
-you cannot tell, ask the user or look at the first line of the file.
+it loads as **a single column whose name is the whole header line, sanitised** —
+`a;b;c` becomes `a_b_c` — with a warning quoting the header it read, so you can
+check it against the file. `ok: true` comes back and every number you compute
+from it is wrong, so this is one to notice rather than work around. If you
+cannot tell, ask the user or look at the first line of the file.
 
 `delimiter` is also a parameter of `create` and of `query(path=…)`, required
 there too — writing has to say what to separate with, or a file named `.tsv`

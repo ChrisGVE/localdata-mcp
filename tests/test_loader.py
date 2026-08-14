@@ -1195,6 +1195,43 @@ def test_the_delimiter_parameter_reads_the_same_file_properly(workspace, root):
     assert rows[0][0] == 255000
 
 
+def test_the_fat_column_warning_cites_evidence_the_answer_still_holds(workspace, root):
+    """The note used to name a `;` in a column name the same answer reported without one.
+
+    Identifier sanitisation runs after the reader, so by the time the caller sees
+    the column its name is `name_role_salary` and the character the note is about
+    has been replaced. A warning whose stated evidence contradicts the payload it
+    arrives in gets the warning disbelieved, so the note quotes the header line it
+    actually read — which is checkable against the file — and says outright that
+    the stored name is not that string.
+    """
+    (info,) = workspace.load_file(str(root / "semicolons.csv"), "main", delimiter=",")
+
+    (note,) = info.notes
+    (column,) = info.columns
+
+    assert ";" not in column.name
+    assert "name;role;salary" in note
+    assert "sanitised" in note
+
+
+def test_a_fat_column_header_is_truncated_before_it_is_quoted(workspace, root):
+    """The header of a wide file read at the wrong separator becomes one long name.
+
+    Quoting it whole would put the entire first line of the file into a warning,
+    which is the shape that turns a diagnostic into a wall the caller scrolls past.
+    """
+    wide = root / "wide.csv"
+    wide.write_text(";".join(f"column_{n}" for n in range(200)) + "\n1;2\n")
+
+    (info,) = workspace.load_file(str(wide), "main", delimiter=",")
+
+    (note,) = info.notes
+    assert "column_0" in note
+    assert "…" in note
+    assert len(note) < 500
+
+
 def test_a_tab_separated_file_splits_at_the_declared_tab(workspace, root):
     """There is no per-extension default left; the tab is declared like any other.
 
