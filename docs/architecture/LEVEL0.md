@@ -337,8 +337,8 @@ SQL. An unregistered suffix has no such fallback — there is no generic way to 
 whose format nobody declared, and guessing produces exactly the answer this server exists
 to prevent: data that loaded, looks fine, and is wrong. Absence here is a refusal by name.
 
-**A delimited file is read twice rather than held once.** `.csv`, `.tsv`, `.txt` and
-`.fwf` — the formats declaring `streamed` — go through a measuring pass and then an inserting pass, so
+**A delimited file is read twice rather than held once.** `.csv`, `.tsv` and `.txt` — the
+formats declaring `streamed` — go through a measuring pass and then an inserting pass, so
 the load's peak stops tracking the file: 4,286 MB → 803 MB against a 1.22 GB CSV
 (CONSTRAINTS §28). The file is read twice and that costs 1.4–1.75x wall clock, which is
 the whole of the trade.
@@ -360,7 +360,7 @@ still tracks the file, and that is stated rather than worked around.
 
 | Group | Read | Write |
 |---|---|---|
-| Flat | `.csv` `.tsv` `.txt` `.fwf` | `.csv` `.tsv` `.txt` |
+| Flat | `.csv` `.tsv` `.txt` | `.csv` `.tsv` `.txt` |
 | Structured | `.json` `.jsonl` `.ndjson` `.yaml` `.yml` `.xml` | same |
 | Spreadsheet | `.xlsx` `.xlsm` `.xls` `.ods` `.numbers` | `.xlsx` `.ods` |
 | Columnar | `.parquet` `.feather` `.orc` | same |
@@ -397,8 +397,6 @@ what is unambiguous, say what was assumed, refuse an actual choice*:
   text and a nested XML element its XML text — lossless and reversible — and a note names
   the columns. `pandas.read_xml` drops the subtree and reports nothing, which is why that
   reader is written directly on ElementTree.
-- **An inference is stated.** Fixed-width column boundaries are inferred from alignment,
-  because nothing in the file declares them, and the note says so.
 - **Nothing sniffs.** A file separated by something other than what its extension implies
   loads as one fat column; `delimiter` is how the caller says otherwise. The parameter
   alone would not have been enough — a caller who does not know would never reach for it —

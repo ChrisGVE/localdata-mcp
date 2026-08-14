@@ -49,7 +49,6 @@ STREAMED_ASSETS = [
     "large_dataset.csv",
     "mixed_tabs.tsv",
     "pipes.txt",
-    "payroll.fwf",
 ]
 
 #: Files neither path can read. They belong in this module all the same: a

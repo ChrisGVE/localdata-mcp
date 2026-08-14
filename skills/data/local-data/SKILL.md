@@ -424,9 +424,6 @@ to character-separated text only — `.csv`, `.tsv`, `.txt` — and on `attach` 
 `create` a `delimiter` handed to a `.parquet` or a workbook is **refused**,
 naming the suffix, because that is a caller who has misread the file. Do not
 retry without it and assume the file was fine; look at what the columns are.
-A fixed-width file (`.fwf`) has no separator at all: its column boundaries are
-inferred from which character positions are blank on every line, and the warning
-says so, because nothing in the file declares them.
 
 **Nested values became JSON text.** A JSON or XML column holding a structure
 comes back as `TEXT` carrying exactly what was in the file, and the warning names

@@ -15,8 +15,7 @@ a ``LoadError`` naming what was wrong with the file, because a wrong answer that
 looks like data is the failure nothing downstream can report.
 
 **A reader may also warn.** Several formats have a shape a table does not: a
-JSON object with one array under it, a workbook with several sheets, a
-fixed-width file whose columns were inferred from where the blanks are. Those
+JSON object with one array under it, a workbook with several sheets. Those
 come back as notes on the result rather than as refusals, because the data is
 readable and the caller is the one who can say whether it was read the way they
 meant.
@@ -63,10 +62,9 @@ class ReadResult:
 
     Most formats need no second field either: a CSV's rows are the whole story.
     Some cannot say everything in the data. A JSON file whose tables hang under
-    a key was read from *one* of those keys; a fixed-width file was read under
-    inferred boundaries. Each is a fact about the source that the caller can act
-    on and would otherwise have to infer from a shape that looks perfectly
-    ordinary — so it is carried out rather than dropped here.
+    a key was read from *one* of those keys. That is a fact about the source the
+    caller can act on and would otherwise have to infer from a shape that looks
+    perfectly ordinary — so it is carried out rather than dropped here.
 
     A note is a sentence, and the contract is the same as the warnings the load
     path already produces: state what happened and what to do about it. It is
@@ -225,25 +223,6 @@ def read_yaml(path: Path) -> ReadResult:
 
     records, notes = _table_within(document, path.name)
     return _frame_of_records(records, notes)
-
-
-def read_fwf(path: Path) -> ReadResult:
-    """Fixed-width text, whose column boundaries are inferred from alignment.
-
-    Nothing in the file states where the columns are, so pandas finds them by
-    looking at which character positions stay blank. That is the only way to
-    read the format without a declared layout — and it is still a guess, so the
-    note says so rather than letting an inferred split pass as a fact.
-    """
-    return _one(
-        pd.read_fwf(path),
-        (
-            f"{path.name} is fixed-width, so its column boundaries were inferred "
-            f"from which character positions are blank on every line — nothing "
-            f"in the file declares them. Check the columns are the ones you "
-            f"expect before relying on the split.",
-        ),
-    )
 
 
 def read_columnar(path: Path) -> ReadResult:

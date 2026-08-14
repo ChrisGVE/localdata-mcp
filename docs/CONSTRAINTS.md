@@ -1483,6 +1483,17 @@ fix and is also the seam every new format arrives through.
 > overlap is **fourteen**. The round-trip property is stated the same way and is now true without
 > the exception HTML had always been — it wrote a table of any size and could not read back past
 > ~417,000 rows of eleven columns (§10.7). The reasoning is in `LEVEL0.md`.
+>
+> **Amended 2026-08-14: `.fwf` was removed from the catalogue**, so every count above drops by one
+> on the read side — **17 readable, 15 writable, 14 both** — and the "Read only" row is now three
+> suffixes, `.numbers` `.xls` `.xlsm`. The measurements themselves are untouched; what changed is
+> the set they were taken over. **`.fwf` is not a file-extension convention**: it is the *function*
+> name pandas and R give fixed-width reading (`read_fwf`, `read.fwf`), and real fixed-width exports
+> carry `.txt`, `.dat`, `.prn` or no suffix at all. The support rested on one fixture written here
+> (`tests/assets/payroll.fwf`) with no dedicated test beyond it, so the format was never read from
+> a file this project did not also write. Fixed-width *data* is real — mainframe, COBOL, banking —
+> and if it is wanted back the honest form is declared column widths, not an invented suffix whose
+> boundaries are inferred from which character positions happen to be blank.
 
 > **The timings below carry a wide environmental variance, measured 2026-07-27.** They were
 > taken in a single pass, and a later run of the same steps came out 2–3x faster, which was
@@ -1602,6 +1613,10 @@ Two consequences worth carrying:
 > 4,286 MB → **803 MB** for the wide corpus. The paragraph below stands for every other format,
 > which is still parsed whole by the library that reads it. **Its ~3.0 GB is also an under-report**
 > — it was sampled, and a per-process high-water mark puts the same load at 4,286 MB (§28.2).
+>
+> **Amended 2026-08-14: `.fwf` is no longer a format this server reads**, so the delimited set that
+> sentence names is `.csv`, `.tsv`, `.txt`. The measurement stands — the wide corpus is CSV — and
+> the reasoning for the removal is with the format catalogue in §10.5.
 
 Peak RSS **~3.0 GB**, against a 1.22 GB source. The load is the peak, not the extract: `read_file`
 builds the whole pandas frame before a single row is inserted, so the load peak tracks the *file*
@@ -4866,6 +4881,11 @@ reader produces a whole frame, so it is the *loading* of a large file that sets 
 A delimited file is now read twice: pass one measures it, pass two coerces each chunk to what
 was measured and inserts it. `.csv`, `.tsv`, `.txt` and `.fwf` stream; everything else is parsed
 whole by the library that reads it and is unchanged (§28.6).
+
+> **Amended 2026-08-14: `.fwf` was removed from the catalogue and no longer streams or reads at
+> all** — the streaming set is `.csv`, `.tsv`, `.txt`. Nothing measured in this section came from a
+> `.fwf` file (the corpus is CSV throughout), so every figure below stands as taken. The reasoning
+> for the removal is with the format catalogue in §10.5.
 
 ### 28.1 What it costs, and what it no longer costs
 

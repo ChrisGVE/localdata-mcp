@@ -919,7 +919,7 @@ def test_a_column_name_xml_cannot_spell_is_refused_not_mangled(workspace, root):
 
 
 # ---------------------------------------------------------------------------
-# YAML, Markdown, fixed width, and the columnar three
+# YAML, Markdown, and the columnar three
 # ---------------------------------------------------------------------------
 
 
@@ -997,16 +997,6 @@ def test_markdown_is_written_as_a_table_and_is_write_only(workspace, root):
     written = target.read_text()
     assert "| name" in written and "Ada" in written and "120000" in written
     assert ".md" not in loader_module.READERS
-
-
-def test_fixed_width_is_read_and_says_the_boundaries_were_inferred(workspace, root):
-    """Nothing in the file states the columns, so the caller is told they were guessed."""
-    (info,) = workspace.load_file(str(root / "payroll.fwf"), "main")
-
-    assert info.row_count == 3
-    assert [c.name for c in info.columns] == ["name", "salary"]
-    assert len(info.notes) == 1
-    assert "inferred" in info.notes[0]
 
 
 @pytest.mark.parametrize("suffix", [".parquet", ".feather", ".orc"])

@@ -523,7 +523,7 @@ def attach(
 
     Args:
         database: A tabular file (.csv, .tsv, .txt, .json, .jsonl, .ndjson,
-            .xml, .yaml, .yml, .fwf, .parquet, .feather, .orc, .xlsx, .xlsm,
+            .xml, .yaml, .yml, .parquet, .feather, .orc, .xlsx, .xlsm,
             .xls, .ods, .numbers), a SQLite or DuckDB database file, or a
             database URL. A database file is told apart from a flat file by its
             header, not by its suffix.

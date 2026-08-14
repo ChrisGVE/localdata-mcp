@@ -106,11 +106,11 @@ rebuild it.
   over either returns a real number that is not the number asked for. It is a
   verb rather than a flag on `directory` because a directory that reports statistics
   stops being one.
-- **Eighteen file formats read** (`.csv` `.tsv` `.txt` `.fwf` `.json` `.jsonl`
+- **Seventeen file formats read** (`.csv` `.tsv` `.txt` `.json` `.jsonl`
   `.ndjson` `.xml` `.yaml` `.yml` `.xlsx` `.xlsm` `.xls` `.ods` `.numbers`
-  `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less `.fwf`,
+  `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less
   `.xlsm`, `.xls` and `.numbers`, plus `.md`). `.xlsx` and `.ods` are written as
-  well as read. Eight of the readers and seven of the writers are guaranteed by
+  well as read. Seven of the readers and seven of the writers are guaranteed by
   the base install; `.yaml`/`.yml` also work without their extra today, because
   `fastmcp` requires `PyYAML` unconditionally — a fact about the dependency graph
   rather than a promise, so `yaml` stays the declared extra.
@@ -210,8 +210,8 @@ rebuild it.
   and handed them back in chunks. A row cap measures the wrong dimension — a
   hundred rows of a two-hundred-column table is the flood it was meant to
   prevent — so `LIMIT`, named columns and `path=` are the controls instead.
-- **A delimited file is read twice rather than held once.** `.csv`, `.tsv`,
-  `.txt` and `.fwf` go through a measuring pass and an inserting pass, dropping
+- **A delimited file is read twice rather than held once.** `.csv`, `.tsv` and
+  `.txt` go through a measuring pass and an inserting pass, dropping
   the load's peak from 4,286 MB to 803 MB on a 1.22 GB CSV, at 1.4–1.75× wall
   clock. Below about 150 MB it costs slightly more than it saves. Formats that
   cannot be chunked still peak with the file, and that is stated rather than

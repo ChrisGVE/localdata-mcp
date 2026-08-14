@@ -59,18 +59,18 @@ uv sync --all-extras                      # every format library and every datab
 Once 3.0.0 is tagged, and not before, the same thing installs from PyPI:
 
 ```bash
-uv tool install localdata-mcp             # CSV, TSV, TXT, FWF, JSON, JSONL, NDJSON, XML
+uv tool install localdata-mcp             # CSV, TSV, TXT, JSON, JSONL, NDJSON, XML
 uv tool install 'localdata-mcp[all]'      # every format and every database driver
 ```
 
-The base install declares no format libraries and no database drivers. **Eight of
-the eighteen readable formats are guaranteed by it**; the remaining ten are
+The base install declares no format libraries and no database drivers. **Seven of
+the seventeen readable formats are guaranteed by it**; the remaining ten are
 declared behind six extras (`parquet` covering all three columnar suffixes, `excel`,
 `ods`, `xls`, `numbers`, `yaml`), and each database is one more (`postgres`,
 `duckdb`, `oracle`, …). One extra is for the write side only: `markdown`
 installs the table formatter `.md` output needs, and there is no `.md` reader.
 
-In practice a base install reads **ten of the eighteen** and writes nine, because `fastmcp`
+In practice a base install reads **nine of the seventeen** and writes nine, because `fastmcp`
 requires `PyYAML` unconditionally and `.yaml`/`.yml` therefore work without their
 extra. That is a fact about today's dependency graph and not a promise this
 project makes: `yaml` stays the declared extra, and code that needs YAML should
@@ -103,7 +103,7 @@ Add the server to your MCP client configuration. From a clone, name the clone �
 After `uv tool install 'localdata-mcp[all]'` puts the entry point on `PATH`,
 `"command": "localdata-mcp"` with no arguments is equivalent. It has to be the
 `[all]` form: the bare `uv tool install localdata-mcp` carries no extras, so that
-configuration would reach ten of the eighteen formats and one of the eighteen
+configuration would reach nine of the seventeen formats and one of the eighteen
 backends — which is what `--all-extras` above exists to avoid.
 
 Then point it at a file and ask:
@@ -177,11 +177,11 @@ No writer for '.docx'. The suffix chooses the format. Supported: .csv, .feather,
 .yaml, .yml
 ```
 
-**Eighteen formats read, fifteen write:**
+**Seventeen formats read, fifteen write:**
 
 | Group | Read | Write |
 |---|---|---|
-| Flat | `.csv` `.tsv` `.txt` `.fwf` | `.csv` `.tsv` `.txt` |
+| Flat | `.csv` `.tsv` `.txt` | `.csv` `.tsv` `.txt` |
 | Structured | `.json` `.jsonl` `.ndjson` `.yaml` `.yml` `.xml` | `.json` `.jsonl` `.ndjson` `.yaml` `.yml` `.xml` |
 | Spreadsheet | `.xlsx` `.xlsm` `.xls` `.ods` `.numbers` | `.xlsx` `.ods` |
 | Columnar | `.parquet` `.feather` `.orc` | `.parquet` `.feather` `.orc` |
@@ -466,9 +466,6 @@ answer belongs to whoever wrote the file, it reports and carries on.
   reachable with `json_extract(column, '$.key')` — and the warning names the
   columns. `pandas.read_xml` drops the subtree and reports nothing, which is why
   that reader is written directly on ElementTree.
-- **An inference is stated.** Fixed-width column boundaries are inferred from
-  which character positions are blank on every line, because nothing in the file
-  declares them, and the warning says so.
 - **Nothing sniffs a delimiter.** A semicolon-separated file read at `,` loads as
   one column named `a_b_c`, and the warning says exactly that and names the
   `delimiter` parameter. It does not re-read at a guessed separator: a guess that
@@ -561,8 +558,8 @@ database. Residency is measured as `(page_count − freelist_count) × page_size
 freelist-corrected so a slot emptied by a `DROP` is not moved to disk for data it
 no longer has.
 
-**A delimited file is read twice rather than held once.** `.csv`, `.tsv`, `.txt`
-and `.fwf` go through a measuring pass and then an inserting pass, which stops the
+**A delimited file is read twice rather than held once.** `.csv`, `.tsv` and
+`.txt` go through a measuring pass and then an inserting pass, which stops the
 load's peak tracking the file: 4,286 MB → 803 MB against a 1.22 GB CSV
 (`docs/CONSTRAINTS.md` §28). The second read costs 1.4–1.75× wall clock, and
 below about 150 MB it costs slightly more than it saves. The formats that are not
@@ -627,7 +624,7 @@ When that route does open, `.claude-plugin/plugin.json` launches the server with
 `uv run --all-extras`, so the first start resolves every format library and every
 database driver — 139 distributions, slow on a cold `uv` cache and a few seconds
 after that. That is deliberate: the plugin builds its own environment, and
-without the flag it would reach ten of the eighteen formats and one of the
+without the flag it would reach nine of the seventeen formats and one of the
 eighteen backends while that file's own description advertises all of them. The
 client configuration above carries the same flag for the same reason, so neither
 path depends on `uv sync --all-extras` having been run in the clone first.

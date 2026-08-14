@@ -39,7 +39,6 @@ from .readers import (
     Reader,
     delimited,
     read_columnar,
-    read_fwf,
     read_json,
     read_jsonl,
     read_numbers,
@@ -155,9 +154,6 @@ FORMATS: dict[str, Format] = dict(
             delimited=True,
             streamed=True,
         ),
-        # Fixed-width: read in chunks like the separated formats, but there is
-        # no writer worth having — the column widths would have to be invented.
-        _format(".fwf", reader=read_fwf, streamed=True),
         # Formats carrying their own structure. A delimiter means nothing for
         # any of them, which is why `delimited` is left false rather than
         # restated.

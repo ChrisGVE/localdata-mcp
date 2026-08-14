@@ -1109,29 +1109,12 @@ def _chunk_reader(
     """A callable giving fresh chunks of this file, every column as raw text."""
 
     def chunks() -> Iterator[pd.DataFrame]:
-        if suffix == ".fwf":
-            reader = pd.read_fwf(path, dtype=str, chunksize=_READ_CHUNK)
-        else:
-            separator = delimiter or ("\t" if suffix == ".tsv" else ",")
-            reader = pd.read_csv(path, sep=separator, dtype=str, chunksize=_READ_CHUNK)
+        separator = delimiter or ("\t" if suffix == ".tsv" else ",")
+        reader = pd.read_csv(path, sep=separator, dtype=str, chunksize=_READ_CHUNK)
         with reader as opened:
             yield from opened
 
     return chunks
-
-
-def _streamed_notes(
-    path: Path, suffix: str, first: pd.DataFrame, sep: str
-) -> tuple[str, ...]:
-    """What the reader had to assume, which the header alone is enough to say."""
-    if suffix == ".fwf":
-        return (
-            f"{path.name} is fixed-width, so its column boundaries were inferred "
-            f"from which character positions are blank on every line — nothing "
-            f"in the file declares them. Check the columns are the ones you "
-            f"expect before relying on the split.",
-        )
-    return fat_column_note(first, sep, path.name)
 
 
 def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:
@@ -1172,7 +1155,7 @@ def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:
                 scans = [
                     _ColumnScan(name) for name in _unique_columns(list(chunk.columns))
                 ]
-                notes = _streamed_notes(path, suffix, chunk, separator)
+                notes = fat_column_note(chunk, separator, path.name)
             for scan, label in zip(scans, chunk.columns):
                 scan.observe(chunk[label])
     except LoadError:
