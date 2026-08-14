@@ -82,6 +82,16 @@ mcp = FastMCP(
         "named by a nickname**, so even a single CSV holds its rows in a table. "
         "attach returns the nickname it actually used, which may not be the one "
         "you asked for — use what it returns.\n\n"
+        "**Character-separated text says what separates it.** .csv, .tsv and "
+        ".txt are one format here, and no suffix carries a separator, so "
+        "delimiter is required on every call that reads or writes one — "
+        "attach(database='sales.csv', delimiter=','), create(..., "
+        "delimiter=';'), query(..., path='out.csv', delimiter=','), save. "
+        "Without it the call is refused rather than guessed at, because a file "
+        "called .csv is as likely to be separated by ';' or '|' or a tab, and "
+        "reading it at the wrong one changes what the data is while the answer "
+        "looks perfectly ordinary. Handed to a format that has no separator — "
+        "a workbook, .parquet — it is refused by name on attach and create.\n\n"
         "**Each call names one datasource, and the SQL addresses tables inside it "
         "by their own names**: query(nickname='shop', sql='SELECT * FROM sales'), "
         "not FROM shop.sales. One statement reaches one datasource. To look a "
@@ -116,7 +126,8 @@ mcp = FastMCP(
         "**stats(nickname, table) says whether the data is any good.** It is the "
         "only call reporting missing values: every column comes back with nulls "
         "and non_nulls, a numeric one adds min, max and avg, and median and "
-        "stddev appear only where the database computes them itself. Read nulls "
+        "stddev appear only where this server declares them for that backend, "
+        "which defaults to none. Read nulls "
         "before reporting an average — avg() skips them silently. A column "
         "answering with 'withheld' and no statistics is one where an aggregate "
         "would be wrong rather than approximate, and it says which.\n\n"
@@ -475,9 +486,9 @@ def _answers(tool: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any
 
     Each verb still catches the failures it *expects* and refuses them in its
     own words; those are the answers a caller can act on. This is the outer net
-    under all eight, and it exists as one decorator rather than as eight
-    ``except`` clauses because the same promise stated eight times is a promise
-    that will soon be stated seven ways: ``query`` carried this catch-all alone
+    under all nine, and it exists as one decorator rather than as nine
+    ``except`` clauses because the same promise stated nine times is a promise
+    that will soon be stated eight ways: ``query`` carried this catch-all alone
     for a release while its seven siblings let the same failures out as protocol
     errors (issue #92).
 
@@ -656,9 +667,11 @@ def stats(
     Every column reports ``nulls`` and ``non_nulls``. A numeric column also
     reports ``min``, ``max`` and ``avg``, and a date column normalised to ISO
     8601 reports ``min`` and ``max``. ``median`` and ``stddev`` appear only where
-    the database computes them itself — nothing here approximates a statistic the
-    engine does not have, so their absence is a fact about the datasource rather
-    than about the column.
+    this server declares them for that backend, which defaults to none — nothing
+    here approximates a statistic it was not told about, so their absence is a
+    fact about the datasource rather than about the column. Measured so far:
+    SQLite has neither, DuckDB has both, and the other sixteen backends are
+    unmeasured rather than known to lack them.
 
     Two kinds of column are deliberately reported with their null count and
     nothing else, and each says why in ``withheld``: a **mixed** column, where an

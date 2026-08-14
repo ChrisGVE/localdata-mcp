@@ -108,7 +108,7 @@ The sheet is addressed by the snake_cased name it arrived under, which the
 writes into has to exist already.
 
 The response describes the table it read in, so — as with `attach` — there is
-nothing for an `directory` call straight afterwards to add.
+nothing for a `directory` call straight afterwards to add.
 
 If the join is slow because both sides are large, index the column you are
 joining on first. Nothing guesses this for you, because which query is coming is
@@ -342,9 +342,10 @@ stats(nickname="sales", table="sales")
 
 Every column comes back with `nulls` and `non_nulls`. A numeric one adds `min`,
 `max` and `avg`; a date column normalised to ISO 8601 adds `min` and `max`.
-`median` and `stddev` appear only when the database itself has them — SQLite
-does not, DuckDB does — so their absence says something about the datasource,
-not about the column. Narrow a wide table with `columns=["amount"]`.
+`median` and `stddev` appear only where this server declares them for that
+backend, which defaults to none — measured, SQLite has neither and DuckDB has
+both, and the other sixteen are unmeasured rather than known to lack them — so
+their absence says something about the datasource, not about the column. Narrow a wide table with `columns=["amount"]`.
 
 **Read `nulls` before you report an average.** `avg()` skips nulls silently, so
 an average over a column that is a tenth empty is an average of the other nine

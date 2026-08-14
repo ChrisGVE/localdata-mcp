@@ -127,9 +127,9 @@ def fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str
     Requiring the separator does not make this redundant, it makes it sharper.
     Before, this diagnosed a guess *this server* had made; now it diagnoses a
     declaration the caller made, so the note can say which character was asked
-    for and be certain that is what was used. One column whose *name* still
+    for and be certain that is what was used. One column whose header still
     contains a common delimiter is the signature of the mistake and nothing
-    else — the whole header became the column's name.
+    else — the whole header line became the column.
 
     This states what it found; it does not re-read the file at the character it
     spotted. Sniffing is the fail-open shape this project keeps being bitten by,

@@ -31,7 +31,8 @@ a C++ runtime macOS no longer ships (`CONSTRAINTS.md` §24), and OceanBase's ser
 at startup on an instruction — `rdtscp` — that the virtual machine Docker runs here does not
 expose (§26). Exasol, the last entry, landed (§27) — and the list ends there.
 
-Sixteen of those are containers, and this machine will run six at a time before the Docker
+Sixteen of the eighteen backends are reached through containers, and this machine will run
+six at a time before the Docker
 VM starves them, so **no single test run covers the catalogue** — it takes five batches once
 the authentication variants are counted, and each one reports a green suite while the
 dialects it never reached stay silent (issue #46).
@@ -401,8 +402,9 @@ what is unambiguous, say what was assumed, refuse an actual choice*:
   `.tsv` and `.txt` are one format and the character is declared. A parameter alone would
   not have been enough — a caller who does not know would never reach for it — so it is
   required, which is also what makes the bytes checkable against the declaration at all.
-  Declared wrongly, a single column whose *name* still contains a common delimiter says
-  exactly that. It reports what it sees; it does not re-read at a guessed separator,
+  Declared wrongly, the whole header line becomes one column and the warning quotes that
+  header back — the stored column name is that header sanitised, so it is not the string
+  the warning shows. It reports what it sees; it does not re-read at a guessed separator,
   because a guess that is usually right is the worst kind.
 
 `delimiter` earns its place on the same test `join_on` failed: it declares a **fact about

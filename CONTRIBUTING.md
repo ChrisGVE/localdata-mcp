@@ -61,8 +61,8 @@ they skip, which is worse, because the run still reports green.
 .venv/bin/python -m pytest -q -m 'not slow'
 ```
 
-At the time of writing that is `768 passed, 500 skipped, 5 deselected`, measured
-at 64 s on this machine. **Every one of the 500 skips is an endpoint test with no
+At the time of writing that is `780 passed, 500 skipped, 0 deselected`, measured
+at 121 s on this machine. **Every one of the 500 skips is an endpoint test with no
 container listening**, and each names the command that would start one — see
 "Endpoint tests" below.
 

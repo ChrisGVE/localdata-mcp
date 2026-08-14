@@ -142,7 +142,7 @@ the one occupancy where the two readings give the same number.
 used** — if that name was taken by a different source, you get `sales_2` and
 `collided_with` names the slot that forced it. Always read it back rather than
 assuming. The answer for a file already carries its columns, types, row count and
-any warning, so there is nothing for an `directory` call straight afterwards to add.
+any warning, so there is nothing for a `directory` call straight afterwards to add.
 
 **A slot is one attached datasource** — its database, the two connections that
 reach it, and the nickname it answers to. There are ten of them; the word is
@@ -166,8 +166,9 @@ what every datasource becomes.
 
 ## What it reads, writes and connects to
 
-Reading and writing are two registries keyed on the file suffix, and the suffix
-is what chooses the format. Writing CSV under a `.parquet` name was the defect
+One table keyed on the file suffix says what each format reads with and writes
+with, and the suffix is what chooses the format. Writing CSV under a `.parquet`
+name was the defect
 this replaced, so a suffix with no writer is **refused by name, before the
 destination is touched**:
 
@@ -252,10 +253,13 @@ is the failure most likely to make a confident answer wrong. Every column comes
 back with `nulls` and `non_nulls`; a numeric column adds `min`, `max` and `avg`,
 and a date column normalised to ISO 8601 adds `min` and `max`.
 
-It is governed by one rule — **free we take, expensive we leave.** A statistic
-the engine does not compute itself is **not reported**, never emulated and never
-approximated in a second pass, so `median` and `stddev` appear on DuckDB and not
-on SQLite. Their absence is a fact about the datasource, not about the column.
+It is governed by one rule — **free we take, expensive we leave.** A statistic a
+dialect has not declared is **not reported**, never emulated and never
+approximated in a second pass. Which statistics a dialect offers defaults to
+none and is declared per backend: measured so far, SQLite has neither `median`
+nor `stddev` and DuckDB has both, and the other sixteen are unmeasured rather
+than incapable. Their absence is a fact about the datasource, not about the
+column.
 Strings get the null count and nothing more. Every aggregate goes into one
 `SELECT`, so a profile costs one scan of the table whatever its width.
 
@@ -472,9 +476,11 @@ answer belongs to whoever wrote the file, it reports and carries on.
   be separated by `;` or `|` or a tab, and reading it at the wrong one changes
   what the data is while the answer looks perfectly ordinary. A declaration is
   what makes the file checkable at all, so it is required rather than defaulted.
-  Declared wrongly, a single column whose *name* still holds a common delimiter
-  says exactly that — it reports what it sees and does not re-read at a guessed
-  separator, because a guess that is usually right is the worst kind.
+  Declared wrongly, the whole header line becomes one column and the warning
+  quotes that header back at you — the stored column name is that header
+  sanitised, so it is not the string the warning shows. It reports what it sees
+  and does not re-read at a guessed separator, because a guess that is usually
+  right is the worst kind.
 
   **Both directions require it**, and that is not decoration: while the suffix
   supplied the separator it supplied it to reader and writer alike, so a file

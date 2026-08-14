@@ -98,9 +98,11 @@ rebuild it.
 - **`stats(nickname, table, columns?)` — the profile, and the only call that
   reports a missing value.** Every column answers with `nulls` and `non_nulls`, a
   numeric one adds `min`, `max` and `avg`, and a date column normalised to ISO
-  8601 adds `min` and `max`. `median` and `stddev` are reported only where the
-  engine computes them itself — never emulated, never approximated, never a
-  second pass in Python — so they appear on DuckDB and not on SQLite. A **mixed**
+  8601 adds `min` and `max`. `median` and `stddev` are reported only where this
+  server declares them for that backend — never emulated, never approximated,
+  never a second pass in Python. That declaration defaults to none, so they
+  appear on DuckDB, not on SQLite, and not yet on the sixteen backends nobody
+  has measured. A **mixed**
   column and a column of **dates in no recognised standard** are profiled to
   their null count alone, each saying why in `withheld`, because an aggregate
   over either returns a real number that is not the number asked for. It is a
