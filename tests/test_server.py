@@ -29,6 +29,7 @@ from sqlalchemy import Integer, Text
 from localdata_mcp import config as config_module
 from localdata_mcp import export as export_module
 from localdata_mcp import server as server_module
+from localdata_mcp.formats import DELIMITED
 from localdata_mcp.config import Config
 
 ASSETS = Path(__file__).parent / "assets"
@@ -59,6 +60,19 @@ def session(monkeypatch, tmp_path):
     server_module._reset()
     yield root
     server_module._reset()
+
+
+def separator_for(destination) -> dict[str, str]:
+    """``delimiter=`` for a destination that is character-separated text.
+
+    Empty for every other format, because a delimiter is inert there rather
+    than required. The suffix no longer supplies a separator to the server —
+    it has to be declared — so the tests state the one their fixtures use.
+    """
+    suffix = Path(str(destination)).suffix.lower()
+    if suffix not in DELIMITED:
+        return {}
+    return {"delimiter": "\t" if suffix == ".tsv" else ","}
 
 
 def call(tool: str, **arguments):
@@ -164,7 +178,9 @@ def test_the_instructions_teach_the_premise_where_the_model_reads_it():
 
 
 def test_a_file_attaches_as_a_database_holding_one_table(session):
-    attached = call("attach", database=str(session / "simple.csv"), nickname="staff")
+    attached = call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     assert attached["ok"] is True
     assert attached["kind"] == "file"
@@ -176,13 +192,15 @@ def test_a_file_attaches_as_a_database_holding_one_table(session):
 
 
 def test_a_nickname_is_derived_when_none_is_given(session):
-    attached = call("attach", database=str(session / "simple.csv"))
+    attached = call("attach", database=str(session / "simple.csv"), delimiter=",")
     assert attached["nickname"] == "simple"
     assert attached["tables"] == ["simple"]
 
 
 def test_attach_then_query_over_the_protocol(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     answer = call("query", nickname="staff", sql="SELECT sum(salary) AS t FROM simple")
     assert answer["ok"] is True
@@ -191,8 +209,12 @@ def test_attach_then_query_over_the_protocol(session):
 
 
 def test_the_same_source_twice_is_refused_and_names_where_it_lives(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
-    again = call("attach", database=str(session / "simple.csv"), nickname="other")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
+    again = call(
+        "attach", database=str(session / "simple.csv"), nickname="other", delimiter=","
+    )
 
     assert again["ok"] is False
     assert "'staff'" in again["error"]
@@ -205,8 +227,13 @@ def test_a_colliding_nickname_is_disambiguated_and_both_slots_survive(session):
     because a caller that assumes it got the name it asked for addresses the
     wrong database.
     """
-    call("attach", database=str(session / "simple.csv"), nickname="slot")
-    second = call("attach", database=str(session / "mixed_tabs.tsv"), nickname="slot")
+    call("attach", database=str(session / "simple.csv"), nickname="slot", delimiter=",")
+    second = call(
+        "attach",
+        database=str(session / "mixed_tabs.tsv"),
+        nickname="slot",
+        delimiter="\t",
+    )
 
     assert second["ok"] is True
     assert second["nickname"] == "slot_2"
@@ -224,7 +251,9 @@ def test_a_colliding_nickname_is_disambiguated_and_both_slots_survive(session):
 
 
 def test_directory_with_nothing_reports_every_datasource_and_the_posture(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     listing = call("directory")
 
     assert listing["ok"] is True
@@ -245,9 +274,15 @@ def test_directory_with_nothing_reports_every_datasource_and_the_posture(session
 
 
 def test_directory_with_a_nickname_reports_that_datasources_tables(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
     call(
-        "create", nickname="staff", type="table", source=str(session / "mixed_tabs.tsv")
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
+    call(
+        "create",
+        nickname="staff",
+        type="table",
+        source=str(session / "mixed_tabs.tsv"),
+        delimiter="\t",
     )
 
     detail = call("directory", nickname="staff")
@@ -262,7 +297,9 @@ def test_directory_with_a_nickname_reports_that_datasources_tables(session):
 
 
 def test_directory_with_a_table_describes_its_columns_and_types(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     described = call("directory", nickname="staff", table="simple")
 
     assert described["ok"] is True
@@ -292,7 +329,9 @@ def test_a_query_returns_its_whole_result(session):
     straight past it. Fewer rows is what SQL ``LIMIT`` is for, and the caller is
     the one who knows how many it wants.
     """
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     answer = call("query", nickname="staff", sql="SELECT * FROM simple")
     assert answer["row_count"] == 5
@@ -306,7 +345,9 @@ def test_a_query_returns_its_whole_result(session):
 
 
 def test_a_path_turns_the_same_query_into_an_export(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "out.csv"
 
     result = call(
@@ -314,6 +355,7 @@ def test_a_path_turns_the_same_query_into_an_export(session):
         nickname="staff",
         sql="SELECT name, salary FROM simple ORDER BY name",
         path=str(target),
+        **separator_for(target),
     )
     assert result["ok"] is True
     assert result["rows_written"] == 5
@@ -322,7 +364,9 @@ def test_a_path_turns_the_same_query_into_an_export(session):
 
 def test_the_export_writes_every_row_the_statement_selected(session):
     """A path is the answer to a result too large to return, so it truncates never."""
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "full.csv"
 
     result = call(
@@ -330,6 +374,7 @@ def test_the_export_writes_every_row_the_statement_selected(session):
         nickname="staff",
         sql="SELECT * FROM simple",
         path=str(target),
+        **separator_for(target),
     )
     assert result["rows_written"] == 5
     assert len(target.read_text().splitlines()) == 6  # header included
@@ -345,7 +390,9 @@ def test_a_writers_refusal_is_not_reported_as_a_slot_problem(session):
     column ``salary`` as the ``salary`` slot and answer a question about a file
     suffix with a sentence about joining across databases.
     """
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     call("attach", database=str(session / "records.json"), nickname="salary")
 
     refused = call(
@@ -365,7 +412,9 @@ def test_the_export_refuses_to_clobber_then_takes_the_users_answer(session):
     It relayed a path the user chose rather than choosing one, so replacing what
     is there is the user's call — and force is how that answer comes back.
     """
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "out.csv"
     target.write_text("existing content\n")
 
@@ -374,6 +423,7 @@ def test_the_export_refuses_to_clobber_then_takes_the_users_answer(session):
         nickname="staff",
         sql="SELECT name FROM simple",
         path=str(target),
+        **separator_for(target),
     )
     assert refused["ok"] is False
     assert "Ask the user" in refused["error"]
@@ -385,6 +435,7 @@ def test_the_export_refuses_to_clobber_then_takes_the_users_answer(session):
         sql="SELECT name FROM simple",
         path=str(target),
         force=True,
+        **separator_for(target),
     )
     assert forced["ok"] is True
     assert target.read_text().splitlines()[0] == "name"
@@ -409,7 +460,9 @@ def test_an_export_will_not_be_forced_over_an_attached_file(session):
 
 
 def test_the_export_suffix_chooses_the_format(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "out.tsv"
 
     result = call(
@@ -417,6 +470,7 @@ def test_the_export_suffix_chooses_the_format(session):
         nickname="staff",
         sql="SELECT name, salary FROM simple ORDER BY name",
         path=str(target),
+        **separator_for(target),
     )
 
     assert result["ok"] is True
@@ -439,7 +493,9 @@ def test_an_ods_export_is_an_ods_file_and_not_a_workbook_under_a_false_name(sess
     writer is handed a `Path`. The fix names the engine instead of inferring it.
     """
     pytest.importorskip("odf")
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "out.ods"
 
     result = call(
@@ -447,6 +503,7 @@ def test_an_ods_export_is_an_ods_file_and_not_a_workbook_under_a_false_name(sess
         nickname="staff",
         sql="SELECT name, salary FROM simple",
         path=str(target),
+        **separator_for(target),
     )
     assert result["ok"] is True
 
@@ -465,7 +522,9 @@ def test_an_ods_export_is_an_ods_file_and_not_a_workbook_under_a_false_name(sess
 def test_an_xlsx_export_is_still_a_workbook(session):
     """The other half of the pair — the fix must not swap the two engines."""
     pytest.importorskip("openpyxl")
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "out.xlsx"
 
     result = call(
@@ -473,6 +532,7 @@ def test_an_xlsx_export_is_still_a_workbook(session):
         nickname="staff",
         sql="SELECT name, salary FROM simple",
         path=str(target),
+        **separator_for(target),
     )
     assert result["ok"] is True
 
@@ -525,7 +585,9 @@ def test_every_writer_produces_the_format_its_suffix_names(session, suffix):
     if module:
         pytest.importorskip(module)
 
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / f"out{suffix}"
 
     result = call(
@@ -533,6 +595,7 @@ def test_every_writer_produces_the_format_its_suffix_names(session, suffix):
         nickname="staff",
         sql="SELECT name, salary FROM simple ORDER BY name",
         path=str(target),
+        **separator_for(target),
     )
 
     assert result["ok"] is True, result
@@ -554,9 +617,7 @@ def test_a_spreadsheet_refuses_more_rows_than_it_is_worth_writing(session, suffi
     pytest.importorskip(module)
     over = export_module.SPREADSHEET_ROW_LIMIT + 1
     call(
-        "attach",
-        database=str(session / "simple.csv"),
-        nickname="staff",
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
     )
     # A generated result rather than a fixture of 65,536 rows: `sqlite_master`
     # is not big enough, so count the rows out in SQL.
@@ -570,6 +631,7 @@ def test_a_spreadsheet_refuses_more_rows_than_it_is_worth_writing(session, suffi
             ") SELECT i FROM n"
         ),
         path=str(target),
+        **separator_for(target),
     )
 
     assert refused["ok"] is False
@@ -584,7 +646,9 @@ def test_a_spreadsheet_writes_right_up_to_the_limit(session, suffix):
     module = {"xlsx": "openpyxl", "ods": "odf"}[suffix.lstrip(".")]
     pytest.importorskip(module)
     at = export_module.SPREADSHEET_ROW_LIMIT
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / f"exact{suffix}"
 
     result = call(
@@ -596,6 +660,7 @@ def test_a_spreadsheet_writes_right_up_to_the_limit(session, suffix):
             ") SELECT i FROM n"
         ),
         path=str(target),
+        **separator_for(target),
     )
 
     assert result["ok"] is True, result
@@ -613,7 +678,9 @@ def test_the_identity_table_covers_every_writer():
 
 def test_an_export_to_a_format_this_server_cannot_write_is_refused(session):
     """It used to answer ok:true with CSV inside, whatever the name said."""
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "out.wibble"
 
     refused = call(
@@ -633,10 +700,14 @@ def test_an_export_to_a_format_this_server_cannot_write_is_refused(session):
 def test_a_second_file_lands_inside_the_open_database_and_joins(session):
     write_csv(session / "sales.csv", "sku,qty\na,3\nb,4\n")
     write_csv(session / "prices.csv", "sku,price\na,10\nb,20\n")
-    call("attach", database=str(session / "sales.csv"), nickname="shop")
+    call("attach", database=str(session / "sales.csv"), nickname="shop", delimiter=",")
 
     added = call(
-        "create", nickname="shop", type="table", source=str(session / "prices.csv")
+        "create",
+        nickname="shop",
+        type="table",
+        source=str(session / "prices.csv"),
+        delimiter=",",
     )
 
     assert added["ok"] is True
@@ -664,8 +735,14 @@ def test_the_whole_lookup_arc_runs_over_the_protocol(session):
     """
     write_csv(session / "sales.csv", "sku,qty\na,3\nb,4\nc,5\n")
     write_csv(session / "prices.csv", "sku,price\na,10\nz,99\n")
-    call("attach", database=str(session / "sales.csv"), nickname="shop")
-    call("create", nickname="shop", type="table", source=str(session / "prices.csv"))
+    call("attach", database=str(session / "sales.csv"), nickname="shop", delimiter=",")
+    call(
+        "create",
+        nickname="shop",
+        type="table",
+        source=str(session / "prices.csv"),
+        delimiter=",",
+    )
 
     made = call(
         "create", nickname="shop", type="index", table="prices", columns=["sku"]
@@ -692,7 +769,9 @@ def test_the_whole_lookup_arc_runs_over_the_protocol(session):
 
 
 def test_an_index_is_dropped_by_the_name_creation_gave_it(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     made = call(
         "create", nickname="staff", type="index", table="simple", columns=["name"]
     )
@@ -707,7 +786,9 @@ def test_an_index_is_dropped_by_the_name_creation_gave_it(session):
 
 def test_create_and_drop_name_the_two_types_when_given_another(session):
     """A refusal that lists the alternatives, rather than a schema-level rejection."""
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     made = call("create", nickname="staff", type="view", table="simple")
     assert made["ok"] is False
@@ -719,7 +800,9 @@ def test_create_and_drop_name_the_two_types_when_given_another(session):
 
 
 def test_creating_a_table_without_a_source_says_which_argument_is_missing(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     answer = call("create", nickname="staff", type="table")
 
@@ -728,7 +811,9 @@ def test_creating_a_table_without_a_source_says_which_argument_is_missing(sessio
 
 
 def test_creating_an_index_without_columns_says_which_arguments_are_missing(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     answer = call("create", nickname="staff", type="index", table="simple")
 
@@ -741,7 +826,11 @@ def test_adding_to_a_read_only_datasource_says_how_to_allow_it(session):
     call("attach", database=str(session / "hr.db"), nickname="hr")
 
     answer = call(
-        "create", nickname="hr", type="table", source=str(session / "simple.csv")
+        "create",
+        nickname="hr",
+        type="table",
+        source=str(session / "simple.csv"),
+        delimiter=",",
     )
     assert answer["ok"] is False
     assert "writable=true" in answer["error"]
@@ -752,16 +841,26 @@ def test_the_write_grant_is_honoured_over_the_protocol(session):
     call("attach", database=str(session / "hr.db"), nickname="hr", writable=True)
 
     added = call(
-        "create", nickname="hr", type="table", source=str(session / "simple.csv")
+        "create",
+        nickname="hr",
+        type="table",
+        source=str(session / "simple.csv"),
+        delimiter=",",
     )
     assert added["ok"] is True
     assert added["table"] == "simple"
 
 
 def test_dropping_a_table_leaves_the_rest_answering(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
     call(
-        "create", nickname="staff", type="table", source=str(session / "mixed_tabs.tsv")
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
+    call(
+        "create",
+        nickname="staff",
+        type="table",
+        source=str(session / "mixed_tabs.tsv"),
+        delimiter="\t",
     )
 
     dropped = call("drop", nickname="staff", type="table", name="mixed_tabs")
@@ -780,7 +879,9 @@ def test_dropping_a_table_leaves_the_rest_answering(session):
 
 
 def test_detaching_frees_the_slot_and_reports_what_went(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     closed = call("detach", nickname="staff")
 
@@ -793,8 +894,14 @@ def test_detaching_frees_the_slot_and_reports_what_went(session):
 def test_saving_then_attaching_again_brings_the_whole_session_back(session):
     write_csv(session / "sales.csv", "sku,qty\na,3\nb,4\n")
     write_csv(session / "prices.csv", "sku,price\na,10\nb,20\n")
-    call("attach", database=str(session / "sales.csv"), nickname="shop")
-    call("create", nickname="shop", type="table", source=str(session / "prices.csv"))
+    call("attach", database=str(session / "sales.csv"), nickname="shop", delimiter=",")
+    call(
+        "create",
+        nickname="shop",
+        type="table",
+        source=str(session / "prices.csv"),
+        delimiter=",",
+    )
     target = session / "keep.db"
 
     saved = call("save", nickname="shop", path=str(target))
@@ -819,7 +926,9 @@ def test_saving_then_attaching_again_brings_the_whole_session_back(session):
 
 
 def test_saving_refuses_an_existing_file_until_the_user_says_replace_it(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "keep.db"
     call("save", nickname="staff", path=str(target))
 
@@ -854,7 +963,7 @@ def test_a_database_moved_to_disk_says_nothing_and_answers_the_same(session):
     rows = "\n".join(f"{index},label{index},{index * 2}" for index in range(60_000))
     write_csv(session / "big.csv", f"id,label,amount\n{rows}\n")
 
-    call("attach", database=str(session / "big.csv"), nickname="big")
+    call("attach", database=str(session / "big.csv"), nickname="big", delimiter=",")
     before = call("query", nickname="big", sql="SELECT count(*), sum(amount) FROM big")
     described_before = call("directory", nickname="big")
 
@@ -889,7 +998,7 @@ def test_the_next_call_after_the_budget_is_crossed_is_the_one_that_spills(sessio
     rows = "\n".join(f"{index},label{index},{index * 2}" for index in range(60_000))
     write_csv(session / "big.csv", f"id,label,amount\n{rows}\n")
 
-    call("attach", database=str(session / "big.csv"), nickname="big")
+    call("attach", database=str(session / "big.csv"), nickname="big", delimiter=",")
 
     registry = server_module._registry
     assert registry.workspace.resident_bytes("big") > 1024 * 1024, (
@@ -917,10 +1026,14 @@ def test_the_next_call_after_the_budget_is_crossed_is_the_one_that_spills(sessio
 
 def test_the_eviction_is_reported_in_the_attachment_that_caused_it(session):
     config_module.use(Config(roots=(session,), slots=2))
-    call("attach", database=str(session / "simple.csv"), nickname="a")
-    call("attach", database=str(session / "mixed_tabs.tsv"), nickname="b")
+    call("attach", database=str(session / "simple.csv"), nickname="a", delimiter=",")
+    call(
+        "attach", database=str(session / "mixed_tabs.tsv"), nickname="b", delimiter="\t"
+    )
 
-    third = call("attach", database=str(session / "no_header.csv"), nickname="c")
+    third = call(
+        "attach", database=str(session / "no_header.csv"), nickname="c", delimiter=","
+    )
 
     assert third["ok"] is True
     assert third["evicted"]["nickname"] == "a"
@@ -930,8 +1043,10 @@ def test_the_eviction_is_reported_in_the_attachment_that_caused_it(session):
 
 def test_querying_an_evicted_datasource_says_it_was_evicted(session):
     config_module.use(Config(roots=(session,), slots=1))
-    call("attach", database=str(session / "simple.csv"), nickname="a")
-    call("attach", database=str(session / "mixed_tabs.tsv"), nickname="b")
+    call("attach", database=str(session / "simple.csv"), nickname="a", delimiter=",")
+    call(
+        "attach", database=str(session / "mixed_tabs.tsv"), nickname="b", delimiter="\t"
+    )
 
     answer = call("query", nickname="a", sql="SELECT * FROM simple")
     assert answer["ok"] is False
@@ -946,19 +1061,28 @@ def test_querying_an_evicted_datasource_says_it_was_evicted(session):
 
 
 def test_a_bad_path_is_answered_not_raised(session, tmp_path):
-    answer = call("attach", database=str(tmp_path / "elsewhere.csv"), nickname="x")
+    answer = call(
+        "attach", database=str(tmp_path / "elsewhere.csv"), nickname="x", delimiter=","
+    )
     assert answer["ok"] is False
     assert "outside the allowed paths" in answer["error"]
 
 
 def test_a_missing_file_is_answered(session):
-    answer = call("attach", database=str(session / "absent.csv"), nickname="x")
+    answer = call(
+        "attach", database=str(session / "absent.csv"), nickname="x", delimiter=","
+    )
     assert answer["ok"] is False
     assert "No such file" in answer["error"]
 
 
 def test_an_unusable_nickname_is_answered(session):
-    answer = call("attach", database=str(session / "simple.csv"), nickname="my-data")
+    answer = call(
+        "attach",
+        database=str(session / "simple.csv"),
+        nickname="my-data",
+        delimiter=",",
+    )
     assert answer["ok"] is False
     assert "my-data" in answer["error"]
 
@@ -981,7 +1105,9 @@ def test_a_network_url_is_answered_while_the_network_is_closed(session):
 
 
 def test_invalid_sql_returns_the_engine_message(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     answer = call("query", nickname="staff", sql="SELECT * FROM nonexistent")
     assert answer["ok"] is False
     assert "no such table" in answer["error"].lower()
@@ -1004,7 +1130,9 @@ def test_invalid_sql_returns_the_engine_message(session):
 def test_query_reads_and_refuses_every_way_of_writing(session, sql):
     """A query is a query. The datasource here is fully writable, which is the
     point: the refusal is a property of the verb, not of the grant."""
-    attached = call("attach", database=str(session / "simple.csv"), nickname="staff")
+    attached = call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     assert attached["writable"] is True
 
     answer = call("query", nickname="staff", sql=sql)
@@ -1023,7 +1151,9 @@ def test_the_refusal_says_what_was_attempted_and_where_to_go(session):
     happens to refuse first — see ``_describe_action``. Reporting the raw first
     refusal would tell an agent that wrote CREATE VIEW it attempted an INSERT.
     """
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     ddl = call(
         "query",
@@ -1051,7 +1181,10 @@ def test_a_read_only_datasource_is_still_readable(session):
 def test_mixed_columns_are_flagged_on_attach(session):
     """The signal that keeps an agent from trusting a wrong average."""
     attached = call(
-        "attach", database=str(session / "messy_mixed_types.csv"), nickname="messy"
+        "attach",
+        database=str(session / "messy_mixed_types.csv"),
+        nickname="messy",
+        delimiter=",",
     )
     assert attached["ok"] is True
     assert any("coerce text to 0" in warning for warning in attached["warnings"])
@@ -1059,7 +1192,12 @@ def test_mixed_columns_are_flagged_on_attach(session):
 
 
 def test_the_mixed_column_detail_is_available_from_directory(session):
-    call("attach", database=str(session / "messy_mixed_types.csv"), nickname="messy")
+    call(
+        "attach",
+        database=str(session / "messy_mixed_types.csv"),
+        nickname="messy",
+        delimiter=",",
+    )
     described = call("directory", nickname="messy", table="messy_mixed_types")
     assert "id" in described["mixed_columns"]
 
@@ -1101,7 +1239,7 @@ def test_mixed_column_warning_prescribes_a_filter_that_works(session):
     produced it is worse than none, because it is followed.
     """
     (session / "sentinels.csv").write_text("v\n1\n2\n3\npending\n")
-    attached = call("attach", database=str(session / "sentinels.csv"))
+    attached = call("attach", database=str(session / "sentinels.csv"), delimiter=",")
 
     warning = attached["warnings"][0]
     # Not prescribed — and said not to work, because an agent reaches for it
@@ -1146,7 +1284,7 @@ def test_query_does_not_advertise_writes_it_refuses(session):
     assert "reads" in documented
     assert not re.search(r"[Ww]rites.*(go through|succeed)", documented)
 
-    attached = call("attach", database=str(session / "simple.csv"))
+    attached = call("attach", database=str(session / "simple.csv"), delimiter=",")
     refused = call(
         "query",
         nickname=attached["nickname"],
@@ -1220,7 +1358,7 @@ def test_a_saved_database_can_be_described_when_it_comes_back(session):
     on, and the first thing anyone does with a database they have just reopened
     is ask what is in it.
     """
-    attached = call("attach", database=str(session / "simple.csv"))
+    attached = call("attach", database=str(session / "simple.csv"), delimiter=",")
     call("save", nickname=attached["nickname"], path=str(session / "kept.db"))
     call("detach", nickname=attached["nickname"])
 
@@ -1352,9 +1490,20 @@ def test_the_delimiter_reaches_attach_over_the_wire(session):
     assert "warnings" not in proper
 
 
-def test_without_it_the_same_file_warns_and_names_the_parameter(session):
-    """The warning is what makes the parameter discoverable at all."""
-    loaded = call("attach", database=str(session / "semicolons.csv"), nickname="staff")
+def test_a_wrongly_declared_separator_warns_and_names_the_parameter(session):
+    """The warning is what turns a wrong declaration into something actionable.
+
+    It used to catch a caller who had never heard of the parameter, because the
+    separator was assumed. The separator is required now, so what it catches is
+    a caller who declared the wrong one — a narrower case and a better-founded
+    note, since the character actually used is known rather than guessed.
+    """
+    loaded = call(
+        "attach",
+        database=str(session / "semicolons.csv"),
+        nickname="staff",
+        delimiter=",",
+    )
 
     assert loaded["ok"] is True
     assert len(loaded["loaded"][0]["columns"]) == 1
@@ -1372,7 +1521,9 @@ def test_a_delimiter_is_refused_on_a_datasource_that_has_none(session):
 
 
 def test_the_delimiter_is_on_create_too(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     added = call(
         "create",
@@ -1401,7 +1552,9 @@ def test_a_workbook_attaches_as_a_database_of_sheets(session):
 
 
 def test_create_refuses_a_multi_table_source_and_points_at_attach(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     refused = call(
         "create",
@@ -1467,7 +1620,11 @@ def test_an_attached_duckdb_file_is_read_only_unless_granted(session):
     call("attach", database=str(target), nickname="wh")
 
     refused = call(
-        "create", nickname="wh", type="table", source=str(session / "simple.csv")
+        "create",
+        nickname="wh",
+        type="table",
+        source=str(session / "simple.csv"),
+        delimiter=",",
     )
     assert refused["ok"] is False
 
@@ -1492,10 +1649,16 @@ def test_rows_can_be_copied_out_of_duckdb_into_a_slot_that_saves(session):
     target = session / "warehouse.db"
     _build_duckdb(target)
     call("attach", database=str(target), nickname="wh")
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     exported = call(
-        "query", nickname="wh", sql="SELECT * FROM sales", path=str(session / "s.csv")
+        "query",
+        nickname="wh",
+        sql="SELECT * FROM sales",
+        path=str(session / "s.csv"),
+        delimiter=",",
     )
     assert exported["ok"] is True
 
@@ -1505,6 +1668,7 @@ def test_rows_can_be_copied_out_of_duckdb_into_a_slot_that_saves(session):
         type="table",
         source=str(session / "s.csv"),
         table="sales",
+        delimiter=",",
     )
     assert added["ok"] is True
     assert call("save", nickname="staff", path=str(session / "kept.db"))["ok"] is True
@@ -1527,7 +1691,9 @@ def test_a_local_file_url_is_still_subject_to_the_path_gate(session, tmp_path):
 
 
 def test_the_output_delimiter_reaches_query_over_the_wire(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "out.csv"
 
     result = call(
@@ -1544,7 +1710,9 @@ def test_the_output_delimiter_reaches_query_over_the_wire(session):
 
 def test_an_output_delimiter_is_ignored_where_it_has_no_meaning(session):
     """Ignored on the way out, refused on the way in — see export.export_rows."""
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     target = session / "out.parquet"
 
     result = call(
@@ -1582,7 +1750,9 @@ def test_a_sheet_can_be_renamed_after_it_lands(session):
 
 
 def test_the_rows_survive_the_rename(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     before = call("query", nickname="staff", sql="SELECT * FROM simple ORDER BY name")
 
     call("update", nickname="staff", type="table", name="simple", to="people")
@@ -1609,7 +1779,9 @@ def test_renaming_onto_a_name_already_taken_is_refused(session):
 
 
 def test_renaming_a_table_that_is_not_there_names_what_is(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     refused = call("update", nickname="staff", type="table", name="nope", to="x")
 
@@ -1631,7 +1803,9 @@ def test_a_read_only_datasource_will_not_be_renamed(session):
 
 
 def test_a_rename_target_must_be_a_legal_identifier(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     refused = call(
         "update", nickname="staff", type="table", name="simple", to="not a name"
@@ -1641,7 +1815,9 @@ def test_a_rename_target_must_be_a_legal_identifier(session):
 
 
 def test_update_names_what_it_can_update(session):
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
 
     refused = call("update", nickname="staff", type="index", name="i", to="j")
 
@@ -1651,7 +1827,9 @@ def test_update_names_what_it_can_update(session):
 
 def test_a_renamed_table_is_saved_under_its_new_name(session):
     """The rename has to reach the database, not only our bookkeeping."""
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     call("update", nickname="staff", type="table", name="simple", to="people")
     kept = session / "kept.db"
 
@@ -1674,7 +1852,9 @@ def test_the_surface_is_nine_verbs_now(session):
 
 def test_directory_refuses_a_table_with_no_nickname_rather_than_dropping_it(session):
     """The third form was asked for; answering the first would look understood."""
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     answer = call("directory", table="simple")
 
     assert answer["ok"] is False
@@ -1685,9 +1865,15 @@ def test_directory_refuses_a_table_with_no_nickname_rather_than_dropping_it(sess
 
 def test_both_of_creates_answers_name_the_datasource(session):
     """One verb, two branches, one set of keys at the front."""
-    call("attach", database=str(session / "simple.csv"), nickname="staff")
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
     made_table = call(
-        "create", nickname="staff", type="table", source=str(session / "mixed_tabs.tsv")
+        "create",
+        nickname="staff",
+        type="table",
+        source=str(session / "mixed_tabs.tsv"),
+        delimiter="\t",
     )
     made_index = call(
         "create", nickname="staff", type="index", table="simple", columns=["salary"]

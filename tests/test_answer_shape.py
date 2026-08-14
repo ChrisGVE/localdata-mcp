@@ -188,7 +188,7 @@ def test_a_nickname_that_is_not_attached_is_refused_by_every_verb_that_takes_one
 
 def test_a_table_that_is_not_there_is_refused_by_every_verb_that_names_one(root):
     csv = people_csv(root)
-    succeeds("attach", database=str(csv), nickname="live")
+    succeeds("attach", database=str(csv), nickname="live", delimiter=",")
 
     cells = [
         ("directory", {"nickname": "live", "table": "ghost"}),
@@ -214,7 +214,7 @@ def test_a_table_that_is_not_there_is_refused_by_every_verb_that_names_one(root)
 
 def test_an_index_and_a_column_that_are_not_there_are_refused_by_name(root):
     csv = people_csv(root)
-    succeeds("attach", database=str(csv), nickname="live")
+    succeeds("attach", database=str(csv), nickname="live", delimiter=",")
 
     reason = refusal("drop", nickname="live", type="index", name="people_name")
     assert "people_name" in reason
@@ -245,7 +245,7 @@ def test_a_slot_attached_read_only_refuses_every_verb_that_would_change_it(root)
     succeeds("directory", nickname="ro")
 
     cells = [
-        ("create", {"nickname": "ro", "type": "table", "source": str(other_csv(root))}),
+        ("create", {"nickname": "ro", "type": "table", "source": str(other_csv(root)), "delimiter": ","}),
         ("create", {"nickname": "ro", "type": "index", "table": "t", "columns": ["a"]}),
         ("update", {"nickname": "ro", "type": "table", "name": "t", "to": "u"}),
         ("drop", {"nickname": "ro", "type": "table", "name": "t"}),
@@ -266,7 +266,7 @@ def test_a_slot_attached_read_only_refuses_every_verb_that_would_change_it(root)
 
 def test_a_type_the_verb_does_not_have_is_refused_with_the_types_it_does(root):
     csv = people_csv(root)
-    succeeds("attach", database=str(csv), nickname="live")
+    succeeds("attach", database=str(csv), nickname="live", delimiter=",")
 
     cells = [
         ("create", {"nickname": "live", "type": "view"}),
@@ -297,7 +297,7 @@ def test_an_unexpected_failure_below_is_still_an_answer_at_every_verb(
     maintainer needs to know it happened, so it comes back saying what it was.
     """
     csv = people_csv(root)
-    succeeds("attach", database=str(csv), nickname="live")
+    succeeds("attach", database=str(csv), nickname="live", delimiter=",")
 
     class Boom(RuntimeError):
         pass

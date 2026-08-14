@@ -33,7 +33,7 @@ from typing import Iterable, Mapping, Sequence
 # Defined in `errors` rather than here, for the same reason `LoadError` is: the
 # format layer below raises it. Imported into this namespace deliberately — the
 # tests and `server` both say `export.ExportError`.
-from .errors import ExportError
+from .errors import ExportError, undeclared_separator
 
 # The one table of formats, and the two views of it this module works from.
 # Imported into this namespace deliberately: the tests and the docs say
@@ -76,26 +76,20 @@ def export_rows(
     Refuses a suffix with no writer, a path outside the allowed root, a file a
     live slot is sitting on, and an existing file unless ``force``.
 
-    ``delimiter`` replaces the separator the suffix implied, and is **ignored**
-    for a format that has none. That is the opposite of the read side, and the
-    asymmetry is real rather than an oversight: reading at the wrong separator
-    changes what the data *is*, so a delimiter that cannot apply means the
-    caller has misunderstood the file and is worth stopping. Writing Parquet
-    produces correct Parquet whatever this says, so the parameter is merely
-    inert — and refusing it would block a caller carrying one default delimiter
-    across a mix of destinations.
+    ``delimiter`` is **required** for the character-separated formats — there is
+    no separator a suffix supplies — and is **ignored** for a format that has
+    none. Requiring it matches the read side, and has to: while the suffix
+    supplied the separator it supplied it to both sides at once, so a file this
+    server wrote was one it could read back. Declared on one side only, that
+    property is gone. Ignoring it for Parquet is not the same asymmetry: writing
+    Parquet produces correct Parquet whatever this says, so the parameter is
+    merely inert there, and refusing it would block a caller carrying one
+    default delimiter across a mix of destinations.
     """
     # Before `resolve_write_path`, deliberately: that call deletes an existing
     # target under `force`, and a request this server was never going to be able
     # to satisfy must not cost the user a file on its way to failing.
-    writer = _writer_for(raw_path)
-
-    if delimiter is not None and Path(raw_path).suffix.lower() in DELIMITED:
-        if len(delimiter) != 1:
-            raise ExportError(
-                f"delimiter must be a single character, not {delimiter!r}."
-            )
-        writer = delimited_writer(delimiter)
+    writer = _writer_for(raw_path, delimiter)
 
     path = resolve_write_path(raw_path, force=force, claimed=claimed)
 
@@ -125,17 +119,38 @@ def export_rows(
     )
 
 
-def _writer_for(raw_path: str) -> Writer:
+def _writer_for(raw_path: str, delimiter: str | None) -> Writer:
+    """The writer this destination needs, or the reason there will not be one.
+
+    Every refusal this function makes has to happen *here*, before the caller in
+    ``export_rows`` reaches ``resolve_write_path`` — that call deletes an
+    existing target under ``force``, so a request this server was never going to
+    satisfy must not cost the user a file on its way to failing. The delimited
+    formats are why this now takes ``delimiter`` rather than checking it later:
+    their writer cannot be chosen until the separator is known, and finding that
+    out after the destination was cleared would be exactly that.
+    """
     suffix = Path(raw_path).suffix.lower()
     writer = WRITERS.get(suffix)
-    if writer is not None:
+    if writer is None:
+        supported = ", ".join(sorted(WRITERS))
+        named = repr(suffix) if suffix else "a name with no suffix"
+        raise ExportError(
+            f"No writer for {named}. The suffix chooses the format. "
+            f"Supported: {supported}"
+        )
+
+    if suffix not in DELIMITED:
+        # A delimiter here is inert rather than wrong — see `export_rows`.
         return writer
 
-    supported = ", ".join(sorted(WRITERS))
-    named = repr(suffix) if suffix else "a name with no suffix"
-    raise ExportError(
-        f"No writer for {named}. The suffix chooses the format. Supported: {supported}"
-    )
+    if delimiter is None:
+        # The same refusal `writers.writing_needs_a_separator` carries, raised
+        # early so nothing has been written or cleared when it happens.
+        raise ExportError(undeclared_separator(Path(raw_path).name, reading=False))
+    if len(delimiter) != 1:
+        raise ExportError(f"delimiter must be a single character, not {delimiter!r}.")
+    return delimited_writer(delimiter)
 
 
 def _remove_quietly(path: Path) -> None:

@@ -169,14 +169,33 @@ def chunked(request, monkeypatch):
     return request.param
 
 
+def separator_of(path: Path) -> dict[str, str]:
+    """The declared separator for this fixture, as keyword arguments.
+
+    The server takes no separator from a suffix any more — it has to be declared
+    on every read of character-separated text — but this corpus was written to
+    the usual convention, so the tests say which character that is here, once,
+    instead of at every call. The mapping deliberately reproduces what the
+    suffixes used to imply, so each test still reads its fixture the way it was
+    written and goes on meaning what it meant.
+
+    Empty for a format that has no separator, because passing one there is
+    refused rather than ignored — which is itself a test in this module.
+    """
+    suffix = path.suffix.lower()
+    if suffix not in loader_module.DELIMITED:
+        return {}
+    return {"delimiter": "\t" if suffix == ".tsv" else ","}
+
+
 def load_both(space: Workspace, path: Path) -> tuple[TableInfo, TableInfo]:
     """Load one file materialised and streamed, into two tags of one workspace."""
-    read = read_file(path)
+    read = read_file(path, **separator_of(path))
     assert len(read.tables) == 1, "a delimited file holds one table"
     materialised = space.insert_frame(
         read.tables[0].frame, "t", source=str(path), tag="whole", notes=read.notes
     )
-    measured = read_source(path)
+    measured = read_source(path, **separator_of(path))
     assert len(measured.tables) == 1
     streamed = space.insert_source(
         measured.tables[0], "t", source=str(path), tag="parts", notes=measured.notes
@@ -387,7 +406,7 @@ def test_the_surrogate_key_counts_rows_of_the_file_not_of_the_chunk(
     entry = workspace.entry("parts")
     monkeypatch.setattr(type(entry.backend), "requires_primary_key", lambda self: True)
 
-    measured = read_source(root / "junk_spread.csv")
+    measured = read_source(root / "junk_spread.csv", delimiter=",")
     landed = workspace.insert_source(
         measured.tables[0], "t", source="test", tag="parts", notes=measured.notes
     )
@@ -410,9 +429,9 @@ def test_an_unreadable_file_is_refused_in_the_same_words_either_way(
     """A refusal that differs by path is a second error message to maintain."""
     path = root / name
     with pytest.raises(LoadError) as whole:
-        read_file(path)
+        read_file(path, **separator_of(path))
     with pytest.raises(LoadError) as parts:
-        read_source(path)
+        read_source(path, **separator_of(path))
     assert str(parts.value) == str(whole.value)
 
 
@@ -430,10 +449,10 @@ def test_an_integer_too_wide_to_store_is_refused_by_both_paths(
     than either answer. Whichever way #72 is settled, it is settled for both.
     """
     path = root / "wide_int_last.csv"
-    read = read_file(path)
+    read = read_file(path, **separator_of(path))
     with pytest.raises(LoadError) as whole:
         workspace.insert_frame(read.tables[0].frame, "t", source=str(path), tag="whole")
-    measured = read_source(path)
+    measured = read_source(path, **separator_of(path))
     with pytest.raises(LoadError) as parts:
         workspace.insert_source(measured.tables[0], "t", source=str(path), tag="parts")
     assert str(parts.value) == str(whole.value)
@@ -484,8 +503,8 @@ def test_a_format_that_is_parsed_whole_still_reaches_the_same_insert(
     than a second way of loading, so nothing downstream knows which it got.
     """
     path = root / name
-    read = read_file(path)
-    measured = read_source(path)
+    read = read_file(path, **separator_of(path))
+    measured = read_source(path, **separator_of(path))
 
     assert len(measured.tables) == len(read.tables)
     assert measured.notes == read.notes

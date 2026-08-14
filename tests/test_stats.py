@@ -63,7 +63,7 @@ def attach_csv(root: Path, name: str, text: str) -> str:
     """Write a CSV, attach it, and return the nickname it actually got."""
     path = root / name
     path.write_text(text)
-    attached = server_module.attach(database=str(path))
+    attached = server_module.attach(database=str(path), delimiter=",")
     assert attached["ok"] is True, attached
     return attached["nickname"]
 

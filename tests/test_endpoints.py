@@ -866,8 +866,7 @@ def test_rows_can_be_copied_into_a_slot_that_saves(live):
         "query",
         nickname="endpoint",
         sql=f"SELECT * FROM {table}",
-        path=str(live.root / "out.csv"),
-    )
+        path=str(live.root / "out.csv"), delimiter=",")
     assert exported["ok"] is True, exported
 
     added = call(
@@ -875,8 +874,7 @@ def test_rows_can_be_copied_into_a_slot_that_saves(live):
         nickname="local",
         type="table",
         source=str(live.root / "out.csv"),
-        table="copied",
-    )
+        table="copied", delimiter=",")
     assert added["ok"] is True, added
     assert added["rows"] == 5
 

@@ -37,26 +37,25 @@ from dataclasses import dataclass
 
 from .readers import (
     Reader,
-    delimited,
     read_columnar,
     read_json,
     read_jsonl,
     read_numbers,
     read_xml,
     read_yaml,
+    reading_needs_a_separator,
     workbook,
 )
 from .writers import (
     Writer,
     workbook_writer,
     write_columnar,
-    write_csv,
     write_json,
     write_jsonl,
     write_markdown,
-    write_tsv,
     write_xml,
     write_yaml,
+    writing_needs_a_separator,
 )
 
 __all__ = ["DELIMITED", "FORMATS", "READERS", "STREAMED", "WRITERS", "Format"]
@@ -74,12 +73,15 @@ class Format:
     cannot be written; at least one of them is always present, since a format
     this server can do neither way has no reason to be in the table.
 
-    ``delimited`` says a separator means something for this format — that the
-    file is character-separated text rather than something carrying its own
-    structure. It governs both directions and is the reason it belongs on the
-    format rather than on either side: reading at the wrong separator changes
-    what the data *is*, so the read side refuses a delimiter it cannot apply,
-    while the write side merely ignores one. Two behaviours, one fact.
+    ``delimited`` says the file is character-separated text rather than
+    something carrying its own structure — and therefore that **the caller must
+    declare what separates it, in both directions**. It belongs on the format
+    rather than on either side because it is one fact governing two rules: a
+    delimited format refuses to be read or written until a separator is given,
+    and a format that is *not* delimited refuses a separator on the read side
+    (the caller has misread the file) and ignores one on the write side (the
+    parameter is merely inert, and refusing would block a caller carrying one
+    default across a mix of destinations).
 
     ``streamed`` says the reader can produce the file in chunks instead of
     materialising it whole. It is a property of the format, not a preference: a
@@ -99,12 +101,13 @@ class Format:
                 f"{self.suffix} declares neither a reader nor a writer, so "
                 f"nothing about it can be acted on. Leave it out of the table."
             )
-        if self.delimited and self.reader is None:
+        if self.delimited and (self.reader is None or self.writer is None):
             raise ValueError(
-                f"{self.suffix} is declared delimited but has no reader. A "
-                f"separator is a fact about how a file is read; a write-only "
-                f"format cannot be read back at the separator it was written "
-                f"with, which is the property `delimited` exists to keep."
+                f"{self.suffix} is declared delimited but is missing a "
+                f"{'reader' if self.reader is None else 'writer'}. A delimited "
+                f"format has to go both ways: the separator is declared on each "
+                f"side, and a file written at one this server could not read "
+                f"back at is the property `delimited` exists to keep."
             )
         if self.streamed and self.reader is None:
             raise ValueError(
@@ -128,32 +131,30 @@ def _format(suffix: str, **known: object) -> tuple[str, Format]:
     return suffix, Format(suffix=suffix, **known)  # type: ignore[arg-type]
 
 
+#: Character-separated text, which is **one format under three names**. `.csv`,
+#: `.tsv` and `.txt` differ in nothing this server can act on: the file is a CSV
+#: whatever it is called, and what separates its fields is declared by the
+#: caller rather than read off the name. So they share one declaration here
+#: instead of three that have to be kept saying the same thing.
+#:
+#: The reader and the writer are the pair that refuse until a separator is
+#: given. Both directions, deliberately — see `writers.writing_needs_a_separator`
+#: for why taking the default off the read side alone would have broken the
+#: round-trip property this table exists to hold.
+_DELIMITED_TEXT: dict[str, object] = dict(
+    reader=reading_needs_a_separator,
+    writer=writing_needs_a_separator,
+    delimited=True,
+    streamed=True,
+)
+
+
 #: The whole catalogue. A new format is one entry here and nothing else.
 FORMATS: dict[str, Format] = dict(
     (
-        # Character-separated text. `.txt` is comma-separated by default, the
-        # same as `.csv`, so a file this server writes it can read back.
-        _format(
-            ".csv",
-            reader=delimited(","),
-            writer=write_csv,
-            delimited=True,
-            streamed=True,
-        ),
-        _format(
-            ".tsv",
-            reader=delimited("\t"),
-            writer=write_tsv,
-            delimited=True,
-            streamed=True,
-        ),
-        _format(
-            ".txt",
-            reader=delimited(","),
-            writer=write_csv,
-            delimited=True,
-            streamed=True,
-        ),
+        _format(".csv", **_DELIMITED_TEXT),
+        _format(".tsv", **_DELIMITED_TEXT),
+        _format(".txt", **_DELIMITED_TEXT),
         # Formats carrying their own structure. A delimiter means nothing for
         # any of them, which is why `delimited` is left false rather than
         # restated.

@@ -57,7 +57,7 @@ when asked, when the result is surprising, or when they need to trust it.
 ### 1. "Have a look at this file"
 
 ```
-attach(database="/path/sales.csv")        → note the nickname it returns
+attach(database="/path/sales.csv", delimiter=",")   → note the nickname it returns
 directory(nickname, table)                      → columns, types, row count
 query(nickname, "SELECT …")                → the answer
 ```
@@ -77,7 +77,7 @@ This is the common one, and the mistake is attaching the second file as its own
 datasource. **Read it into the database that is already open:**
 
 ```
-create(nickname="shop", type="table", source="/path/prices.csv")
+create(nickname="shop", type="table", source="/path/prices.csv", delimiter=",")
 ```
 
 Two reasons, and the second is the one that bites later:
@@ -99,8 +99,8 @@ take it out through a flat file:
 
 ```
 attach("/path/book.xlsx")                                   # → "book"
-query("book", "SELECT * FROM prices", path="/path/prices.csv")
-create(nickname="shop", type="table", source="/path/prices.csv")
+query("book", "SELECT * FROM prices", path="/path/prices.csv", delimiter=",")
+create(nickname="shop", type="table", source="/path/prices.csv", delimiter=",")
 ```
 
 The sheet is addressed by the snake_cased name it arrived under, which the
@@ -205,7 +205,7 @@ Two smaller refusals live here too: `create(type="index")` on the five engines
 listed in §2, and `update(type="table")` on **Firebird**, which has no
 rename-table statement. Both name the reason.
 
-`create(nickname, type="table", source="./local.csv")` reads a local file *into*
+`create(nickname, type="table", source="./local.csv", delimiter=",")` reads a local file *into*
 that database, so a lookup against a server-side table is the same move as
 against a second file. On **two** backends a statement `query` refuses can still
 have happened, and you should say so rather than reassure: on **Oracle** a
@@ -220,7 +220,7 @@ A result they want as a *file* — to open in Excel, to mail on, to feed somethi
 else — goes straight to disk instead of coming back through you:
 
 ```
-query(nickname, "SELECT …", path="/path/result.csv")
+query(nickname, "SELECT …", path="/path/result.csv", delimiter=",")
 ```
 
 **The suffix chooses the format**, and one this server cannot write is refused
@@ -299,8 +299,9 @@ before saving — write it out, then read it back in under a name you choose:
 
 ```
 query(nickname, "SELECT region, COUNT(*) AS n FROM orders GROUP BY region",
-      path="/path/by_region.csv")
-create(nickname, type="table", table="by_region", source="/path/by_region.csv")
+      path="/path/by_region.csv", delimiter=",")
+create(nickname, type="table", table="by_region", source="/path/by_region.csv",
+       delimiter=",")
 save(nickname, path="/path/analysis.db")
 ```
 
@@ -408,22 +409,28 @@ discount set yet, so I left them out of the average"* — because whether to
 exclude them, treat them as zero, or go and fill them in is their call, not
 yours.
 
-**One fat column instead of the columns they described.** Nothing sniffs the
-separator. A file written by a European tool is usually semicolon-separated, and
-read at `,` it loads as **a single column whose name is the whole header line**
-— `a_b_c` — with a warning saying exactly that and naming the `delimiter`
-parameter. `ok: true` comes back and every number you compute from it is wrong,
-so this is one to notice rather than to work around:
+**`delimiter` is required for a text file, and the name of the file tells you
+nothing about it.** `.csv`, `.tsv` and `.txt` are one format here — character-
+separated text — and nothing sniffs or assumes the separator, so an attach
+without one is refused rather than guessed at:
 
 ```
 attach(database="/path/sales.csv", delimiter=";")
 ```
 
-`delimiter` is also a parameter of `create` and of `query(path=…)`. It applies
-to character-separated text only — `.csv`, `.tsv`, `.txt` — and on `attach` and
-`create` a `delimiter` handed to a `.parquet` or a workbook is **refused**,
-naming the suffix, because that is a caller who has misread the file. Do not
-retry without it and assume the file was fine; look at what the columns are.
+Find out what it is instead of trying `,` first. A file written by a European
+tool is usually semicolon-separated whatever it is called, and declared wrongly
+it loads as **a single column whose name is the whole header line** — `a_b_c` —
+with a warning saying exactly that. `ok: true` comes back and every number you
+compute from it is wrong, so this is one to notice rather than work around. If
+you cannot tell, ask the user or look at the first line of the file.
+
+`delimiter` is also a parameter of `create` and of `query(path=…)`, required
+there too — writing has to say what to separate with, or a file named `.tsv`
+would get commas. Handed to a `.parquet` or a workbook it is **refused** on
+`attach` and `create`, naming the suffix, because that is a caller who has
+misread the file; on `query(path=…)` it is ignored, so one value can be carried
+across a mix of destinations.
 
 **Nested values became JSON text.** A JSON or XML column holding a structure
 comes back as `TEXT` carrying exactly what was in the file, and the warning names

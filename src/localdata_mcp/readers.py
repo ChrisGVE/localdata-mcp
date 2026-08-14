@@ -32,7 +32,7 @@ from xml.etree import ElementTree
 
 import pandas as pd
 
-from .errors import LoadError
+from .errors import LoadError, undeclared_separator
 
 __all__ = ["NamedFrame", "ReadResult", "Reader"]
 
@@ -89,11 +89,13 @@ _COMMON_DELIMITERS = {";": "';'", "\t": "a tab", "|": "'|'", ",": "','"}
 
 
 def delimited(separator: str) -> Reader:
-    """A reader for character-separated text, at a given separator.
+    """A reader for character-separated text, at the separator the caller gave.
 
-    The default separator comes from the extension — comma for ``.csv`` and
-    ``.txt``, tab for ``.tsv`` — and an explicit ``delimiter`` replaces the
-    reader rather than being threaded through every other format's signature.
+    There is no default and no suffix that supplies one: ``.csv``, ``.tsv`` and
+    ``.txt`` are the same format here — character-separated text — and which
+    character it is arrives with the request. A factory rather than a parameter
+    so that the separator does not have to be threaded through the signature of
+    every other format's reader, none of which has one.
     """
 
     def read(path: Path) -> ReadResult:
@@ -105,18 +107,33 @@ def delimited(separator: str) -> Reader:
     return read
 
 
+def reading_needs_a_separator(path: Path) -> ReadResult:
+    """The reader every character-separated format has until one is declared.
+
+    It sits in ``FORMATS`` where a bound reader used to, and it is the table's
+    way of saying that ``.csv`` is readable *and* that nothing here can read it
+    on the strength of its name alone. Before this, the suffix supplied the
+    separator — comma for ``.csv`` and ``.txt``, tab for ``.tsv`` — which is a
+    guess wearing a convention: files called ``.csv`` are shipped semicolon-,
+    pipe- and tab-separated every day, and each one loaded as a single fat
+    column or, worse, as plausible columns that were not the file's.
+    """
+    raise LoadError(undeclared_separator(path.name, reading=True))
+
+
 def fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str, ...]:
-    """Say when a file has plainly been read at the wrong separator.
+    """Say when a file was plainly read at the wrong separator.
 
-    The parameter alone does not fix the silent failure: a caller who does not
-    know the file is semicolon-separated gets one column holding every field and
-    no signal at all — the whole header becomes the column's name. One column
-    whose *name* still contains a common delimiter is that, and nothing else, so
-    it is worth saying and worth naming the parameter that fixes it.
+    Requiring the separator does not make this redundant, it makes it sharper.
+    Before, this diagnosed a guess *this server* had made; now it diagnoses a
+    declaration the caller made, so the note can say which character was asked
+    for and be certain that is what was used. One column whose *name* still
+    contains a common delimiter is the signature of the mistake and nothing
+    else — the whole header became the column's name.
 
-    This states what it found; it does not re-read the file at the guessed
-    separator. Sniffing is the fail-open shape this project keeps being bitten
-    by, and a guess that is usually right is the worst kind.
+    This states what it found; it does not re-read the file at the character it
+    spotted. Sniffing is the fail-open shape this project keeps being bitten by,
+    and a guess that is usually right is the worst kind.
     """
     if len(frame.columns) != 1:
         return ()
@@ -131,9 +148,9 @@ def fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str
         return ()
 
     return (
-        f"{name} loaded as a single column whose name contains "
-        f"{' and '.join(found)}, which is what a file separated by something "
-        f"other than {_COMMON_DELIMITERS[separator]} looks like when read at "
+        f"{name} was read at {_COMMON_DELIMITERS[separator]} and loaded as a "
+        f"single column whose name contains {' and '.join(found)} — which is "
+        f"what a file separated by one of those looks like when it is read at "
         f"{_COMMON_DELIMITERS[separator]}. If that is the case, attach it again "
         f"with delimiter set to the right character. Nothing here guesses it.",
     )

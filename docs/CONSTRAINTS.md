@@ -1484,6 +1484,16 @@ fix and is also the seam every new format arrives through.
 > the exception HTML had always been — it wrote a table of any size and could not read back past
 > ~417,000 rows of eleven columns (§10.7). The reasoning is in `LEVEL0.md`.
 >
+> **Amended 2026-08-14, second change the same day: no suffix carries a separator.** Every
+> statement above about `.csv`, `.tsv` and `.txt` being three formats — and about the
+> round-trip property resting on the two sides agreeing on what a suffix implies — describes
+> the arrangement that stood until this date. `.csv`, `.tsv` and `.txt` are now **one**
+> format, character-separated text, and `delimiter` is **required** on both sides for it.
+> The round-trip property is unchanged in substance and stronger in kind: it used to hold
+> because reader and writer read the same default off the suffix, and now holds because the
+> caller names the character in each direction. The overlap counts are unaffected — the same
+> fifteen suffixes are still both read and written.
+>
 > **Amended 2026-08-14: `.fwf` was removed from the catalogue**, so every count above drops by one
 > on the read side — **17 readable, 15 writable, 14 both** — and the "Read only" row is now three
 > suffixes, `.numbers` `.xls` `.xlsm`. The measurements themselves are untouched; what changed is

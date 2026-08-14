@@ -536,12 +536,14 @@ def attach(
             The grant belongs to this attach, and the same source attached twice
             is refused — so granting write to something already open means
             ``detach`` first, then attach it again with this set.
-        delimiter: The character separating fields, for .csv/.tsv/.txt only.
-            Defaults to what the extension implies — comma for .csv and .txt,
-            tab for .tsv. Set it when you know the file uses something else;
-            nothing here sniffs for it, so a semicolon-separated file read
-            without this loads as one column holding every field. The warning
-            says so when it happens.
+        delimiter: The character separating fields. **Required** for .csv,
+            .tsv and .txt, which are one format here — character-separated
+            text — and refused for every other, which carries its own
+            structure. There is no default and the extension supplies nothing:
+            files called .csv are shipped separated by ';' or '|' or a tab as
+            readily as by ',', and reading one at the wrong character changes
+            what the data is while the answer looks perfectly ordinary. Ask the
+            user or look at the file; do not guess on their behalf.
 
     Refuses a datasource that is already attached, naming the slot holding it.
     ``collided_with`` says which live slot forced a suffix, and ``evicted``
@@ -830,10 +832,12 @@ def query(
             user has said to — the path is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file
             an attached datasource is sitting on is refused either way.
-        delimiter: The character to separate fields with, for .csv/.tsv/.txt
-            output. Defaults to what the suffix implies — comma for .csv and
-            .txt, tab for .tsv. Ignored for a format that has no separator, so
-            one default can be carried across a mix of destinations.
+        delimiter: The character to separate fields with. **Required** when
+            ``path`` names .csv, .tsv or .txt, for the same reason it is
+            required on the way in: the suffix decides the format and never the
+            separator, so writing without saying would put commas in a file
+            called .tsv on request. Ignored for a format that has no separator,
+            so one value can be carried across a mix of destinations.
     """
     with _lock:
         registry = _session()
@@ -940,9 +944,9 @@ def create(
             Required for ``type="table"``.
         columns: For an index, the columns to index, in order. Required for
             ``type="index"``.
-        delimiter: For a table read from .csv/.tsv/.txt, the character
+        delimiter: For a table read from .csv, .tsv or .txt, the character
             separating fields. Means the same here as on ``attach``, including
-            that nothing sniffs for it.
+            that it is required and that nothing sniffs for it.
     """
     with _lock:
         registry = _session()

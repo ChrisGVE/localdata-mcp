@@ -109,7 +109,7 @@ backends — which is what `--all-extras` above exists to avoid.
 Then point it at a file and ask:
 
 ```python
-attach("./sales.csv")
+attach("./sales.csv", delimiter=",")
 # → {"ok": true, "nickname": "sales", "kind": "file",
 #    "source": "…/sales.csv", "writable": true,
 #    "tables": ["sales"], "loaded": [{"table": "sales", "rows": 4,
@@ -319,8 +319,8 @@ workbook, write the sheet you want out to a flat file with `query(path=…)`, th
 
 ```
 attach("/path/book.xlsx")                                   # → "book"
-query("book", "SELECT * FROM prices", path="/path/prices.csv")
-create(nickname="shop", type="table", source="/path/prices.csv")
+query("book", "SELECT * FROM prices", path="/path/prices.csv", delimiter=",")
+create(nickname="shop", type="table", source="/path/prices.csv", delimiter=",")
 ```
 
 The backend catalogue is closed rather than open-ended, and a database is in
@@ -337,8 +337,8 @@ The common request — *"can you cross-reference this with that other file?"* �
 uses `create`, not a second `attach`:
 
 ```python
-attach("./sales.csv")                                              # → "sales"
-create("sales", type="table", source="./prices.csv")
+attach("./sales.csv", delimiter=",")                               # → "sales"
+create("sales", type="table", source="./prices.csv", delimiter=",")
 query("sales", "SELECT s.sku, s.qty * p.price AS total "
                "FROM sales s JOIN prices p ON s.sku = p.sku")
 ```
@@ -466,20 +466,30 @@ answer belongs to whoever wrote the file, it reports and carries on.
   reachable with `json_extract(column, '$.key')` — and the warning names the
   columns. `pandas.read_xml` drops the subtree and reports nothing, which is why
   that reader is written directly on ElementTree.
-- **Nothing sniffs a delimiter.** A semicolon-separated file read at `,` loads as
-  one column named `a_b_c`, and the warning says exactly that and names the
-  `delimiter` parameter. It does not re-read at a guessed separator: a guess that
-  is usually right is the worst kind.
+- **Nothing sniffs a delimiter, and nothing assumes one either.** `.csv`, `.tsv`
+  and `.txt` are one format — character-separated text — and the separator is
+  **declared, not inferred from the name**: a file called `.csv` is as likely to
+  be separated by `;` or `|` or a tab, and reading it at the wrong one changes
+  what the data is while the answer looks perfectly ordinary. A declaration is
+  what makes the file checkable at all, so it is required rather than defaulted.
+  Declared wrongly, a single column whose *name* still holds a common delimiter
+  says exactly that — it reports what it sees and does not re-read at a guessed
+  separator, because a guess that is usually right is the worst kind.
 - **A timestamp out of a typed format is reported only on the column itself**,
   and this is the one entry here with **no warning attached**. It loads as an
   integer count of nanoseconds since the epoch, which orders correctly and
   compares wrongly against a date string; the `temporal` and `unit` fields on the
   column say so and nothing else does. *Dates*, below, has the detail.
 
-  The two directions differ deliberately. On the way in, `attach` and `create`
-  **refuse** a `delimiter` for any suffix that has no separator. On the way out,
-  `query(path=…)` **ignores** it for such a suffix, so one default can be carried
-  across a mixed batch of destinations without the caller stripping it per file.
+  **Both directions require it**, and that is not decoration: while the suffix
+  supplied the separator it supplied it to reader and writer alike, so a file
+  this server wrote was one it could read back. Required on the way in only,
+  that property would be gone and `save`-then-`attach` would stop round-tripping.
+  What still differs is the *inapplicable* case — a suffix with no separator at
+  all. On the way in, `attach` and `create` **refuse** a `delimiter` there,
+  because the caller has misread the file. On the way out, `query(path=…)`
+  **ignores** it, so one value can be carried across a mixed batch of
+  destinations without the caller stripping it per file.
 
 ## Dates
 

@@ -13,6 +13,8 @@ import pytest
 
 from localdata_mcp import export as export_module
 from localdata_mcp import loader as loader_module
+from localdata_mcp import readers as readers_module
+from localdata_mcp import writers as writers_module
 from localdata_mcp.formats import (
     DELIMITED,
     FORMATS,
@@ -45,8 +47,20 @@ def test_a_delimiter_cannot_be_declared_for_a_format_nothing_reads():
     A write-only format cannot be read back at the separator it was written
     with, which is the whole content of the claim.
     """
-    with pytest.raises(ValueError, match="no reader"):
+    with pytest.raises(ValueError, match="missing a reader"):
         Format(suffix=".oneway", writer=lambda columns, rows, path: 0, delimited=True)
+
+
+def test_a_delimiter_cannot_be_declared_for_a_format_nothing_writes():
+    """The other half, which only became reachable once the separator was declared.
+
+    While the suffix supplied the separator it supplied it to both sides at
+    once, so this could not be got wrong. Now that each side is told, a format
+    declaring `delimited` with no writer is a format whose files this server
+    could read at a separator it has no way of ever having written at.
+    """
+    with pytest.raises(ValueError, match="missing a writer"):
+        Format(suffix=".oneway", reader=lambda path: None, delimited=True)
 
 
 def test_streaming_cannot_be_declared_for_a_format_nothing_reads():
@@ -146,3 +160,67 @@ def test_every_streamed_format_is_one_whose_rows_arrive_in_order():
     """
     assert not (STREAMED & {".parquet", ".feather", ".orc"})
     assert not (STREAMED & {".xlsx", ".xlsm", ".xls", ".ods", ".numbers"})
+
+
+# ---------------------------------------------------------------------------
+# Character-separated text is one format under three names
+# ---------------------------------------------------------------------------
+
+
+def test_the_three_delimited_suffixes_are_one_declaration():
+    """`.csv`, `.tsv` and `.txt` differ in nothing this server can act on.
+
+    Identity rather than equality, and for the reason identity is used
+    everywhere else in this module: three entries that happen to agree today is
+    exactly the arrangement that let them disagree tomorrow. The file is a CSV
+    whatever it is called, and what separates it arrives with the request.
+    """
+    entries = [FORMATS[suffix] for suffix in (".csv", ".tsv", ".txt")]
+    first = entries[0]
+    for other in entries[1:]:
+        assert other.reader is first.reader
+        assert other.writer is first.writer
+        assert other.delimited is first.delimited is True
+        assert other.streamed is first.streamed is True
+
+
+def test_no_suffix_carries_a_separator_of_its_own():
+    """The whole content of the change, asserted against the table itself.
+
+    Derived from `FORMATS` rather than from a list written here, so a fourth
+    delimited suffix added later is covered without anyone remembering to.
+    """
+    for suffix in DELIMITED:
+        reader = FORMATS[suffix].reader
+        writer = FORMATS[suffix].writer
+        assert reader is readers_module.reading_needs_a_separator, suffix
+        assert writer is writers_module.writing_needs_a_separator, suffix
+
+
+@pytest.mark.parametrize("suffix", sorted(DELIMITED))
+def test_reading_delimited_text_without_a_separator_is_refused(tmp_path, suffix):
+    """And the refusal names the parameter, since a caller can act on that."""
+    path = tmp_path / f"data{suffix}"
+    path.write_text("a;b\n1;2\n")
+
+    with pytest.raises(loader_module.LoadError, match="does not guess"):
+        loader_module.read_file(path)
+    with pytest.raises(loader_module.LoadError, match="delimiter"):
+        loader_module.read_source(path)
+
+
+@pytest.mark.parametrize("suffix", sorted(DELIMITED))
+def test_the_declared_separator_is_the_one_used_whatever_the_suffix(tmp_path, suffix):
+    """The positive control: the refusals above are about the absence, not the file.
+
+    Without this, every assertion above would pass just as happily against a
+    reader that had stopped working altogether.
+    """
+    path = tmp_path / f"data{suffix}"
+    path.write_text("a;b\n1;2\n")
+
+    read = loader_module.read_file(path, delimiter=";")
+    assert list(read.tables[0].frame.columns) == ["a", "b"]
+
+    measured = loader_module.read_source(path, delimiter=";")
+    assert [c.name for c in measured.tables[0].columns] == ["a", "b"]

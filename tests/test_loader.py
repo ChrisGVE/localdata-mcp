@@ -58,7 +58,7 @@ def workspace():
 
 
 def test_simple_csv_loads_and_answers_correctly(workspace, root):
-    (info,) = workspace.load_file(str(root / "simple.csv"), "main")
+    (info,) = workspace.load_file(str(root / "simple.csv"), "main", delimiter=",")
 
     assert info.row_count == 5
     assert [c.name for c in info.columns] == [
@@ -80,7 +80,7 @@ def test_simple_csv_loads_and_answers_correctly(workspace, root):
 
 
 def test_numeric_column_is_declared_numeric(workspace, root):
-    (info,) = workspace.load_file(str(root / "simple.csv"), "main")
+    (info,) = workspace.load_file(str(root / "simple.csv"), "main", delimiter=",")
     by_name = {c.name: c for c in info.columns}
     assert by_name["age"].declared_type == "INTEGER"
     assert by_name["salary"].declared_type == "INTEGER"
@@ -89,7 +89,9 @@ def test_numeric_column_is_declared_numeric(workspace, root):
 
 def test_messy_csv_loads_without_losing_rows(workspace, root):
     """Quoted newlines, embedded commas, emoji and a blank row all survive."""
-    (info,) = workspace.load_file(str(root / "messy_mixed_types.csv"), "main")
+    (info,) = workspace.load_file(
+        str(root / "messy_mixed_types.csv"), "main", delimiter=","
+    )
     assert info.row_count > 0
 
     _, rows = workspace.query(
@@ -116,7 +118,7 @@ def test_mostly_numeric_text_column_is_flagged_as_mixed(workspace, root):
     # 'unknown' is not, so it survives as text. Both behaviours are asserted
     # here because the difference decides what the counts below mean.
     target.write_text("v\n1\n2\n3\n4\n5\nn/a\nunknown\n")
-    (info,) = workspace.load_file(str(target), "main")
+    (info,) = workspace.load_file(str(target), "main", delimiter=",")
 
     column = info.columns[0]
     assert column.declared_type == "TEXT"
@@ -143,13 +145,13 @@ def test_uniformly_numeric_text_column_is_not_flagged(workspace, root):
     """No false positive: a column that is entirely non-numeric is not mixed."""
     target = root / "all_text.csv"
     target.write_text("v\nalpha\nbeta\ngamma\n")
-    (info,) = workspace.load_file(str(target), "main")
+    (info,) = workspace.load_file(str(target), "main", delimiter=",")
     assert info.columns[0].is_mixed is False
     assert info.mixed_columns == []
 
 
 def test_unicode_survives_the_round_trip(workspace, root):
-    workspace.load_file(str(root / "messy_mixed_types.csv"), "main")
+    workspace.load_file(str(root / "messy_mixed_types.csv"), "main", delimiter=",")
     _, rows = workspace.query(
         "main", "SELECT name FROM messy_mixed_types WHERE name LIKE '%Garc%'"
     )
@@ -158,7 +160,7 @@ def test_unicode_survives_the_round_trip(workspace, root):
 
 def test_truncated_file_loads(workspace, root):
     """A missing trailing value is a NULL, not a failure."""
-    (info,) = workspace.load_file(str(root / "truncated.csv"), "main")
+    (info,) = workspace.load_file(str(root / "truncated.csv"), "main", delimiter=",")
     assert info.row_count == 2
     _, rows = workspace.query(
         "main", "SELECT count(*) FROM truncated WHERE value IS NULL"
@@ -168,13 +170,13 @@ def test_truncated_file_loads(workspace, root):
 
 def test_empty_file_is_refused_clearly(workspace, root):
     with pytest.raises(LoadError):
-        workspace.load_file(str(root / "empty.csv"), "main")
+        workspace.load_file(str(root / "empty.csv"), "main", delimiter=",")
 
 
 def test_duplicate_and_blank_headers_become_usable_columns(workspace, root, tmp_path):
     target = root / "dupes.csv"
     target.write_text("a,a,,1x\n1,2,3,4\n")
-    (info,) = workspace.load_file(str(target), "main")
+    (info,) = workspace.load_file(str(target), "main", delimiter=",")
     names = [c.name for c in info.columns]
     assert len(set(names)) == len(names), names
     assert all(names), names
@@ -188,7 +190,9 @@ def test_unsupported_extension_names_what_is_supported(workspace, root):
 
 
 def test_table_name_can_be_overridden(workspace, root):
-    (info,) = workspace.load_file(str(root / "simple.csv"), "main", table_name="staff")
+    (info,) = workspace.load_file(
+        str(root / "simple.csv"), "main", table_name="staff", delimiter=","
+    )
     assert info.name == "staff"
     _, rows = workspace.query("main", "SELECT count(*) FROM staff")
     assert rows[0][0] == 5
@@ -203,14 +207,14 @@ def test_path_outside_root_is_refused(workspace, tmp_path):
     outside = tmp_path / "outside.csv"
     outside.write_text("a\n1\n")
     with pytest.raises(PathNotAllowed):
-        workspace.load_file(str(outside), "main")
+        workspace.load_file(str(outside), "main", delimiter=",")
 
 
 def test_traversal_out_of_root_is_refused(workspace, root, tmp_path):
     outside = tmp_path / "secret.csv"
     outside.write_text("a\n1\n")
     with pytest.raises(PathNotAllowed):
-        workspace.load_file(str(root / ".." / "secret.csv"), "main")
+        workspace.load_file(str(root / ".." / "secret.csv"), "main", delimiter=",")
 
 
 def test_symlink_pointing_outside_root_is_refused(workspace, root, tmp_path):
@@ -220,12 +224,12 @@ def test_symlink_pointing_outside_root_is_refused(workspace, root, tmp_path):
     link = root / "innocent.csv"
     link.symlink_to(outside)
     with pytest.raises(PathNotAllowed):
-        workspace.load_file(str(link), "main")
+        workspace.load_file(str(link), "main", delimiter=",")
 
 
 def test_missing_file_is_refused(workspace, root):
     with pytest.raises(PathNotAllowed, match="No such file"):
-        workspace.load_file(str(root / "nope.csv"), "main")
+        workspace.load_file(str(root / "nope.csv"), "main", delimiter=",")
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +263,7 @@ def test_residency_is_measured_and_grows_with_the_data(workspace, root):
     workspace.attach_memory("scratch")
     empty = workspace.resident_bytes("scratch")
 
-    workspace.load_file(str(root / "simple.csv"), "scratch")
+    workspace.load_file(str(root / "simple.csv"), "scratch", delimiter=",")
     loaded = workspace.resident_bytes("scratch")
 
     assert empty == 0
@@ -274,7 +278,7 @@ def test_residency_falls_back_after_a_drop_despite_the_freelist(workspace, root)
     for data it no longer holds.
     """
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "large_dataset.csv"), "scratch")
+    workspace.load_file(str(root / "large_dataset.csv"), "scratch", delimiter=",")
     full = workspace.resident_bytes("scratch")
 
     workspace.drop_table("scratch", "large_dataset")
@@ -294,7 +298,7 @@ def test_residency_falls_back_after_a_drop_despite_the_freelist(workspace, root)
 def test_vacuum_into_produces_a_database_that_still_answers(workspace, root, tmp_path):
     """Assert on what the copy returns, never on the fact that a file appeared."""
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "simple.csv"), "scratch")
+    workspace.load_file(str(root / "simple.csv"), "scratch", delimiter=",")
     original = workspace.query(
         "scratch", "SELECT name, salary FROM simple ORDER BY name"
     )
@@ -325,7 +329,7 @@ def test_vacuum_into_refuses_to_replace_an_existing_database(workspace, root, tm
     boundary, where it is unconditional.
     """
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "simple.csv"), "scratch")
+    workspace.load_file(str(root / "simple.csv"), "scratch", delimiter=",")
     target = tmp_path / "copy.sqlite"
     workspace.snapshot("scratch", target)
 
@@ -336,7 +340,7 @@ def test_vacuum_into_refuses_to_replace_an_existing_database(workspace, root, tm
 def test_vacuum_into_does_not_refuse_a_zero_length_target(workspace, root, tmp_path):
     """Recorded because it is the gap that makes the path-boundary guard load-bearing."""
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "simple.csv"), "scratch")
+    workspace.load_file(str(root / "simple.csv"), "scratch", delimiter=",")
     target = tmp_path / "copy.sqlite"
     target.write_bytes(b"")
 
@@ -381,7 +385,7 @@ def test_a_question_mark_in_a_filename_is_not_read_as_a_uri_query(workspace, roo
 
 def test_dropping_a_table_removes_it_and_dropping_it_twice_is_an_error(workspace, root):
     workspace.attach_memory("scratch")
-    workspace.load_file(str(root / "simple.csv"), "scratch")
+    workspace.load_file(str(root / "simple.csv"), "scratch", delimiter=",")
     assert workspace.has_table("scratch", "simple")
 
     workspace.drop_table("scratch", "simple")
@@ -398,7 +402,7 @@ def test_dropping_a_table_removes_it_and_dropping_it_twice_is_an_error(workspace
 
 def test_query_stream_returns_what_query_returns(workspace, root):
     """One read path, so the two must agree on rows and on column names."""
-    workspace.load_file(str(root / "simple.csv"), "main")
+    workspace.load_file(str(root / "simple.csv"), "main", delimiter=",")
     sql = "SELECT name, salary FROM simple ORDER BY name"
 
     columns, rows = workspace.query("main", sql)
@@ -416,7 +420,7 @@ def test_query_stream_hands_back_rows_it_has_not_read_yet(workspace, root):
     the mechanism, and a peak measurement is the consequence. The consequence is
     asserted separately, as a growth shape, in ``test_volume``.
     """
-    workspace.load_file(str(root / "simple.csv"), "main")
+    workspace.load_file(str(root / "simple.csv"), "main", delimiter=",")
 
     with workspace.query_stream("main", "SELECT name FROM simple") as (_, rows):
         assert not isinstance(rows, (list, tuple))
@@ -429,7 +433,7 @@ def test_query_stream_hands_back_rows_it_has_not_read_yet(workspace, root):
 
 def test_query_stream_refuses_a_write_exactly_as_query_does(workspace, root):
     """The read-only posture is decided once, so it cannot differ between them."""
-    workspace.load_file(str(root / "simple.csv"), "main")
+    workspace.load_file(str(root / "simple.csv"), "main", delimiter=",")
     sql = "UPDATE simple SET salary = 0"
 
     with pytest.raises(LoadError) as materialised:
@@ -444,7 +448,7 @@ def test_query_stream_refuses_a_write_exactly_as_query_does(workspace, root):
 
 def test_query_stream_explains_a_missing_table_the_same_way(workspace, root):
     """A statement that cannot run fails at the top of the block, explained."""
-    workspace.load_file(str(root / "simple.csv"), "main")
+    workspace.load_file(str(root / "simple.csv"), "main", delimiter=",")
 
     with pytest.raises(LoadError, match="No such table"):
         with workspace.query_stream("main", "SELECT * FROM absent") as (_, rows):
@@ -457,13 +461,13 @@ def test_query_stream_explains_a_missing_table_the_same_way(workspace, root):
 
 
 def test_export_writes_the_rows(workspace, root):
-    workspace.load_file(str(root / "simple.csv"), "main")
+    workspace.load_file(str(root / "simple.csv"), "main", delimiter=",")
     columns, rows = workspace.query(
         "main", "SELECT name, salary FROM simple ORDER BY name"
     )
     target = root / "out.csv"
 
-    result = export_module.export_rows(columns, rows, str(target))
+    result = export_module.export_rows(columns, rows, str(target), delimiter=",")
 
     assert result.row_count == 5
     written = target.read_text().splitlines()
@@ -475,7 +479,7 @@ def test_export_refuses_an_existing_file(workspace, root):
     target = root / "out.csv"
     target.write_text("do not lose me\n")
     with pytest.raises(PathNotAllowed, match="already exists"):
-        export_module.export_rows(["a"], [(1,)], str(target))
+        export_module.export_rows(["a"], [(1,)], str(target), delimiter=",")
     assert target.read_text() == "do not lose me\n"
 
 
@@ -483,7 +487,9 @@ def test_export_replaces_only_when_forced(workspace, root):
     target = root / "out.csv"
     target.write_text("stale\n")
 
-    result = export_module.export_rows(["a"], [(1,), (2,)], str(target), force=True)
+    result = export_module.export_rows(
+        ["a"], [(1,), (2,)], str(target), force=True, delimiter=","
+    )
 
     assert result.row_count == 2
     assert target.read_text().splitlines() == ["a", "1", "2"]
@@ -502,6 +508,7 @@ def test_export_will_not_force_over_a_file_a_slot_is_sitting_on(workspace, root)
             str(source),
             force=True,
             claimed={source.resolve(): "simple"},
+            delimiter=",",
         )
 
     assert source.read_text() == before
@@ -509,38 +516,65 @@ def test_export_will_not_force_over_a_file_a_slot_is_sitting_on(workspace, root)
 
 def test_export_is_owner_readable_only(workspace, root):
     target = root / "out.csv"
-    export_module.export_rows(["a"], [(1,)], str(target))
+    export_module.export_rows(["a"], [(1,)], str(target), delimiter=",")
     assert oct(os.stat(target).st_mode & 0o777) == "0o600"
 
 
 def test_export_outside_root_is_refused(root, tmp_path):
     with pytest.raises(PathNotAllowed):
-        export_module.export_rows(["a"], [(1,)], str(tmp_path / "escape.csv"))
+        export_module.export_rows(
+            ["a"], [(1,)], str(tmp_path / "escape.csv"), delimiter=","
+        )
 
 
 def test_export_to_a_missing_directory_is_refused(root):
     with pytest.raises(PathNotAllowed, match="Directory does not exist"):
-        export_module.export_rows(["a"], [(1,)], str(root / "nope" / "out.csv"))
+        export_module.export_rows(
+            ["a"], [(1,)], str(root / "nope" / "out.csv"), delimiter=","
+        )
 
 
 def test_export_round_trips_back_into_the_workspace(workspace, root):
     """The strongest check that the export is really well-formed."""
-    workspace.load_file(str(root / "messy_mixed_types.csv"), "main")
+    workspace.load_file(str(root / "messy_mixed_types.csv"), "main", delimiter=",")
     columns, rows = workspace.query("main", "SELECT * FROM messy_mixed_types")
     target = root / "exported.csv"
-    export_module.export_rows(columns, rows, str(target))
+    export_module.export_rows(columns, rows, str(target), delimiter=",")
 
-    (reloaded,) = workspace.load_file(str(target), "main", table_name="reloaded")
+    (reloaded,) = workspace.load_file(
+        str(target), "main", table_name="reloaded", delimiter=","
+    )
     assert reloaded.row_count == len(rows)
 
 
-def test_a_tsv_export_is_tab_separated(workspace, root):
-    """The suffix chooses the format. It used to choose nothing at all."""
+def test_an_export_is_separated_by_the_character_that_was_declared(workspace, root):
+    """The suffix chooses the format; the caller chooses the separator.
+
+    Both halves matter, and the second is why the file is written at a tab
+    rather than a comma here — the name says nothing about it.
+    """
     target = root / "out.tsv"
 
-    export_module.export_rows(["a", "b"], [(1, 2)], str(target))
+    export_module.export_rows(["a", "b"], [(1, 2)], str(target), delimiter="\t")
 
     assert target.read_text().splitlines() == ["a\tb", "1\t2"]
+
+
+def test_a_declared_separator_is_used_whatever_the_name_says(workspace, root):
+    """A `.csv` written at semicolons, which is the point of declaring it.
+
+    Under the old contract this file was comma-separated because it was called
+    `.csv`, and the only way to get semicolons was to give the file a name that
+    implied them — which no suffix does.
+    """
+    target = root / "semis.csv"
+
+    export_module.export_rows(["a", "b"], [(1, 2)], str(target), delimiter=";")
+
+    assert target.read_text().splitlines() == ["a;b", "1;2"]
+
+    (loaded,) = workspace.load_file(str(target), "main", delimiter=";")
+    assert [c.name for c in loaded.columns] == ["a", "b"]
 
 
 def test_an_unwritable_suffix_is_refused_by_name_and_leaves_no_file(workspace, root):
@@ -583,7 +617,8 @@ def test_every_writer_produces_an_owner_readable_file(workspace, root):
     """Not just CSV: a format whose library opens the path itself would land 0o644."""
     for suffix in sorted(export_module.WRITERS):
         target = root / f"modes{suffix}"
-        export_module.export_rows(["a"], [(1,)], str(target))
+        declared = {"delimiter": ","} if suffix in export_module.DELIMITED else {}
+        export_module.export_rows(["a"], [(1,)], str(target), **declared)
         assert oct(os.stat(target).st_mode & 0o777) == "0o600", suffix
 
 
@@ -598,7 +633,7 @@ def test_mixed_text_column_names_the_values_that_do_not_parse(workspace, root):
     """
     target = root / "sentinels.csv"
     target.write_text("v\n1\n2\n3\npending\npending\nvoid\n")
-    (loaded,) = workspace.load_file(str(target), "main")
+    (loaded,) = workspace.load_file(str(target), "main", delimiter=",")
     column = loaded.columns[0]
 
     assert column.numeric_values == 3
@@ -612,7 +647,7 @@ def test_non_numeric_examples_are_capped(workspace, root):
     values = "\n".join(f"junk_{n}" for n in range(50))
     target = root / "many_sentinels.csv"
     target.write_text(f"v\n1\n2\n{values}\n")
-    (loaded,) = workspace.load_file(str(target), "main")
+    (loaded,) = workspace.load_file(str(target), "main", delimiter=",")
     column = loaded.columns[0]
 
     assert column.non_numeric_values == 50
@@ -629,7 +664,7 @@ def test_mixed_kind_says_which_signal_fired(workspace, root):
     """
     target = root / "affinity.csv"
     target.write_text("v\n1\n2\npending\n")
-    (loaded,) = workspace.load_file(str(target), "main")
+    (loaded,) = workspace.load_file(str(target), "main", delimiter=",")
     assert loaded.columns[0].mixed_kind == "text"
 
     external = root / "heterogeneous.sqlite"
@@ -1002,7 +1037,7 @@ def test_markdown_is_written_as_a_table_and_is_write_only(workspace, root):
 @pytest.mark.parametrize("suffix", [".parquet", ".feather", ".orc"])
 def test_a_columnar_format_round_trips_every_type_exactly(workspace, root, suffix):
     """Typed formats: the types survive, so this is stricter than the CSV round trip."""
-    workspace.load_file(str(root / "simple.csv"), "main")
+    workspace.load_file(str(root / "simple.csv"), "main", delimiter=",")
     columns, rows = workspace.query(
         "main", "SELECT name, age, salary FROM simple ORDER BY name"
     )
@@ -1141,7 +1176,7 @@ def test_apple_numbers_is_read_without_its_empty_grid(workspace, root):
 
 def test_a_semicolon_file_loads_as_one_fat_column_and_says_so(workspace, root):
     """The silent failure the parameter exists for. Without the warning it is invisible."""
-    (info,) = workspace.load_file(str(root / "semicolons.csv"), "main")
+    (info,) = workspace.load_file(str(root / "semicolons.csv"), "main", delimiter=",")
 
     assert len(info.columns) == 1
     assert len(info.notes) == 1
@@ -1160,13 +1195,19 @@ def test_the_delimiter_parameter_reads_the_same_file_properly(workspace, root):
     assert rows[0][0] == 255000
 
 
-def test_a_tsv_still_defaults_to_tab(workspace, root):
-    """The default is per extension. A flat comma default would regress this."""
-    (info,) = workspace.load_file(str(root / "mixed_tabs.tsv"), "main")
+def test_a_tab_separated_file_splits_at_the_declared_tab(workspace, root):
+    """There is no per-extension default left; the tab is declared like any other.
+
+    This used to assert that `.tsv` defaulted to a tab. It now asserts the thing
+    that replaced that: a tab-separated file splits when the caller says tab,
+    and the suffix is not what carried the answer here.
+    """
+    (info,) = workspace.load_file(str(root / "mixed_tabs.tsv"), "main", delimiter="\t")
     assert len(info.columns) > 1
 
 
-def test_an_explicit_delimiter_overrides_what_the_extension_implied(workspace, root):
+def test_a_declared_delimiter_is_used_whatever_the_file_is_called(workspace, root):
+    """`pipes.txt` is pipe-separated, and no suffix in this server implies a pipe."""
     (info,) = workspace.load_file(str(root / "pipes.txt"), "main", delimiter="|")
     assert [c.name for c in info.columns] == ["name", "role"]
 
@@ -1177,13 +1218,16 @@ def test_a_delimiter_on_a_format_that_has_none_is_refused(workspace, root):
         workspace.load_file(str(root / "records.json"), "main", delimiter=";")
 
 
-def test_nothing_sniffs_the_delimiter(workspace, root):
+def test_nothing_re_reads_at_a_separator_it_was_not_given(workspace, root):
     """A sniffer that is right most of the time is the fail-open shape, not a fix.
 
-    The semicolon file above must still load as one column by default — if some
-    later change starts guessing, this fails.
+    Requiring the separator removed the *guess this server used to make*; it did
+    not add a second guess to catch a caller's mistake. A semicolon file read at
+    the comma it was declared with must still land as one column — the note says
+    what it looks like, and nothing re-reads. If a later change starts guessing,
+    this fails.
     """
-    (info,) = workspace.load_file(str(root / "semicolons.csv"), "main")
+    (info,) = workspace.load_file(str(root / "semicolons.csv"), "main", delimiter=",")
     assert len(info.columns) == 1
 
 
@@ -1224,11 +1268,37 @@ def test_the_written_delimiter_round_trips_when_read_back_with_the_same_one(
     assert [c.name for c in info.columns] == ["name", "salary"]
 
 
-def test_a_tsv_written_without_a_delimiter_is_still_tab_separated(workspace, root):
-    """The suffix keeps deciding when nothing overrides it."""
-    target = root / "plain.tsv"
-    export_module.export_rows(["a", "b"], [(1, 2)], str(target))
-    assert target.read_text().splitlines()[0] == "a\tb"
+def test_writing_delimited_text_without_a_delimiter_is_refused(workspace, root):
+    """The successor to the test that asserted the suffix decided.
+
+    It used to: a `.tsv` written with nothing said was tab-separated, because
+    the suffix supplied the separator. That is the guess this contract removed,
+    and it is removed on the write side as well as the read side — leaving it
+    here would write commas into a file named `.tsv` on request.
+    """
+    for name in ("plain.tsv", "plain.csv", "plain.txt"):
+        target = root / name
+        with pytest.raises(export_module.ExportError, match="say what should separate"):
+            export_module.export_rows(["a", "b"], [(1, 2)], str(target))
+        assert not target.exists(), f"{name} was created by a call that refused"
+
+
+def test_a_refused_export_does_not_cost_the_user_the_file_that_was_there(
+    workspace, root
+):
+    """The reason the check is early rather than inside the writer.
+
+    ``resolve_write_path`` deletes the existing target under ``force``. A
+    refusal raised after that point would answer the question correctly and
+    destroy the file on the way, which is worse than either outcome alone.
+    """
+    target = root / "precious.csv"
+    target.write_text("the user's own data\n")
+
+    with pytest.raises(export_module.ExportError, match="say what should separate"):
+        export_module.export_rows(["a"], [(1,)], str(target), force=True)
+
+    assert target.read_text() == "the user's own data\n"
 
 
 def test_both_sides_read_the_delimited_set_from_one_place():
@@ -1441,7 +1511,7 @@ def test_a_backend_that_demands_a_key_gets_a_surrogate_holding_the_row_order(
 
     # ``load_file`` answers with one entry per table the file produced, and a
     # CSV produces exactly one.
-    (info,) = workspace.load_file(str(root / "simple.csv"), "scratch")
+    (info,) = workspace.load_file(str(root / "simple.csv"), "scratch", delimiter=",")
 
     names = [column.name for column in info.columns]
     assert names[0] == "_row"
@@ -1470,7 +1540,7 @@ def test_the_added_key_is_explained_rather_than_merely_present(
     _demanding_sqlite(monkeypatch)
     workspace.attach_memory("scratch")
 
-    (info,) = workspace.load_file(str(root / "simple.csv"), "scratch")
+    (info,) = workspace.load_file(str(root / "simple.csv"), "scratch", delimiter=",")
 
     assert any(
         "_row" in note and "primary key" in note for note in info.notes
@@ -1486,7 +1556,7 @@ def test_nothing_is_added_where_the_backend_does_not_demand_it(workspace, root):
     """
     workspace.attach_memory("scratch")
 
-    (info,) = workspace.load_file(str(root / "simple.csv"), "scratch")
+    (info,) = workspace.load_file(str(root / "simple.csv"), "scratch", delimiter=",")
 
     header = (root / "simple.csv").read_text().splitlines()[0].split(",")
     assert [column.name for column in info.columns] == [n.lower() for n in header]

@@ -79,7 +79,7 @@ from .dialects import Backend, Engines, backend_for, backend_for_url
 # raise it without importing `loader`. Imported into this namespace deliberately:
 # `slots`, the tests and the docs all say `loader.LoadError`, and there is one
 # class whichever name reaches it.
-from .errors import LoadError
+from .errors import LoadError, undeclared_separator
 from .paths import resolve_read_path
 
 # The readers and the shapes they hand back. Imported into this namespace on
@@ -698,9 +698,10 @@ def read_file(path: Path, *, delimiter: str | None = None) -> ReadResult:
     *before* committing to it. That ordering matters once slots are limited: a
     file that cannot be parsed must not cost a live datasource its place.
 
-    ``delimiter`` replaces the separator the extension implied, and applies only
-    to the delimited formats. Passing it for a format that has no separator is
-    refused rather than ignored: a caller who set it believes it did something.
+    ``delimiter`` is **required** for the character-separated formats and has no
+    default: nothing here reads a separator off a suffix. Passing it for a
+    format that has no separator is refused rather than ignored, because a
+    caller who set it believes it did something.
     """
     suffix = _readable_suffix(path)
     _check_delimiter(path, suffix, delimiter)
@@ -1103,18 +1104,28 @@ class SourceRead:
     notes: tuple[str, ...] = ()
 
 
-def _chunk_reader(
-    path: Path, suffix: str, delimiter: str | None
-) -> Callable[[], Iterator[pd.DataFrame]]:
+def _chunk_reader(path: Path, separator: str) -> Callable[[], Iterator[pd.DataFrame]]:
     """A callable giving fresh chunks of this file, every column as raw text."""
 
     def chunks() -> Iterator[pd.DataFrame]:
-        separator = delimiter or ("\t" if suffix == ".tsv" else ",")
         reader = pd.read_csv(path, sep=separator, dtype=str, chunksize=_READ_CHUNK)
         with reader as opened:
             yield from opened
 
     return chunks
+
+
+def _declared_separator(path: Path, delimiter: str | None) -> str:
+    """The character this file's fields are split on. There is no default.
+
+    The streamed path needs this because it never reaches the format table's
+    reader — it drives ``read_csv`` itself, in chunks — so the requirement the
+    table states for the materialised path has to be stated here too. Both say
+    it in the same sentence, from ``errors``, so the two cannot drift apart.
+    """
+    if delimiter is None:
+        raise LoadError(undeclared_separator(path.name, reading=True))
+    return delimiter
 
 
 def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:
@@ -1145,8 +1156,8 @@ def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:
             notes=read.notes,
         )
 
-    chunks = _chunk_reader(path, suffix, delimiter)
-    separator = delimiter or ("\t" if suffix == ".tsv" else ",")
+    separator = _declared_separator(path, delimiter)
+    chunks = _chunk_reader(path, separator)
     scans: list[_ColumnScan] | None = None
     notes: tuple[str, ...] = ()
     try:
@@ -1173,7 +1184,7 @@ def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:
 
     def coerced() -> Iterator[pd.DataFrame]:
         """Pass two: the same chunks, as the values pass one settled on."""
-        for chunk in _chunk_reader(path, suffix, delimiter)():
+        for chunk in _chunk_reader(path, separator)():
             yield _as_measured(chunk, measured)
 
     return SourceRead(

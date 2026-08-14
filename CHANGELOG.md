@@ -106,6 +106,20 @@ rebuild it.
   over either returns a real number that is not the number asked for. It is a
   verb rather than a flag on `directory` because a directory that reports statistics
   stops being one.
+- **The separator of a text file is declared, never inferred.** `.csv`, `.tsv`
+  and `.txt` are **one format** — character-separated text — and `delimiter` is
+  **required** for it, in both directions. No suffix supplies a default any
+  more: a file called `.csv` is shipped semicolon-, pipe- and tab-separated
+  every day, and read at the wrong character it loads as one fat column or,
+  worse, as plausible columns that are not the file's. Requiring the
+  declaration is also what makes the bytes checkable against it at all —
+  identifying a separator from the bytes is undecidable, verifying them against
+  a declared one is not. It is required on the **write** side for the same
+  reason it is on the read side: while the suffix carried the separator it
+  carried it to reader and writer alike, so a file this server wrote was one it
+  could read back, and requiring it on one side only would have ended that.
+  Handed to a format that has no separator it is still refused on the way in
+  and ignored on the way out.
 - **Seventeen file formats read** (`.csv` `.tsv` `.txt` `.json` `.jsonl`
   `.ndjson` `.xml` `.yaml` `.yml` `.xlsx` `.xlsm` `.xls` `.ods` `.numbers`
   `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less

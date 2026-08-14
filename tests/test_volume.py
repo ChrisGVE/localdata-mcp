@@ -31,6 +31,7 @@ import pytest
 
 from localdata_mcp import config as config_module
 from localdata_mcp import server as server_module
+from localdata_mcp.formats import DELIMITED
 from localdata_mcp.config import Config
 from localdata_mcp.loader import Workspace
 
@@ -119,7 +120,7 @@ def test_large_file_answers_correctly(root):
     workspace = Workspace.in_memory()
     workspace.attach_memory("bulk")
     try:
-        (info,) = workspace.load_file(str(path), "bulk")
+        (info,) = workspace.load_file(str(path), "bulk", delimiter=",")
         assert info.row_count == LARGE_ROWS
 
         _, rows = workspace.query("bulk", "SELECT sum(id) FROM big")
@@ -153,7 +154,7 @@ def _export_peak(
 
     server_module._reset()
     try:
-        attached = server_module.attach(str(source))
+        attached = server_module.attach(str(source), delimiter=",")
         assert attached["ok"], attached
         nickname = attached["nickname"]
         target = root / f"{name}-out{suffix}"
@@ -163,6 +164,7 @@ def _export_peak(
             nickname,
             f"SELECT id, name, score, flag FROM {name}",
             path=str(target),
+            **({"delimiter": ","} if suffix in DELIMITED else {}),
         )
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
@@ -242,10 +244,10 @@ def test_export_of_a_large_result_is_complete(root):
     workspace = Workspace.in_memory()
     workspace.attach_memory("bulk")
     try:
-        workspace.load_file(str(path), "bulk")
+        workspace.load_file(str(path), "bulk", delimiter=",")
         columns, rows = workspace.query("bulk", "SELECT id, score FROM big")
         target = root / "exported.csv"
-        result = export_rows(columns, rows, str(target))
+        result = export_rows(columns, rows, str(target), delimiter=",")
 
         assert result.row_count == SMALL_ROWS
         # Header plus every row, counted from the file rather than the report.

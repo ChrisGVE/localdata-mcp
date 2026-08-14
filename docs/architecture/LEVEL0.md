@@ -212,15 +212,15 @@ than something they catch.
 | `stats` | `nickname`, `table`, `columns?` | Profile a table's columns — missing values, and the range of the ones that are there. The verb that answers *"can I trust this data?"*, which no other verb does. |
 
 **`attach`.** A workbook becomes a database holding a table per sheet and a `.numbers`
-document one per table, snake_cased. `delimiter` applies to character-separated text only
-and is refused elsewhere.
+document one per table, snake_cased. `delimiter` applies to character-separated text only,
+where it is **required**, and is refused elsewhere.
 
 **`query`.** Every write is refused whatever the slot allows, by the connection rather than
 by a check, and as far as each backend can refuse — see *Write is not the default*. The
 `path` suffix chooses the output format and one with no writer is refused by name; `force`
 is the same overwrite consent `save` takes, for the same reason. `delimiter` separates
-fields on the way *out*, for `.csv`/`.tsv`/`.txt` only, and is ignored rather than refused
-elsewhere.
+fields on the way *out*, for `.csv`/`.tsv`/`.txt` only, where it is **required** for the
+same reason it is on the way in, and is ignored rather than refused elsewhere.
 
 **`update` and `drop`.** `update`'s `name` is the snake_cased name `directory` lists rather than
 the spelling in the spreadsheet, and case is the part of that the server closes: a name
@@ -397,21 +397,25 @@ what is unambiguous, say what was assumed, refuse an actual choice*:
   text and a nested XML element its XML text — lossless and reversible — and a note names
   the columns. `pandas.read_xml` drops the subtree and reports nothing, which is why that
   reader is written directly on ElementTree.
-- **Nothing sniffs.** A file separated by something other than what its extension implies
-  loads as one fat column; `delimiter` is how the caller says otherwise. The parameter
-  alone would not have been enough — a caller who does not know would never reach for it —
-  so a single column whose *name* still contains a common delimiter says exactly that and
-  names the parameter. It reports what it sees; it does not re-read at a guessed
-  separator, because a guess that is usually right is the worst kind.
+- **Nothing sniffs, and nothing defaults.** The extension implies no separator: `.csv`,
+  `.tsv` and `.txt` are one format and the character is declared. A parameter alone would
+  not have been enough — a caller who does not know would never reach for it — so it is
+  required, which is also what makes the bytes checkable against the declaration at all.
+  Declared wrongly, a single column whose *name* still contains a common delimiter says
+  exactly that. It reports what it sees; it does not re-read at a guessed separator,
+  because a guess that is usually right is the worst kind.
 
 `delimiter` earns its place on the same test `join_on` failed: it declares a **fact about
 the source** the server cannot know and the caller often does, rather than a judgement the
-caller was already making. It applies to character-separated text only, and **the two
-directions treat a mismatch differently, deliberately**. Reading — `attach` and
-`create` — **refuses** it: a `.parquet` handed a `delimiter` is a caller who has
-misunderstood the file, and the refusal names the suffix and the three that qualify.
-Writing — `query(path=…)` — **ignores** it, because one default can then be carried across
-a mix of destinations without the call having to know which suffix it is about to hit.
+caller was already making. It is **required in both directions** for character-separated
+text. Requiring it on the write side too is what keeps the round trip: while the suffix
+carried the separator it carried it to reader and writer alike, so a file written here was
+one readable here. Where the two directions still differ is the *inapplicable* case.
+Reading — `attach` and `create` — **refuses** a delimiter for a format that has none: a
+`.parquet` handed one is a caller who has misunderstood the file, and the refusal names
+the suffix and the three that qualify. Writing — `query(path=…)` — **ignores** it there,
+because one value can then be carried across a mix of destinations without the call having
+to know which suffix it is about to hit.
 
 ### The backends, and what each one needed
 

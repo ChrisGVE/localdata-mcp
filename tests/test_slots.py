@@ -112,7 +112,7 @@ def test_an_ordinary_path_is_not_a_url():
 
 def test_a_csv_becomes_a_database_holding_one_table(registry, root):
     csv_at(root / "sales.csv")
-    attachment = registry.attach(str(root / "sales.csv"), "shop")
+    attachment = registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     assert attachment.slot.nickname == "shop"
     assert attachment.slot.tables == ("sales",)
@@ -122,13 +122,13 @@ def test_a_csv_becomes_a_database_holding_one_table(registry, root):
 def test_the_table_is_named_from_the_file_not_from_the_nickname(registry, root):
     """The nickname names the database; the file names the table inside it."""
     csv_at(root / "quarterly_report.csv")
-    attachment = registry.attach(str(root / "quarterly_report.csv"), "q3")
+    attachment = registry.attach(str(root / "quarterly_report.csv"), "q3", delimiter=",")
     assert attachment.slot.tables == ("quarterly_report",)
 
 
 def test_a_file_slot_is_addressed_as_nickname_dot_table(registry, root):
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     columns, rows = registry.query("shop", "SELECT sku, qty FROM sales ORDER BY sku")
     assert columns == ["sku", "qty"]
     assert rows == [("a", 3), ("b", 4)]
@@ -136,12 +136,12 @@ def test_a_file_slot_is_addressed_as_nickname_dot_table(registry, root):
 
 def test_a_tsv_is_read_by_its_own_reader(registry, root):
     (root / "tabbed.tsv").write_text("sku\tqty\na\t3\n")
-    attachment = registry.attach(str(root / "tabbed.tsv"), "tabbed")
+    attachment = registry.attach(str(root / "tabbed.tsv"), "tabbed", delimiter="\t")
     assert attachment.slot.tables == ("tabbed",)
 
 
 def test_the_hostile_corpus_still_reports_its_mixed_columns(registry, root):
-    registry.attach(str(root / "messy_mixed_types.csv"), "messy")
+    registry.attach(str(root / "messy_mixed_types.csv"), "messy", delimiter=",")
     described = registry.describe("messy", "messy_mixed_types")
     assert described.mixed_columns
 
@@ -187,7 +187,7 @@ def test_an_attached_database_cannot_be_written_through(registry, root):
 def test_a_path_outside_the_allowed_area_is_refused(registry, tmp_path):
     outside = csv_at(tmp_path / "secret.csv")
     with pytest.raises(AttachRefused, match="outside the allowed paths"):
-        registry.attach(str(outside), "secret")
+        registry.attach(str(outside), "secret", delimiter=",")
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ def test_a_nickname_is_rejected_rather_than_silently_mangled(registry, root):
     """Silent mangling hands back a handle that is not the one requested."""
     csv_at(root / "sales.csv")
     with pytest.raises(AttachRefused, match="my-data"):
-        registry.attach(str(root / "sales.csv"), "my-data")
+        registry.attach(str(root / "sales.csv"), "my-data", delimiter=",")
 
 
 @pytest.mark.parametrize("nickname", ["main", "temp", "sqlite_master", "MAIN"])
@@ -217,7 +217,7 @@ def test_names_sqlite_once_reserved_are_now_ordinary(registry, root, nickname):
     says it went away on purpose.
     """
     csv_at(root / "sales.csv")
-    attachment = registry.attach(str(root / "sales.csv"), nickname)
+    attachment = registry.attach(str(root / "sales.csv"), nickname, delimiter=",")
     assert attachment.slot.nickname == nickname
     assert registry.query(nickname, "SELECT count(*) FROM sales")[1] == [(2,)]
 
@@ -226,7 +226,7 @@ def test_names_sqlite_once_reserved_are_now_ordinary(registry, root, nickname):
 def test_unusable_nicknames_are_rejected(registry, root, nickname):
     csv_at(root / "sales.csv")
     with pytest.raises(AttachRefused):
-        registry.attach(str(root / "sales.csv"), nickname)
+        registry.attach(str(root / "sales.csv"), nickname, delimiter=",")
 
 
 def test_a_colliding_nickname_is_disambiguated_rather_than_replacing_a_slot(
@@ -235,8 +235,8 @@ def test_a_colliding_nickname_is_disambiguated_rather_than_replacing_a_slot(
     """Two real datasources both deserve a slot; only detach drops one."""
     csv_at(root / "first.csv", "a\n1\n")
     csv_at(root / "second.csv", "b\n2\n")
-    registry.attach(str(root / "first.csv"), "slot")
-    attachment = registry.attach(str(root / "second.csv"), "slot")
+    registry.attach(str(root / "first.csv"), "slot", delimiter=",")
+    attachment = registry.attach(str(root / "second.csv"), "slot", delimiter=",")
 
     assert attachment.slot.nickname == "slot_2"
     assert attachment.slot.tables == ("second",)
@@ -256,7 +256,7 @@ def test_a_colliding_nickname_is_disambiguated_rather_than_replacing_a_slot(
 
 def test_a_nickname_is_derived_from_the_filename_when_none_is_given(registry, root):
     csv_at(root / "sales.csv")
-    attachment = registry.attach(str(root / "sales.csv"))
+    attachment = registry.attach(str(root / "sales.csv"), delimiter=",")
     assert attachment.slot.nickname == "sales"
     assert attachment.collided_with is None
 
@@ -264,7 +264,7 @@ def test_a_nickname_is_derived_from_the_filename_when_none_is_given(registry, ro
 def test_a_filename_that_is_not_a_legal_identifier_still_yields_one(registry, root):
     """`2024 Sales Report.csv` has no legal spelling the caller chose for us."""
     csv_at(root / "2024 Sales Report.csv")
-    attachment = registry.attach(str(root / "2024 Sales Report.csv"))
+    attachment = registry.attach(str(root / "2024 Sales Report.csv"), delimiter=",")
 
     nickname = attachment.slot.nickname
     (table,) = attachment.slot.tables
@@ -281,7 +281,7 @@ def test_a_filename_that_is_not_a_legal_identifier_still_yields_one(registry, ro
 def test_a_file_called_main_keeps_its_own_name(registry, root):
     """It used to become main_2, to stay off SQLite's own schema name."""
     csv_at(root / "main.csv")
-    attachment = registry.attach(str(root / "main.csv"))
+    attachment = registry.attach(str(root / "main.csv"), delimiter=",")
 
     assert attachment.slot.nickname == "main"
     _, rows = registry.query("main", "SELECT count(*) FROM main")
@@ -295,8 +295,8 @@ def test_two_same_named_files_in_different_directories_both_get_a_slot(registry,
     csv_at(root / "q1" / "sales.csv", "sku,qty\na,1\n")
     csv_at(root / "q2" / "sales.csv", "sku,qty\nb,2\n")
 
-    first = registry.attach(str(root / "q1" / "sales.csv"))
-    second = registry.attach(str(root / "q2" / "sales.csv"))
+    first = registry.attach(str(root / "q1" / "sales.csv"), delimiter=",")
+    second = registry.attach(str(root / "q2" / "sales.csv"), delimiter=",")
 
     assert first.slot.nickname == "sales"
     assert second.slot.nickname == "sales_2"
@@ -314,7 +314,7 @@ def test_disambiguation_keeps_counting_past_the_second_collision(registry, root)
         (root / directory).mkdir()
         csv_at(root / directory / "sales.csv", f"sku,qty\nx,{index}\n")
     names = [
-        registry.attach(str(root / directory / "sales.csv")).slot.nickname
+        registry.attach(str(root / directory / "sales.csv"), delimiter=",").slot.nickname
         for directory in ("a", "b", "c")
     ]
     assert names == ["sales", "sales_2", "sales_3"]
@@ -323,20 +323,20 @@ def test_disambiguation_keeps_counting_past_the_second_collision(registry, root)
 def test_the_same_source_twice_is_refused_and_says_where_it_lives(registry, root):
     """A second copy of identical data burns a slot for nothing."""
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     with pytest.raises(AttachRefused, match="already attached as 'shop'"):
-        registry.attach(str(root / "sales.csv"), "shop")
+        registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
 
 def test_asking_for_a_different_nickname_does_not_get_around_the_duplicate_check(
     registry, root
 ):
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     with pytest.raises(AttachRefused, match="'shop'"):
-        registry.attach(str(root / "sales.csv"), "elsewhere")
+        registry.attach(str(root / "sales.csv"), "elsewhere", delimiter=",")
     assert [slot.nickname for slot in registry.slots()] == ["shop"]
 
 
@@ -347,11 +347,11 @@ def test_a_refused_duplicate_costs_no_live_slot_its_place(root):
     try:
         csv_at(root / "first.csv", "a\n1\n")
         csv_at(root / "second.csv", "b\n2\n")
-        registry.attach(str(root / "first.csv"), "one")
-        registry.attach(str(root / "second.csv"), "two")
+        registry.attach(str(root / "first.csv"), "one", delimiter=",")
+        registry.attach(str(root / "second.csv"), "two", delimiter=",")
 
         with pytest.raises(AttachRefused):
-            registry.attach(str(root / "first.csv"), "three")
+            registry.attach(str(root / "first.csv"), "three", delimiter=",")
 
         assert [slot.nickname for slot in registry.slots()] == ["one", "two"]
         _, rows = registry.query("one", "SELECT a FROM first")
@@ -366,7 +366,7 @@ def test_an_explicitly_requested_nickname_is_refused_rather_than_corrected(
     """Handing back a silently corrected handle is the defect this avoids."""
     csv_at(root / "sales.csv")
     with pytest.raises(AttachRefused, match="cannot be a nickname"):
-        registry.attach(str(root / "sales.csv"), "2 bad")
+        registry.attach(str(root / "sales.csv"), "2 bad", delimiter=",")
 
 
 # ---------------------------------------------------------------------------
@@ -377,13 +377,13 @@ def test_an_explicitly_requested_nickname_is_refused_rather_than_corrected(
 def test_a_database_we_built_from_a_file_is_writable(registry, root):
     """Nothing outside it is at risk, so composition needs no grant."""
     csv_at(root / "sales.csv")
-    slot = registry.attach(str(root / "sales.csv"), "shop").slot
+    slot = registry.attach(str(root / "sales.csv"), "shop", delimiter=",").slot
 
     assert slot.writable is True
     # The grant is what add_table and drop_table consult. query never writes,
     # whatever the grant says, so it is no longer the way to observe this.
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.create_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
     assert "prices" in registry.tables("shop")
     registry.drop_table("shop", "prices")
     assert "prices" not in registry.tables("shop")
@@ -396,7 +396,7 @@ def test_an_outside_database_arrives_read_only(registry, root):
     assert slot.writable is False
     csv_at(root / "prices.csv", "sku,price\na,10\n")
     with pytest.raises(NotWritable, match="writable=true"):
-        registry.create_table("wh", source=str(root / "prices.csv"))
+        registry.create_table("wh", source=str(root / "prices.csv"), delimiter=",")
 
 
 def test_the_write_grant_is_honoured_when_it_is_asked_for(registry, root):
@@ -405,7 +405,7 @@ def test_the_write_grant_is_honoured_when_it_is_asked_for(registry, root):
 
     assert slot.writable is True
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    added = registry.create_table("wh", source=str(root / "prices.csv"))
+    added = registry.create_table("wh", source=str(root / "prices.csv"), delimiter=",")
     assert added.row_count == 1
     assert "prices" in registry.tables("wh")
 
@@ -418,7 +418,7 @@ def test_the_write_grant_is_honoured_when_it_is_asked_for(registry, root):
 def fill(registry: Registry, root: Path, count: int, start: int = 0) -> None:
     for index in range(start, start + count):
         csv_at(root / f"f{index}.csv", "a\n1\n")
-        registry.attach(str(root / f"f{index}.csv"), f"s{index}")
+        registry.attach(str(root / f"f{index}.csv"), f"s{index}", delimiter=",")
 
 
 def test_the_cap_comes_from_the_configuration(root):
@@ -434,7 +434,7 @@ def test_the_cap_comes_from_the_configuration(root):
 def test_the_eleventh_attachment_evicts_the_first(registry, root):
     fill(registry, root, 10)
     csv_at(root / "eleventh.csv", "a\n1\n")
-    attachment = registry.attach(str(root / "eleventh.csv"), "eleventh")
+    attachment = registry.attach(str(root / "eleventh.csv"), "eleventh", delimiter=",")
 
     assert attachment.evicted is not None
     assert attachment.evicted.nickname == "s0"
@@ -447,7 +447,7 @@ def test_eviction_takes_the_oldest_not_the_newest(root):
     try:
         fill(registry, root, 3)
         csv_at(root / "fresh.csv", "a\n1\n")
-        registry.attach(str(root / "fresh.csv"), "fresh")
+        registry.attach(str(root / "fresh.csv"), "fresh", delimiter=",")
         assert [slot.nickname for slot in registry.slots()] == ["s1", "s2", "fresh"]
     finally:
         registry.close()
@@ -459,9 +459,9 @@ def test_the_eviction_record_carries_what_is_needed_to_rebuild_the_slot(root):
     registry = Registry()
     try:
         source = csv_at(root / "sales.csv")
-        registry.attach(str(source), "shop")
+        registry.attach(str(source), "shop", delimiter=",")
         csv_at(root / "other.csv", "a\n1\n")
-        evicted = registry.attach(str(root / "other.csv"), "next").evicted
+        evicted = registry.attach(str(root / "other.csv"), "next", delimiter=",").evicted
 
         assert evicted.nickname == "shop"
         assert evicted.source == str(source.resolve())
@@ -482,12 +482,12 @@ def test_the_eviction_record_names_a_table_that_create_added(root):
     config_module.use(Config(roots=(root,), slots=1))
     registry = Registry()
     try:
-        registry.attach(str(csv_at(root / "sales.csv")), "shop")
+        registry.attach(str(csv_at(root / "sales.csv")), "shop", delimiter=",")
         csv_at(root / "prices.csv", "sku,price\na,10\n")
-        registry.create_table("shop", source=str(root / "prices.csv"))
+        registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
 
         csv_at(root / "other.csv", "a\n1\n")
-        evicted = registry.attach(str(root / "other.csv"), "next").evicted
+        evicted = registry.attach(str(root / "other.csv"), "next", delimiter=",").evicted
 
         assert set(evicted.tables) == {"sales", "prices"}
     finally:
@@ -505,11 +505,11 @@ def test_reaching_for_an_evicted_slot_names_every_table_it_held(root):
     config_module.use(Config(roots=(root,), slots=1))
     registry = Registry()
     try:
-        registry.attach(str(csv_at(root / "sales.csv")), "shop")
+        registry.attach(str(csv_at(root / "sales.csv")), "shop", delimiter=",")
         csv_at(root / "prices.csv", "sku,price\na,10\n")
-        registry.create_table("shop", source=str(root / "prices.csv"))
+        registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
         csv_at(root / "other.csv", "a\n1\n")
-        registry.attach(str(root / "other.csv"), "next")
+        registry.attach(str(root / "other.csv"), "next", delimiter=",")
 
         with pytest.raises(SlotNotAvailable, match="prices"):
             registry.slot("shop")
@@ -520,12 +520,12 @@ def test_reaching_for_an_evicted_slot_names_every_table_it_held(root):
 def test_refusing_a_duplicate_source_names_every_table_the_slot_holds(registry, root):
     """Same snapshot, third reader: "query it there" has to say where there is."""
     source = csv_at(root / "sales.csv")
-    registry.attach(str(source), "shop")
+    registry.attach(str(source), "shop", delimiter=",")
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.create_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
 
     with pytest.raises(AttachRefused, match="prices"):
-        registry.attach(str(source), "shop_again")
+        registry.attach(str(source), "shop_again", delimiter=",")
 
 
 def test_using_an_evicted_nickname_explains_the_eviction(root):
@@ -551,15 +551,15 @@ def test_a_refused_attachment_costs_no_live_slot_its_place(root):
     registry = Registry()
     try:
         csv_at(root / "keeper.csv")
-        registry.attach(str(root / "keeper.csv"), "keeper")
+        registry.attach(str(root / "keeper.csv"), "keeper", delimiter=",")
 
         (root / "empty.csv").write_text("")
         with pytest.raises(AttachRefused):
-            registry.attach(str(root / "empty.csv"), "doomed")
+            registry.attach(str(root / "empty.csv"), "doomed", delimiter=",")
         with pytest.raises(AttachRefused):
-            registry.attach(str(root / "absent.csv"), "doomed")
+            registry.attach(str(root / "absent.csv"), "doomed", delimiter=",")
         with pytest.raises(AttachRefused):
-            registry.attach(str(root / "keeper.csv"), "not-a-name")
+            registry.attach(str(root / "keeper.csv"), "not-a-name", delimiter=",")
 
         assert [slot.nickname for slot in registry.slots()] == ["keeper"]
         _, rows = registry.query("keeper", "SELECT count(*) FROM keeper")
@@ -573,7 +573,7 @@ def test_a_slot_can_be_attached_again_after_eviction(root):
     registry = Registry()
     try:
         fill(registry, root, 2)
-        registry.attach(str(root / "f0.csv"), "s0")
+        registry.attach(str(root / "f0.csv"), "s0", delimiter=",")
         _, rows = registry.query("s0", "SELECT a FROM f0")
         assert rows == [(1,)]
     finally:
@@ -582,7 +582,7 @@ def test_a_slot_can_be_attached_again_after_eviction(root):
 
 def test_a_genuine_missing_table_still_reports_itself_plainly(registry, root):
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     with pytest.raises(Exception) as raised:
         registry.query("shop", "SELECT * FROM absent")
     assert "evicted" not in str(raised.value).lower()
@@ -659,7 +659,7 @@ def test_a_url_slot_composes_like_any_other(registry, root):
     csv_at(root / "stock.csv")
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
 
-    added = registry.create_table("remote", source=str(root / "stock.csv"))
+    added = registry.create_table("remote", source=str(root / "stock.csv"), delimiter=",")
 
     assert added.name == "stock"
     assert added.row_count == 2
@@ -670,7 +670,7 @@ def test_a_url_slot_lists_what_was_added_to_it(registry, root):
     build_database(root / "remote.db")
     csv_at(root / "stock.csv")
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
-    registry.create_table("remote", source=str(root / "stock.csv"))
+    registry.create_table("remote", source=str(root / "stock.csv"), delimiter=",")
 
     assert registry.tables("remote") == ("products", "stock")
 
@@ -679,7 +679,7 @@ def test_a_url_slot_joins_the_table_that_was_added_to_it(registry, root):
     build_database(root / "remote.db")
     csv_at(root / "stock.csv")
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
-    registry.create_table("remote", source=str(root / "stock.csv"))
+    registry.create_table("remote", source=str(root / "stock.csv"), delimiter=",")
 
     _, rows = registry.query(
         "remote",
@@ -693,7 +693,7 @@ def test_a_url_slot_describes_a_table_it_was_given(registry, root):
     build_database(root / "remote.db")
     csv_at(root / "stock.csv")
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
-    registry.create_table("remote", source=str(root / "stock.csv"))
+    registry.create_table("remote", source=str(root / "stock.csv"), delimiter=",")
 
     info = registry.describe("remote", "stock")
     assert [column.name for column in info.columns] == ["sku", "qty"]
@@ -707,7 +707,7 @@ def test_a_read_only_url_slot_still_refuses_composition(registry, root):
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=False)
 
     with pytest.raises(NotWritable):
-        registry.create_table("remote", source=str(root / "stock.csv"))
+        registry.create_table("remote", source=str(root / "stock.csv"), delimiter=",")
 
 
 def test_a_url_slot_backed_by_a_real_file_can_be_saved(registry, root):
@@ -751,10 +751,10 @@ def test_detaching_frees_the_slot_for_another_datasource(root):
     try:
         csv_at(root / "first.csv", "a\n1\n")
         csv_at(root / "second.csv", "b\n2\n")
-        registry.attach(str(root / "first.csv"), "one")
+        registry.attach(str(root / "first.csv"), "one", delimiter=",")
 
         registry.detach("one")
-        attachment = registry.attach(str(root / "second.csv"), "two")
+        attachment = registry.attach(str(root / "second.csv"), "two", delimiter=",")
 
         assert attachment.evicted is None
         assert [slot.nickname for slot in registry.slots()] == ["two"]
@@ -767,10 +767,10 @@ def test_detaching_frees_the_slot_for_another_datasource(root):
 def test_a_detached_source_can_be_attached_again(registry, root):
     """Detach is also how you get around the same-source refusal on purpose."""
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     registry.detach("shop")
 
-    again = registry.attach(str(root / "sales.csv"), "shop")
+    again = registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     assert again.slot.nickname == "shop"
     _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
@@ -778,7 +778,7 @@ def test_a_detached_source_can_be_attached_again(registry, root):
 
 def test_detaching_a_nickname_nobody_holds_explains_itself(registry, root):
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     with pytest.raises(SlotNotAvailable, match="shop"):
         registry.detach("elsewhere")
 
@@ -795,9 +795,9 @@ def test_a_second_file_joins_the_first_inside_one_database(registry, root):
     """
     csv_at(root / "sales.csv", "sku,qty\na,3\nb,4\n")
     csv_at(root / "prices.csv", "sku,price\na,10\nb,20\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
-    added = registry.create_table("shop", source=str(root / "prices.csv"))
+    added = registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
 
     # `qualified` identifies the table; it is not how a statement addresses it.
     assert added.qualified == "shop.prices"
@@ -813,23 +813,23 @@ def test_a_second_file_joins_the_first_inside_one_database(registry, root):
 def test_the_added_table_is_named_from_its_file_unless_told_otherwise(registry, root):
     csv_at(root / "sales.csv")
     csv_at(root / "2025 prices.csv", "sku,price\na,10\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
-    derived = registry.create_table("shop", source=str(root / "2025 prices.csv"))
+    derived = registry.create_table("shop", source=str(root / "2025 prices.csv"), delimiter=",")
     assert derived.name == "table_2025_prices"
 
     csv_at(root / "more.csv", "sku,x\na,1\n")
-    named = registry.create_table("shop", table="extra", source=str(root / "more.csv"))
+    named = registry.create_table("shop", table="extra", source=str(root / "more.csv"), delimiter=",")
     assert named.name == "extra"
 
 
 def test_adding_over_an_existing_table_is_refused(registry, root):
     """Never silently replace: the rows already there are unrecoverable."""
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     with pytest.raises(SlotError, match="already exists"):
-        registry.create_table("shop", table="sales", source=str(root / "sales.csv"))
+        registry.create_table("shop", table="sales", source=str(root / "sales.csv"), delimiter=",")
 
     _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
@@ -841,7 +841,7 @@ def test_a_read_only_slot_refuses_composition_and_says_how_to_allow_it(registry,
     csv_at(root / "extra.csv", "sku,x\na,1\n")
 
     with pytest.raises(NotWritable, match="writable=true"):
-        registry.create_table("wh", source=str(root / "extra.csv"))
+        registry.create_table("wh", source=str(root / "extra.csv"), delimiter=",")
     with pytest.raises(NotWritable):
         registry.drop_table("wh", "products")
 
@@ -851,7 +851,7 @@ def test_composition_is_allowed_once_write_is_granted(registry, root):
     registry.attach(str(root / "warehouse.db"), "wh", writable=True)
     csv_at(root / "extra.csv", "sku,x\na,1\n")
 
-    registry.create_table("wh", source=str(root / "extra.csv"))
+    registry.create_table("wh", source=str(root / "extra.csv"), delimiter=",")
     _, rows = registry.query(
         "wh", "SELECT p.name FROM products p JOIN extra e ON p.sku = e.sku"
     )
@@ -861,8 +861,8 @@ def test_composition_is_allowed_once_write_is_granted(registry, root):
 def test_dropping_a_table_leaves_the_rest_of_the_slot_answering(registry, root):
     csv_at(root / "sales.csv")
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.create_table("shop", source=str(root / "prices.csv"))
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
+    registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
 
     registry.drop_table("shop", "prices")
 
@@ -873,7 +873,7 @@ def test_dropping_a_table_leaves_the_rest_of_the_slot_answering(registry, root):
 
 def test_dropping_a_table_that_is_not_there_lists_the_ones_that_are(registry, root):
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     with pytest.raises(SlotNotAvailable, match="sales"):
         registry.drop_table("shop", "prices")
 
@@ -885,7 +885,7 @@ def test_dropping_a_table_that_is_not_there_lists_the_ones_that_are(registry, ro
 
 def test_an_index_is_created_on_the_columns_asked_for_and_names_itself(registry, root):
     csv_at(root / "sales.csv", "sku,qty\na,3\nb,4\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     made = registry.create_index("shop", table="sales", columns=["sku"])
 
@@ -898,7 +898,7 @@ def test_an_index_is_created_on_the_columns_asked_for_and_names_itself(registry,
 def test_a_composite_index_keeps_the_column_order_it_was_given(registry, root):
     """Order is not cosmetic — an index on (a, b) does not serve a lookup on b."""
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     made = registry.create_index("shop", table="sales", columns=["qty", "sku"])
 
@@ -908,7 +908,7 @@ def test_a_composite_index_keeps_the_column_order_it_was_given(registry, root):
 
 def test_asking_twice_for_the_same_index_is_refused_by_name(registry, root):
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     registry.create_index("shop", table="sales", columns=["sku"])
 
     with pytest.raises(SlotError, match="already indexed on sku, by ix_sales_sku"):
@@ -917,7 +917,7 @@ def test_asking_twice_for_the_same_index_is_refused_by_name(registry, root):
 
 def test_an_index_on_a_column_that_is_not_there_lists_the_ones_that_are(registry, root):
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     with pytest.raises(SlotError, match="sku, qty"):
         registry.create_index("shop", table="sales", columns=["price"])
@@ -925,7 +925,7 @@ def test_an_index_on_a_column_that_is_not_there_lists_the_ones_that_are(registry
 
 def test_an_index_needs_at_least_one_column(registry, root):
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     with pytest.raises(SlotError, match="at least one column"):
         registry.create_index("shop", table="sales", columns=[])
@@ -933,7 +933,7 @@ def test_an_index_needs_at_least_one_column(registry, root):
 
 def test_an_index_is_dropped_by_the_name_creation_returned(registry, root):
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     made = registry.create_index("shop", table="sales", columns=["sku"])
 
     gone = registry.drop_index("shop", made.name)
@@ -945,7 +945,7 @@ def test_an_index_is_dropped_by_the_name_creation_returned(registry, root):
 
 def test_dropping_an_index_that_is_not_there_lists_the_ones_that_are(registry, root):
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     registry.create_index("shop", table="sales", columns=["sku"])
 
     with pytest.raises(SlotError, match="No such index.*ix_sales_sku"):
@@ -982,7 +982,7 @@ def test_indexes_a_datasource_arrived_with_are_reported(registry, root):
 
 def test_an_index_survives_the_save_that_carries_its_table(registry, root):
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     registry.create_index("shop", table="sales", columns=["sku"])
 
     saved = registry.save("shop", str(root / "keep.db"))
@@ -1002,8 +1002,8 @@ def test_whether_a_join_lines_up_is_answerable_in_plain_sql(registry, root):
     """
     csv_at(root / "sales.csv", "sku,qty\na,3\nb,4\nc,5\n")
     csv_at(root / "prices.csv", "sku,price\na,10\nz,99\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.create_table("shop", source=str(root / "prices.csv"))
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
+    registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
 
     _, unpriced = registry.query(
         "shop",
@@ -1026,8 +1026,8 @@ def test_whether_a_join_lines_up_is_answerable_in_plain_sql(registry, root):
 def test_a_saved_database_can_be_attached_again_with_its_rows(registry, root):
     csv_at(root / "sales.csv")
     csv_at(root / "prices.csv", "sku,price\na,10\nb,20\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.create_table("shop", source=str(root / "prices.csv"))
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
+    registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
 
     saved = registry.save("shop", str(root / "keep.db"))
     registry.detach("shop")
@@ -1045,7 +1045,7 @@ def test_a_saved_database_can_be_attached_again_with_its_rows(registry, root):
 def test_a_saved_database_comes_back_read_only(registry, root):
     """Like any other outside database — being ours once does not persist."""
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     saved = registry.save("shop", str(root / "keep.db"))
     registry.detach("shop")
 
@@ -1058,12 +1058,12 @@ def test_a_saved_database_comes_back_read_only(registry, root):
 def test_saving_keeps_the_slot_answering_and_writable(registry, root):
     """Copied out, not moved away: the session is not disturbed by keeping it."""
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     registry.save("shop", str(root / "keep.db"))
 
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.create_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
     assert "prices" in registry.tables("shop")
     _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
@@ -1076,12 +1076,12 @@ def test_saving_refuses_an_existing_file_then_replaces_it_when_forced(registry, 
     user's decision — `force` is that decision arriving, not the agent's own.
     """
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     saved = registry.save("shop", str(root / "keep.db"))
     kept = saved.read_bytes()
 
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.create_table("shop", source=str(root / "prices.csv"))
+    registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
 
     with pytest.raises(SlotError, match="Ask the user"):
         registry.save("shop", str(root / "keep.db"))
@@ -1111,8 +1111,8 @@ def test_forcing_a_save_over_a_live_slots_own_file_is_refused(registry, root):
     """
     csv_at(root / "sales.csv")
     csv_at(root / "prices.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.attach(str(root / "prices.csv"), "wh")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
+    registry.attach(str(root / "prices.csv"), "wh", delimiter=",")
 
     for target, holder in ((root / "sales.csv", "shop"), (root / "prices.csv", "wh")):
         with pytest.raises(SlotError, match=f"'{holder}'"):
@@ -1128,7 +1128,7 @@ def test_forcing_a_save_over_a_live_slots_own_file_is_refused(registry, root):
 def test_a_saved_file_is_not_world_readable(registry, root):
     """It holds the user's actual data; SQLite would have created it 0o644."""
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     saved = registry.save("shop", str(root / "keep.db"))
 
@@ -1137,7 +1137,7 @@ def test_a_saved_file_is_not_world_readable(registry, root):
 
 def test_saving_outside_the_allowed_area_is_refused(registry, root, tmp_path):
     csv_at(root / "sales.csv")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     with pytest.raises(SlotError, match="outside the allowed paths"):
         registry.save("shop", str(tmp_path / "elsewhere.db"))
 
@@ -1164,7 +1164,7 @@ def test_a_database_that_outgrows_the_budget_still_answers_from_disk(root):
     registry = budgeted(root)
     try:
         bulky_csv(root / "big.csv")
-        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
         before = registry.query(
             "big", "SELECT count(*), sum(amount), min(label), max(label) FROM big"
         )[1]
@@ -1186,7 +1186,7 @@ def test_the_overshoot_is_tolerated_once_and_paid_for_next_time(root):
     registry = budgeted(root)
     try:
         bulky_csv(root / "big.csv")
-        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
 
         # Straight after the attach, nothing has moved: the overshoot stands.
         assert registry.slot("big").spill_path is None
@@ -1201,7 +1201,7 @@ def test_a_session_inside_its_budget_moves_nothing(root):
     registry = budgeted(root, megabytes=100)
     try:
         csv_at(root / "sales.csv")
-        registry.attach(str(root / "sales.csv"), "shop")
+        registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
         assert registry.relieve_memory() == ()
         assert registry.slot("shop").spill_path is None
@@ -1216,9 +1216,9 @@ def test_the_spilled_slot_keeps_its_name_and_its_place_in_eviction_order(root):
         csv_at(root / "first.csv", "a\n1\n")
         bulky_csv(root / "big.csv")
         csv_at(root / "third.csv", "c\n3\n")
-        registry.attach(str(root / "first.csv"), "one")
-        registry.attach(str(root / "big.csv"), "big")
-        registry.attach(str(root / "third.csv"), "three")
+        registry.attach(str(root / "first.csv"), "one", delimiter=",")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
+        registry.attach(str(root / "third.csv"), "three", delimiter=",")
 
         registry.relieve_memory()
 
@@ -1227,7 +1227,7 @@ def test_the_spilled_slot_keeps_its_name_and_its_place_in_eviction_order(root):
         # The shelf is full, so the next attach evicts the oldest — which must
         # still be 'one', not the slot that happens to have moved most recently.
         csv_at(root / "fourth.csv", "d\n4\n")
-        evicted = registry.attach(str(root / "fourth.csv"), "four").evicted
+        evicted = registry.attach(str(root / "fourth.csv"), "four", delimiter=",").evicted
         assert evicted is not None
         assert evicted.nickname == "one"
     finally:
@@ -1239,8 +1239,8 @@ def test_the_largest_database_is_the_one_that_moves(root):
     try:
         csv_at(root / "small.csv", "a\n1\n")
         bulky_csv(root / "big.csv")
-        registry.attach(str(root / "small.csv"), "small")
-        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "small.csv"), "small", delimiter=",")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
 
         moved = registry.relieve_memory()
 
@@ -1255,13 +1255,13 @@ def test_a_spilled_database_is_still_writable_and_composable(root):
     registry = budgeted(root)
     try:
         bulky_csv(root / "big.csv")
-        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
         registry.relieve_memory()
 
         csv_at(root / "labels.csv", "id,note\n1,first\n")
-        registry.create_table("big", source=str(root / "labels.csv"))
+        registry.create_table("big", source=str(root / "labels.csv"), delimiter=",")
         csv_at(root / "more.csv", "id,note\n2,second\n")
-        registry.create_table("big", source=str(root / "more.csv"), table="more")
+        registry.create_table("big", source=str(root / "more.csv"), table="more", delimiter=",")
 
         _, rows = registry.query(
             "big",
@@ -1278,7 +1278,7 @@ def test_relieving_twice_does_not_move_an_already_spilled_database_again(root):
     registry = budgeted(root)
     try:
         bulky_csv(root / "big.csv")
-        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
         first = registry.relieve_memory()
 
         assert registry.relieve_memory() == ()
@@ -1291,7 +1291,7 @@ def test_the_temp_file_goes_when_the_slot_is_detached(root):
     registry = budgeted(root)
     try:
         bulky_csv(root / "big.csv")
-        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
         registry.relieve_memory()
         spilled = registry.slot("big").spill_path
         assert spilled is not None and spilled.exists()
@@ -1307,13 +1307,13 @@ def test_the_temp_file_goes_when_the_slot_is_evicted(root):
     registry = budgeted(root, slots=1)
     try:
         bulky_csv(root / "big.csv")
-        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
         registry.relieve_memory()
         spilled = registry.slot("big").spill_path
         assert spilled is not None and spilled.exists()
 
         csv_at(root / "next.csv", "a\n1\n")
-        registry.attach(str(root / "next.csv"), "next")
+        registry.attach(str(root / "next.csv"), "next", delimiter=",")
 
         assert not spilled.exists()
     finally:
@@ -1324,7 +1324,7 @@ def test_the_temp_directory_goes_when_the_session_ends_with_slots_live(root):
     """The third exit, beside eviction and detach: closing with data attached."""
     registry = budgeted(root)
     bulky_csv(root / "big.csv")
-    registry.attach(str(root / "big.csv"), "big")
+    registry.attach(str(root / "big.csv"), "big", delimiter=",")
     registry.relieve_memory()
     spilled = registry.slot("big").spill_path
     assert spilled is not None and spilled.exists()
@@ -1339,7 +1339,7 @@ def test_a_spilled_database_can_still_be_saved(root):
     registry = budgeted(root)
     try:
         bulky_csv(root / "big.csv")
-        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
         registry.relieve_memory()
 
         saved = registry.save("big", str(root / "keep.db"))
@@ -1360,7 +1360,7 @@ def test_nothing_is_created_on_disk_until_something_has_to_move(root):
     registry = budgeted(root, megabytes=100)
     try:
         csv_at(root / "sales.csv")
-        registry.attach(str(root / "sales.csv"), "shop")
+        registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
         registry.relieve_memory()
         assert registry._temp_dir is None
     finally:
@@ -1378,7 +1378,7 @@ def test_the_spill_really_moves_the_database_off_the_heap(root):
     registry = budgeted(root)
     try:
         bulky_csv(root / "big.csv")
-        registry.attach(str(root / "big.csv"), "big")
+        registry.attach(str(root / "big.csv"), "big", delimiter=",")
         assert _backing_file(registry, "big") == ""
 
         registry.relieve_memory()
@@ -1417,8 +1417,8 @@ def test_a_view_naming_tables_unqualified_survives_being_saved_and_renamed(
     """
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
     csv_at(root / "prices.csv", "sku,price\na,10\n")
-    registry.attach(str(root / "sales.csv"), "shop")
-    registry.create_table("shop", source=str(root / "prices.csv"))
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
+    registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
     view_from_outside(
         registry,
         "shop",
@@ -1441,7 +1441,7 @@ def test_a_table_aliased_to_the_nickname_does_not_trip_the_check(registry, root)
     alias and not a schema at all.
     """
     csv_at(root / "sales.csv", "sku,qty\na,3\n")
-    registry.attach(str(root / "sales.csv"), "shop")
+    registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
     view_from_outside(
         registry, "shop", "CREATE VIEW totals AS SELECT shop.qty FROM sales shop"
     )
@@ -1562,7 +1562,7 @@ def test_landing_a_table_beside_one_that_differs_only_in_case_is_a_collision(
     csv_at(root / "mytable.csv", "id,val\n2,y\n")
 
     with pytest.raises(SlotError, match="already exists"):
-        registry.create_table("mixed", source=str(root / "mytable.csv"))
+        registry.create_table("mixed", source=str(root / "mytable.csv"), delimiter=",")
 
 
 def test_renaming_a_table_to_its_own_name_in_another_case_says_why_it_cannot(
