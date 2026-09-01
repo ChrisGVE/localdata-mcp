@@ -29,7 +29,7 @@ keywords = [
 ]
 dependencies = [
   "fastmcp>=3.0.0",
-  "pandas>=1.3.0",
+  "pandas>=2.3.3",
   "sqlalchemy>=1.4.0",
   "psycopg2-binary",
   "mysql-connector-python",
