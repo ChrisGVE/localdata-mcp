@@ -427,6 +427,10 @@ check it against the file. `ok: true` comes back and every number you compute
 from it is wrong, so this is one to notice rather than work around. If you
 cannot tell, ask the user or look at the first line of the file.
 
+It is **one character**. An empty string or a longer one such as `"||"` is
+refused, and a tab is the tab character itself (`"\t"` in JSON), not a
+backslash followed by `t`.
+
 `delimiter` is also a parameter of `create` and of `query(path=…)`, required
 there too — writing has to say what to separate with, or a file named `.tsv`
 would get commas. Handed to a `.parquet` or a workbook it is **refused** on

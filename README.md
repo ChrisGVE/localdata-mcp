@@ -479,7 +479,9 @@ answer belongs to whoever wrote the file, it reports and carries on.
   quotes that header back at you — the stored column name is that header
   sanitised, so it is not the string the warning shows. It reports what it sees
   and does not re-read at a guessed separator, because a guess that is usually
-  right is the worst kind.
+  right is the worst kind. The declaration is **one character**: an empty string
+  or a longer one such as `||` is refused, so a file separated by a
+  multi-character string is not one this server reads.
 
   **Both directions require it**, and that is not decoration: while the suffix
   supplied the separator it supplied it to reader and writer alike, so a file

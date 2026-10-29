@@ -532,6 +532,15 @@ def attach(
     count and any warning — so calling ``directory`` straight afterwards returns the
     same thing again. Go and ask the question instead.
 
+    Warnings arrive in ``warnings``, a list of plain sentences, and the key is
+    **absent** rather than empty when there is nothing to say. They name a column
+    holding values of more than one type, a column of dates in no recognised
+    standard, and anything the reader had to decide about the file itself — a
+    header line that suggests the declared delimiter was the wrong one, or a
+    nested value stored as its text. Only a file is described on the way in, so
+    only a file's attach can carry them. ``directory``, ``stats`` and
+    ``create`` return the same field, built the same way.
+
     Args:
         database: A tabular file (.csv, .tsv, .txt, .json, .jsonl, .ndjson,
             .xml, .yaml, .yml, .parquet, .feather, .orc, .xlsx, .xlsm,
@@ -554,7 +563,10 @@ def attach(
             files called .csv are shipped separated by ';' or '|' or a tab as
             readily as by ',', and reading one at the wrong character changes
             what the data is while the answer looks perfectly ordinary. Ask the
-            user or look at the file; do not guess on their behalf.
+            user or look at the file; do not guess on their behalf. It is
+            exactly one character: an empty string or a longer one such as
+            ``'||'`` is refused, and a tab is the tab character itself, not a
+            backslash followed by ``t``.
 
     Refuses a datasource that is already attached, naming the slot holding it.
     ``collided_with`` says which live slot forced a suffix, and ``evicted``
@@ -628,6 +640,10 @@ def directory(nickname: str | None = None, table: str | None = None) -> dict[str
     the third form and reaches the first, and answering the session listing
     under ``ok: true`` would look like the question was understood.
 
+    The second and third forms carry ``warnings`` about the tables they
+    describe, as ``attach`` does for a file, and leave the key out when there is
+    nothing to say. The session listing describes no table and never has it.
+
     Args:
         nickname: Restrict to one datasource.
         table: With a nickname, describe this one table in full.
@@ -685,6 +701,10 @@ def stats(
         table: The table to profile, by the name ``directory`` lists.
         columns: Restrict the profile to these columns. All of them by default;
             a name matching nothing is refused, naming the columns that exist.
+
+    The answer carries ``warnings`` about the table when there are any — the
+    same list, built the same way, as ``directory(nickname, table)`` — and
+    leaves the key out when there are none.
 
     Refuses an unattached nickname, a missing table and a missing column, each
     naming what was available instead.
@@ -849,8 +869,9 @@ def query(
             ``path`` names .csv, .tsv or .txt, for the same reason it is
             required on the way in: the suffix decides the format and never the
             separator, so writing without saying would put commas in a file
-            called .tsv on request. Ignored for a format that has no separator,
-            so one value can be carried across a mix of destinations.
+            called .tsv on request. Exactly one character, as on ``attach``.
+            Ignored for a format that has no separator, so one value can be
+            carried across a mix of destinations.
     """
     with _lock:
         registry = _session()
@@ -947,6 +968,12 @@ def create(
     over two tables in one database — ordinary SQL you can write, and better
     said in the user's own words than in a payload field.
 
+    Both answers can carry ``warnings``, and leave the key out when there is
+    nothing to say. For a table it is the list ``attach`` returns for a file.
+    For an index it is what the index covers short of what was asked — MySQL,
+    for one, keys a ``TEXT`` column on a prefix of it rather than the whole
+    value, and says how long a prefix.
+
     Args:
         nickname: The datasource to create in. Must be writable.
         type: ``"table"`` or ``"index"``.
@@ -958,7 +985,8 @@ def create(
             ``type="index"``.
         delimiter: For a table read from .csv, .tsv or .txt, the character
             separating fields. Means the same here as on ``attach``, including
-            that it is required and that nothing sniffs for it.
+            that it is required, that it is exactly one character, and that
+            nothing sniffs for it.
     """
     with _lock:
         registry = _session()
@@ -1015,6 +1043,16 @@ def drop(nickname: str, type: str, name: str) -> dict[str, Any]:
     answer — so an index name that came back from ``create`` stops naming
     anything the moment its table goes, and ``drop`` on it afterwards refuses as
     a missing index rather than reporting one already gone.
+
+    **The two types match their name differently, and echo it differently.**
+    A table name resolves the way ``update``'s does: an exact match wins, and
+    otherwise a name differing from a stored one only in case resolves to it,
+    provided exactly one table matches. ``dropped`` then echoes the name as you
+    passed it, not as the database stored it — ``tables``, the list after the
+    drop, is where the stored spellings are. An index name is matched exactly,
+    case included, so ``IX_PRICES_SKU`` does not drop ``ix_prices_sku``; on
+    success ``dropped`` is the index's stored name, and ``table`` the table it
+    was on.
 
     Args:
         nickname: The datasource holding it. Must be writable.

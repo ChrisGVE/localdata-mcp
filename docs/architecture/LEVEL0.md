@@ -238,7 +238,10 @@ existence question the way the database does and the way `query` always did. A s
 snake_casing changed by more than case — `Q2 Prices` — still names no table and is refused
 with the names that do. Renaming onto a taken name is refused rather than allowed to replace,
 and so is renaming to the same name in another case, which is not a free name on an engine
-that folds. The index name `drop` takes is the one `create` returned and `directory` lists.
+that folds. The index name `drop` takes is the one `create` returned and `directory` lists,
+matched exactly — case is not folded there. The two `drop` answers echo differently too:
+for a table `dropped` is the name as the caller passed it, and the list of `tables` after
+the drop carries the stored spellings; for an index `dropped` is the stored name.
 `update(type='table')` is refused on Firebird, and `create(type='index')` on the four
 engines named in the backend table.
 
@@ -413,7 +416,8 @@ what is unambiguous, say what was assumed, refuse an actual choice*:
   Declared wrongly, the whole header line becomes one column and the warning quotes that
   header back — the stored column name is that header sanitised, so it is not the string
   the warning shows. It reports what it sees; it does not re-read at a guessed separator,
-  because a guess that is usually right is the worst kind.
+  because a guess that is usually right is the worst kind. The declaration is one character;
+  an empty or longer string is refused on both sides.
 
 `delimiter` earns its place on the same test `join_on` failed: it declares a **fact about
 the source** the server cannot know and the caller often does, rather than a judgement the
