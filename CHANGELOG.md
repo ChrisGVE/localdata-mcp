@@ -206,6 +206,15 @@ rebuild it.
 - **Path confinement** to the working directory and configured roots, with
   symlinks and `..` resolved before the check. Network URLs are refused until
   `network.enabled = true`, and the refusal masks the password.
+- **Installable as a plugin in Claude Code and in Codex**, from the marketplace
+  file this repository carries (`.claude-plugin/marketplace.json`, which Codex
+  also reads), with the server and the `local-data` skill in one step. Both launch the server with `uvx localdata-mcp`. The skill moved
+  to `skills/local-data/`, one level up, because both loaders look exactly one
+  directory below `skills/`. The README gives the plugin route and a manual one
+  for each harness. The cross-vendor Agent Plugins form (`plugin.json` and
+  `mcp.json` at the root) is deliberately not used: it starts the server in the
+  plugin's own directory, and with paths confined to the working directory
+  and the configured roots, it refused every file the user pointed at.
 - `docs/architecture/LEVEL0.md` — the specification — and `docs/CONSTRAINTS.md`,
   which records every behaviour measured to arrive at these decisions, with the
   numbers.

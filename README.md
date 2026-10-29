@@ -622,27 +622,66 @@ client's server log. Read that log; it names the typo. Refusing to start is
 deliberate: a server that came up under a configuration it could not read would
 be one whose path boundary is not the one you wrote.
 
-## Claude Code plugin
+## Claude Code and Codex plugin
 
-The repository doubles as a Claude Code plugin, registering the server and
-shipping the `local-data` skill — the mental model, the naming conversation, and
-how to phrase an incomplete join in the user's own words rather than as an
-anti-join. The tools stay mechanical precisely because the skill carries that.
+The repository doubles as a plugin for Claude Code and for Codex, registering the
+server and shipping the `local-data` skill — the mental model, the naming
+conversation, and how to phrase an incomplete join in the user's own words rather
+than as an anti-join. The tools stay mechanical precisely because the skill
+carries that.
 
-**There is no install route for it yet.** `claude plugin install` resolves a
-plugin from a marketplace, and this repository publishes no marketplace entry —
-there is no `.claude-plugin/marketplace.json` and nothing lists the plugin
-elsewhere. Until one exists, use the ordinary client configuration above; it
-reaches the same server, and the skill is the only thing the plugin adds on top.
+In Claude Code:
 
-When that route does open, `.claude-plugin/plugin.json` launches the server with
-`uv run --all-extras`, so the first start resolves every format library and every
-database driver — 139 distributions, slow on a cold `uv` cache and a few seconds
-after that. That is deliberate: the plugin builds its own environment, and
-without the flag it would reach nine of the seventeen formats and one of the
-seventeen backends while that file's own description advertises all of them. The
-client configuration above carries the same flag for the same reason, so neither
-path depends on `uv sync --all-extras` having been run in the clone first.
+```bash
+claude plugin marketplace add ChrisGVE/localdata-mcp
+claude plugin install localdata-mcp@localdata-mcp
+```
+
+In Codex:
+
+```bash
+codex plugin marketplace add ChrisGVE/localdata-mcp
+codex plugin add localdata-mcp@localdata-mcp
+```
+
+Start a new session afterwards; the skill and the tools appear in sessions
+started after the install. In Claude Code the skill is `/localdata-mcp:local-data`,
+and in Codex it is listed as `localdata-mcp:local-data`.
+
+Both start the server with `uvx localdata-mcp`. If `localdata-mcp` is already
+installed as a tool, uvx runs that installation instead of fetching the package,
+so `uv tool install 'localdata-mcp[all]'` beforehand is how the plugin gets every
+format and every database driver — the bare package uvx would fetch otherwise
+reaches nine of the seventeen formats and one of the seventeen backends.
+
+### Without the plugin
+
+The server and the skill can be set up separately. Name the server `localdata`:
+the skill's tool grants are written for that name.
+
+Claude Code:
+
+```bash
+claude mcp add --scope user localdata -- uvx localdata-mcp
+cp -R skills/local-data ~/.claude/skills/
+```
+
+Codex — either the command, or the same entry written into `~/.codex/config.toml`
+by hand:
+
+```bash
+codex mcp add localdata -- uvx localdata-mcp
+cp -R skills/local-data ~/.agents/skills/
+```
+
+```toml
+[mcp_servers.localdata]
+command = "uvx"
+args = ["localdata-mcp"]
+```
+
+The `cp` lines run from a clone. A skill copied this way is a snapshot: copy it
+again after upgrading the server, so that it describes the tools the server has.
 
 ## Documentation
 

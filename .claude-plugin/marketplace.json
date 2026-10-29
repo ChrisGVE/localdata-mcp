@@ -1,0 +1,16 @@
+{
+  "$schema": "https://www.schemastore.org/claude-code-marketplace.json",
+  "name": "localdata-mcp",
+  "description": "The LocalData MCP server and its local-data skill.",
+  "owner": {
+    "name": "Christian C. Berclaz",
+    "email": "christian.berclaz@mac.com"
+  },
+  "plugins": [
+    {
+      "name": "localdata-mcp",
+      "source": "./",
+      "category": "data"
+    }
+  ]
+}

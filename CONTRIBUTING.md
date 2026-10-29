@@ -113,7 +113,8 @@ localdata-mcp/
 ├── assets/                       # The logo, referenced by absolute URL from the README
 ├── non_factual/                  # Quarantined prose — see its README before reading
 ├── skills/local-data/            # The skill that ships with the server
-├── .claude-plugin/plugin.json    # Claude Code plugin manifest
+├── .claude-plugin/               # Claude Code manifest; the marketplace both read
+├── .codex-plugin/plugin.json     # Codex plugin manifest
 ├── server.json                   # MCP registry entry
 ├── scripts/                      # Fixture and test-data generation, the endpoint
 │                                 #   batch runner, and the logo build
@@ -391,7 +392,7 @@ We follow semantic versioning:
 - **Minor**: New features, backward compatible
 - **Patch**: Bug fixes, backward compatible
 
-A version lives in **six** hand-edited places across five files, and they must
+A version lives in **seven** hand-edited places across six files, and they must
 move together — then `uv lock` has to be re-run, because `uv.lock` carries the
 project's own version too. **`--locked` is what catches a bump without a relock,
 and it is a general flag rather than a `sync` one.** Measured on a copy of this
@@ -405,14 +406,15 @@ which is the relock you forgot, performed where nobody is looking at it. No
 workflow in this repository runs `uv` at all — the two that did were deleted on
 2026-08-11 (see `.github/WORKFLOWS.md`) — and nothing here runs `uv lock
 --check`, so forgetting the relock is silent rather than self-announcing. The
-one bare `uv run` that still executes is `.claude-plugin/plugin.json`'s launch
-command, on a user's machine rather than in CI:
+one bare `uv run` that still executes is the clone-based client configuration in
+the README's Quick start, on a user's machine rather than in CI:
 
 | File | Field | Today |
 |---|---|---|
 | `pyproject.toml` | `project.version` | `3.0.0.dev0` |
 | `src/localdata_mcp/__init__.py` | `__version__` — **nothing derives this from `pyproject.toml`**; there is no `dynamic` key, so the two agree only because someone kept them in step, and no test checks that they do | `3.0.0.dev0` |
 | `.claude-plugin/plugin.json` | `version` | `3.0.0-dev` |
+| `.codex-plugin/plugin.json` | `version` — the same field for Codex, which reads its own manifest; `tests/test_plugin_manifests.py` fails when either plugin manifest disagrees with `pyproject.toml`, comparing the two spellings as PEP 440 versions | `3.0.0-dev` |
 | `server.json` | `version` — the registry entry's own | `2.1.0` |
 | `server.json` | `packages[0].version` — **the PyPI release a client is told to fetch**, which is not the same thing and must name a release that exists | `2.1.0`, which PyPI 404s |
 | `Dockerfile` | `LABEL version` | `2.0.0` |

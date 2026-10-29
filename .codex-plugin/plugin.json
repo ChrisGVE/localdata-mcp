@@ -1,0 +1,32 @@
+{
+  "name": "localdata-mcp",
+  "version": "3.0.0-dev",
+  "description": "SQL over local data files and databases. Every datasource becomes a database addressed by a nickname — 18 file formats and 17 SQL backends, reached by the same nine verbs.",
+  "author": {
+    "name": "Christian C. Berclaz",
+    "email": "christian.berclaz@mac.com"
+  },
+  "homepage": "https://github.com/ChrisGVE/localdata-mcp",
+  "repository": "https://github.com/ChrisGVE/localdata-mcp",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "sql",
+    "sqlite",
+    "duckdb",
+    "postgresql",
+    "csv",
+    "excel",
+    "parquet",
+    "data"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "localdata": {
+      "command": "uvx",
+      "args": [
+        "localdata-mcp"
+      ]
+    }
+  }
+}
