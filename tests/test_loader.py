@@ -1598,3 +1598,22 @@ def test_nothing_is_added_where_the_backend_does_not_demand_it(workspace, root):
     header = (root / "simple.csv").read_text().splitlines()[0].split(",")
     assert [column.name for column in info.columns] == [n.lower() for n in header]
     assert not any("_row" in note for note in info.notes)
+
+
+def test_sheets_whose_names_clean_up_alike_each_get_a_table(workspace, root):
+    """The test-only load path names tables by the same rule attach does (#91)."""
+    import pandas as pd
+
+    target = root / "collide.xlsx"
+    with pd.ExcelWriter(target, engine="openpyxl") as writer:
+        pd.DataFrame({"a": [1]}).to_excel(writer, sheet_name="Q2 Prices", index=False)
+        pd.DataFrame({"b": [2]}).to_excel(writer, sheet_name="Q2-Prices", index=False)
+    assert list(pd.read_excel(target, sheet_name=None)) == ["Q2 Prices", "Q2-Prices"]
+
+    landed = workspace.load_file(str(target), "main")
+
+    assert [info.name for info in landed] == ["q2_prices", "q2_prices_1"]
+    _, rows = workspace.query("main", "SELECT a FROM q2_prices")
+    assert [tuple(r) for r in rows] == [(1,)]
+    _, rows = workspace.query("main", "SELECT b FROM q2_prices_1")
+    assert [tuple(r) for r in rows] == [(2,)]

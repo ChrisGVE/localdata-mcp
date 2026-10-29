@@ -67,7 +67,9 @@ from .loader import (
     Workspace,
     _sanitize,
     read_source,
+    table_names,
 )
+from .names import clashes
 from .paths import PathNotAllowed, resolve_read_path, resolve_write_path
 
 __all__ = [
@@ -205,6 +207,32 @@ class Attachment:
     evicted: Eviction | None = None
     #: What the derived or requested nickname collided with, if anything.
     collided_with: Collision | None = None
+    #: The name the file gave each table in ``slot.tables``, position for
+    #: position — a workbook's sheet names — or ``None`` where it gave none, as
+    #: a CSV does not. Empty for a database, whose tables are its own.
+    sheets: tuple[str | None, ...] = ()
+    #: What the caller has to be told about how the file's tables were named:
+    #: one sentence per set of names that cleaned up to the same table name.
+    warnings: tuple[str, ...] = ()
+
+
+def _clash_warning(file: str, name: str, landed: list[tuple[str, str]]) -> str:
+    """Say which of a file's tables would have shared a table name, and where each went.
+
+    ``landed`` pairs the name the file gave each table with the table it became,
+    in file order, starting with the one that kept ``name``.
+    """
+    quoted = [repr(given) for given, _ in landed]
+    listed = f"{', '.join(quoted[:-1])} and {quoted[-1]}"
+    where = ", ".join(f"{given!r} as {table}" for given, table in landed)
+    every = "both" if len(landed) == 2 else "all"
+    return (
+        f"In {file}, {listed} would {every} have become the table {name} — a "
+        f"table name keeps only letters, digits and underscores, in lower case — "
+        f"so each landed as a table of its own: {where}. The one earlier in the "
+        f"file keeps the plain name. Query each under the name it landed as, or "
+        f"rename one with update(nickname, type='table', name=..., to=...)."
+    )
 
 
 class Registry:
@@ -277,6 +305,9 @@ class Registry:
         path = self._resolve(database, scheme)
         self._refuse_duplicate(str(path))
         chosen, collision = self._choose_nickname(nickname, path.stem)
+        # Only a file names its tables on the way in; a database's are its own.
+        sheets: tuple[str | None, ...] = ()
+        warnings: tuple[str, ...] = ()
 
         if path.suffix.lower() in READERS:
             # Read before making room. A file that cannot be parsed must not
@@ -287,7 +318,8 @@ class Registry:
             except LoadError as exc:
                 raise AttachRefused(str(exc)) from exc
             evicted = self._make_room()
-            slot = self._attach_source(read, path, chosen)
+            slot, warnings = self._attach_source(read, path, chosen)
+            sheets = tuple(table.name for table in read.tables)
         elif (dialect := self._database_dialect(path)) is not None:
             self._refuse_pointless_delimiter(delimiter, f"a {dialect} database")
             evicted = self._make_room()
@@ -304,7 +336,13 @@ class Registry:
             )
 
         self._slots[chosen] = slot
-        return Attachment(slot=slot, evicted=evicted, collided_with=collision)
+        return Attachment(
+            slot=slot,
+            evicted=evicted,
+            collided_with=collision,
+            sheets=sheets,
+            warnings=warnings,
+        )
 
     @staticmethod
     def _refuse_pointless_delimiter(delimiter: str | None, kind: str) -> None:
@@ -416,29 +454,40 @@ class Registry:
                 return dialect
         return None
 
-    def _attach_source(self, read: SourceRead, path: Path, nickname: str) -> Slot:
+    def _attach_source(
+        self, read: SourceRead, path: Path, nickname: str
+    ) -> tuple[Slot, tuple[str, ...]]:
         """Give the tables read out of a file their own database.
 
         Every table in the file lands here, not just the first: a workbook's
         sheets are each a table, and the datasource is a database, so it holds
         all of them exactly as an attached SQLite file would.
+
+        Each lands under a name of its own. Two sheet names can clean up to the
+        same table name — ``Q2 Prices`` and ``Q2-Prices`` are both
+        ``q2_prices`` — and the later one in the file is given a numeric
+        suffix, the way a repeated column is, rather than overwriting the first.
+        Comes back with a warning for each such clash, since the caller would
+        otherwise look for the second sheet under a name it does not have.
         """
+        given = [table.name for table in read.tables]
+        wanted, landing = table_names(given, path.stem)
         self._workspace.attach_memory(nickname)
         try:
             landed = [
                 self._workspace.insert_source(
                     table,
-                    _sanitize(table.name or path.stem, "table"),
+                    name,
                     source=str(path),
                     tag=nickname,
                     notes=read.notes,
                 )
-                for table in read.tables
+                for table, name in zip(read.tables, landing)
             ]
         except LoadError as exc:
             self._workspace.detach(nickname)
             raise AttachRefused(str(exc)) from exc
-        return Slot(
+        slot = Slot(
             nickname=nickname,
             kind="file",
             source=str(path),
@@ -447,6 +496,11 @@ class Registry:
             # a write, so composition needs no grant.
             writable=True,
         )
+        warnings = tuple(
+            _clash_warning(path.name, name, [(str(given[i]), landing[i]) for i in at])
+            for name, at in clashes(wanted, landing)
+        )
+        return slot, warnings
 
     def _attach_database(
         self, path: Path, nickname: str, *, dialect: str, writable: bool
@@ -712,10 +766,8 @@ class Registry:
                 # file's own names and the identifiers every later call needs
                 # sit side by side.
                 named = ", ".join(str(one.name) for one in read.tables)
-                arriving = ", ".join(
-                    _sanitize(str(one.name) or path.stem, "table")
-                    for one in read.tables
-                )
+                _, landing = table_names([one.name for one in read.tables], path.stem)
+                arriving = ", ".join(landing)
                 raise SlotError(
                     f"{Path(source).name} holds {len(read.tables)} tables "
                     f"({named}), and create makes one. Attach the file as its "

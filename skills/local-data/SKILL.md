@@ -159,6 +159,12 @@ A tab whose name **starts with a digit** gets a `table_` in front of it, because
 no SQL identifier may begin with one: a year-per-tab workbook of `2025` and
 `2026` arrives as `table_2025` and `table_2026`. A tab whose name survives the
 snake_casing as nothing at all — `...` — arrives as plain `table`.
+Two tabs that snake_case to the same name — `Q2 Prices` and `Q2-Prices` — both
+arrive: the one earlier in the workbook keeps `q2_prices` and the next comes in
+as `q2_prices_1`, the way a repeated column header does. `attach` says so in
+`warnings`, naming both tabs, and each `loaded` entry carries the `sheet` it came
+from beside the `table` it became — read that before telling anyone which tab a
+number came from.
 **Use the name `attach` reported, not the one on the tab.** A tab name that
 differs only in case resolves to the table anyway, so `Sheet1` finds `sheet1`;
 one the snake_casing did more to — `Q2 Prices` — does not, and is refused for
@@ -375,6 +381,9 @@ because that is the moment a better name is cheap:
 
 > "You've already got a `sales` from `~/q1`, so this one came in as `sales_2`.
 > Want to call it something that'll still make sense tomorrow — `q2_sales`?"
+
+Two tabs that landed as `q2_prices` and `q2_prices_1` are the same moment: the
+suffix means nothing to the user, and the tab names they know are in the warning.
 
 Do **not** ask before attaching. Attach, see what you got, ask only if the
 result is genuinely ambiguous.

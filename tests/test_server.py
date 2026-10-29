@@ -30,6 +30,7 @@ from localdata_mcp import config as config_module
 from localdata_mcp import export as export_module
 from localdata_mcp import server as server_module
 from localdata_mcp.formats import DELIMITED
+from localdata_mcp.names import sanitize
 from localdata_mcp.config import Config
 
 ASSETS = Path(__file__).parent / "assets"
@@ -1899,3 +1900,242 @@ def test_update_reports_the_name_the_database_held_not_the_one_passed(session):
     assert renamed["renamed"] == "MyTable"
     assert renamed["table"] == "kept"
     assert renamed["tables"] == ["kept"]
+
+
+# ---------------------------------------------------------------------------
+# Sheet names that clean up to the same table name (#91)
+# ---------------------------------------------------------------------------
+#
+# A table name is the sheet's name made safe for SQL, and two sheet names that
+# differ only in punctuation or case make the same one. Before #91 the second
+# sheet overwrote the first and `attach` reported two loads of the survivor.
+
+_WORKBOOK_ENGINES = {".xlsx": "openpyxl", ".ods": "odf"}
+
+
+def _workbook(path: Path, sheets: dict[str, dict[str, list]]) -> Path:
+    """Write a workbook holding exactly these sheets, and check it does.
+
+    The check is the point: a writer that renamed a sheet on the way out (Excel
+    refuses two sheet names differing only in case, and openpyxl quietly renames
+    the second) would leave a fixture with no collision in it, and every test
+    below would pass against a file that never exercised the rule.
+    """
+    import pandas as pd
+
+    pytest.importorskip(_WORKBOOK_ENGINES[path.suffix])
+    with pd.ExcelWriter(path, engine=_WORKBOOK_ENGINES[path.suffix]) as writer:
+        for name, columns in sheets.items():
+            pd.DataFrame(columns).to_excel(writer, sheet_name=name, index=False)
+    assert list(pd.read_excel(path, sheet_name=None)) == list(sheets)
+    return path
+
+
+def _rows(nickname: str, table: str) -> tuple[list, list]:
+    answer = call("query", nickname=nickname, sql=f"SELECT * FROM {table}")
+    assert answer["ok"] is True, answer
+    return answer["columns"], answer["rows"]
+
+
+@pytest.mark.parametrize("suffix", [".xlsx", ".ods"])
+def test_two_sheets_that_clean_up_alike_each_land_as_a_table(session, suffix):
+    book = _workbook(
+        session / f"collide{suffix}",
+        {"Q2 Prices": {"a": [1]}, "Q2-Prices": {"b": [2]}},
+    )
+    # The fixture has to produce the collision it is named for.
+    assert sanitize("Q2 Prices", "t") == "q2_prices"
+    assert sanitize("Q2-Prices", "t") == "q2_prices"
+
+    attached = call("attach", database=str(book), nickname="book")
+
+    assert attached["ok"] is True, attached
+    assert sorted(attached["tables"]) == ["q2_prices", "q2_prices_1"]
+    # Sheet order decides who keeps the bare name, and each entry describes its
+    # own sheet rather than the survivor's.
+    assert [
+        (one["sheet"], one["table"], [c["name"] for c in one["columns"]])
+        for one in attached["loaded"]
+    ] == [("Q2 Prices", "q2_prices", ["a"]), ("Q2-Prices", "q2_prices_1", ["b"])]
+    assert _rows("book", "q2_prices") == (["a"], [[1]])
+    assert _rows("book", "q2_prices_1") == (["b"], [[2]])
+
+    (warning,) = attached["warnings"]
+    for named in ("'Q2 Prices'", "'Q2-Prices'", "q2_prices", "q2_prices_1"):
+        assert named in warning, warning
+
+    detached = call("detach", nickname="book")
+    assert detached["ok"] is True
+    assert sorted(detached["tables"]) == ["q2_prices", "q2_prices_1"]
+
+
+@pytest.mark.parametrize("suffix", [".xlsx", ".ods"])
+def test_three_sheets_that_clean_up_alike_each_land_as_a_table(session, suffix):
+    sheets = {"Q2 Prices": {"a": [1]}, "Q2-Prices": {"b": [2]}, "q2.prices": {"c": [3]}}
+    book = _workbook(session / f"three{suffix}", sheets)
+    assert {sanitize(name, "t") for name in sheets} == {"q2_prices"}
+
+    attached = call("attach", database=str(book), nickname="book")
+
+    assert attached["ok"] is True, attached
+    assert [(one["sheet"], one["table"]) for one in attached["loaded"]] == [
+        ("Q2 Prices", "q2_prices"),
+        ("Q2-Prices", "q2_prices_1"),
+        ("q2.prices", "q2_prices_2"),
+    ]
+    assert _rows("book", "q2_prices") == (["a"], [[1]])
+    assert _rows("book", "q2_prices_1") == (["b"], [[2]])
+    assert _rows("book", "q2_prices_2") == (["c"], [[3]])
+    (warning,) = attached["warnings"]
+    for named in ("'Q2 Prices'", "'Q2-Prices'", "'q2.prices'", "q2_prices_2"):
+        assert named in warning, warning
+
+
+@pytest.mark.parametrize("suffix", [".xlsx", ".ods"])
+@pytest.mark.parametrize(
+    ("order", "expected", "clashing"),
+    [
+        # The suffix the second sheet is given is the third sheet's own name,
+        # so the third is moved too: two clashes, a and then a_1.
+        (
+            ["a", "a!", "a_1"],
+            ["a", "a_1", "a_1_1"],
+            [["'a'", "'a!'"], ["'a!'", "'a_1'"]],
+        ),
+        # The other way round: the suffix already taken is skipped over, and
+        # only a is contested.
+        (["a_1", "a", "a!"], ["a_1", "a", "a_2"], [["'a'", "'a!'"]]),
+    ],
+)
+def test_a_suffix_never_lands_on_a_name_another_sheet_has(
+    session, suffix, order, expected, clashing
+):
+    sheets = {name: {f"c{i}": [i]} for i, name in enumerate(order)}
+    book = _workbook(session / f"suffixed{suffix}", sheets)
+
+    attached = call("attach", database=str(book), nickname="book")
+
+    assert attached["ok"] is True, attached
+    assert [(one["sheet"], one["table"]) for one in attached["loaded"]] == list(
+        zip(order, expected)
+    )
+    assert len(set(attached["tables"])) == 3
+    for i, table in enumerate(expected):
+        assert _rows("book", table) == ([f"c{i}"], [[i]])
+    # One warning per contested name, naming every sheet that wanted it.
+    warnings = attached["warnings"]
+    assert len(warnings) == len(clashing)
+    for warning, named in zip(warnings, clashing):
+        assert all(sheet in warning for sheet in named), warning
+
+
+def test_a_workbook_whose_sheets_do_not_collide_carries_no_warning(session):
+    attached = call("attach", database=str(session / "workbook.xlsx"), nickname="book")
+
+    assert attached["ok"] is True
+    assert "warnings" not in attached
+    assert [(one["sheet"], one["table"]) for one in attached["loaded"]] == [
+        ("staff", "staff"),
+        ("departments", "departments"),
+    ]
+
+
+def test_a_flat_file_names_no_sheet(session):
+    attached = call(
+        "attach", database=str(session / "simple.csv"), nickname="flat", delimiter=","
+    )
+
+    assert attached["ok"] is True
+    assert "sheet" not in attached["loaded"][0]
+
+
+def test_create_names_the_tables_a_colliding_workbook_would_arrive_as(session):
+    book = _workbook(
+        session / "collide.xlsx", {"Q2 Prices": {"a": [1]}, "Q2-Prices": {"b": [2]}}
+    )
+    call("attach", database=str(session / "simple.csv"), nickname="s", delimiter=",")
+
+    refused = call("create", nickname="s", type="table", source=str(book))
+
+    assert refused["ok"] is False
+    assert "arriving as q2_prices, q2_prices_1" in refused["error"]
+
+
+def _numbers(path: Path, placed: list[tuple[str, str, str, int]]) -> Path:
+    """A Numbers document with one single-column table per (sheet, table) entry."""
+    parser = pytest.importorskip("numbers_parser")
+    document = None
+    for sheet, table, column, value in placed:
+        if document is None:
+            document = parser.Document(
+                sheet_name=sheet, table_name=table, num_rows=2, num_cols=1
+            )
+            target = document.sheets[0].tables[0]
+        elif sheet in [s.name for s in document.sheets]:
+            target = document.sheets[sheet].add_table(
+                table_name=table, num_rows=2, num_cols=1
+            )
+        else:
+            document.add_sheet(sheet, table, num_rows=2, num_cols=1)
+            target = document.sheets[-1].tables[0]
+        target.write(0, 0, column)
+        target.write(1, 0, value)
+    document.save(str(path))
+    reread = parser.Document(str(path))
+    assert [(s.name, t.name) for s in reread.sheets for t in s.tables] == [
+        (sheet, table) for sheet, table, _, _ in placed
+    ]
+    return path
+
+
+def test_numbers_tables_that_clean_up_alike_are_qualified_by_their_sheet(session):
+    """The sheet-prefix rule asks about the table name SQL will see, not the raw one."""
+    document = _numbers(
+        session / "collide.numbers",
+        [("North", "Q2 Prices", "a", 1), ("South", "Q2-Prices", "b", 2)],
+    )
+
+    attached = call("attach", database=str(document), nickname="nums")
+
+    assert attached["ok"] is True, attached
+    assert [one["table"] for one in attached["loaded"]] == [
+        "north_q2_prices",
+        "south_q2_prices",
+    ]
+    assert _rows("nums", "north_q2_prices") == (["a"], [[1]])
+    assert _rows("nums", "south_q2_prices") == (["b"], [[2]])
+    # Qualifying by sheet is the reader's own rule and costs nobody a table, so
+    # there is no collision left to warn about.
+    assert "warnings" not in attached
+
+
+def test_numbers_tables_on_one_sheet_that_clean_up_alike_each_land(session):
+    """Qualifying by sheet cannot separate two tables on the same sheet."""
+    document = _numbers(
+        session / "one_sheet.numbers",
+        [("North", "Q2 Prices", "a", 1), ("North", "Q2-Prices", "b", 2)],
+    )
+
+    attached = call("attach", database=str(document), nickname="nums")
+
+    assert attached["ok"] is True, attached
+    assert [one["table"] for one in attached["loaded"]] == [
+        "north_q2_prices",
+        "north_q2_prices_1",
+    ]
+    assert _rows("nums", "north_q2_prices") == (["a"], [[1]])
+    assert _rows("nums", "north_q2_prices_1") == (["b"], [[2]])
+    (warning,) = attached["warnings"]
+    assert "north_q2_prices_1" in warning
+
+
+def test_a_column_suffix_never_lands_on_a_name_another_column_has(session):
+    """The same rule names columns, and had the same hole: a, A, a_1 made a_1 twice."""
+    (session / "cols.csv").write_text("a,A,a_1\n1,2,3\n")
+
+    attached = call(
+        "attach", database=str(session / "cols.csv"), nickname="c", delimiter=","
+    )
+
+    assert attached["ok"] is True, attached
+    assert _rows("c", "cols") == (["a", "a_1", "a_1_1"], [[1, 2, 3]])

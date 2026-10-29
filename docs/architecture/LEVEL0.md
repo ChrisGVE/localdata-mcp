@@ -64,6 +64,19 @@ dropping a value — so the datasource, being a database, holds every table the 
 under the names the file gave them **put through the same snake_case rule as a nickname**
 (a sheet called `Sheet1` becomes the table `sheet1`).
 
+Cleaning a name up can make two of them one: `Q2 Prices` and `Q2-Prices` are both
+`q2_prices`. Every table still lands, under a name of its own — the one earlier in the file
+keeps `q2_prices` and the next arrives as `q2_prices_1`, by the rule that already keeps
+repeated column headers apart (`names.unique`), which picks the first suffix nothing in the
+file already holds. The suffix starts at `_1` like a column's, not at `_2` like a nickname's,
+because it is one rule for every name inside a datasource. A `.numbers` document qualifies a
+table by its sheet first when another table's name would make the same table name, and
+decides that on the cleaned-up name; the suffix catches what qualifying cannot separate, two
+such tables on one sheet. The `attach` answer shows the mapping: each `loaded` entry names
+the `sheet` it came from beside the `table` it became, and `warnings` carries one sentence
+per contested name, naming every sheet involved and where each went. Until #91 neither was
+true, and the second sheet overwrote the first without a word.
+
 > **Corrected (2026-08-04) — a multi-table JSON is not this shape, and the code says so.**
 > An earlier draft of this paragraph named "a JSON file carrying several arrays" alongside
 > the workbook. It is not the same case and never was built as one: a JSON, YAML or XML
@@ -221,7 +234,8 @@ than something they catch.
 | `stats` | `nickname`, `table`, `columns?` | Profile a table's columns — missing values, and the range of the ones that are there. The verb that answers *"can I trust this data?"*, which no other verb does. |
 
 **`attach`.** A workbook becomes a database holding a table per sheet and a `.numbers`
-document one per table, snake_cased. `delimiter` applies to character-separated text only,
+document one per table, snake_cased, and two whose names snake_case alike are told apart
+by a numeric suffix and a warning. `delimiter` applies to character-separated text only,
 where it is **required**, and is refused elsewhere.
 
 **`query`.** Every write is refused whatever the slot allows, by the connection rather than

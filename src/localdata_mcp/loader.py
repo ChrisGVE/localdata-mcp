@@ -80,6 +80,12 @@ from .dialects import Backend, Engines, backend_for, backend_for_url
 # `slots`, the tests and the docs all say `loader.LoadError`, and there is one
 # class whichever name reaches it.
 from .errors import LoadError, undeclared_separator
+
+# How a name the file gives becomes one SQL can use lives in `names`, so that
+# columns and tables follow one rule and the readers can reach it too. Imported
+# under its old private name, which `slots` and the comments here still use.
+from .names import sanitize as _sanitize
+from .names import unique
 from .paths import resolve_read_path
 
 # The readers and the shapes they hand back. Imported into this namespace on
@@ -103,6 +109,7 @@ __all__ = [
     "measure_frame",
     "read_file",
     "read_source",
+    "table_names",
 ]
 
 #: What a retried read gives back, whatever that happens to be. Only
@@ -370,14 +377,18 @@ class Tagged:
 # Names
 # ---------------------------------------------------------------------------
 
-_UNSAFE = re.compile(r"\W+")
 
+def table_names(given: Sequence[str | None], stem: str) -> tuple[list[str], list[str]]:
+    """The table each of a file's tables lands as, before and after de-duplication.
 
-def _sanitize(name: str, fallback: str) -> str:
-    cleaned = _UNSAFE.sub("_", str(name).strip()).strip("_")
-    if not cleaned or cleaned[0].isdigit():
-        cleaned = f"{fallback}_{cleaned}" if cleaned else fallback
-    return cleaned.lower()
+    Returns what each table's name cleans up to and the distinct name it gets,
+    in file order. A table the file did not name — a CSV is just rows — is named
+    after the file. Every path that turns one file into several tables asks
+    here, so ``attach`` lands them under the names ``create`` says they would
+    arrive as.
+    """
+    wanted = [_sanitize(name or stem, "table") for name in given]
+    return wanted, unique(wanted)
 
 
 #: How the backends we have seen say "that table is not here". Matching driver
@@ -548,19 +559,12 @@ def _unique_columns(raw_names: list[Any]) -> list[str]:
     """Make column names safe and unique, preserving order.
 
     CSV headers arrive duplicated, blank, and full of punctuation. Silently
-    dropping a duplicate would lose a column, so collisions get a numeric suffix.
+    dropping a duplicate would lose a column, so collisions get a numeric suffix
+    — by the same rule a workbook's sheets get theirs, :func:`names.unique`.
     """
-    out: list[str] = []
-    seen: dict[str, int] = {}
-    for index, raw in enumerate(raw_names):
-        name = _sanitize(raw, f"column_{index + 1}")
-        if name in seen:
-            seen[name] += 1
-            name = f"{name}_{seen[name]}"
-        else:
-            seen[name] = 0
-        out.append(name)
-    return out
+    return unique(
+        [_sanitize(raw, f"column_{index + 1}") for index, raw in enumerate(raw_names)]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1638,21 +1642,25 @@ class Workspace:
             named = ", ".join(str(table.name) for table in read.tables)
             raise LoadError(
                 f"{path.name} holds {len(read.tables)} tables ({named}), so one "
-                f"name cannot cover them — they keep the names the file gives "
-                f"them. Drop table_name, or point at a file holding one table."
+                f"name cannot cover them — each lands under a name of its own, "
+                f"made from the file's. Drop table_name, or point at a file "
+                f"holding one table."
             )
 
+        _, landing = table_names(
+            [table_name or table.name for table in read.tables], path.stem
+        )
         return [
             self.insert_source(
                 table,
-                _sanitize(table_name or table.name or path.stem, "table"),
+                name,
                 source=str(path),
                 tag=tag,
                 # The notes describe reading the file, so they belong to every
                 # table that came out of it.
                 notes=read.notes,
             )
-            for table in read.tables
+            for table, name in zip(read.tables, landing)
         ]
 
     def insert_frame(

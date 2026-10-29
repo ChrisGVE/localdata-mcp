@@ -33,6 +33,7 @@ from xml.etree import ElementTree
 import pandas as pd
 
 from .errors import LoadError, undeclared_separator
+from .names import sanitize
 
 __all__ = ["NamedFrame", "ReadResult", "Reader"]
 
@@ -308,6 +309,9 @@ def workbook(module: str, extra: str) -> Reader:
     def read_workbook(path: Path) -> ReadResult:
         """Every sheet of a workbook, each as a table under its own sheet name.
 
+        The names are the file's, raw. Two that clean up to the same table name
+        are told apart downstream, where every multi-table file is named.
+
         ``sheet_name=None`` rather than the default ``0``: the default reads the
         first sheet and says nothing about the others, which leaves data that is
         present in the file unreachable through the server. A workbook is a database
@@ -343,7 +347,12 @@ def read_numbers(path: Path) -> ReadResult:
 
     Two levels rather than one: a Numbers sheet is a canvas that may carry
     several tables, so the name here is the table's, qualified by its sheet only
-    when the same table name appears on more than one.
+    when another table's name would make the same table name in SQL. That is
+    asked of the cleaned-up name, not the raw one: ``Q2 Prices`` on one sheet
+    and ``Q2-Prices`` on another are different names and the same table, and
+    are qualified as such. Two that still clean up alike after qualifying — both
+    on one sheet — are told apart downstream, by the rule every multi-table file
+    goes through.
     """
     parser = _require("numbers_parser", "numbers", "Reading Apple Numbers")
     try:
@@ -360,7 +369,8 @@ def read_numbers(path: Path) -> ReadResult:
 
     counts: dict[str, int] = {}
     for _, table_name, _ in found:
-        counts[table_name] = counts.get(table_name, 0) + 1
+        cleaned = sanitize(table_name, "table")
+        counts[cleaned] = counts.get(cleaned, 0) + 1
 
     tables = []
     for sheet_name, table_name, rows in found:
@@ -369,7 +379,8 @@ def read_numbers(path: Path) -> ReadResult:
             continue
         header, body = trimmed
         frame = pd.DataFrame(body, columns=header)
-        name = table_name if counts[table_name] == 1 else f"{sheet_name}_{table_name}"
+        alone = counts[sanitize(table_name, "table")] == 1
+        name = table_name if alone else f"{sheet_name}_{table_name}"
         tables.append(NamedFrame(_inferred_types(frame), name))
 
     if not tables:

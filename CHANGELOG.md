@@ -136,8 +136,11 @@ rebuild it.
   becomes a database with a table per sheet, and a `.numbers` document one per
   **table** — a Numbers sheet is a canvas that may carry several — each under its
   own name put through the same snake_case rule as a nickname, so `Sheet1`
-  becomes `sheet1` and `update` renames it. Where two tables in one document
-  share a name, the sheet name is prefixed to break the collision. 2.x read the
+  becomes `sheet1` and `update` renames it. Two `.numbers` tables that would
+  make the same table name are qualified by their sheet; names that still clean
+  up alike — `Q2 Prices` and `Q2-Prices` — get a numeric suffix in file order,
+  as repeated column headers do (`q2_prices`, `q2_prices_1`), and `attach` says
+  which sheet became which table. 2.x read the
   first sheet and said nothing about the rest. A JSON, YAML or XML document with
   **two** candidate tables is refused instead, naming both, rather than one being
   picked silently.
@@ -325,6 +328,20 @@ each was reported against 2.x and none of the code carrying it survives:
 - **Ten of twelve analytical tools crashed on their documented happy path**
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
+
+And one found in this release's own code before it shipped:
+
+- **Two sheets whose names cleaned up to the same table name lost one of them
+  without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
+  `Q2 Prices` and `Q2-Prices` are both `q2_prices` once made safe for SQL, so the
+  second sheet overwrote the first, and `attach` reported two loads both showing
+  the survivor's columns. Every sheet now lands as its own table — the later one
+  as `q2_prices_1` — by the same rule that already kept repeated column headers
+  apart, and the `.numbers` sheet qualifier is decided on the cleaned-up name
+  rather than the raw one. Each `loaded` entry names the `sheet` it came from,
+  and a warning names the sheets and the tables they became. That rule had a
+  hole of its own, closed with it: a header row of `a, A, a_1` made `a_1` twice
+  and the file could not be attached; it now arrives as `a, a_1, a_1_1`.
 
 ### Known limitations
 

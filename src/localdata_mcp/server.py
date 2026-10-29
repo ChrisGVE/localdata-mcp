@@ -26,8 +26,8 @@ Nothing else here reports a missing value, which is what made an empty
 ``mixed_columns`` readable as a clean bill of health (issue #94).
 
 ``update`` completes the composition triad and arrived with the formats that name
-their own tables: a workbook's sheets land under the names the spreadsheet chose,
-and renaming one beats re-reading the file to get a different name.
+their own tables: a workbook's sheets land under the names the spreadsheet chose
+(given a numeric suffix where two clean up alike), and renaming one beats re-reading the file to get a different name.
 
 **These are raw capabilities, not a workflow.** Nothing here infers a join key,
 decides that an index would help, or turns an anti-join into a sentence. Those
@@ -108,7 +108,10 @@ mcp = FastMCP(
         "own verbs, create, update and drop, and those are the ones the writable "
         "grant governs. A table keeps the name its file gave it until you "
         "update(nickname, type='table', name=..., to=...), which matters for a "
-        "workbook whose sheets are named Sheet1; that one is refused on "
+        "workbook whose sheets are named Sheet1, or two whose names clean up to "
+        "the same table name — Q2 Prices and Q2-Prices land as q2_prices and "
+        "q2_prices_1, and attach's warnings say which is which; rename is "
+        "refused on "
         "Firebird, which has no rename-table statement. The whole result comes "
         "back, so ask for what you want: use SQL LIMIT, name your columns "
         "instead of SELECT *, or pass path= to write a large result to a file "
@@ -442,9 +445,20 @@ def _attachment_payload(attachment: Attachment, registry: Registry) -> dict[str,
     # A slot we built ourselves was described as it was read, so its shape and
     # its mixed-column signal are already known — returning them here saves the
     # caller an immediate directory() round trip.
+    #
+    # Each entry names the sheet it came from when the file named its tables,
+    # because a sheet's table name is not always its own: two sheets whose names
+    # clean up alike land under different ones, and the caller needs to see
+    # which sheet went where.
     if slot.kind == "file":
         described, warnings = _described(registry, slot.nickname, slot.tables)
-        payload["loaded"] = [_table_payload(info) for info in described]
+        payload["loaded"] = [
+            {"sheet": sheet, **_table_payload(info)}
+            if sheet is not None
+            else _table_payload(info)
+            for info, sheet in zip(described, attachment.sheets)
+        ]
+        warnings = [*attachment.warnings, *warnings]
         if warnings:
             payload["warnings"] = warnings
 
@@ -526,7 +540,12 @@ def attach(
     A flat file becomes a new database holding one table named after the file; a
     SQLite or DuckDB database arrives with the tables it already has. A file that
     holds several tables — a workbook's sheets, a ``.numbers`` document's tables —
-    becomes a database holding all of them, under the names the file gives them.
+    becomes a database holding all of them, under the names the file gives them
+    made safe for SQL. Two names that come out the same — ``Q2 Prices`` and
+    ``Q2-Prices`` are both ``q2_prices`` — still land as two tables: the one
+    earlier in the file keeps the name and the next gets a numeric suffix,
+    ``q2_prices_1``. Each ``loaded`` entry then names the ``sheet`` it came from
+    beside the ``table`` it became.
 
     For a file, the answer already carries what it loaded — columns, types, row
     count and any warning — so calling ``directory`` straight afterwards returns the
@@ -535,7 +554,8 @@ def attach(
     Warnings arrive in ``warnings``, a list of plain sentences, and the key is
     **absent** rather than empty when there is nothing to say. They name a column
     holding values of more than one type, a column of dates in no recognised
-    standard, and anything the reader had to decide about the file itself — a
+    standard, two sheets whose names made the same table name and where each
+    went, and anything the reader had to decide about the file itself — a
     header line that suggests the declared delimiter was the wrong one, or a
     nested value stored as its text. Only a file is described on the way in, so
     only a file's attach can carry them. ``directory``, ``stats`` and

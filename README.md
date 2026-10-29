@@ -300,9 +300,15 @@ Per-backend detail, and what each engine needed, is in
 table per sheet and a `.numbers` document one **per table** — a Numbers sheet is
 a canvas that may carry several — so nothing in the file is unreachable. Each
 table arrives under its own name put through the same snake_case rule as a
-nickname, so `Sheet1` arrives as `sheet1` and `Q2 Prices` as `q2_prices`; where
-two tables in one document share a name, the sheet name is prefixed to break the
-collision. `update` renames one, keeping its rows and indexes. A JSON, YAML or
+nickname, so `Sheet1` arrives as `sheet1` and `Q2 Prices` as `q2_prices`. Two
+`.numbers` tables that would make the same table name are qualified by their
+sheet, so a `Q2 Prices` on `North` and one on `South` arrive as `north_q2_prices`
+and `south_q2_prices`. Names that still clean up alike — `Q2 Prices` and
+`Q2-Prices` on two tabs of a workbook — each get a table anyway, the way a
+repeated column header does: the one earlier in the file keeps `q2_prices` and
+the next arrives as `q2_prices_1`. Each `loaded` entry names the `sheet` it came
+from beside the `table` it became, and `warnings` names both sheets and where
+each went. `update` renames one, keeping its rows and indexes. A JSON, YAML or
 XML document is the other way round: one candidate table loads with a note naming
 the key it came from, and **two are refused, naming both**, rather than one being
 picked silently.
