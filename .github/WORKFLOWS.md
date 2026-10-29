@@ -88,7 +88,7 @@ alongside them. GitHub serves all of these without a workflow. They predate this
 rewrite, and one field has gone stale with it: the bug report's **required**
 Python dropdown (`bug_report.yml:33-46`) offers 3.8 and 3.9, both below the
 `requires-python = ">=3.10"` this project declares, and omits the 3.13 that
-`pyproject.toml:21` claims support for. A reporter on 3.13 cannot answer it
+`pyproject.toml:22` claims support for. A reporter on 3.13 cannot answer it
 truthfully and cannot skip it.
 
 The bug report's `database-info` field and the PR template's "Database Support"

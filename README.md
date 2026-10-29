@@ -214,7 +214,7 @@ the plain case and two are ours.
 Both shapes are what the *URL* route returns. A datasource attached as a
 **file** — the common DuckDB route — is wrapped by the attach path instead, and
 reads `Could not attach <path>: Can't load plugin: sqlalchemy.dialects:duckdb`:
-`slots.py:482` renders the exception's message, so the class name is not part of
+`slots.py:483` renders the exception's message, so the class name is not part of
 it.
 
 Either way the refusal never names the extra, which is why the map is here. Two
