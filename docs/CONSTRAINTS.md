@@ -933,6 +933,15 @@ wearing a `.csv` extension, and every unsupported extension (`.parquet`, `.xlsx`
 refusal names the three supported suffixes. UTF-8 BOM, CRLF and a headers-only file all load
 correctly.
 
+> **Amended 2026-10-29 — the default separator this section measured no longer exists.** Since
+> 2026-08-14 (§10.1, amendment of that date) `.csv`, `.tsv` and `.txt` are one format,
+> character-separated text, and no suffix supplies a separator: `delimiter` is required, and an
+> attach without it is refused before anything is read. The silent half of this section is closed
+> for a missing delimiter. A *wrong* one still loads: `a;b;c` attached with `delimiter=','` is
+> still one column `a_b_c`, but the answer now carries a warning naming the `;` in the header line
+> and telling the caller to attach again at the right character. Nothing re-reads the file at the
+> character it spotted. The table above is the record of the default as it stood.
+
 ### 8.3 A slot's table list was a snapshot, and three messages reported it after it went stale
 
 Found by composing a slot with `create` and then forcing eviction. `Slot.tables` is taken at attach
