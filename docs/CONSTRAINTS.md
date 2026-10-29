@@ -3105,6 +3105,30 @@ are the *driver's* gaps, where the type exists and cannot be bound. These are th
 `CREATE TABLE` is refused at parse time — `Cannot find data type: blob`, `Cannot find data type:
 time` — so the column is never made.
 
+> **Amended 2026-10-29 — `sqlalchemy-cratedb` 0.44.0 fixes the truncation, and `Numeric` is no
+> longer declined.** Upstream fixed #292 in 0.44.0 (fix PR crate/sqlalchemy-cratedb#300). Measured
+> against the same `crate:latest` container, SQLAlchemy Core only, so nothing of this server's was in
+> the path:
+>
+> | | 0.43.1 | 0.44.0 |
+> |---|---|---|
+> | `Numeric(10, 2)` compiles to | `c LONG` | `c NUMERIC(10, 2)` |
+> | `SHOW CREATE TABLE` column | `"c" BIGINT` | `"c" NUMERIC(10, 2)` |
+> | `Decimal("1.25")` reads back as | `Decimal('1.00')` | `Decimal('1.25')` |
+> | bare `Numeric()` as a column | `c LONG` | `CompileError: CrateDB stores a NUMERIC column only with a precision` |
+>
+> So `Numeric` left `CrateDBBackend.unstorable_column_types()`, and the `cratedb` extra's floor went
+> from `>=0.43` to `>=0.44` in the same change: without the floor an older dialect would be back to
+> truncating silently while the backend claimed the type was safe.
+> `test_every_value_reaches_the_wire_as_something_json_can_hold[cratedb]` now asserts the `amount`
+> column instead of excluding it, and passes (`12345.6789` within tolerance).
+>
+> The paragraph above about `Time` is now half out of date. The *database* still refuses a `TIME`
+> column, but 0.44.0 no longer sends one: it renders Core's `Time` as `STRING`, the server records
+> `"clock" TEXT`, and `time(14, 30)` reads back through a raw `SELECT` as `'14:30:00'`. That is a
+> time of day stored in a text column, the substitution the paragraph declines, so `Time` stays in
+> the set. `LargeBinary` is unchanged: it still renders `BLOB` and is still refused.
+
 ### 19.6 Everything else, and a healthcheck that repeated a known gotcha
 
 | Axis | CrateDB |

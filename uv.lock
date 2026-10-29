@@ -1680,7 +1680,7 @@ requires-dist = [
     { name = "setuptools", marker = "extra == 'monetdb'", specifier = "<82" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlalchemy-cockroachdb", marker = "extra == 'cockroachdb'", specifier = ">=2.0.4" },
-    { name = "sqlalchemy-cratedb", marker = "extra == 'cratedb'", specifier = ">=0.43" },
+    { name = "sqlalchemy-cratedb", marker = "extra == 'cratedb'", specifier = ">=0.44" },
     { name = "sqlalchemy-exasol", marker = "extra == 'exasol'", specifier = ">=7.1" },
     { name = "sqlalchemy-firebirdsql", marker = "extra == 'firebird'", specifier = ">=0.1" },
     { name = "sqlalchemy-monetdb", marker = "extra == 'monetdb'", specifier = ">=2.0" },
@@ -3588,7 +3588,7 @@ wheels = [
 
 [[package]]
 name = "sqlalchemy-cratedb"
-version = "0.43.1"
+version = "0.44.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "crate" },
@@ -3596,9 +3596,9 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "verlib2" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/53/35/4fbea8c79f6df5d06ee1956648bb9ef4f08114cd9dae0329ab1cd2c45f20/sqlalchemy_cratedb-0.43.1.tar.gz", hash = "sha256:0466573af3dc5b796dc6df45ac4085d67eb4fba614a72a029c2b4671aead78a7", size = 48411, upload-time = "2026-06-22T08:54:22.56Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/04/20/40b3c03ae3bae1902f1d539299f5fd199a8697e1af45989d2a3a79558344/sqlalchemy_cratedb-0.44.0.tar.gz", hash = "sha256:18ca621c54b9aa35aa717fd8eaf7c9cd3fcc05656b0cb772d3f255d92d323d91", size = 53334, upload-time = "2026-10-19T09:17:47.803Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/3c/946062f221bde60332ac175aeb40a7426a6e076056b4ad60c7bf5af7ece8/sqlalchemy_cratedb-0.43.1-py3-none-any.whl", hash = "sha256:1db7a30a7f76a023f63b0c4d396e4c32becd45c66c72c327f58720685335199b", size = 46774, upload-time = "2026-06-22T08:54:21.293Z" },
+    { url = "https://files.pythonhosted.org/packages/88/be/d67f73be4d243032ddd60f2fd8d744bac8c8aa676d5289534a6313183b56/sqlalchemy_cratedb-0.44.0-py3-none-any.whl", hash = "sha256:65584e99e080c50745259ef024390674eda9ea735a0ccf7b13d1582d468ee9d3", size = 49928, upload-time = "2026-10-19T09:17:46.574Z" },
 ]
 
 [[package]]

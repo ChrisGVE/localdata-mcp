@@ -123,7 +123,11 @@ monetdb = ["sqlalchemy-monetdb>=2.0", "setuptools<82"]
 # Crate.io's own dialect, and it brings its own driver: `crate` speaks CrateDB's
 # HTTP endpoint on 4200 rather than the PostgreSQL wire the same server also
 # offers on 5432, so no PostgreSQL driver is involved and none is pulled in.
-cratedb = ["sqlalchemy-cratedb>=0.43"]
+# The floor is 0.44 because that is the first release that renders `Numeric` as
+# `NUMERIC(p, s)`; 0.43 rendered it `BIGINT` and truncated every fraction without
+# a word (issue #52, docs/CONSTRAINTS.md §19.5). CrateDBBackend no longer
+# declines the type, so an older dialect would corrupt it silently again.
+cratedb = ["sqlalchemy-cratedb>=0.44"]
 # Two dialects exist for Firebird and this is the one that can be reached from
 # here. `sqlalchemy-firebird` is the older and more established of the two, but
 # it rides on `firebird-driver`, which is a ctypes binding to Firebird's own

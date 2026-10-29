@@ -1765,34 +1765,33 @@ class CrateDBBackend(Backend):
         )
 
     def unstorable_column_types(self) -> frozenset[str]:
-        """Three, and the third is the dangerous one because it does not fail.
+        """Two, both of them the database's own absences.
 
-        ``LargeBinary`` and ``Time`` are the database's own absences, unlike
-        ClickHouse's two of the same name which are its *driver's*: here
-        ``CREATE TABLE`` is refused at parse time — ``Cannot find data type:
-        blob``, ``Cannot find data type: time`` — so the column is never made and
-        there is nothing to write to. CrateDB stores binary as a base64
-        ``STRING`` and time-of-day inside a ``TIMESTAMP``; neither is what the
-        portable type means, and substituting one would put a value in a column
-        whose type says something else.
+        Unlike ClickHouse's two of the same name, which are its *driver's*, these
+        are gaps in CrateDB itself: it has no binary column and no storable
+        time-of-day column. ``LargeBinary`` renders ``BLOB`` and ``CREATE TABLE``
+        is refused at parse time — ``Cannot find data type: blob`` — so the column
+        is never made. ``Time`` is refused the same way when it reaches the
+        server as ``TIME``; from ``sqlalchemy-cratedb`` 0.44 the dialect renders
+        it ``STRING`` instead, the server records the column as ``TEXT``, and
+        ``time(14, 30)`` is stored as ``'14:30:00'`` — which is what raw SQL
+        through ``query`` reads back, measured. That is exactly the substitution
+        this axis exists to decline, a value in a column whose type says
+        something else, so it stays declined.
 
-        ``Numeric`` is here for the opposite reason: **nothing fails.** The
-        dialect renders it as ``BIGINT``, so ``Decimal("12345.6789")`` is stored
-        as ``12345`` and read back as ``Decimal("12345.0000")`` — the scale is
-        re-applied on the way out by SQLAlchemy's own type, which is what makes
-        the loss invisible. Measured against the alternative: a column declared
-        ``NUMERIC(10,2)`` in raw SQL holds ``1.25`` exactly, so **the database
-        supports the type and the dialect does not use it**. Stated as the
-        dialect's defect so nobody later fixes CrateDB for it — issue #52.
-
-        A column that silently corrupts is worse than one that cannot be created,
-        which is the same judgement ClickHouse's ``Time`` entry records. Nothing
-        this server writes reaches it — ``_declared_type`` emits only
-        ``INTEGER``, ``REAL`` and ``TEXT`` — so the exposure is a caller's own
-        table, and naming it here is what keeps the harness from asserting a
-        value it would silently be handed wrong.
+        ``Numeric`` used to be the third entry, and it was the dangerous one
+        because nothing failed (issue #52). Up to 0.43 the dialect rendered it
+        ``BIGINT``, so ``Decimal("12345.6789")`` was stored as ``12345`` and read
+        back as ``Decimal("12345.0000")``. From 0.44 it renders
+        ``NUMERIC(p, s)`` and ``Decimal("1.25")`` round-trips exactly — measured
+        against the container, ``SHOW CREATE TABLE`` reporting
+        ``"c" NUMERIC(10, 2)``. The ``cratedb`` extra's floor is 0.44 for that
+        reason, so the entry is gone rather than kept as a precaution. A bare
+        ``Numeric()`` with no precision is now refused at compile time with a
+        ``CompileError`` naming the problem, which is a loud failure and needs
+        nothing here.
         """
-        return frozenset({"LargeBinary", "Time", "Numeric"})
+        return frozenset({"LargeBinary", "Time"})
 
     def builds_indexes(self) -> bool:
         return False
