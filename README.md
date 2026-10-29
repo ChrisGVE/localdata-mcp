@@ -103,7 +103,7 @@ Add the server to your MCP client configuration. From a clone, name the clone �
 After `uv tool install 'localdata-mcp[all]'` puts the entry point on `PATH`,
 `"command": "localdata-mcp"` with no arguments is equivalent. It has to be the
 `[all]` form: the bare `uv tool install localdata-mcp` carries no extras, so that
-configuration would reach nine of the seventeen formats and one of the eighteen
+configuration would reach nine of the seventeen formats and one of the seventeen
 backends — which is what `--all-extras` above exists to avoid.
 
 Then point it at a file and ask:
@@ -188,18 +188,18 @@ No writer for '.docx'. The suffix chooses the format. Supported: .csv, .feather,
 | Columnar | `.parquet` `.feather` `.orc` | `.parquet` `.feather` `.orc` |
 | Markdown | — | `.md` |
 
-**Eighteen database backends**: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
+**Seventeen database backends**: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB, SQL
 Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB,
-Firebird, openGauss, YDB, Databend and Exasol. SQLite and DuckDB are normally
-files, and can also be reached by URL; the other sixteen are URLs only, and each
-of the sixteen is exercised against a container of its own in
+Firebird, openGauss, YDB and Exasol. SQLite and DuckDB are normally
+files, and can also be reached by URL; the other fifteen are URLs only, and each
+of the fifteen is exercised against a container of its own in
 `docker-compose.test.yml`.
 
 **Each backend needs its driver extra installed, and the refusal will not tell
 you which.** A missing *format* library produces the instruction quoted above. A
 missing *driver* produces one of two raw exceptions, neither naming the extra:
 eight backends give `ModuleNotFoundError` naming the Python module
-(`No module named 'psycopg'`), and nine give `NoSuchModuleError. Can't load
+(`No module named 'psycopg'`), and eight give `NoSuchModuleError. Can't load
 plugin: sqlalchemy.dialects:<name>` naming a SQLAlchemy dialect entry point —
 which for CockroachDB, openGauss and YDB is a composite name (`yql.ydb`) that is
 not importable as a module path at all.
@@ -238,10 +238,9 @@ rows point at another backend's extra:
 | Firebird | `firebird` |
 | openGauss | `opengauss` |
 | YDB | `ydb` |
-| Databend | `databend` |
 | Exasol | `exasol` |
 
-`databases` installs all fifteen at once — fifteen and not eighteen because
+`databases` installs all fourteen at once — fourteen and not seventeen because
 SQLite needs no extra and MariaDB and YugabyteDB share another backend's.
 `formats` installs the seven format extras (the six for reading, plus `markdown`
 for `.md` output), and `all` installs both.
@@ -257,7 +256,7 @@ It is governed by one rule — **free we take, expensive we leave.** A statistic
 dialect has not declared is **not reported**, never emulated and never
 approximated in a second pass. Which statistics a dialect offers defaults to
 none and is declared per backend: measured so far, SQLite has neither `median`
-nor `stddev` and DuckDB has both, and the other sixteen are unmeasured rather
+nor `stddev` and DuckDB has both, and the other fifteen are unmeasured rather
 than incapable. Their absence is a fact about the datasource, not about the
 column.
 Strings get the null count and nothing more. Every aggregate goes into one
@@ -281,16 +280,16 @@ carried out on some engines, and the refusal says so and names the way round:
 - **`save` writes out a database this server is holding.** A file-derived slot
   — every CSV, workbook, Parquet file and the like — is an in-memory SQLite
   database, and `save` writes it out. **A slot reached over its own connection
-  has no such database, so `save` is refused on all seventeen non-SQLite
+  has no such database, so `save` is refused on all sixteen non-SQLite
   backends, a local DuckDB file included.** The way to keep the result is three
   calls: `query(path=…)` writes the rows to a file, `attach` on that file makes
   a database of your own — file-derived, so writable — and `save` writes it
   out. The middle verb is `attach`, not `create`: `create` lands a file inside a
   slot that is already open. The refusal says exactly this.
-- **`create(type="index")` is refused on ClickHouse, Trino, CrateDB, Databend
-  and Exasol** — each for its own reason: indexes that cannot be reflected, no
-  storage to index, every column indexed already, a statement that compiles to
-  nothing, or an engine that maintains its own.
+- **`create(type="index")` is refused on ClickHouse, Trino, CrateDB and
+  Exasol** — each for its own reason: indexes that cannot be reflected, no
+  storage to index, every column indexed already, or an engine that maintains
+  its own.
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement.
 
@@ -413,7 +412,7 @@ Attaching that file again later is an ordinary attach, so it comes back
 
 **`save` only works on a slot this server built** — anything that came from a
 file, and SQLite. A slot reached over its own connection (PostgreSQL, a DuckDB
-file, any of the other fifteen backends) has no local database to write out, and
+file, any of the other fourteen backends) has no local database to write out, and
 `save` is refused there; send the result to a file with `query(path=…)`, `attach`
 that file as a datasource of your own, and save that. See [Not every verb
 reaches every backend](#not-every-verb-reaches-every-backend).
@@ -641,7 +640,7 @@ When that route does open, `.claude-plugin/plugin.json` launches the server with
 database driver — 139 distributions, slow on a cold `uv` cache and a few seconds
 after that. That is deliberate: the plugin builds its own environment, and
 without the flag it would reach nine of the seventeen formats and one of the
-eighteen backends while that file's own description advertises all of them. The
+seventeen backends while that file's own description advertises all of them. The
 client configuration above carries the same flag for the same reason, so neither
 path depends on `uv sync --all-extras` having been run in the clone first.
 

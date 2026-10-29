@@ -121,8 +121,8 @@ create(nickname="shop", type="index", table="prices", columns=["sku"])
 `directory(nickname, table)` lists the indexes already there — cheaper than asking
 for one twice. The name comes back, and that is the name `drop` wants.
 
-**Five backends refuse an index** — ClickHouse, Trino, CrateDB, Databend and
-Exasol — because on those engines the request means nothing: every column is
+**Four backends refuse an index** — ClickHouse, Trino, CrateDB and Exasol —
+because on those engines the request means nothing: every column is
 indexed already, or there is no storage to index, or the engine keeps its own.
 The refusal says which. It is not a permission problem and not something to
 retry; run the join as it stands, and if it is genuinely slow, narrow it in SQL.
@@ -181,9 +181,9 @@ A database URL attaches exactly like a file, and the same nine verbs address it:
 attach(database="postgresql://user:pass@host:5432/sales")
 ```
 
-Eighteen backends are supported — SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
+Seventeen backends are supported — SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
 SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB,
-Firebird, openGauss, YDB, Databend and Exasol. Three things differ from a file:
+Firebird, openGauss, YDB and Exasol. Three things differ from a file:
 
 - **A URL is refused unless `network.enabled = true`** is set in the user's
   configuration file. The refusal says so and masks the password. That is a
@@ -201,7 +201,7 @@ Firebird, openGauss, YDB, Databend and Exasol. Three things differ from a file:
   because it came from a file, and `save` works on it. `create` is for adding
   further tables to that new slot, not for making it. §6 has the rule in full.
 
-Two smaller refusals live here too: `create(type="index")` on the five engines
+Two smaller refusals live here too: `create(type="index")` on the four engines
 listed in §2, and `update(type="table")` on **Firebird**, which has no
 rename-table statement. Both name the reason.
 
@@ -344,7 +344,7 @@ Every column comes back with `nulls` and `non_nulls`. A numeric one adds `min`,
 `max` and `avg`; a date column normalised to ISO 8601 adds `min` and `max`.
 `median` and `stddev` appear only where this server declares them for that
 backend, which defaults to none — measured, SQLite has neither and DuckDB has
-both, and the other sixteen are unmeasured rather than known to lack them — so
+both, and the other fifteen are unmeasured rather than known to lack them — so
 their absence says something about the datasource, not about the column. Narrow a wide table with `columns=["amount"]`.
 
 **Read `nulls` before you report an average.** `avg()` skips nulls silently, so

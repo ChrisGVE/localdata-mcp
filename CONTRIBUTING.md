@@ -61,8 +61,8 @@ they skip, which is worse, because the run still reports green.
 .venv/bin/python -m pytest -q -m 'not slow'
 ```
 
-At the time of writing that is `780 passed, 500 skipped, 0 deselected`, measured
-at 121 s on this machine. **Every one of the 500 skips is an endpoint test with no
+At the time of writing that is `764 passed, 480 skipped, 5 deselected`, measured
+at 109 s on this machine. **Every one of the 480 skips is an endpoint test with no
 container listening**, and each names the command that would start one — see
 "Endpoint tests" below.
 
@@ -215,9 +215,9 @@ green.
 ### Endpoint tests
 
 `tests/test_endpoints.py` holds twenty test functions, and each runs against
-every entry in `tests/endpoints.py`'s `TARGETS` — **twenty-five**, not sixteen:
-the sixteen containers plus the nine authentication-mode variants that four of
-them carry. That is where the 500 skips above come from, 20 × 25.
+every entry in `tests/endpoints.py`'s `TARGETS` — **twenty-four**, not fifteen:
+the fifteen containers plus the nine authentication-mode variants that four of
+them carry. That is where the 480 skips above come from, 20 × 24.
 `docker-compose.test.yml` defines the containers:
 
 ```bash
@@ -242,7 +242,7 @@ live in a script rather than in prose that has already gone stale twice:
 ./scripts/endpoint-batch.sh a --keep   # leave the containers and images up
 ```
 
-The sixteen images are 33 GB, Exasol alone 12 GB, so the script removes them
+The fifteen images are about 32 GB, Exasol alone 12 GB, so the script removes them
 afterwards by default: re-download every time, and leave nothing behind. **Say in
 your PR which batches you actually ran** — a green run says nothing about a
 dialect it never reached.
@@ -329,7 +329,7 @@ more that are not obvious from the code:
 - Use a descriptive title following conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`, `perf:`); a `!` marks a breaking change
 - Fill out the PR template. Its "Database Support" checklist names SQLite,
   PostgreSQL and MySQL, which this version still supports; tick "Other databases
-  tested" for any of the other fifteen
+  tested" for any of the other fourteen
 - Reference related issues with `#issue_number`
 - One feature, one bug fix, or one improvement per PR
 - **There is no CI gating this branch.** `.github/WORKFLOWS.md` explains why, so

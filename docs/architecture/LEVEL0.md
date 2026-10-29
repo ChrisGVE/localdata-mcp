@@ -7,17 +7,17 @@ pointed at more kinds of source, so a block that is wrong here is wrong everywhe
 The surface is built, and the gate has since opened onto its own breadth: more formats
 and more backends are **still level 0**, because they are nothing new — the same verbs
 pointed at more kinds of source. Formats are done. The backends are a **closed** catalogue
-of **eighteen**, worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
+of **seventeen**, worked through one at a time: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
 SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB, CrateDB, Firebird,
-openGauss, YDB, Databend and Exasol. Each is reached by the same nine verbs, and each is
+openGauss, YDB and Exasol. Each is reached by the same nine verbs, and each is
 exercised against a container of its own — except SQLite and DuckDB, which are files and
 need none. **The catalogue is worked through**: every entry that can be reached on this
-machine is landed.
+machine is landed, and one that landed has since been suspended (below).
 
 Reached is not the same as *carried out*. Three verbs mean nothing on some engines and are
 refused there, with the reason named: **`save` on every backend but SQLite** (a slot reached
 over its own connection holds no database here to write out), **`create(type='index')` on
-ClickHouse, Trino, CrateDB, Databend and Exasol**, and **`update(type='table')` on
+ClickHouse, Trino, CrateDB and Exasol**, and **`update(type='table')` on
 Firebird**. The per-backend table below carries each one, and they are the reason the surface
 is uniform while the outcomes are not.
 
@@ -31,7 +31,15 @@ a C++ runtime macOS no longer ships (`CONSTRAINTS.md` §24), and OceanBase's ser
 at startup on an instruction — `rdtscp` — that the virtual machine Docker runs here does not
 expose (§26). Exasol, the last entry, landed (§27) — and the list ends there.
 
-Sixteen of the eighteen backends are reached through containers, and this machine will run
+One entry that landed has left again. **Databend** was suspended on 2026-10-29, and the
+reason is its SQLAlchemy dialect rather than the engine: three defects that give a wrong
+outcome without saying so, none with a released fix — a rollback that reports success over
+a write that stands, an `Index.create()` that compiles to an empty statement and creates
+nothing, and a `Time` column rendered as `DATETIME`, so a time of day is stored as a 1970
+timestamp. The measurements stand in `CONSTRAINTS.md` §23, with the amendment that records
+the suspension, and the backend can return from git history once the dialect is fixed.
+
+Fifteen of the seventeen backends are reached through containers, and this machine will run
 six at a time before the Docker
 VM starves them, so **no single test run covers the catalogue** — it takes five batches once
 the authentication variants are counted, and each one reports a green suite while the
@@ -231,7 +239,7 @@ snake_casing changed by more than case — `Q2 Prices` — still names no table 
 with the names that do. Renaming onto a taken name is refused rather than allowed to replace,
 and so is renaming to the same name in another case, which is not a free name on an engine
 that folds. The index name `drop` takes is the one `create` returned and `directory` lists.
-`update(type='table')` is refused on Firebird, and `create(type='index')` on the five
+`update(type='table')` is refused on Firebird, and `create(type='index')` on the four
 engines named in the backend table.
 
 **`save`.** An occupied path is refused until `force` carries the user's consent, and a path
@@ -263,7 +271,7 @@ whose whole promise is that the numbers are true — the same judgement `snapsho
 Which statistics a backend offers is declared per-dialect and **defaults to none**, so a
 dialect nobody has measured under-reports rather than failing a statement mid-profile.
 Measured so far: SQLite has neither `median` nor `stddev`; DuckDB has both. The other
-sixteen are a declared coverage gap and are left at the floor until a container run measures
+fifteen are a declared coverage gap and are left at the floor until a container run measures
 them.
 
 ### Write is not the default
@@ -426,9 +434,9 @@ A database is reached through a SQLAlchemy engine, and `create_engine` is generi
 nobody has subclassed still opens, still queries, still composes. A subclass exists only
 where the generic answer means something different here, or nothing at all.
 
-**Seventeen rows for eighteen backends**: MySQL and MariaDB need the same overrides and
+**Sixteen rows for seventeen backends**: MySQL and MariaDB need the same overrides and
 share one. **Every row but SQLite's refuses `save`** — that refusal is the generic answer,
-not a per-dialect one, so it is stated once here rather than repeated in seventeen cells:
+not a per-dialect one, so it is stated once here rather than repeated in sixteen cells:
 `Backend.snapshot` raises, and only `SQLiteBackend` overrides it, because only a database
 this server built is a database it holds.
 
@@ -449,7 +457,6 @@ this server built is a database it holds.
 | openGauss | URL | nothing — but it is the first PostgreSQL fork here that cannot be *addressed* as PostgreSQL, since its version banner does not parse and SQLAlchemy's own PGDialect raises while initialising the connection; it ships its own dialect, so there is no impostor to resolve either |
 | Firebird | URL | that rows cannot be written in the transaction that created the table, since DDL is transactional *and* prepared against committed metadata; the refusal of `update(type='table', to=…)`, since no statement renames a table here; `DOUBLE PRECISION`, since the dialect renders `Double` as a keyword Firebird lacks; and `VARCHAR` sized from the data, since `Text` becomes a `BLOB` that groups by identity rather than by value |
 | YDB | URL | a **primary key on every loaded table**, since it has no heap tables and a file has no key to offer — so one holding the row's position is added and reported; a **read-only isolation level**, since an uncommitted write here is not rolled back at all and the floor has to be a refusal rather than an undo; the two codes that refusal arrives under, one for rows and one for schema; and `Time`, which it does not have |
-| Databend | URL | that a statement is **a read before it runs**, since it has no transaction, no read-only session, and a write that answers with a named result set no examination of the result can tell from a query — so the server itself is asked to plan the statement as a subquery first; `Time`, which it does not have and its dialect renders `DATETIME`; `LargeBinary`, which binds or not depending on whether the bytes are valid UTF-8; and the refusal of `create(type='index')`, since the statement for one compiles to nothing and succeeds |
 | Exasol | URL | **autocommit turned off for the read engine**, since its driver commits every statement by default and the transactional floor is otherwise no floor at all; the driver's own type mapper, without which a number widened by `SUM` arrives as the *string* `'155000'` and a `TIMESTAMP` as text; `RENAME TABLE`; `LargeBinary`, which the database does not have and its dialect refuses at compile time; and the refusal of `create(type='index')`, since the engine maintains its own indexes and offers no statement for one |
 
 Two things generalised out of that table and became generic rather than per-dialect. **A
@@ -480,7 +487,7 @@ text.
 > [#79](https://github.com/ChrisGVE/localdata-mcp/issues/79). **Open, not decided.**
 
 Every dialect that needs a server is exercised against a live container
-(`docker-compose.test.yml`) — sixteen of the eighteen; SQLite and DuckDB are files and need
+(`docker-compose.test.yml`) — fifteen of the seventeen; SQLite and DuckDB are files and need
 none. The tests skip — with the command to start one — rather than fail where none is
 running.
 
@@ -628,7 +635,7 @@ carrying a password where the server wants one. Nine more are exercised now:
 
 | | Modes | Where |
 |---|---|---|
-| The route 2.x took | 1 — a plain URL | all sixteen endpoints — **eleven with a password in it, five with none**, since CockroachDB, YugabyteDB, Trino, CrateDB and YDB are reached by a bare username |
+| The route 2.x took | 1 — a plain URL | all fifteen endpoints — **ten with a password in it, five with none**, since CockroachDB, YugabyteDB, Trino, CrateDB and YDB are reached by a bare username |
 | Added by this work | 9 — trust, a password from the environment, a password from a file, verified TLS, a client certificate, a Kerberos ticket, an option file, an empty password, a data-source name in place of an address | four endpoints |
 | **Exercised in total** | **10** | |
 | Real and out of reach here | 2 — a Unix socket, which does not cross the container boundary, and Windows integrated authentication, there being no Windows host | — |
@@ -636,8 +643,8 @@ carrying a password where the server wants one. Nine more are exercised now:
 They run as a **second axis** over the endpoint table rather than as tests of their own, so
 each endpoint test runs against every mode its endpoint carries: `tests/test_endpoints.py`
 holds **twenty test functions**, and each is parameterised over `TARGETS` — one entry per
-endpoint *per authentication mode*, **twenty-five** of them against sixteen containers. That
-is where the suite's 500 endpoint tests come from: 20 × 25. Nothing in
+endpoint *per authentication mode*, **twenty-four** of them against fifteen containers. That
+is where the suite's 480 endpoint tests come from: 20 × 24. Nothing in
 the server implements them: each is expressed in the URL or in the driver's own environment,
 which this server passes through untouched, so what was added is the evidence rather than a
 feature. `docs/CONSTRAINTS.md` §25 has the measurements.

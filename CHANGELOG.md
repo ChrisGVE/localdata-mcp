@@ -101,7 +101,7 @@ rebuild it.
   8601 adds `min` and `max`. `median` and `stddev` are reported only where this
   server declares them for that backend — never emulated, never approximated,
   never a second pass in Python. That declaration defaults to none, so they
-  appear on DuckDB, not on SQLite, and not yet on the sixteen backends nobody
+  appear on DuckDB, not on SQLite, and not yet on the fifteen backends nobody
   has measured. A **mixed**
   column and a column of **dates in no recognised standard** are profiled to
   their null count alone, each saying why in `withheld`, because an aggregate
@@ -139,9 +139,9 @@ rebuild it.
   first sheet and said nothing about the rest. A JSON, YAML or XML document with
   **two** candidate tables is refused instead, naming both, rather than one being
   picked silently.
-- **Eighteen database backends**: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
+- **Seventeen database backends**: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
   SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB,
-  CrateDB, Firebird, openGauss, YDB, Databend and Exasol. Sixteen are exercised
+  CrateDB, Firebird, openGauss, YDB and Exasol. Fifteen are exercised
   against a container of their own in `docker-compose.test.yml`. The nine verbs
   are the whole surface on all of them; three verbs are refused on some engines,
   and those refusals are listed under *Known limitations* below.
@@ -150,8 +150,8 @@ rebuild it.
   server configured to trust, a password from the environment, a password from a
   file, verified TLS, a client certificate, a Kerberos ticket, a MySQL option
   file, an empty password, and an ODBC data-source name in place of a host and
-  port — ten routes in all, counting the plain URL that all sixteen endpoints
-  still use, which carries a password on eleven of them and a bare username on
+  port — ten routes in all, counting the plain URL that all fifteen endpoints
+  still use, which carries a password on ten of them and a bare username on
   the other five (CockroachDB, YugabyteDB, Trino, CrateDB, YDB). All five of
   those are databases with authentication available and none of it configured,
   which is the same shape as `trust` — CockroachDB's `--insecure` accepts any
@@ -263,6 +263,26 @@ rebuild it.
   XPath ceiling (about 417,000 rows of eleven columns). The `html` extra went with
   it, lxml being its only dependency.
 - **`.hdf5`, `.ini`, `.toml` and `.arrow`** as datasource formats.
+- **Databend**, suspended on 2026-10-29 before it shipped. It was landed during
+  3.0.0's development and is taken out because its SQLAlchemy dialect,
+  `databend-sqlalchemy`, has three defects that give a wrong outcome without
+  saying so, and none has a released fix: `do_rollback()` swallows
+  `NotSupportedError`, so a rollback reports success over a write that stands
+  ([databendlabs/databend-sqlalchemy#77](https://github.com/databendlabs/databend-sqlalchemy/issues/77));
+  `Index.create()` compiles to an empty string and creates nothing
+  ([#78](https://github.com/databendlabs/databend-sqlalchemy/issues/78)); and
+  Core `Time` renders as `DATETIME`, so a time of day is stored as a 1970
+  timestamp ([#79](https://github.com/databendlabs/databend-sqlalchemy/issues/79)).
+  Two more were worked around rather than fixed: `bytes` cannot be bound unless
+  they happen to be valid UTF-8
+  ([#80](https://github.com/databendlabs/databend-sqlalchemy/issues/80), fixed
+  upstream and not yet released), and `databend-driver` does not expose the
+  write progress the server reports
+  ([databendlabs/bendsql#790](https://github.com/databendlabs/bendsql/issues/790)).
+  The `databend` extra, its container and its endpoint tests went with it. This
+  is a suspension, not a verdict on the engine: the measurements stay in
+  `docs/CONSTRAINTS.md` §23, and the backend can return from git history once
+  the dialect is fixed.
 - **Eighteen skills and eleven agents.** One skill ships now,
   `skills/data/local-data/SKILL.md`, and it carries the idiom the tools
   deliberately do not: the naming conversation, and how to phrase an incomplete
@@ -300,17 +320,17 @@ each was reported against 2.x and none of the code carrying it survives:
 
 ### Known limitations
 
-- **`save` is refused on every backend but SQLite** — seventeen of the eighteen,
+- **`save` is refused on every backend but SQLite** — sixteen of the seventeen,
   a local DuckDB file included. `save` writes out a database this server is
   holding, and a slot reached over its own connection has none: the rows live in
   the engine, not here. Every file-derived slot *is* SQLite, so `save` works on
   all of them. For the rest it takes three calls: send the rows to a file with
   `query(path=…)`, `attach` that file as a datasource of your own — file-derived,
   so writable — and save that. The refusal says so.
-- **`create(type="index")` is refused on ClickHouse, Trino, CrateDB, Databend and
+- **`create(type="index")` is refused on ClickHouse, Trino, CrateDB and
   Exasol**, each for its own reason — indexes that cannot be reflected, no
-  storage to index, every column indexed already, a statement that compiles to
-  nothing, or an engine that maintains its own.
+  storage to index, every column indexed already, or an engine that maintains
+  its own.
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement and never has.
 - **On two backends a statement `query` refuses can still have happened.** The

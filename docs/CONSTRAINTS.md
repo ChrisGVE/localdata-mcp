@@ -2301,6 +2301,11 @@ table above is a reader's summary of the script, and the script is the source of
 also derives each batch's **images from compose itself** (`docker compose config --images`), so
 that list cannot drift from the services either.
 
+> **Amended 2026-10-29.** Databend support was suspended (§23, amendment of the same date), so
+> `localdata-test-databend` left batch C, which is now postgresql, cratedb, opengauss and ydb. The
+> table above is the record of the batches as they stood, and `scripts/endpoint-batch.sh` is still
+> the source of truth.
+
 ### 13.6 The images are removed after every batch, deliberately
 
 The sixteen images are **33 GB**, of which `exasol/docker-db` alone is **12.3 GB**. They are all
@@ -2320,6 +2325,12 @@ on, which half the machine shares and re-pulls in a second. The skip is a glob o
 (`endpoint-batch.sh:151`), so `postgres:16-alpine` does not match it and is removed like
 everything else. The script says so per image rather than skipping silently, so its count
 always matches the lines beneath it.
+
+> **Amended 2026-10-29.** The catalogue is fifteen images now that Databend support is
+> suspended (§23, amendment of the same date). The Databend image,
+> `datafuselabs/databend:v1.2.925-patch-4`, measured **1.04 GB** (`docker image inspect`, pulled
+> and removed again on 2026-10-29), so the fifteen come to about **32 GB**. The 33 GB above is the
+> sixteen as they were measured, and stands as that.
 
 ## §14 — The MCP 2026-07-28 specification, measured against this server (2026-07-29)
 
@@ -4201,6 +4212,33 @@ The `EXPLAIN`-executes-nothing property in 23.4 is measured on this version. It 
 future release ever executed a plan it produced, the posture would become the write it exists to
 prevent. The endpoint suite would catch that — the refusal tests assert the row count afterwards — and
 this sentence is here so the next reader knows to look.
+
+> **Amended 2026-10-29 — Databend support is suspended.** The backend, its `databend` extra, its
+> compose service and its endpoint tests were removed from the code on this date, by the owner's
+> decision. This is a suspension and not a judgement on the engine: the reason is the dialect this
+> section measured, which has three defects that give a wrong outcome without saying so, none with
+> a released fix —
+>
+> - `do_rollback()` swallows `NotSupportedError`, so a rollback reports success over a write that
+>   stands (23.2,
+>   [databendlabs/databend-sqlalchemy#77](https://github.com/databendlabs/databend-sqlalchemy/issues/77));
+> - `Index.create()` compiles to an empty string and creates nothing (23.5,
+>   [#78](https://github.com/databendlabs/databend-sqlalchemy/issues/78));
+> - Core `Time` renders as `DATETIME`, so a time of day is stored as a 1970 timestamp (23.6,
+>   [#79](https://github.com/databendlabs/databend-sqlalchemy/issues/79)).
+>
+> Two further defects were worked around rather than fixed: a `bytes` value binds only if it
+> happens to be valid UTF-8 (23.6, [#80](https://github.com/databendlabs/databend-sqlalchemy/issues/80),
+> whose fix is merged upstream and not yet released), and `databend-driver` does not expose the
+> write progress the server reports (23.7,
+> [databendlabs/bendsql#790](https://github.com/databendlabs/bendsql/issues/790)).
+>
+> **Every measurement in this section stands as history**, against the server and package versions
+> named at its top. The code it describes can return from git history: the last commit carrying
+> `DatabendBackend` is the parent of the commit that removed it, and once the dialect fixes reach a
+> release this section is where the re-measurement starts. The other sections that compare against
+> Databend (§17, §18, §21, §27) are records of what was true when they were written, and are not
+> amended.
 
 ## §24 — Db2, eligible on the rule and unreachable on the machine (2026-07-30)
 
