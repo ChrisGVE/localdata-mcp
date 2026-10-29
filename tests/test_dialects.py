@@ -901,8 +901,11 @@ def test_the_backend_that_cannot_see_its_own_new_tables_says_so():
 def test_firebird_respells_the_two_portable_types_its_dialect_renders_unusably():
     """``Double`` and ``Text`` both need replacing, for opposite reasons (#55, #56).
 
-    ``Double`` renders ``DOUBLE``, which Firebird has no such keyword for, so the
+    ``Double`` renders ``DOUBLE`` under ``sqlalchemy-firebirdsql`` 0.1.0, which
+    Python 3.10 still resolves to, and Firebird has no such keyword, so the
     ``CREATE TABLE`` fails and nothing is made — loud, and therefore harmless.
+    From 0.3.0, which Python 3.11 and later get, the dialect renders ``DOUBLE
+    PRECISION`` itself, and the respelling asks for the type it would have chosen.
     ``Text`` renders ``BLOB``, which is created, stores every byte, reads back
     exactly, and then groups by handle instead of by value: five rows become five
     groups with no error anywhere. The silent one is the dangerous one.
