@@ -1,7 +1,7 @@
 [project]
 name = "localdata-mcp"
 version = "3.0.0.dev0"
-description = "MCP server giving LLM agents SQL access to local files and databases: nine verbs over 18 file formats and 18 SQL backends."
+description = "MCP server giving LLM agents SQL access to local files and databases: nine verbs over 18 file formats and 17 SQL backends."
 readme = "README.md"
 authors = [
   { name = "Christian C. Berclaz", email = "christian.berclaz@mac.com" },
@@ -37,7 +37,7 @@ keywords = [
 #
 # SQLAlchemy is the exception to that rule and was here from the start on purpose,
 # before any backend but SQLite existed. It is a mature, proven abstraction over
-# exactly the axis this grew along, and the bet paid: eighteen backends later, each
+# exactly the axis this grew along, and the bet paid: seventeen backends later, each
 # one is a different URL and a driver package rather than a rewrite of the
 # connection layer. The drivers themselves are optional extras below, one per
 # backend, so the base install stays minimal.
@@ -171,23 +171,6 @@ opengauss = ["opengauss-sqlalchemy>=2.4", "psycopg2-binary>=2.9"]
 # Neither `ydb` nor `ydb-dbapi` is named here: the dialect requires both, and
 # naming them again would let the three drift.
 ydb = ["ydb-sqlalchemy>=0.1.22"]
-# Databend, through Databend's own dialect. `databend-sqlalchemy` is the only
-# SQLAlchemy dialect for this engine — `sqlalchemy-databend` does not exist on
-# PyPI, and `databend-py` is a DB-API driver that registers no dialect — so
-# there is no rival to weigh it against, and no question of whether the one we
-# picked is merely a shim over the other.
-#
-# The driver it rides on, `databend-driver`, is a Rust extension and therefore
-# the first *native* dependency here since Firebird's `libfbclient` sent that
-# entry to a pure-Python dialect. It is not the same cost: it publishes
-# `cp39-abi3` wheels for macOS x86_64 and arm64 and for both manylinux
-# architectures, so nothing is compiled and no system library is needed. The
-# `local` extra — which would pull in an embedded `databend` engine — is
-# deliberately not requested; this endpoint is reached over the wire.
-#
-# The driver is not named here: the dialect requires it, and naming it again
-# would let the two drift.
-databend = ["databend-sqlalchemy>=0.5.5"]
 # Exasol, through Exasol's own dialect on Exasol's own driver — the first entry
 # here where the adapter, the driver and the database all come from one vendor,
 # so there is no rival dialect to weigh it against, and neither package can be
@@ -209,7 +192,7 @@ formats = [
   "localdata-mcp[yaml,markdown,excel,xls,ods,numbers,parquet]",
 ]
 databases = [
-  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird,opengauss,ydb,databend,exasol]",
+  "localdata-mcp[duckdb,postgres,mysql,mssql,oracle,clickhouse,cockroachdb,trino,monetdb,cratedb,firebird,opengauss,ydb,exasol]",
 ]
 all = [
   "localdata-mcp[formats,databases]",

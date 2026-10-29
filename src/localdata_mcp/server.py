@@ -100,7 +100,7 @@ mcp = FastMCP(
         "the two tables there in an ordinary statement. Whether the join is "
         "complete is an anti-join you write yourself; if it is slow, "
         "create(nickname, type='index', table=..., columns=[...]) first — "
-        "refused on ClickHouse, Trino, CrateDB, Databend and Exasol, each for "
+        "refused on ClickHouse, Trino, CrateDB and Exasol, each for "
         "its own reason, which the refusal names — and directory(nickname, table) "
         "says which indexes are already there.\n\n"
         "**query only reads.** INSERT, UPDATE, CREATE TABLE and every other write "
@@ -670,7 +670,7 @@ def stats(
     this server declares them for that backend, which defaults to none — nothing
     here approximates a statistic it was not told about, so their absence is a
     fact about the datasource rather than about the column. Measured so far:
-    SQLite has neither, DuckDB has both, and the other sixteen backends are
+    SQLite has neither, DuckDB has both, and the other fifteen backends are
     unmeasured rather than known to lack them.
 
     Two kinds of column are deliberately reported with their null count and
@@ -937,12 +937,11 @@ def create(
     nothing here guesses that for you, because which query is coming is yours to
     know. The index is named for you and the name comes back — that is the name
     ``drop`` wants. ``directory(nickname, table)`` lists the indexes that already
-    exist, which is the cheaper way to find out than asking twice. Five engines
-    refuse ``type="index"`` outright — ClickHouse, Trino, CrateDB, Databend and
-    Exasol — each for its own reason: indexes that cannot be reflected, no
-    storage to index, every column indexed already, a statement that compiles to
-    nothing, or an engine that maintains its own. The refusal says which, and
-    arrives before any work is done.
+    exist, which is the cheaper way to find out than asking twice. Four engines
+    refuse ``type="index"`` outright — ClickHouse, Trino, CrateDB and Exasol —
+    each for its own reason: indexes that cannot be reflected, no storage to
+    index, every column indexed already, or an engine that maintains its own.
+    The refusal says which, and arrives before any work is done.
 
     Whether a join actually lines up is not reported here. It is an anti-join
     over two tables in one database — ordinary SQL you can write, and better
