@@ -21,9 +21,6 @@
     "parquet",
     "data"
   ],
-  "skills": [
-    "./skills/data/"
-  ],
   "mcpServers": {
     "localdata": {
       "command": "uv",

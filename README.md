@@ -648,7 +648,7 @@ path depends on `uv sync --all-extras` having been run in the clone first.
 
 - [Level 0 specification](docs/architecture/LEVEL0.md) — the premise, the three user journeys, the nine verbs
 - [Measured constraints](docs/CONSTRAINTS.md) — the behaviour that shapes the design, with the numbers behind it
-- [The shipped skill](skills/data/local-data/SKILL.md) — how an agent should talk to a user about their data
+- [The shipped skill](skills/local-data/SKILL.md) — how an agent should talk to a user about their data
 - [Changelog](CHANGELOG.md) — and read the 3.0.0 entry before upgrading from 2.x, because none of that tool surface survived
 - [Contributing](CONTRIBUTING.md) — development setup, tests, and which document owns what
 - [What CI does and does not do](.github/WORKFLOWS.md) — read it before trusting a green check

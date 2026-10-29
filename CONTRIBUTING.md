@@ -112,7 +112,7 @@ localdata-mcp/
 │   └── CONSTRAINTS.md            # Measured behaviour, with the evidence
 ├── assets/                       # The logo, referenced by absolute URL from the README
 ├── non_factual/                  # Quarantined prose — see its README before reading
-├── skills/data/local-data/       # The skill that ships with the server
+├── skills/local-data/            # The skill that ships with the server
 ├── .claude-plugin/plugin.json    # Claude Code plugin manifest
 ├── server.json                   # MCP registry entry
 ├── scripts/                      # Fixture and test-data generation, the endpoint
@@ -151,10 +151,11 @@ reading mean anything for it, all on the one `Format` — and a new backend is a
 something different for it — several backends needed no subclass at all, which is
 the result rather than an omission.
 
-One skill ships, at `skills/data/local-data/`. A skill is a directory holding a
+One skill ships, at `skills/local-data/`. A skill is a directory holding a
 single `SKILL.md`, the directory name must match the `name` field in its
-frontmatter, and a new one goes under its domain directory rather than at the top
-of `skills/`. Version numbers live in more than one file and must move together —
+frontmatter, and a new one goes directly under `skills/`, never in a subdirectory
+of it: a plugin loader looks exactly one level down, in Claude Code and in Codex
+alike, so a skill nested deeper is a skill nobody installs. Version numbers live in more than one file and must move together —
 see [Versioning](#versioning).
 
 ## Development workflow
@@ -364,7 +365,7 @@ abandoned v2 documents, not a document kept current.)
   constraint nobody recorded is one the next person re-derives. It is append-only
   in spirit: a later measurement that changes the answer is a new section, not an
   edit to an old one.
-- **`skills/data/local-data/SKILL.md`** — how an agent should talk to a user
+- **`skills/local-data/SKILL.md`** — how an agent should talk to a user
   about their data. It ships with the server and is versioned with it, because
   the two are only correct against each other.
 - **`.github/WORKFLOWS.md`** — what CI does and does not do.

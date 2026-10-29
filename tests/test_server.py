@@ -137,7 +137,7 @@ def test_the_shipped_skill_grants_exactly_the_tools_that_exist():
     there are to call were three names apart, and nothing said so. An invariant
     kept in prose is not kept.
     """
-    skill = Path(__file__).parent.parent / "skills" / "data" / "local-data" / "SKILL.md"
+    skill = Path(__file__).parent.parent / "skills" / "local-data" / "SKILL.md"
     granted = re.search(r"^allowed-tools:(.*)$", skill.read_text(), re.MULTILINE)
     assert granted is not None, "the skill declares no allowed-tools"
 

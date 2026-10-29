@@ -284,7 +284,7 @@ rebuild it.
   `docs/CONSTRAINTS.md` §23, and the backend can return from git history once
   the dialect is fixed.
 - **Eighteen skills and eleven agents.** One skill ships now,
-  `skills/data/local-data/SKILL.md`, and it carries the idiom the tools
+  `skills/local-data/SKILL.md`, and it carries the idiom the tools
   deliberately do not: the naming conversation, and how to phrase an incomplete
   join in a user's own words rather than as an anti-join.
 - **The `security.readonly` setting, `max_query_length` and `blocked_keywords`.**
