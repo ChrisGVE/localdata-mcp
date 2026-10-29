@@ -2,14 +2,14 @@
 # endpoint-batch.sh — run one batch of endpoint containers end to end, then put the
 # disk back the way it was found.
 #
-# The endpoint catalogue is sixteen database dialects plus a four-service
+# The endpoint catalogue is fifteen database dialects plus a four-service
 # authentication axis, and this machine holds about six containers at once before the
 # Docker VM starves them (issue #46, docs/CONSTRAINTS.md §13.4). So the suite is run in
 # batches, and the batches are written down HERE rather than in prose, because prose
 # went stale twice: the working sets had to be reconstructed from a GitHub issue's own
 # comment history on 2026-08-01.
 #
-# The images are large — 33 GB for the sixteen, of which Exasol alone is 12 GB — and
+# The images are large — about 32 GB for the fifteen, of which Exasol alone is 12 GB — and
 # they are pulled from public registries, so keeping them between sessions costs disk
 # to save a download. This script therefore REMOVES them when the batch is done. That
 # is the deliberate trade (Chris, 2026-08-03): re-download every time, and leave
@@ -50,7 +50,7 @@ batch_services() {
 	case "$1" in
 	a) echo "localdata-test-postgres localdata-test-mysql localdata-test-mariadb localdata-test-mssql localdata-test-oracle localdata-test-firebird" ;;
 	b) echo "localdata-test-postgres localdata-test-clickhouse localdata-test-cockroachdb localdata-test-yugabytedb localdata-test-trino localdata-test-monetdb" ;;
-	c) echo "localdata-test-postgres localdata-test-cratedb localdata-test-opengauss localdata-test-ydb localdata-test-databend" ;;
+	c) echo "localdata-test-postgres localdata-test-cratedb localdata-test-opengauss localdata-test-ydb" ;;
 	d) echo "localdata-test-postgres localdata-test-exasol" ;;
 	e) echo "localdata-test-postgres-trust localdata-test-clickhouse-noauth localdata-test-postgres-tls localdata-test-postgres-krb" ;;
 	*) return 1 ;;
@@ -74,7 +74,7 @@ batch_dialects() {
 	case "$1" in
 	a) echo "postgresql, mysql, mariadb, mssql, oracle, firebird" ;;
 	b) echo "clickhouse, cockroachdb, yugabytedb, trino, monetdb" ;;
-	c) echo "cratedb, opengauss, ydb, databend" ;;
+	c) echo "cratedb, opengauss, ydb" ;;
 	d) echo "exasol" ;;
 	e) echo "the authentication axis — trust, no-auth, TLS, Kerberos" ;;
 	esac
