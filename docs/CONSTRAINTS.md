@@ -3647,6 +3647,30 @@ The first route's failure is a defect of its own — a connect keyword the drive
 rejects is indistinguishable from one it applied — and is reported upstream as
 [ydb-platform/ydb-python-dbapi#40](https://github.com/ydb-platform/ydb-python-dbapi/issues/40).
 
+> **Amended 2026-10-29 — `ydb-dbapi` 0.1.24 rejects unknown connect keywords by name (#62).**
+> ydb-platform/ydb-python-dbapi#40 is closed. 0.1.24 routes leftover `connect()` keywords into
+> `ydb.DriverConfig` and raises `ProgrammingError` for any it does not know. Measured on the same
+> container with plain `create_engine` and nothing of this server's in the path, passing
+> `connect_args={"no_such_option_xyz": True}`:
+>
+> | | 0.1.22 | 0.1.24 |
+> |---|---|---|
+> | unknown keyword | accepted; `SELECT 1` answers; kept in `connection_kwargs` and never read | `ProgrammingError: Unknown connection option(s): no_such_option_xyz. Supported driver options: …` |
+> | URL with a username, `yql+ydb://root@…/local` | accepted, connection anonymous | `ProgrammingError: Unknown connection option(s): username` |
+>
+> `disable_discovery` is on the supported list in the 0.1.24 message. This was not re-measured
+> against a cluster where discovery fails, so the table's first row above is still the 0.1.22
+> record. The route chosen there does not depend on it.
+>
+> The second row is a consequence of the fix, and it touches the harness. `ydb-sqlalchemy` hands a
+> URL's username to the driver as a `username` keyword, which 0.1.22 discarded. `tests/endpoints.py`
+> carried `root` in the YDB URL, and from 0.1.24 every YDB endpoint test errored at the handshake.
+> The builder now passes no username. The connection is anonymous exactly as before, and the YDB
+> endpoint tests pass (19 passed, 1 skipped: there is no password to test). It also means that up to
+> 0.1.22, **credentials written into a YDB URL were thrown away without a word and the connection was
+> made anonymously**. From 0.1.24 they are refused. Credentials for YDB go in the `credentials`
+> connect argument.
+
 ### 22.2 A rollback that reports success over a write that stands (issue #61)
 
 **The transactional floor does not exist on YDB as SQLAlchemy drives it.** An uncommitted write
@@ -3699,6 +3723,33 @@ not avoidable by ordering through the ORM, and the `ProgrammingError` fallback p
 would turn silent-no-transaction into every-transaction-raises.
 
 Unreachable from here, so the posture is **raised rather than restored** — see 22.3.
+
+> **Amended 2026-10-29 — fixed in `ydb-dbapi` 0.1.24, and the read posture stays.**
+> ydb-platform/ydb-python-dbapi#34 is closed. In 0.1.24 `Cursor._tx_context` is a property that reads
+> the owning connection's *current* transaction, rather than a value captured in `__init__`. The table
+> above, run again with SQLAlchemy Core, an engine at `SERIALIZABLE`, no read posture, and a
+> username-less URL so that both versions see the same anonymous connection:
+>
+> | Sequence | 0.1.22 | 0.1.24 |
+> |---|---|---|
+> | `INSERT`, connection closed without committing | 1 | **0** |
+> | `INSERT`, then an explicit `Connection.rollback()` | 1 | **0** |
+> | `INSERT` inside a `begin()` block that raises | 0 | 0 |
+> | control: `INSERT` inside a `begin()` block that commits | 1 | 1 |
+> | DBAPI, `cursor()` → `begin()` → `execute` → `rollback()` | 1 | **0** |
+>
+> The third row does **not** reproduce the 1 recorded above. On 0.1.22 this probe measured 0 for the
+> aborted `begin()` block, while the other two SQLAlchemy sequences and the DBAPI ordering reproduce
+> as recorded. One plausible reason: `Engine.begin()` opens the transaction before the first
+> statement builds its cursor. That was not traced, so it is a reading, not a finding. The control
+> row is what makes the zeros mean something: a committed write does land.
+>
+> `YDBBackend.read_posture` is **not** removed. The `ydb` extra names only `ydb-sqlalchemy>=0.1.22`,
+> and that still admits `ydb-dbapi` 0.1.22. Refusing the write before it reaches the data is also the
+> stronger guarantee, as 22.3 argues, whichever driver is installed. The **write-path** limit recorded
+> in issue #61 was not re-measured: rows that already landed when `insert_frame` fails part-way, and
+> a drop-and-create pair that is not atomic. Fixing the cursor binding may have changed the first,
+> but that has not been measured, so it stands as recorded.
 
 ### 22.3 A read-only isolation level, which refuses instead of undoing
 

@@ -4211,28 +4211,28 @@ wheels = [
 
 [[package]]
 name = "ydb-dbapi"
-version = "0.1.22"
+version = "0.1.24"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ydb" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/69/29/473641a18ab54333d8c0d4f2fe46d7acad03688378e9e7e79cf7c95cc4d7/ydb_dbapi-0.1.22.tar.gz", hash = "sha256:79df761d2bd67d532a7bae2e9a155f2f083e8de9a71c8398bbdeaceca692677f", size = 18856, upload-time = "2026-05-12T16:12:05.738Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/c7/03dddc4b71ee572a41147d29e70166bc843a08e68cb34d2876e9838b15bd/ydb_dbapi-0.1.24.tar.gz", hash = "sha256:2fdc6a736f023445ebdc466107666c68c52374d7d125e8ba787ff96255ef7991", size = 21033, upload-time = "2026-10-26T12:19:42.732Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/14/d3a1b14737d95f8192e66b08814a7fbddb4160a4ef4731fe795e9ca24708/ydb_dbapi-0.1.22-py3-none-any.whl", hash = "sha256:6825d004441fce4a4ab701f619c2d6045809ee764a26d246e546ac5ae7d7be12", size = 19123, upload-time = "2026-05-12T16:12:04.328Z" },
+    { url = "https://files.pythonhosted.org/packages/74/5b/30161a715310f4c9ab351ae3fdf769836e083ba6dd9ec6b513537189bc16/ydb_dbapi-0.1.24-py3-none-any.whl", hash = "sha256:65651ea7e060597c64dfc79ff2199383d70e9332e08a3d2149f8e301c0dd2238", size = 21306, upload-time = "2026-10-26T12:19:41.628Z" },
 ]
 
 [[package]]
 name = "ydb-sqlalchemy"
-version = "0.1.22"
+version = "0.1.24"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "sqlalchemy" },
     { name = "ydb" },
     { name = "ydb-dbapi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/d7/ec3e3a4908a3d9e17ea0e56994831d7c9309e026eeb8cb3c5cd07f794c70/ydb_sqlalchemy-0.1.22.tar.gz", hash = "sha256:9ac0fb679de2f0e13b4b497aae7ee5b734c12350420379c90a13b218043a3a54", size = 39958, upload-time = "2026-06-03T11:31:12.086Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f9/52/435593e15a1905022ed844e181877c59d2eafd41c4861ddaa9568ad44653/ydb_sqlalchemy-0.1.24.tar.gz", hash = "sha256:8b458b864e8138facb1dfb9ae41aaf9c831e6dba29912515749e5880f1417954", size = 51970, upload-time = "2026-09-14T09:28:02.785Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/d0/04cb641bb8921541e81b4c378998a70f6dee7d0f51f108746e050ad26f6d/ydb_sqlalchemy-0.1.22-py2.py3-none-any.whl", hash = "sha256:d7e4914e2f66c536a3880168137517f2268e2be0fa42bb3d1157a8da18c8d925", size = 43964, upload-time = "2026-06-03T11:31:11.14Z" },
+    { url = "https://files.pythonhosted.org/packages/28/8d/b6e50a34d17c98092f2bd5df7646e288de46def078ef2c13b41c1e6331d7/ydb_sqlalchemy-0.1.24-py2.py3-none-any.whl", hash = "sha256:c9e6721b299844271b9a896752952cc4febfd5c8bac59ce1d70bc1fb47e0f5b2", size = 58466, upload-time = "2026-09-14T09:28:01.575Z" },
 ]
 
 [[package]]

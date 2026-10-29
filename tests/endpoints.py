@@ -672,9 +672,17 @@ def _ydb(env: dict[str, str], port: int) -> str:
     Two things here are not what the other builders do, and both were measured.
 
     **No credentials at all.** The image configures no authentication, so this
-    passes ``password=None`` — which ``_url`` renders by omitting the ``:``
-    entirely — and a username that is never checked. CockroachDB's insecure mode
-    is the only other endpoint reached this way.
+    passes neither a username nor a password, and ``_url`` renders a URL with no
+    ``user@`` part. It is the only endpoint builder that leaves out the
+    username as well as the password.
+
+    The username has to be absent, not just unchecked. ``ydb-sqlalchemy`` passes
+    a URL's username to ``ydb_dbapi.connect`` as a ``username`` keyword. Up to
+    ``ydb-dbapi`` 0.1.22 that keyword was stored and never read (#62), so this
+    builder used to carry ``root`` and the connection was anonymous anyway.
+    0.1.24 rejects any keyword it does not know, so a URL with a username fails
+    the handshake with ``Unknown connection option(s): username``. Credentials
+    for YDB go in a ``credentials`` connect argument instead.
 
     **The port is not offset.** Every other service here publishes on a port well
     away from its engine's default so that a locally-installed copy cannot be
@@ -692,7 +700,7 @@ def _ydb(env: dict[str, str], port: int) -> str:
     """
     return _url(
         "yql+ydb",
-        username="root",
+        username=None,
         password=None,
         port=port,
         database="local",

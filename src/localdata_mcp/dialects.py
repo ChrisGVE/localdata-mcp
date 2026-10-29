@@ -2051,17 +2051,18 @@ class YDBBackend(Backend):
     **A table must declare a primary key** — see :meth:`requires_primary_key`,
     the one axis this backend adds.
 
-    **There is no rollback to be had.** Not because YDB lacks transactions: it
-    has them, the driver exposes them, and they work when driven directly. The
-    client library binds a cursor's transaction context *at cursor construction*,
-    and SQLAlchemy constructs the cursor before it opens the transaction — so
-    every statement runs in implicit autocommit and the transaction opened a
-    moment later is empty. ``rollback()`` then rolls that empty transaction back
-    and **returns normally**, reporting success over a write that stands. This is
-    a defect in ``ydb-dbapi`` rather than in YDB, it is unreachable from here, and
-    it is why :meth:`read_posture` refuses rather than relying on the
-    transactional floor. See docs/CONSTRAINTS.md §22.2 for the ordering
-    measurement that located it.
+    **Up to ``ydb-dbapi`` 0.1.22 there was no rollback to be had.** Not because
+    YDB lacks transactions: it has them, the driver exposes them, and they work
+    when driven directly. That client library bound a cursor's transaction
+    context *at cursor construction*, and SQLAlchemy constructs the cursor before
+    it opens the transaction — so every statement ran in implicit autocommit and
+    the transaction opened a moment later was empty. ``rollback()`` then rolled
+    that empty transaction back and **returned normally**, reporting success over
+    a write that stands. 0.1.24 reads the transaction from the connection at
+    execute time instead, and an uncommitted write is now rolled back, measured
+    (#61, docs/CONSTRAINTS.md §22.2). Nothing in this project requires 0.1.24,
+    though, so :meth:`read_posture` still refuses rather than relying on the
+    transactional floor. Refusing is the stronger guarantee in any case.
 
     **It has no time-of-day type**, which is Oracle's gap arrived at
     independently — see :meth:`unstorable_column_types`.
@@ -2077,14 +2078,16 @@ class YDBBackend(Backend):
     name: str = "ydb"
 
     def read_posture(self, engine: Engine, refusal: Refusal) -> None:
-        """Refuse the write outright, because there is no rollback underneath.
+        """Refuse the write outright, rather than trust a rollback underneath.
 
         The generic guarantee is that a read connection never commits, so
-        anything it changed is rolled back. Here that guarantee is not weakened
-        but **absent**: an ``INSERT`` sent through a read connection was applied,
-        survived an explicit ``rollback()`` that raised nothing, and was still
-        there on the next connection — measured three ways (close without commit,
-        explicit rollback, aborted ``begin()`` block), all three the same.
+        anything it changed is rolled back. With ``ydb-dbapi`` 0.1.22 that
+        guarantee was not weakened but **absent**: an ``INSERT`` sent through a
+        read connection was applied, survived an explicit ``rollback()`` that
+        raised nothing, and was still there on the next connection (#61). 0.1.24
+        fixes the driver, measured. The posture stays because the ``ydb`` extra
+        does not require 0.1.24, and because refusing a write is a stronger
+        guarantee than undoing it.
 
         Trino's remedy was tried first and does not work here. There, naming a
         real isolation level takes the driver out of autocommit and the floor
