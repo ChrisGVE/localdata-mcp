@@ -655,7 +655,9 @@ Both start the server with `uvx localdata-mcp`. If `localdata-mcp` is already
 installed as a tool, uvx runs that installation instead of fetching the package,
 so `uv tool install 'localdata-mcp[all]'` beforehand is how the plugin gets every
 format and every database driver — the bare package uvx would fetch otherwise
-reaches nine of the seventeen formats and one of the seventeen backends.
+reaches nine of the seventeen formats and one of the seventeen backends. The note
+at the top of this page applies here too: until 3.0.0 is tagged, what uvx fetches
+is 2.0.0.
 
 ### Without the plugin
 
