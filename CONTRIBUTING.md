@@ -61,8 +61,8 @@ they skip, which is worse, because the run still reports green.
 .venv/bin/python -m pytest -q -m 'not slow'
 ```
 
-At the time of writing that is `764 passed, 480 skipped, 5 deselected`, measured
-at 109 s on this machine. **Every one of the 480 skips is an endpoint test with no
+At the time of writing that is `774 passed, 480 skipped, 5 deselected`, measured
+at 64 s on this machine. **Every one of the 480 skips is an endpoint test with no
 container listening**, and each names the command that would start one — see
 "Endpoint tests" below.
 
@@ -126,7 +126,7 @@ localdata-mcp/
 ├── README.md                     # The product documentation
 ├── CHANGELOG.md                  # Keep a Changelog format
 ├── CONTRIBUTING.md               # This file
-├── docker-compose.test.yml       # 22 services for the endpoint suite: one per endpoint,
+├── docker-compose.test.yml       # 21 services for the endpoint suite: one per endpoint,
 │                                 #   plus the auth-axis variants and two helpers
 ├── Dockerfile                    # 2.x's, and broken — see .github/WORKFLOWS.md
 ├── docker-compose.yml            # 2.x's development stack, likewise
