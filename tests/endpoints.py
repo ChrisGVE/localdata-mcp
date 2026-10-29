@@ -155,7 +155,7 @@ class AuthMode:
     Every endpoint above is addressed one way: a username and a password in the
     URL, in plaintext, over TCP to the loopback interface. That is one code path
     out of several a real caller uses, and the others had never run — which is
-    what task 23 is about.
+    what this class exists to change.
 
     **A mode varies the addressing, never the database.** It is not a new
     :class:`Endpoint`, and deliberately so: an ``Endpoint`` is identified by its
@@ -573,8 +573,8 @@ def _cratedb(env: dict[str, str], port: int) -> str:
 
     ``crate`` with **no password**: a fresh node has no users configured and its
     HTTP endpoint accepts any client. This is the fifth no-auth endpoint here,
-    after CockroachDB, YugabyteDB, Trino and MonetDB — which is why task 23's
-    first item keeps being covered by accident.
+    after CockroachDB, YugabyteDB, Trino and MonetDB — which is why the
+    no-password case keeps being covered by accident.
 
     No database component at all. CrateDB has no databases to choose between;
     tables live in schemas, and an unqualified name lands in ``doc``.
