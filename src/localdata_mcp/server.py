@@ -86,7 +86,7 @@ mcp = FastMCP(
         ".txt are one format here, and no suffix carries a separator, so "
         "delimiter is required on every call that reads or writes one — "
         "attach(database='sales.csv', delimiter=','), create(..., "
-        "delimiter=';'), query(..., path='out.csv', delimiter=','), save. "
+        "delimiter=';'), query(..., path='out.csv', delimiter=','). "
         "Without it the call is refused rather than guessed at, because a file "
         "called .csv is as likely to be separated by ';' or '|' or a tab, and "
         "reading it at the wrong one changes what the data is while the answer "

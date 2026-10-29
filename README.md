@@ -486,7 +486,8 @@ answer belongs to whoever wrote the file, it reports and carries on.
   **Both directions require it**, and that is not decoration: while the suffix
   supplied the separator it supplied it to reader and writer alike, so a file
   this server wrote was one it could read back. Required on the way in only,
-  that property would be gone and `save`-then-`attach` would stop round-tripping.
+  that property would be gone and `query(path=…)`-then-`attach` would stop
+  round-tripping.
   What still differs is the *inapplicable* case — a suffix with no separator at
   all. On the way in, `attach` and `create` **refuse** a `delimiter` there,
   because the caller has misread the file. On the way out, `query(path=…)`
