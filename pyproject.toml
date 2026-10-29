@@ -112,14 +112,12 @@ trino = ["trino[sqlalchemy]>=0.330"]
 # requires and which is the actively maintained half (1.9.1, 2026-07), is a DB-API
 # driver and registers no dialect of its own.
 #
-# The upper-bounded `setuptools` is a *defect in the dialect*, carried here
-# because the alternative is that it cannot be imported at all. Its package
-# `__init__` imports `pkg_resources` — only to read its own version — and declares
-# no dependency that would provide it. `pkg_resources` shipped inside setuptools
-# until **82.0.0**, which removed it, so the bound is measured rather than
-# guessed. This is the only version ceiling in this file; see
-# docs/CONSTRAINTS.md §18.1 before relaxing it.
-monetdb = ["sqlalchemy-monetdb>=2.0", "setuptools<82"]
+# The floor is 2.1 because 2.0.0's package `__init__` imported `pkg_resources`,
+# only to read its own version, without declaring the `setuptools` that provides
+# it. That forced a `setuptools<82` ceiling here. 2.1.0 hard-codes the version
+# string and imports nothing outside SQLAlchemy, so the ceiling is gone. See
+# docs/CONSTRAINTS.md §18.1.
+monetdb = ["sqlalchemy-monetdb>=2.1"]
 # Crate.io's own dialect, and it brings its own driver: `crate` speaks CrateDB's
 # HTTP endpoint on 4200 rather than the PostgreSQL wire the same server also
 # offers on 5432, so no PostgreSQL driver is involved and none is pulled in.

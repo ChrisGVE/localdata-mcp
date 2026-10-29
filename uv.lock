@@ -1564,7 +1564,6 @@ all = [
     { name = "pymysql" },
     { name = "pyodbc" },
     { name = "pyyaml" },
-    { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
     { name = "sqlalchemy-cratedb" },
     { name = "sqlalchemy-exasol" },
@@ -1596,7 +1595,6 @@ databases = [
     { name = "psycopg2-binary" },
     { name = "pymysql" },
     { name = "pyodbc" },
-    { name = "setuptools" },
     { name = "sqlalchemy-cockroachdb" },
     { name = "sqlalchemy-cratedb" },
     { name = "sqlalchemy-exasol" },
@@ -1636,7 +1634,6 @@ markdown = [
     { name = "tabulate" },
 ]
 monetdb = [
-    { name = "setuptools" },
     { name = "sqlalchemy-monetdb" },
 ]
 mssql = [
@@ -1700,13 +1697,12 @@ requires-dist = [
     { name = "pyodbc", marker = "extra == 'mssql'", specifier = ">=5.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6.0" },
-    { name = "setuptools", marker = "extra == 'monetdb'", specifier = "<82" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlalchemy-cockroachdb", marker = "extra == 'cockroachdb'", specifier = ">=2.0.4" },
     { name = "sqlalchemy-cratedb", marker = "extra == 'cratedb'", specifier = ">=0.44" },
     { name = "sqlalchemy-exasol", marker = "extra == 'exasol'", specifier = ">=7.1" },
     { name = "sqlalchemy-firebirdsql", marker = "extra == 'firebird'", specifier = ">=0.1" },
-    { name = "sqlalchemy-monetdb", marker = "extra == 'monetdb'", specifier = ">=2.0" },
+    { name = "sqlalchemy-monetdb", marker = "extra == 'monetdb'", specifier = ">=2.1" },
     { name = "tabulate", marker = "extra == 'markdown'", specifier = ">=0.9" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "trino", extras = ["sqlalchemy"], marker = "extra == 'trino'", specifier = ">=0.330" },
@@ -3674,15 +3670,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/3e/25/2157b92a67d87bb9b
 
 [[package]]
 name = "sqlalchemy-monetdb"
-version = "2.0.0"
+version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pymonetdb" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2c/ec/25339826232a864f3b5ef447fef5bca9edeb56eac8d7665dc601dd5fb506/sqlalchemy_monetdb-2.0.0.tar.gz", hash = "sha256:0a0e9ebfb4ab5b2a748a92f2a536aa88c77384b84d573c4c9035b05c5b6a32eb", size = 28372, upload-time = "2024-09-17T09:26:23.017Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/bc/feeb96d7cf9bf1bf06a3368976cab3a4766051f4df14a034c5520c27bd0a/sqlalchemy_monetdb-2.1.0.tar.gz", hash = "sha256:48596a4d1db388293db9e93c42fa838ce9814031b59687f7bb80559c4ca602b7", size = 30941, upload-time = "2026-08-27T14:48:20.124Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/79/6dee44f561eca80699741ce8ed1aac0899f0b645622f7b794a927dc1ddba/sqlalchemy_monetdb-2.0.0-py2.py3-none-any.whl", hash = "sha256:3fcd816fb596c8ffa1ea9970ca98c084dcb1ed27de75d760192bc44f52607d9c", size = 30190, upload-time = "2024-09-17T09:26:21.817Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/2c/de4326aa90e641437f6adb5417410eafca9589a845934d56b86a1de6d1a7/sqlalchemy_monetdb-2.1.0-py3-none-any.whl", hash = "sha256:026b0c4d4e030708a5bfd5d162c262cd39da1a3e31c476d8c24a0060abb2748b", size = 27782, upload-time = "2026-08-27T14:48:18.917Z" },
 ]
 
 [[package]]

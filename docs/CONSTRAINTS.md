@@ -2852,6 +2852,31 @@ is in the `databases` aggregate it is inherited by `localdata-mcp[databases]` an
 it, because 80.10.2 warns too. The upstream fix is one line of `importlib.metadata`, stdlib since
 3.8.
 
+> **Amended 2026-10-29 — `sqlalchemy-monetdb` 2.1.0 no longer imports `pkg_resources`, and the
+> ceiling is gone.** 2.1.0's `__init__` sets `__version__ = '2.1.0'` as a literal and imports nothing
+> but `sqlalchemy`. MonetDB/sqlalchemy-monetdb#61 is still open upstream, but the release no longer
+> has the defect. Measured in two fresh virtual environments holding only the dialect and SQLAlchemy
+> 2.0.51, with no `setuptools` and no `pkg_resources` present, resolving the dialect through
+> SQLAlchemy's own entry point under `python -I -W error`:
+>
+> | `sqlalchemy-monetdb` | result |
+> |---|---|
+> | 2.0.0 | `ModuleNotFoundError: No module named 'pkg_resources'` |
+> | 2.1.0 | `sqlalchemy_monetdb.dialect.MonetDialect` loads; `__version__ = 2.1.0`; no warning |
+>
+> The same holds in this project's own environment, against `monetdb/monetdb:latest`. With 2.1.0 and
+> `setuptools` uninstalled from `.venv`, the 20 MonetDB endpoint tests pass. Putting 2.0.0 back into
+> that same environment makes all 20 error at setup, so the run above was a real check, not a
+> vacuous one. With the lock as committed (`setuptools` 81.0.0 present for other reasons), they pass
+> under `-W error::UserWarning`, so the per-session deprecation warning is gone too.
+>
+> So the `monetdb` extra is now `sqlalchemy-monetdb>=2.1` with no `setuptools` entry.
+> `pyproject.toml` has no version ceiling left, and `localdata-mcp[databases]` and
+> `localdata-mcp[all]` no longer inherit one. `setuptools` is still in `uv.lock` at 81.0.0, but now
+> only because `numbers-parser` and its `compact-json` dependency require it unbounded. The lock kept
+> the version it already had; this change did not move it. §26's comparison of `cx_Oracle` with "the
+> `setuptools<82` ceiling MonetDB costs this project" describes the state before this amendment.
+
 **Eligibility was never in question.** An open-source SQLAlchemy adapter exists, published under the
 vendor's own `github.com/MonetDB` organisation and MIT-licensed, so MonetDB is eligible under the
 §13 rule. Adapter quality is a cost to record. This is what the cost turned out to be.
