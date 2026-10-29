@@ -121,7 +121,9 @@ rebuild it.
   carried it to reader and writer alike, so a file this server wrote was one it
   could read back, and requiring it on one side only would have ended that.
   Handed to a format that has no separator it is still refused on the way in
-  and ignored on the way out.
+  and ignored on the way out. Nothing sniffs: a semicolon-separated file
+  declared as `,` loads as one column, and the warning says so and names the
+  parameter rather than re-reading at a guessed separator.
 - **Seventeen file formats read** (`.csv` `.tsv` `.txt` `.json` `.jsonl`
   `.ndjson` `.xml` `.yaml` `.yml` `.xlsx` `.xlsm` `.xls` `.ods` `.numbers`
   `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less
@@ -200,9 +202,6 @@ rebuild it.
   source deriving the same nickname gets a numeric suffix, and `collided_with`
   names the slot and source that forced it. The same source attached twice is
   refused outright, naming where it already lives.
-- **A `delimiter` parameter on `attach`, `create` and `query`.** Nothing sniffs:
-  a semicolon-separated file read at `,` loads as one column, and the warning says
-  so and names the parameter rather than re-reading at a guessed separator.
 - **Path confinement** to the working directory and configured roots, with
   symlinks and `..` resolved before the check. Network URLs are refused until
   `network.enabled = true`, and the refusal masks the password.
