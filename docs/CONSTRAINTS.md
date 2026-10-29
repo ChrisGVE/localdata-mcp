@@ -3307,6 +3307,14 @@ and `ORDER BY` is long-standing Firebird engine behaviour rather than something 
 introduces. The choice that produced the corruption was **ours** — `_PORTABLE_TYPES` reaching for
 `Text` — and the fix is the sized `VARCHAR` above. A report would have been a non-bug report.
 
+> **Amended 2026-10-29 — re-checked under `sqlalchemy-firebirdsql` 0.3.0, and unchanged.** The same
+> five rows in Core `Text` columns against `firebirdsql/firebird:5`, nothing of this server's in the
+> path: 0.3.0 still compiles `Text` to `BLOB SUB_TYPE TEXT`, and `GROUP BY department` still returns
+> five groups with engineering split into 75000 and 80000, `DISTINCT` returns 5 rows for 4 values, and
+> `ORDER BY` returns `['engineering', 'sales', 'marketing', 'engineering', 'hr']`. That is what the
+> paragraph above predicts: the behaviour belongs to the engine's BLOB, and no dialect release can
+> change it. The sized `VARCHAR` in `FirebirdBackend.column_type` stays.
+
 ### 20.4 The dialect cannot spell a 64-bit float (issue #55)
 
 `_PORTABLE_TYPES` maps a loaded float64 column to Core's `Double`, which both Firebird dialects render
@@ -3335,6 +3343,30 @@ Reported upstream **on both ports**, because the table above shows the fault is 
 lineage they share rather than in either one:
 [fdcastel/sqlalchemy-firebird#93](https://github.com/fdcastel/sqlalchemy-firebird/issues/93) and
 [nakagami/sqlalchemy_firebirdsql#1](https://github.com/nakagami/sqlalchemy_firebirdsql/issues/1).
+
+> **Amended 2026-10-29 — fixed upstream in `sqlalchemy-firebirdsql` 0.3.0, and the respelling stays
+> anyway.** nakagami/sqlalchemy_firebirdsql#1 is closed, and 0.3.0 adds `visit_DOUBLE`, `visit_double`
+> and `visit_DOUBLE_PRECISION`, all three returning `DOUBLE PRECISION`. Measured with Core's `Double`
+> and nothing of this server's in the path:
+>
+> | | 0.1.0 (`firebirdsql` 1.4.6) | 0.3.0 (`firebirdsql` 1.5.0) |
+> |---|---|---|
+> | `Double` compiles to | `v DOUBLE` | `v DOUBLE PRECISION` |
+> | `CREATE TABLE` | `-104 Token unknown`, no table | accepted |
+> | `0.1` reads back as | — | `0.1` (`float`) |
+>
+> The `column_type` override for `REAL` is **not** removed. 0.2.0 and 0.3.0 both declare
+> `requires-python >=3.11`, and this project's floor is 3.10, so `uv lock` forks: Python 3.11 and later
+> get 0.3.0 with `firebirdsql` 1.5.0, while Python 3.10 keeps 0.1.0 with `firebirdsql` 1.4.6, which
+> still renders bare `DOUBLE`. On 0.3.0 the override asks for the type the dialect would have chosen
+> anyway. It can go when the Python floor reaches 3.11 and the `firebird` extra can say `>=0.3`.
+> The Firebird endpoint tests pass on 0.3.0 (20 passed).
+>
+> **The endpoint suite cannot tell whether this respelling is needed.** Deleting the `REAL` branch
+> and running the Firebird endpoint tests on **0.1.0** also gives 20 passed, because no endpoint
+> fixture loads a float column: `PEOPLE` holds text and integers only. On a live server, the evidence
+> for this section is the measurement in this amendment, not the suite. `tests/test_dialects.py` covers the mapping, but
+> only at compile time.
 
 ### 20.5 There is no way to rename a table
 

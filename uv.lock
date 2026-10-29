@@ -1055,7 +1055,27 @@ wheels = [
 name = "firebirdsql"
 version = "1.4.6"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
 sdist = { url = "https://files.pythonhosted.org/packages/27/ff/830819697518a9b0208d164e5340cffb69d0e54b689404a76bfb584923b3/firebirdsql-1.4.6.tar.gz", hash = "sha256:91a333dc9f026d20aae36c95952340de27d3dc8d25c5502af1ca92b7d193e59f", size = 94972, upload-time = "2026-05-02T02:31:07.797Z" }
+
+[[package]]
+name = "firebirdsql"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1e/8c/e8e8407ad66e08a0640bdf748c70041ca6ad4cb05c4c76e0a0d14eb17aaa/firebirdsql-1.5.0.tar.gz", hash = "sha256:9abab2db8d87672b9a92ea2636f48c84c5ae76628621c86e085fadf3fd155f91", size = 118383, upload-time = "2026-10-25T03:04:09.198Z" }
 
 [[package]]
 name = "frozenlist"
@@ -1548,7 +1568,8 @@ all = [
     { name = "sqlalchemy-cockroachdb" },
     { name = "sqlalchemy-cratedb" },
     { name = "sqlalchemy-exasol" },
-    { name = "sqlalchemy-firebirdsql" },
+    { name = "sqlalchemy-firebirdsql", version = "0.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "sqlalchemy-firebirdsql", version = "0.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sqlalchemy-monetdb" },
     { name = "tabulate" },
     { name = "trino", extra = ["sqlalchemy"] },
@@ -1579,7 +1600,8 @@ databases = [
     { name = "sqlalchemy-cockroachdb" },
     { name = "sqlalchemy-cratedb" },
     { name = "sqlalchemy-exasol" },
-    { name = "sqlalchemy-firebirdsql" },
+    { name = "sqlalchemy-firebirdsql", version = "0.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "sqlalchemy-firebirdsql", version = "0.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sqlalchemy-monetdb" },
     { name = "trino", extra = ["sqlalchemy"] },
     { name = "ydb-sqlalchemy" },
@@ -1598,7 +1620,8 @@ excel = [
     { name = "openpyxl" },
 ]
 firebird = [
-    { name = "sqlalchemy-firebirdsql" },
+    { name = "sqlalchemy-firebirdsql", version = "0.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "sqlalchemy-firebirdsql", version = "0.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 formats = [
     { name = "numbers-parser" },
@@ -3619,11 +3642,35 @@ wheels = [
 name = "sqlalchemy-firebirdsql"
 version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
 dependencies = [
-    { name = "firebirdsql" },
+    { name = "firebirdsql", version = "1.4.6", source = { registry = "https://pypi.org/simple" } },
     { name = "sqlalchemy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fa/1b/8bdd43a0dd8473501951f4e2be2286ff19f3f5329c47d348f81468a2c3ab/sqlalchemy_firebirdsql-0.1.0.tar.gz", hash = "sha256:f111817b080037b1f902b89c1b06a9e9cc0e84443869bacd8aa7ada58df07d1c", size = 53861, upload-time = "2026-05-23T01:03:39.766Z" }
+
+[[package]]
+name = "sqlalchemy-firebirdsql"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "firebirdsql", version = "1.5.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3e/25/2157b92a67d87bb9b9144bfc36f96184a4150b5c6a76238dba2be12ed0d9/sqlalchemy_firebirdsql-0.3.0.tar.gz", hash = "sha256:81e57464f6024e20ed1aace6dfd651b570a766ff3a1392d5a2295fd2513bb0fd", size = 55737, upload-time = "2026-10-25T10:17:17.014Z" }
 
 [[package]]
 name = "sqlalchemy-monetdb"

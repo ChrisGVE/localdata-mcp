@@ -139,8 +139,10 @@ cratedb = ["sqlalchemy-cratedb>=0.44"]
 # `sqlalchemy-firebirdsql` rides on `firebirdsql` instead, which speaks the wire
 # protocol in pure Python and needs no native library at all. It is not a shim:
 # it is the same dialect base, ported, co-authored by `sqlalchemy-firebird`'s
-# author and maintained by the driver's. Younger, though — 0.1.0, sdist only —
-# and that is the cost this choice carries. See docs/CONSTRAINTS.md §20.1.
+# author and maintained by the driver's. Younger, though — sdist only — and that
+# is the cost this choice carries. See docs/CONSTRAINTS.md §20.1. Its 0.2 and 0.3
+# releases require Python 3.11, so the lock resolves 0.3 on 3.11 and later and
+# keeps 0.1 on 3.10; FirebirdBackend.column_type covers the difference (§20.4).
 #
 # The driver is not named here: the dialect requires it, and naming it again
 # would let the two drift.

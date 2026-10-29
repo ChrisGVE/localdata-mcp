@@ -1863,9 +1863,10 @@ class FirebirdBackend(Backend):
     statement exists, in any Firebird version. See :meth:`renames_tables`.
 
     **Neither portable type a loaded file needs is usable as rendered** (#55, #56).
-    Core's ``Double`` becomes bare ``DOUBLE``, which Firebird's parser rejects
-    outright; Core's ``Text`` becomes ``BLOB``, which is accepted and then groups
-    by identity rather than by value. See :meth:`column_type` for both.
+    Core's ``Double`` becomes bare ``DOUBLE`` before ``sqlalchemy-firebirdsql``
+    0.3.0, which Firebird's parser rejects outright; Core's ``Text`` becomes
+    ``BLOB`` in every version, which is accepted and then groups by identity
+    rather than by value. See :meth:`column_type` for both.
 
     Everything else is generic and was measured to be: the transactional floor
     holds for rows and for schema alike, a quoted mixed-case name survives,
@@ -1933,13 +1934,22 @@ class FirebirdBackend(Backend):
         """Two of the three portable types have to be respelled here.
 
         ``REAL`` → **``DOUBLE PRECISION``** (#55). Core's ``Double`` is the
-        portable 64-bit float and every other backend renders it usably. Both
-        Firebird dialects render it ``DOUBLE``, a keyword Firebird does not have —
-        the parser waits for ``PRECISION`` and fails on whatever follows, so the
-        ``CREATE TABLE`` dies with ``-104 Token unknown`` and no table is made.
+        portable 64-bit float and every other backend renders it usably.
+        ``sqlalchemy-firebirdsql`` 0.1.0 and ``sqlalchemy-firebird`` 2.2.0 both
+        render it ``DOUBLE``, a keyword Firebird does not have — the parser waits
+        for ``PRECISION`` and fails on whatever follows, so the ``CREATE TABLE``
+        dies with ``-104 Token unknown`` and no table is made.
         ``DOUBLE_PRECISION`` holds a float64 exactly: ``0.1`` reads back as
         ``0.1``. ``Float(53)`` lands in the same column and was rejected in favour
         of this — both work, and only one says what it means.
+
+        ``sqlalchemy-firebirdsql`` 0.3.0 fixed the spelling upstream, measured:
+        ``Double`` now renders ``DOUBLE PRECISION`` and ``0.1`` round-trips. The
+        respelling stays all the same, because 0.3.0 requires Python 3.11 and
+        this project supports 3.10, where the resolver still installs 0.1.0. On
+        0.3.0 it asks for the type the dialect would have chosen anyway, so it
+        costs nothing there. Delete it when the Python floor reaches 3.11 and
+        the ``firebird`` extra's floor can say ``>=0.3``.
 
         ``TEXT`` → **``VARCHAR`` sized from the data** (#56), and this is the
         dangerous one, because nothing fails. Core's ``Text`` renders ``BLOB``,
