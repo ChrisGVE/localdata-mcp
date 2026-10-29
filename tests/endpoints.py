@@ -249,7 +249,7 @@ class Target:
 
         The endpoint's own builder returns a bare URL and needs no scratch
         directory, so it is lifted into a :class:`Reached` here rather than every
-        one of the sixteen builders being rewritten to return one. A mode that
+        one of the fifteen builders being rewritten to return one. A mode that
         needed nothing but a URL would look identical from outside.
         """
         if self.auth is None:
@@ -699,36 +699,6 @@ def _ydb(env: dict[str, str], port: int) -> str:
     )
 
 
-def _databend(env: dict[str, str], port: int) -> str:
-    """Databend over its own HTTP query handler, with a credential.
-
-    The dialect and the driver are both called ``databend`` and so is the engine,
-    which after YugabyteDB, Firebird and YDB is worth stating rather than passing
-    over: this is the first endpoint in a while that needs no ``engine=``
-    override, because the database ships its own dialect and named it after
-    itself.
-
-    ``default`` is the database the image creates, and ``sslmode=disable`` is
-    required rather than tidy — the driver defaults to TLS and this container
-    serves plaintext, so without it the handshake fails.
-
-    The credentials are the container's, read from its environment like every
-    other builder's. What is specific here is that the image needs **both**
-    variables to make a user at all: given only one, its entrypoint writes a
-    passwordless ``root`` instead and the user this URL names does not exist. So
-    a missing password is not a weaker endpoint, it is a *different* one, and
-    that is why the compose entry sets the pair together.
-    """
-    return _url(
-        "databend",
-        username=env["QUERY_DEFAULT_USER"],
-        password=env["QUERY_DEFAULT_PASSWORD"],
-        port=port,
-        database="default",
-        query={"sslmode": "disable"},
-    )
-
-
 def _exasol(env: dict[str, str], port: int) -> str:
     """Exasol over its WebSocket protocol, as a user its healthcheck made.
 
@@ -755,9 +725,7 @@ def _exasol(env: dict[str, str], port: int) -> str:
     with ``CERTIFICATE_VERIFY_FAILED: self-signed certificate``. The dialect maps
     this query parameter onto its ``certificate_validation`` argument; the other
     accepted spelling, ``FINGERPRINT``, pins the certificate instead and would
-    make the URL depend on a value the container regenerates. Databend's
-    ``sslmode=disable`` is the same shape of concession made for the opposite
-    reason — there the server offers no TLS, here it offers nothing else.
+    make the URL depend on a value the container regenerates.
     """
     return _url(
         "exa+websocket",
@@ -1460,19 +1428,6 @@ ENDPOINTS = (
         extra="ydb",
         url=_ydb,
         engine="ydb",
-    ),
-    # No `engine` override, and the entry after three consecutive ones that
-    # needed it: `databend-sqlalchemy` registers `databend`, calls itself
-    # `databend`, names its driver `databend` and answers for Databend. Measured
-    # (`dialect.name`, `dialect.driver`) rather than read off the entry points,
-    # because that is exactly the reading that got YDB wrong.
-    Endpoint(
-        dialect="databend",
-        service="localdata-test-databend",
-        container_port=8000,
-        driver="databend_sqlalchemy",
-        extra="databend",
-        url=_databend,
     ),
     # `engine` differs from `dialect` for the fourth time, and this one is
     # narrower than the three before it: not another engine's dialect, not a

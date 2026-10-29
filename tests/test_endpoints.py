@@ -277,7 +277,7 @@ def test_the_backend_is_chosen_by_the_engine_answering_not_by_its_dialect(live):
     asked the backend what it thought it was. This asks.
 
     Meaningful for every entry and not only the one that shares: the resolution
-    must leave the eight that own their dialect exactly where they were.
+    must leave every endpoint that owns its dialect exactly where it was.
     """
     assert backend_for_url(live.url).name == live.endpoint.engine_name
 
