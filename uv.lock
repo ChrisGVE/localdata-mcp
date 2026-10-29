@@ -1573,6 +1573,7 @@ all = [
     { name = "tabulate" },
     { name = "trino", extra = ["sqlalchemy"] },
     { name = "xlrd" },
+    { name = "ydb-dbapi" },
     { name = "ydb-sqlalchemy" },
 ]
 clickhouse = [
@@ -1602,6 +1603,7 @@ databases = [
     { name = "sqlalchemy-firebirdsql", version = "0.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sqlalchemy-monetdb" },
     { name = "trino", extra = ["sqlalchemy"] },
+    { name = "ydb-dbapi" },
     { name = "ydb-sqlalchemy" },
 ]
 dev = [
@@ -1671,6 +1673,7 @@ yaml = [
     { name = "pyyaml" },
 ]
 ydb = [
+    { name = "ydb-dbapi" },
     { name = "ydb-sqlalchemy" },
 ]
 
@@ -1707,6 +1710,7 @@ requires-dist = [
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "trino", extras = ["sqlalchemy"], marker = "extra == 'trino'", specifier = ">=0.330" },
     { name = "xlrd", marker = "extra == 'xls'", specifier = ">=2.0" },
+    { name = "ydb-dbapi", marker = "extra == 'ydb'", specifier = ">=0.1.24" },
     { name = "ydb-sqlalchemy", marker = "extra == 'ydb'", specifier = ">=0.1.22" },
 ]
 provides-extras = ["dev", "yaml", "markdown", "excel", "xls", "ods", "numbers", "parquet", "duckdb", "postgres", "mysql", "mssql", "oracle", "clickhouse", "cockroachdb", "trino", "monetdb", "cratedb", "firebird", "opengauss", "ydb", "exasol", "formats", "databases", "all"]

@@ -172,9 +172,12 @@ opengauss = ["opengauss-sqlalchemy>=2.4", "psycopg2-binary>=2.9"]
 # which is the third distinct way a dialect name has failed to be an identity in
 # this project. See docs/CONSTRAINTS.md §22.1.
 #
-# Neither `ydb` nor `ydb-dbapi` is named here: the dialect requires both, and
-# naming them again would let the three drift.
-ydb = ["ydb-sqlalchemy>=0.1.22"]
+# `ydb` is not named here: the dialect requires it, and naming it again would let
+# the two drift. `ydb-dbapi` IS named, as a floor only: before 0.1.24 the driver
+# silently discarded connect keywords it did not know, so a URL carrying a user
+# and password connected anonymously without a word (docs/CONSTRAINTS.md §22.1,
+# amended 2026-10-29). A floor that refuses that silence is worth the drift risk.
+ydb = ["ydb-sqlalchemy>=0.1.22", "ydb-dbapi>=0.1.24"]
 # Exasol, through Exasol's own dialect on Exasol's own driver — the first entry
 # here where the adapter, the driver and the database all come from one vendor,
 # so there is no rival dialect to weigh it against, and neither package can be
