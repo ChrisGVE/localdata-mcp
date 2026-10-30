@@ -66,7 +66,7 @@ from uuid import UUID
 
 from fastmcp import FastMCP
 
-from . import config
+from . import binding, config, temporal
 from .credentials import mask_credentials
 from .export import ExportError, export_rows
 from .loader import ColumnProfile, IndexInfo, TableInfo
@@ -273,11 +273,24 @@ def _wire_value(value: Any) -> Any:
 
 
 def _column_payload(column: Any) -> dict[str, Any]:
+    """One column as ``attach`` and ``directory`` describe it.
+
+    ``temporal`` is said one of two ways, by how the column is stored. A column
+    of integer ticks names its kind and what one tick counts —
+    ``nanoseconds_since_epoch`` only for an instant, plain ``nanoseconds`` for a
+    duration, ``nanoseconds_since_midnight`` for a time of day
+    (:data:`binding.TICK_UNITS`, #109). A column of canonical text names its
+    standard, and an instant adds that it was normalised to UTC; a time of day
+    has no offset to normalise and says nothing more.
+    """
     return {
         "name": column.name,
         "type": column.declared_type,
         **(
-            {"temporal": column.temporal_kind, "unit": "nanoseconds_since_epoch"}
+            {
+                "temporal": column.temporal_kind,
+                "unit": binding.TICK_UNITS[column.temporal_kind],
+            }
             if column.temporal_kind
             else {}
         ),
@@ -297,6 +310,8 @@ def _column_payload(column: Any) -> dict[str, Any]:
         # chronologically" from "nothing is known about this column".
         **(
             {"temporal": column.temporal_standard, "normalized": "UTC"}
+            if column.temporal_standard == temporal.ISO8601_UTC
+            else {"temporal": column.temporal_standard}
             if column.temporal_standard
             else {}
         ),
@@ -742,8 +757,8 @@ def stats(
     in ``directory`` looking perfectly ordinary.
 
     Every column reports ``nulls`` and ``non_nulls``. A numeric column also
-    reports ``min``, ``max`` and ``avg``, and a date column normalised to ISO
-    8601 reports ``min`` and ``max``. ``median`` and ``stddev`` appear only where
+    reports ``min``, ``max`` and ``avg``, and a date or time-of-day column held
+    as canonical ISO 8601 text reports ``min`` and ``max``. ``median`` and ``stddev`` appear only where
     this server declares them for that backend, which defaults to none — nothing
     here approximates a statistic it was not told about, so their absence is a
     fact about the datasource rather than about the column. Measured so far:

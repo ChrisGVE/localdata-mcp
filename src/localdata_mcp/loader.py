@@ -194,8 +194,10 @@ _DML_SURVIVED = (
 class ColumnInfo:
     name: str
     declared_type: str
-    #: ``"timestamp"`` / ``"duration"`` when the column holds integer ticks whose
-    #: meaning is not recoverable from the value alone, otherwise ``None``.
+    #: ``"timestamp"`` / ``"duration"`` / ``"time_of_day"`` when the column holds
+    #: integer ticks whose meaning is not recoverable from the value alone,
+    #: otherwise ``None``. What each kind's ticks count is
+    #: :data:`binding.TICK_UNITS`.
     temporal_kind: str | None = None
     #: Storage classes actually present, as ``{"integer": 120, "text": 3}``.
     #: Measured with a GROUP BY after the load rather than predicted from dtypes.
@@ -209,8 +211,10 @@ class ColumnInfo:
     #: the filter without first going to look. See :func:`_numeric_split`.
     non_numeric_examples: tuple[str, ...] = ()
     #: ``"iso8601_utc"`` for a date column held in the one canonical spelling,
-    #: whose comparisons are therefore chronological. ``None`` for everything
-    #: else, including a date column in no standard — see below.
+    #: and ``"iso8601_time"`` for a time-of-day column in its canonical
+    #: spelling — both columns whose comparisons are therefore chronological
+    #: (:func:`temporal.standard_of`). ``None`` for everything else, including
+    #: a date column in no standard — see below.
     temporal_standard: str | None = None
     #: Values from a column that reads as dates but is not in a standard this
     #: server recognises, so it is compared as text. Non-empty means ``ORDER
@@ -806,9 +810,8 @@ def measure_frame(frame: pd.DataFrame) -> tuple[ColumnMeasurement, ...]:
         dates: tuple[str, ...] = ()
         standard: str | None = None
         if declared == "TEXT":
-            if temporal.is_standard(series):
-                standard = "iso8601_utc"
-            else:
+            standard = temporal.standard_of(series)
+            if standard is None:
                 numeric, non_numeric, examples = _numeric_split(series)
                 dates = temporal.unparsed_temporal_examples(series)
         measured.append(
@@ -867,11 +870,12 @@ class _ColumnScan:
         self._had_values = False
         self._rows = 0
         self._longest = 0
-        # Three all-or-nothing temporal questions. Each stops being asked as
+        # Four all-or-nothing temporal questions. Each stops being asked as
         # soon as a chunk answers no, because no later chunk can answer yes.
         self._canonical_throughout = True
         self._parses_throughout = True
         self._date_shaped_throughout = True
+        self._time_of_day_throughout = True
         #: Which canonical spellings the column arrived in, unioned rather than
         #: folded: two chunks each written one way are each uniform and the
         #: column is not, so a flag per chunk cannot answer this (#75).
@@ -958,6 +962,9 @@ class _ColumnScan:
                     else self._spelling.merged_with(found)
                 )
 
+        if self._time_of_day_throughout and not temporal.is_time_of_day(present):
+            self._time_of_day_throughout = False
+
         if self._date_shaped_throughout:
             if not temporal.is_date_shaped(present):
                 self._date_shaped_throughout = False
@@ -1018,6 +1025,16 @@ class _ColumnScan:
         )
         standard = declared == "TEXT" and self._had_values and self._parses_throughout
         spelling = self._spelling if standard and not arrived_in_one_spelling else None
+        # A time of day is never rewritten — it is canonical as it arrived or it
+        # is not a time of day at all — so it is only described (#109). It and
+        # `standard` cannot both hold: a canonical instant begins with a year.
+        time_of_day = (
+            declared == "TEXT"
+            and self._had_values
+            and not standard
+            and self._time_of_day_throughout
+        )
+        described = standard or time_of_day
 
         if declared != "TEXT":
             longest = None
@@ -1032,18 +1049,24 @@ class _ColumnScan:
             family=family,
             longest=longest,
             spelling=spelling,
-            temporal_standard="iso8601_utc" if standard else None,
-            numeric_values=0 if standard or declared != "TEXT" else self._numeric,
+            temporal_standard=(
+                temporal.ISO8601_UTC
+                if standard
+                else temporal.ISO8601_TIME
+                if time_of_day
+                else None
+            ),
+            numeric_values=0 if described or declared != "TEXT" else self._numeric,
             non_numeric_values=(
-                0 if standard or declared != "TEXT" else self._non_numeric
+                0 if described or declared != "TEXT" else self._non_numeric
             ),
             non_numeric_examples=(
-                () if standard or declared != "TEXT" else tuple(self._numeric_examples)
+                () if described or declared != "TEXT" else tuple(self._numeric_examples)
             ),
             unparsed_temporal_examples=(
                 tuple(self._date_examples)
                 if declared == "TEXT"
-                and not standard
+                and not described
                 and self._had_values
                 and self._date_shaped_throughout
                 else ()
@@ -2040,7 +2063,8 @@ class Workspace:
           backend offers on top;
         * a **canonical date** column — normalised to one ISO 8601 UTC spelling,
           so its text order *is* chronological order — gets its range and no
-          average, an average of instants not being an instant;
+          average, an average of instants not being an instant; a **canonical
+          time-of-day** column is the same case, for the same reason;
         * anything else, a string, gets the null count alone.
 
         Numeric-ness is read off SQLAlchemy's own type hierarchy rather than

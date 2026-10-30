@@ -301,3 +301,38 @@ def test_nothing_is_registered_with_a_driver():
     """
     assert not hasattr(binding, "sqlite3")
     assert "sqlite3" not in vars(binding)
+
+
+# ---------------------------------------------------------------------------
+# What a tick column says it counts (#109)
+# ---------------------------------------------------------------------------
+
+
+def test_a_bare_time_column_is_a_time_of_day_not_a_timestamp():
+    """Nanoseconds since midnight are not an instant, and must not be called one.
+
+    A reader's frame never reaches these ticks — ``temporal.standardize`` writes
+    a time of day as text first — but a frame handed straight to the workspace
+    does, and its description has to be true too.
+    """
+    times = pd.Series([_dt.time(14, 30), None, _dt.time(9, 0)], dtype=object)
+    assert binding.column_temporal_kind(times) == "time_of_day"
+
+
+def test_times_of_day_beside_instants_are_not_a_temporal_column():
+    """Midnight-relative and epoch-relative ticks in one column cannot compare."""
+    mixed = pd.Series([_dt.time(14, 30), _dt.date(2024, 3, 1)], dtype=object)
+    assert binding.column_temporal_kind(mixed) is None
+
+
+@pytest.mark.parametrize(
+    "kind,unit",
+    [
+        ("timestamp", "nanoseconds_since_epoch"),
+        ("duration", "nanoseconds"),
+        ("time_of_day", "nanoseconds_since_midnight"),
+    ],
+)
+def test_each_tick_kind_names_what_its_ticks_count_from(kind, unit):
+    """Only an instant counts from the epoch; a duration counts from nothing."""
+    assert binding.TICK_UNITS[kind] == unit

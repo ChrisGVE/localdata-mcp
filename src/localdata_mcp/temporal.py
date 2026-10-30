@@ -77,8 +77,29 @@ reason it gives: ``WHERE seen > '2024-03-02'`` against one returned zero rows
 with no error, while the same frame written to a CSV answered correctly. One
 kind of value now has one representation whichever file it came from, under the
 same contract: a tz-aware value is converted to UTC, a naive one is taken as
-UTC already, and the spelling is measured over the whole column. Durations and
-bare times of day are not instants and are not touched here.
+UTC already, and the spelling is measured over the whole column. Durations are
+not instants and are not touched here: they stay integer ticks, which is what
+§1.4's aggregate table is about.
+
+**A time of day is text too, in its own spelling** (#109). Parquet, Feather and
+the workbooks hand a time of day over as ``datetime.time`` objects, and those
+used to land as integer nanoseconds since midnight — so ``WHERE clock >
+'10:00:00'`` returned zero rows with no error, where a CSV holding
+``14:30:00`` as text answered correctly. A time of day has no date and no offset
+to normalise, so it is not an instant and is not written as one: it is written
+``HH:MM:SS``, with ``.ffffff`` on the values that carry a fraction — the
+spelling ``datetime.time.isoformat`` gives, and the one a CSV of the same values
+holds. Unlike a date column, the fraction is decided **per value**, not over the
+column. A date column needs one spelling because its ``Z`` terminator makes a
+fractional value sort before the whole second it follows (#75). A time of day
+has no terminator, so a whole-second value is a prefix of its fractional
+neighbours and sorts before them, as it should — and writing ``14:30:00.000000``
+would make ``WHERE clock > '14:30:00'`` match 14:30 itself.
+
+A text column whose every value is in that spelling (:func:`is_time_of_day`) is
+described as a time of day whichever file it came from, which is what lets the
+description survive an export: the result of a query carries no column types,
+but it carries the text.
 """
 
 from __future__ import annotations
@@ -96,15 +117,29 @@ __all__ = [
     "is_canonical",
     "is_date_shaped",
     "is_standard",
+    "is_time_of_day",
     "parse",
     "spelling_of",
+    "standard_of",
     "standardize",
     "standardize_as",
     "text_values",
     "typed_instants",
+    "typed_times_of_day",
     "unparsed_temporal_examples",
     "MAX_TEMPORAL_EXAMPLES",
+    "ISO8601_UTC",
+    "ISO8601_TIME",
 ]
+
+#: How a column described as canonical instants is named on the wire: ISO 8601
+#: text, normalised to UTC.
+ISO8601_UTC = "iso8601_utc"
+
+#: How a column described as canonical times of day is named on the wire: ISO
+#: 8601 ``HH:MM:SS[.ffffff]`` text. No offset is named, because a time of day
+#: carries none to normalise.
+ISO8601_TIME = "iso8601_time"
 
 #: The extended-format calendar date every accepted value must begin with.
 #:
@@ -118,6 +153,18 @@ _EXTENDED_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 #: in for its comparisons to be chronological. Anchored at both ends, so a
 #: value that merely *starts* with a date does not qualify.
 _CANONICAL = re.compile(r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z)?$")
+
+#: The spelling :func:`typed_times_of_day` writes, and the only one a text column
+#: can be in to be described as a time of day: ``HH:MM:SS`` on the 24-hour clock,
+#: optionally with exactly six fractional digits. :func:`is_time_of_day` also
+#: refuses a fraction of six zeroes (:data:`_ZERO_FRACTION`), which this pattern
+#: cannot say: a pandas string column matches through Arrow's RE2 engine, and
+#: RE2 has no lookahead.
+_CANONICAL_TIME = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{6})?$")
+
+#: The fraction ``isoformat`` never writes. ``14:30:00.000000`` is a second
+#: spelling of ``14:30:00`` — one time, two strings, and a join on them misses.
+_ZERO_FRACTION = ".000000"
 
 #: Shapes that read as a date to a person but are not a standard this server
 #: accepts. Two families, which is all the live sweep found: numbers separated
@@ -200,6 +247,20 @@ def is_canonical(present: pd.Series) -> bool:
     questions together are what :func:`is_standard` needs (#75).
     """
     return _matches_throughout(present, _CANONICAL)
+
+
+def is_time_of_day(present: pd.Series) -> bool:
+    """Whether every value is a time of day in the spelling :data:`_CANONICAL_TIME` names.
+
+    Takes the *present* values, like :func:`is_canonical`, so that it composes
+    across chunks: a column is a time of day if and only if every chunk of it
+    is. One spelling is not asked for, as it is of a date column, because a
+    time of day in this spelling orders chronologically whether or not its
+    neighbours carry a fraction (see the module docstring).
+    """
+    if not _matches_throughout(present, _CANONICAL_TIME):
+        return False
+    return not bool(present.str.endswith(_ZERO_FRACTION).any())
 
 
 def canonical_widths(present: pd.Series) -> frozenset[int]:
@@ -378,6 +439,51 @@ def typed_instants(series: pd.Series) -> pd.Series | None:
     return pd.to_datetime(series, utc=True)
 
 
+def typed_times_of_day(series: pd.Series) -> pd.Series | None:
+    """A column a reader typed as times of day, written as ISO 8601 text, or ``None``.
+
+    Parquet and Feather ``time32``/``time64``, an Excel time cell and an
+    OpenDocument time cell all reach pandas as ``datetime.time`` objects in an
+    ``object`` column — pandas has no time-of-day dtype. Each is written with
+    ``isoformat``, which gives ``HH:MM:SS`` and adds ``.ffffff`` only for a
+    value with a fraction; a missing value stays missing.
+
+    A time carrying an offset keeps it in the text (``14:30:00+01:00``). It is
+    not converted, because converting a time of day between offsets needs a
+    date to know which offset applied, and it is not described as a time of
+    day either, since its text does not compare with an un-offset one. No
+    reader here produces one — Arrow's time types carry no zone — so this is
+    the honest answer for a frame that does, not a path anything takes.
+
+    ``None`` for anything else, and for an ``object`` column with nothing in it.
+    """
+    if not pd.api.types.is_object_dtype(series.dtype):
+        return None
+    present = series.dropna()
+    if present.empty:
+        return None
+    if pd.api.types.infer_dtype(present, skipna=True) != "time":
+        return None
+    written = series.map(lambda value: value.isoformat(), na_action="ignore")
+    return written.where(series.notna(), other=None)
+
+
+def standard_of(series: pd.Series) -> str | None:
+    """Which canonical text a column is in, as named on the wire, or ``None``.
+
+    :data:`ISO8601_UTC` for instants (:func:`is_standard`), :data:`ISO8601_TIME`
+    for times of day (:func:`is_time_of_day`), and ``None`` for everything else,
+    an empty column included. The two cannot both hold: every canonical instant
+    begins with a four-digit year and a hyphen, and no time of day does.
+    """
+    if is_standard(series):
+        return ISO8601_UTC
+    present = text_values(series)
+    if present is not None and is_time_of_day(present):
+        return ISO8601_TIME
+    return None
+
+
 def standardize(frame: pd.DataFrame) -> pd.DataFrame:
     """Canonicalise every column that is unambiguously ISO 8601, or already instants.
 
@@ -385,7 +491,9 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
     spellings — those are reported by :func:`unparsed_temporal_examples`
     rather than guessed at. A column a typed reader handed over as instants
     (:func:`typed_instants`) is written in the same canonical spelling, so a
-    date compares the same way whichever kind of file it came from.
+    date compares the same way whichever kind of file it came from, and one it
+    handed over as times of day (:func:`typed_times_of_day`) is written as the
+    text a CSV of the same times would hold.
     """
     converted: dict[str, pd.Series] = {}
     for name in frame.columns:
@@ -400,6 +508,11 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
             instants = typed_instants(series)
             if instants is not None:
                 converted[name] = as_canonical(instants, spelling_of(instants))
+                continue
+            # A time of day is not an instant and has its own spelling (#109).
+            times = typed_times_of_day(series)
+            if times is not None:
+                converted[name] = times
             continue
         # Already in the form this would rewrite it into, which is the case for
         # any file written the way the documentation asks for. Parsing it only

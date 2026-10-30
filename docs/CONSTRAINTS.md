@@ -5482,6 +5482,11 @@ the tick path: they are not instants.
 - `Workspace.insert_frame`, which takes a frame directly and is not reached by any verb, still
   converts instants to ticks. `tests/test_binding.py` exercises that path.
 
+> **Amended 2026-10-30 — the times-of-day bullet above is closed.** A time of day from a typed
+> format is now stored as `HH:MM:SS` text and described `"temporal": "iso8601_time"`, and a
+> duration keeps its ticks under `"unit": "nanoseconds"`. Measurements in §32. The bullet is left as
+> it stood.
+
 ---
 
 ## §31 — A DuckDB slot opens both connections under one configuration (2026-10-30)
@@ -5558,3 +5563,105 @@ DuckDB's own parser names the statements that end a transaction. `extract_statem
   and this server does not match on a driver's prose.
 - `directory` lists no indexes on any DuckDB slot, because duckdb-engine reflects none. That is
   [#107](https://github.com/ChrisGVE/localdata-mcp/issues/107)'s root, not this section's.
+
+---
+
+## §32 — A time of day is text, and a duration says what it counts (2026-10-30)
+
+Closes [#109](https://github.com/ChrisGVE/localdata-mcp/issues/109). Measured with pandas 3.0.2,
+pyarrow 25.0.0, openpyxl 3.1.5 and odfpy 1.4.1, on `new-v3` from `dd187aaf`.
+
+### 32.1 What the typed readers hand over
+
+| Source | What pandas gives the loader |
+|---|---|
+| Parquet / Feather `time64[us]`, `time32[s]` | `object`, holding `datetime.time` (pandas has no time dtype) |
+| Parquet / Feather `duration[us]` | `timedelta64[us]` |
+| `.xlsx` time cell (openpyxl) | `object`, holding `datetime.time` |
+| `.xlsx` duration cell (openpyxl, `[h]:mm:ss` format) | `timedelta64[us]` |
+| `.ods` cell of `office:value-type="time"` | `object`, holding `datetime.time` |
+| ORC | carries neither: Arrow's ORC writer refuses `time32`, `time64` and `duration` |
+
+Two writers do not produce what their names suggest, which matters to anyone building a fixture.
+pandas' own ODS writer stores a `datetime.time` as a *string* cell, so a frame written with
+`to_excel(…, engine="odf")` reads back as text and never reaches the time path; only a cell typed
+`time` does. And pandas reads an ODS time cell through its displayed text, so a cell showing a
+duration past `23:59:59` is refused (`hour must be in 0..23: 48:00:00`), which is why an ODS
+duration has no row in the table.
+
+### 32.2 Before
+
+The repro from the issue (`took = 1 h, 2 d`, `clock = 14:30, 09:00`), attached from Parquet, from
+Feather and from an openpyxl-built `.xlsx`, and the ODS column read by `read_source`:
+
+```
+took  {"type": "INTEGER", "temporal": "duration",  "unit": "nanoseconds_since_epoch"}
+clock {"type": "INTEGER", "temporal": "timestamp", "unit": "nanoseconds_since_epoch"}
+SELECT id FROM dur WHERE clock > '10:00:00'   ->  {"ok": true, "rows": []}
+```
+
+identically on all three attached formats, and `clock` declared `INTEGER` with kind `timestamp` from
+the ODS file. The same two times from a CSV land as `TEXT` with no temporal key, and the filter
+returns `[[1]]`.
+
+### 32.3 The choice
+
+**A time of day takes the text path**, for §8.1's reason and §30's: the comparison written first
+is against a literal, and text answers it where ticks return zero rows. §1.4's aggregate table is
+about durations, and an average of clock times is not a quantity anyone asks for. Its spelling is
+`datetime.time.isoformat`'s — `HH:MM:SS`, plus `.ffffff` only on a value whose fraction is not
+zero — which is also what a CSV written from the same frame holds.
+
+The fraction is decided **per value**, unlike a date column's, and the difference is measured, not
+stylistic:
+
+- A date column needs one spelling because its `Z` terminator sorts after `.`, so
+  `…T09:30:00Z` would order after `…T09:30:00.5Z` (#75, §28.4). A time of day has no terminator.
+  A whole-second value is a prefix of its fractional neighbours and sorts before them, so mixed
+  widths order correctly. Measured: `09:00:00.500000`, `09:00:00`, `08:59:59.999999` order as
+  `08:59:59.999999, 09:00:00, 09:00:00.500000`.
+- Padding the column would break the obvious filter. `14:30:00.000000 > '14:30:00'` is true, so
+  `WHERE clock > '14:30:00'` would return 14:30 itself.
+
+A text column is described as a time of day when every value is in that spelling, on the 24-hour
+clock, with no `.000000` fraction — a second spelling of a whole-second value, which would not
+join with the first. The description is read off the stored text, not remembered from the reader,
+so a CSV holding the same values is described the same way, and so is an export attached again.
+It is `{"type": "TEXT", "temporal": "iso8601_time"}`, with no `normalized`: an `Arrow` time
+carries no zone, and a time of day has no date to resolve an offset against.
+
+**A duration stays ticks**, which is §1.4's own case, and only its description changes: the
+`unit` is now `nanoseconds`. The `unit` of a tick column is now chosen by its kind:
+`nanoseconds_since_epoch` for an instant, `nanoseconds` for a duration, and
+`nanoseconds_since_midnight` for a time of day. The last two kinds still reach ticks only through
+`Workspace.insert_frame`, which no verb calls.
+
+### 32.4 After
+
+- Parquet, Feather and `.xlsx`: `clock` is `{"type": "TEXT", "temporal": "iso8601_time"}`,
+  stored `14:30:00` and `09:00:00`, and `WHERE clock > '10:00:00'` returns `[[1]]`. `took` is
+  `{"type": "INTEGER", "temporal": "duration", "unit": "nanoseconds"}`. The ODS column is
+  measured `TEXT`, `iso8601_time`.
+- The same times from a Parquet file and a CSV store the same text, so a join of the two on
+  `clock` matches 3 of 3, and both are described alike.
+- A CSV of times is described the same way read whole or in chunks, at chunk sizes 1, 2 and
+  5,000. One non-time value, a `.000000` fraction or an hour of `25` withdraws the description
+  wherever it sits.
+- Exported with `query(path=…)` to Parquet or CSV and attached again, `clock` keeps its
+  description and its filter. `took` comes back a plain `INTEGER` with no temporal key: a query
+  result carries no column kinds. Its values, and so its `sum`, are unchanged.
+- `stats` reports `min` and `max` for a time-of-day column, as it does for a canonical date.
+
+### 32.5 What this did not change
+
+- **32-bit `INTEGER` on PostgreSQL and MySQL** ([#110](https://github.com/ChrisGVE/localdata-mcp/issues/110)).
+  A time of day no longer reaches an integer column at all, so it no longer overflows one. A
+  duration still does: one hour is `3600000000000` nanoseconds. Not measured against a live
+  server for this section. No database container was running, and the endpoint test written for
+  it skipped on every server backend.
+- **Sub-microsecond precision** ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
+  pandas refuses a Parquet `time64[ns]` holding a non-zero nanosecond part before the loader sees
+  it (`ArrowInvalid: Value 52200000000123 has non-zero nanoseconds`). `datetime.time` stops at the
+  microsecond, so no finer part reaches the text.
+- **A CSV time in another spelling** — `9:00`, `14:30`, `09:00:00.5` — is left as it was written
+  and not described. It is not rewritten, because nothing recognises it as a time of day first.

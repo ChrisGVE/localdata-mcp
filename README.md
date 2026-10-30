@@ -504,14 +504,14 @@ answer belongs to whoever wrote the file, it reports and carries on.
   because the caller has misread the file. On the way out, `query(path=…)`
   **ignores** it, so one value can be carried across a mixed batch of
   destinations without the caller stripping it per file.
-- **A duration or a time of day out of a typed format is reported only on the
-  column itself**, and this is the one entry here with **no warning attached**.
-  It loads as an integer count of nanoseconds, which orders correctly and
-  compares wrongly against a string such as `'10:00:00'`; the `temporal` and
-  `unit` fields on the column are the only signal, and the `unit` they carry is
-  wrong for both ([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)).
-  A *date or timestamp* from a typed format is not in this list: it is stored
-  the way a CSV date is. *Dates*, below, has the detail.
+- **A duration out of a typed format is reported only on the column itself**,
+  and this is the one entry here with **no warning attached**. It loads as an
+  integer count of nanoseconds, which sums, averages and orders correctly and
+  compares wrongly against a string such as `'01:00:00'`; the column's
+  `"temporal": "duration", "unit": "nanoseconds"` is the only signal, so compare
+  it against a nanosecond count. A *date, timestamp or time of day* from a typed
+  format is not in this list: each is stored the way a CSV holds it. *Dates*,
+  below, has the detail.
 
 ## Dates
 
@@ -558,12 +558,31 @@ seconds are kept to the microsecond on both paths, and a finer part is cut
 
 Until [#87](https://github.com/ChrisGVE/localdata-mcp/issues/87) these columns
 loaded as integer nanoseconds since the epoch, and a comparison against a date
-string returned zero rows with no error. Durations and bare times of day still
-load that way. They are not instants, and the tag they carry is
-`{"temporal": "duration" | "timestamp", "unit": "nanoseconds_since_epoch"}`,
-which is wrong for both: a duration counts from no epoch, and a time of day
-counts from midnight. Compare a time of day against a nanosecond count rather
-than against `'10:00:00'`
+string returned zero rows with no error.
+
+A **time of day** is not an instant — it has no date and no offset — and is
+written as the text a CSV holds for it: `HH:MM:SS`, with `.ffffff` only on a
+value that has a fraction. That spelling orders chronologically, so
+`WHERE clock > '10:00:00'` means the same whichever file the column came from.
+A text column every value of which is in that spelling — from a CSV, a typed
+format, or an earlier export — is reported as one:
+
+```python
+{"name": "clock", "type": "TEXT", "temporal": "iso8601_time"}
+```
+
+A **duration** stays an integer count of nanoseconds, because that is what
+`sum`, `avg` and `ORDER BY` need, and it is reported as counting from nothing:
+
+```python
+{"name": "took", "type": "INTEGER", "temporal": "duration", "unit": "nanoseconds"}
+```
+
+Compare it against a nanosecond count rather than a string. Exported with
+`query(path=…)`, it comes back a plain integer column: a query result carries
+no column kinds, and a count of nanoseconds looks like any other count. Both
+kinds used to be tagged `"unit": "nanoseconds_since_epoch"`, and a time of day
+`"timestamp"` as well
 ([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)).
 
 ## Memory

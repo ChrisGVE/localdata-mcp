@@ -424,6 +424,52 @@ def test_a_typed_date_landed_in_the_endpoint_filters_by_a_date_literal(live):
     ]
 
 
+def test_a_typed_time_of_day_landed_in_the_endpoint_filters_by_a_time_literal(live):
+    """A Parquet ``time64`` lands as ``HH:MM:SS`` text, on every backend (#109).
+
+    It used to land as integer nanoseconds since midnight, so
+    ``clock > '10:00:00'`` compared a number with a string — each backend by
+    its own rule, and SQLite's answered false for every row. On a backend whose
+    ``INTEGER`` is 32-bit the ticks did not fit at all (#110). The fraction is
+    on the one value that has it, so a value padded to six zeroes would move
+    ``14:30:00`` across a ``> '14:30:00'`` filter.
+    """
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+    import datetime as dt
+
+    attach_writable(live)
+    source = live.root / "clock.parquet"
+    pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "clock": [dt.time(14, 30), dt.time(9, 0), dt.time(14, 30, 0, 500000)],
+        }
+    ).to_parquet(source)
+    table = live.table("clock")
+    made = call(
+        "create", nickname="endpoint", type="table", source=str(source), table=table
+    )
+    assert made["ok"] is True, made
+
+    after = call(
+        "query",
+        nickname="endpoint",
+        sql=f"SELECT id FROM {table} WHERE clock > '14:30:00' ORDER BY id",
+    )
+    stored = call(
+        "query", nickname="endpoint", sql=f"SELECT clock FROM {table} ORDER BY id"
+    )
+
+    assert after["ok"] is True, after
+    assert after["rows"] == [[3]]
+    assert [row[0] for row in stored["rows"]] == [
+        "14:30:00",
+        "09:00:00",
+        "14:30:00.500000",
+    ]
+
+
 def _build_typed_table(live: Live) -> str:
     """A table of types SQLite does not have, built the way the user's would be.
 

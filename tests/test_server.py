@@ -2940,6 +2940,386 @@ def test_a_typed_date_keeps_its_description_through_an_export(session):
 
 
 # ---------------------------------------------------------------------------
+# A time of day compares the way a CSV's does; a duration says what it counts
+# (#109)
+# ---------------------------------------------------------------------------
+#
+# #87 moved typed *instants* to canonical text and left two kinds on the tick
+# path. A time of day landed as INTEGER nanoseconds since midnight, described as
+# a "timestamp" counted "since_epoch", and `WHERE clock > '10:00:00'` compared
+# an integer to text and returned zero rows with `ok: true` — while the same
+# value from a CSV, which is text, answered correctly. A duration stays ticks,
+# because sum, avg and ORDER BY need a number (CONSTRAINTS §1.4), but it was
+# described as counted from an epoch, which no duration is.
+
+#: What a time-of-day column and a duration column are described as.
+TIME_OF_DAY = {"type": "TEXT", "temporal": "iso8601_time"}
+DURATION = {"type": "INTEGER", "temporal": "duration", "unit": "nanoseconds"}
+
+_NS = 1_000_000_000
+
+
+def _clock_frame():
+    """The frame from the issue: one duration column, one time-of-day column."""
+    import datetime as dt
+
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "id": [1, 2],
+            "took": pd.to_timedelta(["1h", "2D"]),
+            "clock": [dt.time(14, 30), dt.time(9, 0)],
+        }
+    )
+
+
+def _arrow_schema(path: Path):
+    """The schema a Parquet or Feather file actually declares, read by Arrow."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    if path.suffix == ".parquet":
+        return pq.read_schema(path)
+    with pa.memory_map(str(path), "rb") as source:
+        return pa.ipc.open_file(source).schema
+
+
+def _described(attached, name: str) -> dict:
+    """One column's description from an ``attach`` that loaded one table."""
+    return next(c for c in attached["loaded"][0]["columns"] if c["name"] == name)
+
+
+@pytest.mark.parametrize("suffix", [".parquet", ".feather"])
+def test_a_typed_time_of_day_filters_by_a_time_literal(session, suffix):
+    """The repro from #109, for each format that can carry both types.
+
+    ORC is absent because it cannot: Arrow's ORC writer refuses ``time64`` and
+    ``duration`` alike, so no ORC file holds either.
+    """
+    pytest.importorskip("pyarrow")
+    import pyarrow as pa
+
+    path = session / f"dur{suffix}"
+    TYPED_WRITERS[suffix][1](_clock_frame(), path)
+    schema = _arrow_schema(path)
+    assert pa.types.is_time(schema.field("clock").type), schema
+    assert pa.types.is_duration(schema.field("took").type), schema
+
+    attached = call("attach", database=str(path), nickname="d")
+    after_ten = call(
+        "query", nickname="d", sql="SELECT id FROM dur WHERE clock > '10:00:00'"
+    )
+    stored = call("query", nickname="d", sql="SELECT clock FROM dur ORDER BY id")
+
+    assert _described(attached, "clock") == {"name": "clock", **TIME_OF_DAY}
+    assert _described(attached, "took") == {"name": "took", **DURATION}
+    assert after_ten["ok"] is True, after_ten
+    assert after_ten["rows"] == [[1]]
+    assert stored["rows"] == [["14:30:00"], ["09:00:00"]]
+
+
+def test_a_time_of_day_lands_the_same_from_a_csv_and_a_parquet_file(session):
+    """One value, one stored form, one description, whichever file it came from.
+
+    Asserted by comparison, by a literal filter on each, and by joining the two
+    tables on the column — a join only matches if the stored text is identical.
+    """
+    pytest.importorskip("pyarrow")
+    import datetime as dt
+
+    import pandas as pd
+
+    pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "clock": [
+                dt.time(14, 30),
+                dt.time(9, 0, 0, 500000),
+                dt.time(23, 59, 59, 999999),
+            ],
+        }
+    ).to_parquet(session / "typed.parquet")
+    write_csv(
+        session / "texted.csv",
+        "id,clock\n1,14:30:00\n2,09:00:00.500000\n3,23:59:59.999999\n",
+    )
+
+    typed = call("attach", database=str(session / "typed.parquet"), nickname="t")
+    texted = call(
+        "attach", database=str(session / "texted.csv"), nickname="c", delimiter=","
+    )
+    answers = {
+        nickname: (
+            call(
+                "query", nickname=nickname, sql=f"SELECT clock FROM {table} ORDER BY id"
+            ),
+            call(
+                "query",
+                nickname=nickname,
+                sql=f"SELECT id FROM {table} WHERE clock >= '14:30:00' ORDER BY id",
+            ),
+        )
+        for nickname, table in (("t", "typed"), ("c", "texted"))
+    }
+    landed = call(
+        "create",
+        nickname="t",
+        type="table",
+        source=str(session / "texted.csv"),
+        delimiter=",",
+    )
+    joined = call(
+        "query",
+        nickname="t",
+        sql="SELECT count(*) FROM typed JOIN texted ON typed.clock = texted.clock",
+    )
+
+    assert _described(typed, "clock") == {"name": "clock", **TIME_OF_DAY}
+    assert _described(texted, "clock") == _described(typed, "clock")
+    assert answers["t"][0]["rows"] == answers["c"][0]["rows"]
+    assert answers["t"][0]["rows"] == [
+        ["14:30:00"],
+        ["09:00:00.500000"],
+        ["23:59:59.999999"],
+    ]
+    assert answers["t"][1]["rows"] == answers["c"][1]["rows"] == [[1], [3]]
+    assert landed["ok"] is True, landed
+    assert joined["rows"] == [[3]]
+
+
+def test_a_fractional_time_of_day_orders_and_ranges_chronologically(session):
+    """Fractional seconds are written only on the values that have them.
+
+    Which is the spelling a CSV of the same values holds, and it still orders:
+    with no terminator after the seconds, a whole-second value is a prefix of
+    its fractional neighbours and sorts before them, as it should.
+    """
+    pytest.importorskip("pyarrow")
+    import datetime as dt
+
+    import pandas as pd
+
+    pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "clock": [
+                dt.time(9, 0, 0, 500000),
+                dt.time(9, 0),
+                dt.time(8, 59, 59, 999999),
+            ],
+        }
+    ).to_parquet(session / "fine.parquet")
+    call("attach", database=str(session / "fine.parquet"), nickname="f")
+
+    stored = call("query", nickname="f", sql="SELECT clock FROM fine ORDER BY id")
+    ordered = call("query", nickname="f", sql="SELECT id FROM fine ORDER BY clock")
+    after_nine = call(
+        "query", nickname="f", sql="SELECT id FROM fine WHERE clock > '09:00:00'"
+    )
+    profiled = call("stats", nickname="f", table="fine", columns=["clock"])
+
+    assert stored["rows"] == [["09:00:00.500000"], ["09:00:00"], ["08:59:59.999999"]]
+    assert ordered["rows"] == [[3], [2], [1]]
+    assert after_nine["rows"] == [[1]]
+    clock = profiled["columns"][0]
+    assert clock["min"] == "08:59:59.999999", clock
+    assert clock["max"] == "09:00:00.500000", clock
+
+
+def test_a_missing_typed_time_of_day_is_null(session):
+    """A gap is NULL, not the text ``'None'``, and the column is still a time."""
+    pytest.importorskip("pyarrow")
+    import datetime as dt
+
+    import pandas as pd
+
+    pd.DataFrame(
+        {"id": [1, 2, 3], "clock": [dt.time(14, 30), None, dt.time(9, 0)]}
+    ).to_parquet(session / "gappy.parquet")
+    attached = call("attach", database=str(session / "gappy.parquet"), nickname="g")
+
+    gaps = call("query", nickname="g", sql="SELECT id FROM gappy WHERE clock IS NULL")
+    before_ten = call(
+        "query", nickname="g", sql="SELECT id FROM gappy WHERE clock < '10:00:00'"
+    )
+
+    assert _described(attached, "clock") == {"name": "clock", **TIME_OF_DAY}
+    assert gaps["rows"] == [[2]]
+    assert before_ten["rows"] == [[3]]
+
+
+def test_a_typed_duration_sums_averages_and_orders(session):
+    """The reason durations stay ticks, asserted on what the aggregates return."""
+    pytest.importorskip("pyarrow")
+    import pandas as pd
+
+    pd.DataFrame(
+        {"id": [1, 2, 3, 4], "took": pd.to_timedelta(["1h", "2D", "30min", None])}
+    ).to_parquet(session / "spans.parquet")
+    attached = call("attach", database=str(session / "spans.parquet"), nickname="s")
+
+    totals = call(
+        "query", nickname="s", sql="SELECT sum(took), avg(took), max(took) FROM spans"
+    )
+    ordered = call(
+        "query",
+        nickname="s",
+        sql="SELECT id FROM spans WHERE took IS NOT NULL ORDER BY took",
+    )
+    gaps = call("query", nickname="s", sql="SELECT id FROM spans WHERE took IS NULL")
+
+    assert _described(attached, "took") == {"name": "took", **DURATION}
+    total = (3600 + 2 * 86400 + 1800) * _NS
+    assert totals["rows"] == [[total, total / 3, 2 * 86400 * _NS]]
+    assert ordered["rows"] == [[3], [1], [2]]
+    assert gaps["rows"] == [[4]]
+
+
+def test_a_workbook_time_and_duration_are_described_as_what_they_are(session):
+    """An ``.xlsx`` cell can hold either type, and openpyxl reads both back.
+
+    The fixture is checked for that first: a cell that came back as text or a
+    number would make every assertion after it about something else.
+    """
+    openpyxl = pytest.importorskip("openpyxl")
+    import datetime as dt
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "dur"
+    sheet.append(["id", "took", "clock"])
+    sheet.append([1, dt.timedelta(hours=1), dt.time(14, 30)])
+    sheet.append([2, dt.timedelta(days=2), dt.time(9, 0)])
+    book.save(session / "dur.xlsx")
+    reread = openpyxl.load_workbook(session / "dur.xlsx").active
+    assert isinstance(reread["B2"].value, dt.timedelta), reread["B2"].value
+    assert isinstance(reread["C2"].value, dt.time), reread["C2"].value
+
+    attached = call("attach", database=str(session / "dur.xlsx"), nickname="x")
+    after_ten = call(
+        "query", nickname="x", sql="SELECT id FROM dur WHERE clock > '10:00:00'"
+    )
+    total = call("query", nickname="x", sql="SELECT sum(took) FROM dur")
+
+    assert _described(attached, "clock") == {"name": "clock", **TIME_OF_DAY}
+    assert _described(attached, "took") == {"name": "took", **DURATION}
+    assert after_ten["rows"] == [[1]]
+    assert total["rows"] == [[(3600 + 2 * 86400) * _NS]]
+
+
+def test_an_ods_time_of_day_is_described_as_one(session):
+    """An OpenDocument time cell reaches pandas as a ``datetime.time``.
+
+    Built with odfpy, because pandas' own ODS writer stores a time as a string
+    cell, which is not the condition this test is about; the cell type is
+    checked in the file itself. Durations are absent: pandas reads an ODS time
+    cell through its displayed text, and refuses one past 23:59:59.
+    """
+    pytest.importorskip("odf")
+    from odf.opendocument import OpenDocumentSpreadsheet
+    from odf.table import Table, TableCell, TableRow
+    from odf.text import P
+
+    def cell(text: str, **typed) -> TableCell:
+        made = TableCell(**typed)
+        made.addElement(P(text=text))
+        return made
+
+    sheet = Table(name="dur")
+    for cells in (
+        [cell("id", valuetype="string"), cell("clock", valuetype="string")],
+        [
+            cell("1", valuetype="float", value=1),
+            cell("14:30:00", valuetype="time", timevalue="PT14H30M00S"),
+        ],
+        [
+            cell("2", valuetype="float", value=2),
+            cell("09:00:00", valuetype="time", timevalue="PT09H00M00S"),
+        ],
+    ):
+        row = TableRow()
+        for made in cells:
+            row.addElement(made)
+        sheet.addElement(row)
+    document = OpenDocumentSpreadsheet()
+    document.spreadsheet.addElement(sheet)
+    document.save(str(session / "dur.ods"))
+    with zipfile.ZipFile(session / "dur.ods") as package:
+        content = package.read("content.xml").decode()
+    assert content.count('office:value-type="time"') == 2, content
+
+    attached = call("attach", database=str(session / "dur.ods"), nickname="o")
+    after_ten = call(
+        "query", nickname="o", sql="SELECT id FROM dur WHERE clock > '10:00:00'"
+    )
+
+    assert _described(attached, "clock") == {"name": "clock", **TIME_OF_DAY}
+    assert after_ten["rows"] == [[1]]
+
+
+@pytest.mark.parametrize("suffix", [".parquet", ".csv"])
+def test_a_typed_time_and_duration_survive_an_export_described_truthfully(
+    session, suffix
+):
+    """Exported with ``query(path=…)`` and attached again.
+
+    The time of day comes back described as one, because its description is
+    read off the stored text. The duration comes back as its integer count —
+    the result of a query carries no column kinds, so nothing says it was a
+    duration — and it must at least not come back claiming an epoch.
+    """
+    pytest.importorskip("pyarrow")
+    _clock_frame().to_parquet(session / "dur.parquet")
+    call("attach", database=str(session / "dur.parquet"), nickname="d")
+    exported = call(
+        "query",
+        nickname="d",
+        sql="SELECT id, took, clock FROM dur",
+        path=str(session / f"again{suffix}"),
+        **separator_for(session / f"again{suffix}"),
+    )
+    assert exported["ok"] is True, exported
+
+    again = call(
+        "attach",
+        database=str(session / f"again{suffix}"),
+        nickname="a",
+        **separator_for(session / f"again{suffix}"),
+    )
+    after_ten = call(
+        "query", nickname="a", sql="SELECT id FROM again WHERE clock > '10:00:00'"
+    )
+    total = call("query", nickname="a", sql="SELECT sum(took) FROM again")
+
+    assert _described(again, "clock") == {"name": "clock", **TIME_OF_DAY}
+    assert _described(again, "took").get("unit") != "nanoseconds_since_epoch"
+    assert after_ten["rows"] == [[1]]
+    assert total["rows"] == [[(3600 + 2 * 86400) * _NS]]
+
+
+def test_a_typed_time_and_duration_land_in_an_existing_slot_described(session):
+    """``create`` from a typed file into a SQLite slot a CSV already made."""
+    pytest.importorskip("pyarrow")
+    _clock_frame().to_parquet(session / "dur.parquet")
+    call("attach", database=str(session / "simple.csv"), nickname="s", delimiter=",")
+
+    landed = call(
+        "create", nickname="s", type="table", source=str(session / "dur.parquet")
+    )
+    after_ten = call(
+        "query", nickname="s", sql="SELECT id FROM dur WHERE clock > '10:00:00'"
+    )
+    described = call("directory", nickname="s", table="dur")
+
+    assert landed["ok"] is True, landed
+    assert after_ten["rows"] == [[1]]
+    columns = {column["name"]: column for column in described["columns"]}
+    assert columns["clock"] == {"name": "clock", **TIME_OF_DAY}
+    assert columns["took"] == {"name": "took", **DURATION}
+
+
+# ---------------------------------------------------------------------------
 # A DuckDB slot answers every verb, whichever way it was reached (issue #79)
 # ---------------------------------------------------------------------------
 

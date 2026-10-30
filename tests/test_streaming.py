@@ -513,3 +513,49 @@ def test_a_format_that_is_parsed_whole_still_reaches_the_same_insert(
         assert [c.name for c in table.columns] == list(
             loader_module._unique_columns(list(expected.frame.columns))
         )
+
+
+# ---------------------------------------------------------------------------
+# A time-of-day column, both ways (#109)
+# ---------------------------------------------------------------------------
+#
+# A column of ISO 8601 times of day is described as one, so the measurement
+# that says so has to come out the same whichever path read the file — and has
+# to be withdrawn by a single value that is not a time, wherever it sits.
+
+#: Each file, and the description its `clock` column should end with.
+TIMES_OF_DAY = {
+    "clock_whole.csv": (
+        "id,clock\n1,14:30:00\n2,09:00:00\n3,23:59:59\n",
+        "iso8601_time",
+    ),
+    "clock_fraction_late.csv": (
+        "id,clock\n1,14:30:00\n2,09:00:00\n3,09:00:00.500000\n",
+        "iso8601_time",
+    ),
+    # Not a time, last: a measurement taken from the first chunk would keep it.
+    "clock_junk_last.csv": ("id,clock\n1,14:30:00\n2,09:00:00\n3,soon\n", None),
+    # A zero fraction is a second spelling of a whole-second value, and a typed
+    # file never writes it, so a column holding one is not described as a time.
+    "clock_zero_fraction_last.csv": (
+        "id,clock\n1,14:30:00\n2,09:00:00\n3,10:00:00.000000\n",
+        None,
+    ),
+    # An hour no clock shows.
+    "clock_hour_25.csv": ("id,clock\n1,14:30:00\n2,25:00:00\n", None),
+}
+
+
+@pytest.mark.parametrize("chunked", [1, 2, 5_000], indirect=True)
+@pytest.mark.parametrize("name", sorted(TIMES_OF_DAY))
+def test_a_time_of_day_column_is_described_the_same_read_either_way(
+    workspace, root, chunked, name
+):
+    body, expected = TIMES_OF_DAY[name]
+    (root / name).write_text(body)
+
+    described = assert_identical(workspace, root / name)
+
+    clock = next(c for c in described.columns if c.name == "clock")
+    assert clock.declared_type == "TEXT"
+    assert clock.temporal_standard == expected

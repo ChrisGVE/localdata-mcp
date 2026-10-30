@@ -507,20 +507,24 @@ written in the same canonical UTC spelling and carries the same
 `"iso8601_utc"` mark, so a date predicate is written the same way whichever
 file the column came from. A tz-aware value has been converted to UTC.
 
-**Durations and times of day are not.** They arrive as integer nanoseconds,
-marked `"unit": "nanoseconds_since_epoch"` — a wrong unit for both — and **no
-warning is raised about them**. `WHERE clock > '10:00:00'` against one compares
-an integer to text and comes back `"ok": true` with zero rows. If the column
-list shows that `unit`, compare against a nanosecond count. For a time of day
-that is nanoseconds since midnight, not since 1970.
+**A time of day is text too.** It is stored as `HH:MM:SS`, with `.ffffff`
+only where the value has a fraction — the same text a CSV holds — and marked
+`"temporal": "iso8601_time"`. `WHERE clock > '10:00:00'` works as written.
+
+**A duration is not text.** It arrives as an integer count of nanoseconds,
+marked `"temporal": "duration", "unit": "nanoseconds"`, so `sum`, `avg` and
+`ORDER BY` work on it — and **no warning is raised about it**.
+`WHERE took > '01:00:00'` compares an integer to text and comes back
+`"ok": true` with zero rows. Compare against a nanosecond count instead: one
+hour is `3600000000000`.
 
 ## Checking your own work
 
 Before reporting a number:
 
 - Did any warning come back from `attach` about the columns it touches? A
-  duration or time-of-day column held as nanoseconds is the one problem that
-  raises none, so check the column's own `temporal` and `unit` fields too.
+  duration column held as nanoseconds is the one problem that raises none, so
+  check the column's own `temporal` and `unit` fields too.
 - If it is a join, was the match complete — and did you say so either way?
 - Does the row count make sense against what `directory` said was there?
 - **Is the column you are summing actually populated?** `stats(nickname, table)`

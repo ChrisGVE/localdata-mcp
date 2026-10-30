@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And seven found in this release's own code before it shipped:
+And eight found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -382,7 +382,7 @@ And seven found in this release's own code before it shipped:
   `{"type": "TEXT", "temporal": "iso8601_utc", "normalized": "UTC"}`. A tz-aware
   value is converted to UTC rather than shifted, and a missing one is `NULL`.
   The description now also survives `query(path=…)` and a second `attach`.
-  Durations and times of day still load as nanoseconds
+  Durations and times of day are not instants and were fixed separately
   ([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)).
 - **`detach` named the tables a slot arrived with, not the ones it held**
   ([#90](https://github.com/ChrisGVE/localdata-mcp/issues/90)). After a
@@ -410,6 +410,21 @@ And seven found in this release's own code before it shipped:
   with a row it then discards, and a statement that would begin, commit or roll
   back a transaction of its own is refused, since that is the one way out of a
   read-only transaction.
+- **A time of day from a typed format compared wrongly against a time literal,
+  and a duration claimed to count from the epoch**
+  ([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)). A time-of-day
+  column from `.parquet`, `.feather`, `.xlsx` or `.ods` loaded as integer
+  nanoseconds since midnight, described as
+  `"temporal": "timestamp", "unit": "nanoseconds_since_epoch"`, so
+  `WHERE clock > '10:00:00'` returned zero rows with `ok: true` while a CSV
+  holding `14:30:00` returned the right row. It is now written as the text the
+  CSV holds — `HH:MM:SS`, with `.ffffff` only where the value has a fraction —
+  and described `{"type": "TEXT", "temporal": "iso8601_time"}`, the description
+  any text column in that spelling now gets, a CSV's included, so it survives
+  `query(path=…)` and a second `attach`. A duration stays integer nanoseconds,
+  which sum, average and order correctly, and is described
+  `"temporal": "duration", "unit": "nanoseconds"` instead of counting from an
+  epoch it has nothing to do with.
 
 ### Known limitations
 

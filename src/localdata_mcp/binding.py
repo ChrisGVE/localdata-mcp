@@ -15,12 +15,13 @@ The short version:
 * Temporals stored as ISO-8601 text bind fine and are wrong on every aggregate:
   `sum` and `avg` return `0.0`, `max` picks the lexically-largest string, and
   `ORDER BY` sorts `1 h, 10 d, 2 d`. We store **INTEGER ticks** instead.
-  That measurement is about durations, and it is durations and bare times of
-  day that reach these conversions from a file. An *instant* read from a file
-  never does: :func:`temporal.standardize` has already written it as canonical
-  UTC text, which compares against a date literal where ticks return zero rows
-  (#87, `CONSTRAINTS` §8.1). The instant conversions below serve a frame handed
-  to ``Workspace.insert_frame`` without going through a reader.
+  That measurement is about durations, and durations are the only temporal
+  values that reach these conversions from a file. An *instant* or a *time of
+  day* read from a file never does: :func:`temporal.standardize` has already
+  written it as canonical text, which compares against a date or time literal
+  where ticks return zero rows (#87, #109, `CONSTRAINTS` §8.1). The instant and
+  time-of-day conversions below serve a frame handed to
+  ``Workspace.insert_frame`` without going through a reader.
 * Two value classes cannot be represented at all and must be refused on their
   *value*, not their type: `np.uint64` above 2**63-1 (which stores a silent blob
   even with adapters registered, because it is genuinely out of range) and
@@ -47,9 +48,11 @@ import pandas as pd
 __all__ = [
     "EPOCH",
     "TICK_UNIT",
+    "TICK_UNITS",
     "UnrepresentableValue",
     "adapt_column",
     "adapt_value",
+    "column_temporal_kind",
     "temporal_kind",
     "to_timestamp",
     "to_timedelta",
@@ -59,12 +62,24 @@ __all__ = [
 # The temporal contract
 # ---------------------------------------------------------------------------
 
-#: Temporal columns are stored as INTEGER ticks counted from this instant.
+#: Instants stored as INTEGER ticks are counted from this instant. Durations and
+#: times of day are not counted from it — see :data:`TICK_UNITS`.
 EPOCH = "1970-01-01T00:00:00Z"
 
 #: The unit of one tick. Nanoseconds matches pandas' internal resolution, so a
 #: `datetime64[ns]` column round-trips exactly.
 TICK_UNIT = "nanosecond"
+
+#: What one tick column counts, by the kind :func:`column_temporal_kind` names,
+#: as reported beside that kind on the wire. Only an instant counts from
+#: :data:`EPOCH`. A duration counts elapsed time from no origin at all, and a
+#: time of day counts from the midnight of a day it does not name, so calling
+#: either "since epoch" tells a reader to decode it as a date it is not (#109).
+TICK_UNITS = {
+    "timestamp": "nanoseconds_since_epoch",
+    "duration": "nanoseconds",
+    "time_of_day": "nanoseconds_since_midnight",
+}
 
 _NS_PER_SECOND = 1_000_000_000
 _NS_PER_DAY = 86_400 * _NS_PER_SECOND
@@ -141,10 +156,13 @@ def temporal_kind(dtype: Any) -> str | None:
     return None
 
 
-#: Value types that become ticks. Kept beside the dispatch table above, which is
-#: what actually converts them, so the two cannot drift apart.
-_INSTANTS = (_dt.date, _dt.datetime, _dt.time, pd.Timestamp, np.datetime64)
+#: Value types that become ticks, by what their ticks count. Kept beside the
+#: dispatch table below, which is what actually converts them, so the two cannot
+#: drift apart. ``datetime.time`` is not an instant: it has no date, and its
+#: ticks count from midnight rather than from :data:`EPOCH`.
+_INSTANTS = (_dt.date, _dt.datetime, pd.Timestamp, np.datetime64)
 _DURATIONS = (pd.Timedelta, np.timedelta64)
+_TIMES_OF_DAY = (_dt.time,)
 
 
 def column_temporal_kind(values: pd.Series) -> str | None:
@@ -161,6 +179,10 @@ def column_temporal_kind(values: pd.Series) -> str | None:
 
     The scan exits at the first value that is not temporal, so an ordinary text
     column pays for one comparison.
+
+    The answer is ``"timestamp"``, ``"duration"`` or ``"time_of_day"`` — the
+    keys of :data:`TICK_UNITS`, which says what each one's ticks count — or
+    ``None``.
     """
     by_dtype = temporal_kind(values.dtype)
     if by_dtype is not None:
@@ -176,11 +198,13 @@ def column_temporal_kind(values: pd.Series) -> str | None:
             seen = "duration"
         elif isinstance(value, _INSTANTS):
             seen = "timestamp"
+        elif isinstance(value, _TIMES_OF_DAY):
+            seen = "time_of_day"
         else:
             return None
-        # Instants and durations in one column are not a temporal column; they
-        # are a mixed one, and mixing their ticks would compare epochs against
-        # elapsed time.
+        # Two kinds in one column are not a temporal column; they are a mixed
+        # one, and mixing their ticks would compare epochs against elapsed time,
+        # or against time since midnight.
         if kind is not None and kind != seen:
             return None
         kind = seen

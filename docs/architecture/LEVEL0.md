@@ -601,11 +601,25 @@ for the whole column**: a single value carrying a time takes the column to
 > seconds are kept to the microsecond on both paths; a finer part is cut
 > ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
 >
-> Durations and bare times of day are not instants and still land as integer
-> nanoseconds, tagged `{"temporal": "duration" | "timestamp", "unit":
-> "nanoseconds_since_epoch"}` — a tag that is wrong for both, tracked with the
-> rest of that case in
-> [#109](https://github.com/ChrisGVE/localdata-mcp/issues/109).
+> Durations and bare times of day are not instants, and each has its own form
+> ([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)). A **time of
+> day** is text, written `HH:MM:SS` with `.ffffff` only on a value that has a
+> fraction — `datetime.time.isoformat`'s spelling and what a CSV of the same
+> values holds. The fraction is decided per value rather than per column
+> because nothing follows the seconds: a whole-second value is a prefix of its
+> fractional neighbours and sorts before them, where a date's `Z` sorts after
+> the `.` (#75); and padding `14:30:00` to `14:30:00.000000` would put it on the
+> wrong side of `> '14:30:00'`. A text column whose every value is in that
+> spelling, from whichever file, is described
+> `{"type": "TEXT", "temporal": "iso8601_time"}` — no `normalized`, since a time
+> of day carries no offset. A **duration** stays integer ticks, because §1.4's
+> aggregate table is about durations, and is described
+> `{"type": "INTEGER", "temporal": "duration", "unit": "nanoseconds"}`. A tick
+> column's `unit` names what its ticks count: `nanoseconds_since_epoch` only
+> for an instant held as ticks, and `nanoseconds_since_midnight` for a time of
+> day held as ticks, which only a frame handed to the workspace directly is. A duration's description does not survive
+> `query(path=…)`: a result carries no column kinds, and the count comes back a
+> plain integer.
 
 **Any other text is left alone and reported.** A column that reads as dates in
 no recognised standard comes back with the offending values named, saying that
