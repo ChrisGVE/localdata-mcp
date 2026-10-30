@@ -2299,3 +2299,149 @@ def test_a_column_suffix_never_lands_on_a_name_another_column_has(session):
 
     assert attached["ok"] is True, attached
     assert _rows("c", "cols") == (["a", "a_1", "a_1_1"], [[1, 2, 3]])
+
+
+# ---------------------------------------------------------------------------
+# A password is masked where it is a credential, and nowhere else (#82)
+# ---------------------------------------------------------------------------
+#
+# The masker used to replace every occurrence of the password's characters,
+# so a short password rewrote the driver's own words: password `e` turned
+# "connection refused" into "conn***ction r***fus***d". A refusal is read while
+# the credentials are still wrong, which is when its wording matters most. The
+# credential is masked where it sits as a credential — in a URL's userinfo, or
+# under a password key in what a driver echoes — and the rest is left alone.
+#
+# Port 1 on the loopback refuses at once, so the two network drivers fail fast
+# and in their own words without a container behind them.
+
+
+def _network_open(session):
+    config_module.use(Config(roots=(session,), network_enabled=True))
+
+
+#: A driver URL whose open fails, and words its complaint must still carry.
+_REFUSING_DRIVERS = [
+    pytest.param(
+        "postgresql+psycopg://u:{password}@127.0.0.1:1/db",
+        "Connection refused",
+        id="postgres",
+    ),
+    pytest.param(
+        "mysql+pymysql://u:{password}@127.0.0.1:1/db",
+        "Can't connect to MySQL server",
+        id="mysql",
+    ),
+]
+
+
+@pytest.mark.parametrize("password", ["e", "con", "r", "t"])
+@pytest.mark.parametrize(("template", "driver_words"), _REFUSING_DRIVERS)
+def test_a_short_password_does_not_corrupt_the_drivers_complaint(
+    session, template, driver_words, password
+):
+    """A password that is also a common substring leaves the complaint intact."""
+    _network_open(session)
+
+    answer = call("attach", database=template.format(password=password))
+
+    assert answer["ok"] is False
+    assert driver_words in answer["error"], answer["error"]
+    # One mask, in the URL's userinfo — none scattered through the prose.
+    assert answer["error"].count("***") == 1, answer["error"]
+
+
+@pytest.mark.parametrize("password", ["e", "con"])
+def test_a_duckdb_url_with_a_short_password_keeps_the_drivers_words(
+    session, password
+):
+    """The repro in #82: duckdb's own complaint read `conn***ct()`."""
+    target = session / "junk.db"
+    target.write_bytes(b"")
+
+    answer = call("attach", database=f"duckdb://u:{password}@/{target}")
+
+    assert answer["ok"] is False
+    assert "connect(): incompatible function arguments" in answer["error"]
+    assert answer["error"].count("***") == 1, answer["error"]
+
+
+#: A password made of the characters a URL gives meaning to, spelled as the
+#: caller must spell it in the URL.
+_SPECIAL = "p@ss/w:rd ?#%"
+_SPECIAL_IN_URL = "p%40ss%2Fw%3Ard%20%3F%23%25"
+
+
+@pytest.mark.parametrize(("template", "driver_words"), _REFUSING_DRIVERS)
+def test_a_password_with_url_characters_is_masked_in_every_spelling(
+    session, template, driver_words
+):
+    _network_open(session)
+
+    answer = call("attach", database=template.format(password=_SPECIAL_IN_URL))
+
+    assert answer["ok"] is False
+    assert driver_words in answer["error"]
+    for spelling in (_SPECIAL, _SPECIAL_IN_URL, "p@ss", "p%40ss"):
+        assert spelling not in answer["error"], answer["error"]
+
+
+def test_a_password_with_url_characters_is_masked_behind_the_closed_network(
+    session,
+):
+    answer = call(
+        "attach", database=f"postgresql://u:{_SPECIAL_IN_URL}@db.example.com/s"
+    )
+
+    assert answer["ok"] is False
+    assert "network" in answer["error"]
+    for spelling in (_SPECIAL, _SPECIAL_IN_URL, "p@ss", "p%40ss"):
+        assert spelling not in answer["error"], answer["error"]
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        pytest.param(
+            "query",
+            {
+                "nickname": "staff",
+                "sql": "SELECT 1",
+                "path": "postgresql://u:hunter2@localhost:5432/db.csv",
+                "delimiter": ",",
+            },
+            id="query-path",
+        ),
+        pytest.param(
+            "save",
+            {
+                "nickname": "staff",
+                "path": "postgresql://u:hunter2@localhost:5432/db.sqlite",
+            },
+            id="save-path",
+        ),
+        pytest.param(
+            "attach",
+            {"database": "post gres://u:hunter2@db.example.com/sales"},
+            id="attach-not-quite-a-url",
+        ),
+    ],
+)
+def test_a_credential_read_as_a_path_is_masked_in_the_refusal(
+    session, tool, arguments
+):
+    """A URL that never reaches the URL code is still a credential.
+
+    Taken as a path, ``postgresql://u:hunter2@…`` is normalised to
+    ``postgresql:/u:hunter2@…`` before any message is written, so the masking
+    that ``attach`` applies to URLs never sees it. Every refusal leaving the
+    server is masked on the way out, whichever path produced it.
+    """
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
+
+    answer = call(tool, **arguments)
+
+    assert answer["ok"] is False
+    assert "hunter2" not in answer["error"], answer["error"]

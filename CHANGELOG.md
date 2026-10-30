@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And two found in this release's own code before it shipped:
+And three found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -352,6 +352,17 @@ And two found in this release's own code before it shipped:
   statement reaches only the database it was attached as. A second file still
   arrives through `create(type="table")`, and a result is still written with
   `query(path=…)`.
+- **A short password corrupted the refusal it was masked out of**
+  ([#82](https://github.com/ChrisGVE/localdata-mcp/issues/82)). The password was
+  removed by replacing every occurrence of its characters, so password `e` turned
+  a driver's "connection refused" into "conn***ction r***fus***d", and the shape
+  of the damage gave away the password's length and letters. A password is now
+  masked where it sits as a credential — in a URL's userinfo, or under the
+  `password=`/`PWD=` key a driver echoes when a connection fails — and nowhere
+  else, in its percent-encoded and decoded spellings both. One masker does it,
+  and every refusal passes through it on the way out, so a URL that a verb read
+  as a path (`query(path=…)`, `save(path=…)`) no longer comes back with its
+  password in the "directory does not exist" message either.
 
 ### Known limitations
 

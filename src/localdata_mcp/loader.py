@@ -73,6 +73,7 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 from . import binding, temporal
+from .credentials import redacted_url
 from .dialects import Backend, Engines, backend_for, backend_for_url
 
 # Defined in `errors` rather than here so the format layer below this module can
@@ -1334,7 +1335,7 @@ class Workspace:
         one of them silently stops supporting a verb the other has.
         """
         parsed = make_url(url)
-        safe = parsed.render_as_string(hide_password=True)
+        safe = redacted_url(parsed)
         backend = backend_for_url(parsed)
         self._install(
             tag,

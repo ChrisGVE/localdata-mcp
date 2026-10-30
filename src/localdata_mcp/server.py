@@ -67,6 +67,7 @@ from uuid import UUID
 from fastmcp import FastMCP
 
 from . import config
+from .credentials import mask_credentials
 from .export import ExportError, export_rows
 from .loader import ColumnProfile, IndexInfo, TableInfo
 from .paths import PathNotAllowed, allowed_paths
@@ -485,8 +486,20 @@ def _attachment_payload(attachment: Attachment, registry: Registry) -> dict[str,
     return payload
 
 
+def _refusal(message: str) -> dict[str, Any]:
+    """The one shape a refusal leaves the server in, its credentials masked.
+
+    Every refusal goes through here, so a credential in one is masked whichever
+    path produced it. The paths that handle a URL mask it themselves; this is
+    for the ones that never knew they had one — a URL handed to a verb that
+    reads it as a filesystem path, say, where it is normalised into
+    ``postgresql:/u:hunter2@…`` before any message is written (issue #88).
+    """
+    return {"ok": False, "error": mask_credentials(message)}
+
+
 def _failed(exc: Exception) -> dict[str, Any]:
-    return {"ok": False, "error": str(exc)}
+    return _refusal(str(exc))
 
 
 def _answers(tool: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
@@ -517,7 +530,7 @@ def _answers(tool: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any
         try:
             return tool(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 - the envelope is the point
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            return _refusal(f"{type(exc).__name__}: {exc}")
 
     return answered
 
@@ -902,7 +915,7 @@ def query(
             except SlotError as exc:
                 return _failed(exc)
             except Exception as exc:
-                return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                return _refusal(f"{type(exc).__name__}: {exc}")
 
             return {
                 "ok": True,
@@ -935,9 +948,9 @@ def query(
         except SlotError as exc:
             return _failed(exc)
         except OSError as exc:
-            return {"ok": False, "error": f"Could not write {path}: {exc}"}
+            return _refusal(f"Could not write {path}: {exc}")
         except Exception as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            return _refusal(f"{type(exc).__name__}: {exc}")
 
         return {
             "ok": True,

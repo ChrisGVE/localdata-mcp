@@ -83,7 +83,7 @@ have installed with `uv tool list` or `pip show localdata-mcp`.
 
 ```
 localdata-mcp/
-├── src/localdata_mcp/            # The whole package — thirteen modules, no sub-packages,
+├── src/localdata_mcp/            # The whole package — fifteen modules, no sub-packages,
 │                                 #   plus the package `__init__` and the typing marker
 │   ├── __init__.py               # `__version__` — one of the six version sites below
 │   ├── server.py                 # The nine MCP tools, and nothing else
@@ -98,11 +98,14 @@ localdata-mcp/
 │   ├── binding.py                # Type adapters — see CONSTRAINTS §1
 │   ├── config.py                 # Configuration discovery and validation
 │   ├── paths.py                  # Path containment at the trust boundary
+│   ├── credentials.py            # Masking a password out of every refusal
+│   ├── names.py                  # How a name a file gives becomes one SQL can use
 │   ├── export.py                 # Writing a result out
 │   └── py.typed                  # PEP 561 marker — what `Typing :: Typed` rests on
-├── tests/                        # 15 test modules — `test_<module>.py` for nine of the
-│                                 #   thirteen, plus test_concurrency, test_streaming,
-│                                 #   test_volume, test_endpoints and test_answer_shape
+├── tests/                        # 18 test modules — `test_<module>.py` for eleven of the
+│                                 #   fifteen, plus test_concurrency, test_streaming,
+│                                 #   test_volume, test_endpoints, test_answer_shape,
+│                                 #   test_stats and test_plugin_manifests
 │   ├── assets/                   # Deliberately hostile test files
 │   ├── conftest.py               # Shared fixtures
 │   ├── foreign.py                # Cross-backend helpers

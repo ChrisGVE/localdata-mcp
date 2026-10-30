@@ -221,6 +221,12 @@ where a name was wrong, the names that were right. That is the envelope the whol
 shares, and it is why every refusal below is described as something the caller reads rather
 than something they catch.
 
+**No refusal carries a password.** It is masked as `***` where it sits as a credential — in
+a URL's userinfo, or under the `password=` or `PWD=` key a driver echoes when a connection
+fails — and nowhere else, so a short password does not rewrite the words around it. One
+masker does this (`credentials.py`), and every refusal passes through it on the way out,
+including one from a verb that took a URL for a path and never knew it held a credential.
+
 | Verb | Shape | What it is for |
 |---|---|---|
 | `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Open a datasource as a database — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. |

@@ -56,6 +56,7 @@ from typing import Any, Iterator, Sequence
 from sqlalchemy.engine import make_url
 
 from . import config
+from .credentials import mask_credentials, redacted_url
 from .dialects import UnsupportedOperation
 from .loader import (
     READERS,
@@ -420,7 +421,9 @@ class Registry:
         if scheme is not None:
             raw = make_url(database).database or ""
             if not raw:
-                raise AttachRefused(f"{database} names no database file.")
+                raise AttachRefused(
+                    f"{mask_credentials(database)} names no database file."
+                )
         try:
             return resolve_read_path(raw)
         except PathNotAllowed as exc:
@@ -550,9 +553,11 @@ class Registry:
         try:
             url = make_url(database)
         except Exception as exc:
-            raise AttachRefused(f"Not a usable datasource URL: {exc}") from exc
+            raise AttachRefused(
+                f"Not a usable datasource URL: {mask_credentials(str(exc))}"
+            ) from exc
 
-        safe = url.render_as_string(hide_password=True)
+        safe = redacted_url(url)
 
         # A URL with no host names something on this machine — `duckdb:///x.db`
         # is a local file, exactly as `sqlite:///x.db` is. The gate is about
@@ -588,7 +593,7 @@ class Registry:
         database cannot quietly support fewer of them than a file does.
         """
         url = make_url(database)
-        safe = url.render_as_string(hide_password=True)
+        safe = redacted_url(url)
         try:
             self._workspace.attach(url, nickname, writable=writable)
             # Listing forces the schema to be read, so a datasource that opens
@@ -619,11 +624,16 @@ class Registry:
 
     @staticmethod
     def _first_line(exc: Exception, url: Any) -> str:
-        """The driver's complaint, with the password scrubbed out of it."""
-        message = str(exc).splitlines()[0] if str(exc) else ""
-        if url.password:
-            message = message.replace(str(url.password), "***")
-        return message
+        """The first line of the driver's complaint, its credentials masked.
+
+        Masked before it is cut, so a password the driver echoes on a later
+        line is gone too if the cut ever moves. Masked where the password sits
+        as a credential rather than wherever its characters occur: a substring
+        replacement turned a short password into a corruption of the driver's
+        own words (issue #82).
+        """
+        masked = mask_credentials(str(exc), connecting_to=url)
+        return masked.splitlines()[0] if masked else ""
 
     def _validate_nickname(self, nickname: str) -> None:
         if not _NICKNAME.match(nickname or ""):
