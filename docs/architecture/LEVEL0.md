@@ -322,7 +322,10 @@ which is not equally far:
 
 - **SQLite** refuses at statement preparation, through an authorizer that whitelists four
   read actions; a read-only attach also carries `mode=ro` in its connection URI. **DuckDB**
-  opens `access_mode=read_only`. Neither runs the statement at all.
+  opens a read-only datasource `access_mode=read_only` on both of its connections, and runs
+  every `query` on a writable one in a `READ ONLY` transaction, refusing any statement that
+  would begin, commit or roll back a transaction of its own
+  ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)). Neither runs a write at all.
 - **DuckDB** also reaches files by itself — `read_csv`, `read_text`, `COPY … TO`, `ATTACH` —
   and `access_mode` covers only its own database. So every DuckDB connection, read and
   write, has `enable_external_access` switched off and `lock_configuration` on, and a
@@ -482,7 +485,7 @@ this server built is a database it holds.
 | Backend | Reached as | What it could not be asked portably |
 |---|---|---|
 | SQLite | file, URL | `query_only` and an authorizer; `VACUUM INTO`, which is what makes it the one backend `save` works on; residency from the page count; `typeof()` for mixed columns; the declared type *is* the affinity |
-| DuckDB | file, URL | `access_mode=read_only` on the read connection — refused by DuckDB itself at open time, so a read connection cannot write however it is reached, which is stronger than the generic transactional floor. And on both connections, `enable_external_access` off and the configuration locked, because DuckDB's table functions and `COPY` open files without asking `paths.py` ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). Everything else is the generic answer |
+| DuckDB | file, URL | One DuckDB configuration for both connections of a slot, because DuckDB refuses a second connection to one file under a different one ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)). A read-only datasource carries `access_mode=read_only` on both, refused by DuckDB itself at open time. A writable one carries it on neither, and its read connection opens every transaction `READ ONLY` and refuses a statement that would end it — DuckDB refuses the write rather than this server discarding it, which is stronger than the generic transactional floor. And on both connections, `enable_external_access` off and the configuration locked, because DuckDB's table functions and `COPY` open files without asking `paths.py` ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). Everything else is the generic answer |
 | PostgreSQL | URL | nothing |
 | MySQL / MariaDB | URL | a read-only session, since DDL commits itself; an index over a *prefix*, since `TEXT` cannot be a key |
 | Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |
@@ -524,6 +527,13 @@ text.
 > ways out point different directions: open one engine and carry the posture per statement,
 > or refuse `writable=true` on a DuckDB file outright and say why. Filed as
 > [#79](https://github.com/ChrisGVE/localdata-mcp/issues/79). **Open, not decided.**
+>
+> **Resolved (2026-10-30) — the slot was fixed.** Both connections of a DuckDB slot now open
+> under one configuration: `access_mode=read_only` on both for a read-only datasource, on
+> neither for a writable one, file and URL alike. The URL form had the same defect in the
+> read-only arm — `directory` and `stats` failed on a `duckdb:///` URL attached without
+> `writable` — and is fixed by the same change. A writable slot's read connection is held to
+> reading by a `READ ONLY` transaction instead, measured in `CONSTRAINTS.md` §31.
 
 Every dialect that needs a server is exercised against a live container
 (`docker-compose.test.yml`) — fifteen of the seventeen; SQLite and DuckDB are files and need
@@ -652,14 +662,13 @@ correct against each other.
 
 **What is left before level 0 closes is no longer code**: a pass driving the live server
 through a real client, since every verb has changed since the last one, and a review of the
-issues that were fixed forward. Three design questions are open and are recorded where they
-arise, under an **Open, not decided** mark (rows 1 and 3 share one, since the second is moot
-if the first resolves against the refusal):
+issues that were fixed forward. Two design questions are open and are recorded where they
+arise, under an **Open, not decided** mark (they share one, since the second is moot if the
+first resolves against the refusal):
 
 | Question | Where |
 |---|---|
 | Whether a JSON, YAML or XML document with two candidate tables should still be refused, given the premise that a file may hold more than one table | *The premise*, above |
-| What a DuckDB file attached `writable=true` should do, since two engines on one file is refused by DuckDB ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)) | *The backends*, above |
 | Whether the refusal's wording — *"which one you want"* — should survive, since it is the pick-one model this design left behind | *The premise*, above |
 
 The rest of this section is how the two catalogues went, and is history rather than plan.
@@ -670,8 +679,8 @@ rather than assumed.
 The expectation going into the backends was that they would need a test harness rather
 than a code path, and that was half right: nothing about *reaching* a dialect needed
 writing, and PostgreSQL — which needed nothing at all — is the proof. (DuckDB was named
-here too until the correction above: it carries `access_mode=read_only`, which is the one
-thing its subclass adds.)
+here too until the correction above: it carries `access_mode=read_only`, which is what its
+subclass was first registered for.)
 What the harness found instead was defect after defect the file-backed dialects could not
 have shown, most of them a wrong answer rather than an error: a number arriving as text, a
 write reported as a success, a `CREATE TABLE` that was permanent despite being refused, a

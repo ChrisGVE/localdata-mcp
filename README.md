@@ -368,8 +368,9 @@ DDL by design.
 Changing a slot goes through `create`, `update` and `drop`, which is what
 `writable=true` governs. The enforcement is the connection's rather than a check
 that could be reached around, and each backend goes as far as it can: SQLite
-refuses at statement preparation through an authorizer, DuckDB opens
-`access_mode=read_only` and has its own file access (`read_csv`, `COPY … TO`)
+refuses at statement preparation through an authorizer, DuckDB opens a
+read-only datasource `access_mode=read_only`, runs `query` on a writable one in a
+`READ ONLY` transaction, and has its own file access (`read_csv`, `COPY … TO`)
 switched off on every connection, MySQL and MariaDB open a read-only session
 because their DDL commits itself, ClickHouse carries `readonly=1` because it has
 no transaction to withhold. **Two are exceptions.** Oracle commits DDL before

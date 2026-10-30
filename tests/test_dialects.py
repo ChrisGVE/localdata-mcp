@@ -1454,3 +1454,73 @@ def test_a_mysql_index_with_no_room_left_is_refused_naming_the_column_to_drop():
     assert "enormous" in message, "the caller is not told which column to drop"
     assert "800" in message
     assert "3072" in message
+
+
+# ---------------------------------------------------------------------------
+# Both engines of one DuckDB slot open together (issue #79)
+# ---------------------------------------------------------------------------
+
+
+def _open_duckdb_slot(database: Path, reach: str, *, writable: bool):
+    """Open a DuckDB slot the way ``attach`` does, by a file path or by a URL."""
+    backend = backend_for("duckdb")
+    if reach == "file":
+        return backend.open_file(database, writable=writable)
+    return backend.open(f"duckdb:///{database}", writable=writable)
+
+
+@pytest.mark.parametrize("first", ["read", "write"])
+@pytest.mark.parametrize("writable", [False, True])
+@pytest.mark.parametrize("reach", ["file", "url"])
+def test_both_engines_of_a_duckdb_slot_connect_in_either_order(
+    tmp_path, reach, writable, first
+):
+    """Issue #79: DuckDB refuses a second connection to one file under a new configuration.
+
+    The slot holds two engines onto one file, and DuckDB keeps one database
+    instance per file per process: the first connection fixes the
+    configuration, and a second asking for a different one is refused with
+    "Can't open a connection to same database file with a different
+    configuration than existing connections". Which engine connects first is
+    up to whichever verb runs first, so both orders are driven.
+
+    Connected and *queried*, because the defect was invisible to every test
+    that asserted on the engines' URLs without ever opening both.
+    """
+    database = build_database(tmp_path / "warehouse.duckdb", dialect="duckdb")
+    engines = _open_duckdb_slot(database, reach, writable=writable)
+    order = (
+        (engines.read, engines.write)
+        if first == "read"
+        else (engines.write, engines.read)
+    )
+    try:
+        for engine in order:
+            with engine.connect() as connection:
+                counted = connection.execute(text("SELECT count(*) FROM products"))
+                assert counted.scalar_one() == 1
+    finally:
+        engines.dispose()
+
+
+@pytest.mark.parametrize("reach", ["file", "url"])
+def test_the_reader_of_a_writable_duckdb_slot_sees_what_the_writer_committed(
+    tmp_path, reach
+):
+    """One database instance behind both engines, so a write is visible at once.
+
+    The writer is what ``create``, ``update`` and ``drop`` use, and ``query``
+    reads through the reader straight afterwards. Two instances of one file
+    would each hold their own view of it, so this is the property the shared
+    configuration buys.
+    """
+    database = build_database(tmp_path / "warehouse.duckdb", dialect="duckdb")
+    engines = _open_duckdb_slot(database, reach, writable=True)
+    try:
+        with engines.write.begin() as connection:
+            connection.execute(text("INSERT INTO products VALUES ('b', 'Gadget')"))
+        with engines.read.connect() as connection:
+            counted = connection.execute(text("SELECT count(*) FROM products"))
+            assert counted.scalar_one() == 2
+    finally:
+        engines.dispose()

@@ -5381,6 +5381,11 @@ cost remains:** a writable file with a `?` in its name cannot commit (*"Failed t
 access file …/why.wal? not.duckdb"*). That is currently behind #79, which already stops a writable
 DuckDB file from reaching `create`.
 
+> **Amended 2026-10-30 — #79 no longer stands in front of this cost.** A writable DuckDB file now
+> reaches `create` (§31), so the cost is reachable. Measured: `why? not.duckdb` attached
+> `writable=true` answers `directory`, and `create(type="table")` from a CSV is refused with
+> *"Failed to commit: Cannot access file …"*. The file holds only its original table afterwards.
+
 Settings belong to the database instance, and DuckDB gives every connection to one file the same
 instance, so a second connection finds it already locked. The seal checks first and does not set
 the value twice. The one case it refuses is a URL carrying `lock_configuration=true` with file access
@@ -5476,3 +5481,80 @@ the tick path: they are not instants.
   Filed as [#109](https://github.com/ChrisGVE/localdata-mcp/issues/109).
 - `Workspace.insert_frame`, which takes a frame directly and is not reached by any verb, still
   converts instants to ticks. `tests/test_binding.py` exercises that path.
+
+---
+
+## §31 — A DuckDB slot opens both connections under one configuration (2026-10-30)
+
+Closes [#79](https://github.com/ChrisGVE/localdata-mcp/issues/79). Measured with DuckDB 1.5.5,
+duckdb-engine 0.17.0 and SQLAlchemy 2.0.51, on `new-v3` from `2e02ba0a`.
+
+### 31.1 The defect
+
+DuckDB keeps one database instance per file per process, and the first connection fixes its
+configuration. A second connection asking for a different one is refused: *"Can't open a
+connection to same database file with a different configuration than existing connections"*.
+A slot opens a read engine and a write engine, and the generic `Backend.open` put
+`access_mode=read_only` on the reader only. Driven through the tool surface, fresh server:
+
+- A file attached `writable=true`: `attach` and `query` answer, then `directory` and `stats`
+  fail with the error above. `create`, `update` and `drop` reach the writer and fail the same way.
+- A `duckdb:///` URL attached read-only: `directory(nickname)`, `directory(nickname, table)`
+  and `stats` fail the same way. `query` answers, because it uses only the reader.
+- A file attached read-only is clean, because its URL carries the posture to both engines.
+
+### 31.2 What a writable reader can rely on instead
+
+Without `access_mode=read_only`, the reader of a writable slot has the generic floor, and the
+floor alone is not enough here. On the sealed engines:
+
+- `INSERT … RETURNING` on a connection closed without commit answers with the inserted row, and
+  the row is gone afterwards. The answer and the outcome disagree.
+- `COMMIT; INSERT … RETURNING …` keeps the row. DuckDB runs every statement of a
+  multi-statement string, so the `COMMIT` ends the transaction and the `INSERT` runs in
+  autocommit. `ROLLBACK; …` does the same.
+
+DuckDB has no session-level read-only setting. `SET TRANSACTION READ ONLY` is a parser error,
+and `default_transaction_read_only` and `transaction_read_only` are unknown settings. It does
+have a per-transaction one. `BEGIN TRANSACTION READ ONLY`, `BEGIN READ ONLY` and
+`START TRANSACTION READ ONLY` are accepted. Inside one, `INSERT`, `INSERT … RETURNING` and
+`CREATE MACRO` are refused with *"Cannot write to database … transaction is launched in
+read-only mode"*. That leaves one way out, which is to end the transaction. Tried inside a
+read-only transaction on a sealed connection:
+
+| Attempt | Result |
+|---|---|
+| `COMMIT; INSERT …` / `ROLLBACK; INSERT …` | gets out: the row is kept |
+| `PREPARE p AS COMMIT` | parser error |
+| `PREPARE q AS INSERT …; EXECUTE q` | refused as a write |
+| `DETACH <db>` | refused: it is the default database |
+| `USE memory; CREATE TABLE …` | refused: no such catalog |
+| `CREATE TEMP TABLE`, `SET VARIABLE` | run, and touch nothing in the file |
+| `CHECKPOINT`, `FORCE CHECKPOINT`, `VACUUM` | run without error. A checkpoint is DuckDB moving its own WAL into its own file, not a change to the data; not examined further |
+
+DuckDB's own parser names the statements that end a transaction. `extract_statements` gives
+`BEGIN`, `COMMIT`, `ROLLBACK`, `ABORT` and `END` the type `TRANSACTION`. It types `SUMMARIZE`,
+`DESCRIBE`, `SHOW`, `PRAGMA` and a `WITH` query as `SELECT`, and `EXPLAIN` as `EXPLAIN`.
+
+### 31.3 What was done
+
+- `DuckDBBackend.open` builds one URL and gives it to both engines. A read-only slot gets
+  `access_mode=read_only` on both, and a writable slot gets it on neither.
+- Its `read_posture` replaces the read connection's `begin` with `BEGIN TRANSACTION READ ONLY`.
+  duckdb-engine begins a transaction by calling that method. It also refuses, before running
+  anything, a string in which DuckDB's parser finds a `TRANSACTION` statement.
+- After the change, through the tool surface: on a writable file, `query`, both `directory`
+  forms, `stats`, `create` (a table and an index), `update` and `drop` all answer, and DuckDB
+  reads the changes back from the file after `detach`. On a read-only URL, `directory`, `stats`
+  and `query` answer, and every write verb is refused. `INSERT … RETURNING` sent to `query` on a
+  writable slot is refused, as are a plain `INSERT` and `COMMIT; INSERT …`, and the file keeps its
+  rows.
+
+### 31.4 What this did not change
+
+- The refusal of a plain write on DuckDB is DuckDB's own sentence. That is *"transaction is
+  launched in read-only mode"* on a writable slot and *"attached in read-only mode"* on a
+  read-only one. Neither names the verb to use instead. DuckDB attaches no error code to either,
+  and this server does not match on a driver's prose.
+- `directory` lists no indexes on any DuckDB slot, because duckdb-engine reflects none. That is
+  [#107](https://github.com/ChrisGVE/localdata-mcp/issues/107)'s root, not this section's.

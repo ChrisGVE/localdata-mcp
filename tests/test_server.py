@@ -2937,3 +2937,185 @@ def test_a_typed_date_keeps_its_description_through_an_export(session):
     seen = next(c for c in again["loaded"][0]["columns"] if c["name"] == "seen")
     assert seen.get("temporal") == "iso8601_utc", seen
     assert after["rows"] == [[3]]
+
+
+# ---------------------------------------------------------------------------
+# A DuckDB slot answers every verb, whichever way it was reached (issue #79)
+# ---------------------------------------------------------------------------
+
+
+def _attach_duckdb_by(session, reach: str, **grant):
+    """Attach the DuckDB fixture by its file path or by a ``duckdb:///`` URL."""
+    target = session / "warehouse.db"
+    _build_duckdb(target)
+    database = str(target) if reach == "file" else f"duckdb:///{target}"
+    attached = call("attach", database=database, nickname="wh", **grant)
+    assert attached["ok"] is True
+    return target
+
+
+def _duckdb_contents(target: Path) -> tuple[set[str], set[str], int]:
+    """Tables, indexes and ``sales`` rows, read from the file by DuckDB itself.
+
+    Opened after ``detach``, read-only, and outside this server, so what it
+    sees is what the file holds rather than what a slot remembers.
+    """
+    import duckdb
+
+    connection = duckdb.connect(str(target), read_only=True)
+    try:
+        tables = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT index_name FROM duckdb_indexes()"
+            ).fetchall()
+        }
+        sales = connection.execute("SELECT count(*) FROM sales").fetchone()[0]
+    finally:
+        connection.close()
+    return tables, indexes, sales
+
+
+@pytest.mark.parametrize("reach", ["file", "url"])
+def test_a_writable_duckdb_datasource_answers_every_verb(session, reach):
+    """Issue #79: ``writable=true`` used to leave five of the verbs failing.
+
+    The slot's two engines opened the file under different DuckDB
+    configurations, and DuckDB refuses the second. ``query`` worked because it
+    connected first; ``directory``, ``stats``, ``create``, ``update`` and
+    ``drop`` all reach the other engine and all failed. Every verb is driven
+    here, each one's effect read back through the server, and the file is then
+    opened by DuckDB itself to show the changes were kept.
+    """
+    write_csv(session / "extra.csv", "code,label\nx,one\ny,two\n")
+    target = _attach_duckdb_by(session, reach, writable=True)
+
+    counted = call("query", nickname="wh", sql="SELECT count(*) AS n FROM sales")
+    assert counted["ok"] is True
+    assert counted["rows"] == [[2]]
+
+    listed = call("directory", nickname="wh")
+    assert listed["ok"] is True
+    assert listed["tables"] == ["sales"]
+    described = call("directory", nickname="wh", table="sales")
+    assert described["ok"] is True
+    assert [column["name"] for column in described["columns"]] == [
+        "region",
+        "amount",
+    ]
+    measured = call("stats", nickname="wh", table="sales")
+    assert measured["ok"] is True
+
+    for source in ("simple.csv", "extra.csv"):
+        landed = call(
+            "create",
+            nickname="wh",
+            type="table",
+            source=str(session / source),
+            delimiter=",",
+        )
+        assert landed["ok"] is True, landed
+    indexed = call(
+        "create", nickname="wh", type="index", table="sales", columns=["region"]
+    )
+    assert indexed["ok"] is True, indexed
+    renamed = call("update", nickname="wh", type="table", name="simple", to="staff")
+    assert renamed["ok"] is True, renamed
+    dropped = call("drop", nickname="wh", type="table", name="extra")
+    assert dropped["ok"] is True, dropped
+
+    # The index is checked in the file below rather than through ``directory``:
+    # duckdb-engine reflects no indexes at all, so ``directory`` lists none on
+    # any DuckDB slot. That is issue #107's, not this one's.
+    assert sorted(call("directory", nickname="wh")["tables"]) == ["sales", "staff"]
+    staffed = call("query", nickname="wh", sql="SELECT count(*) FROM staff")
+    assert staffed["rows"][0][0] > 0
+
+    assert call("detach", nickname="wh")["ok"] is True
+    tables, indexes, sales = _duckdb_contents(target)
+    assert tables == {"sales", "staff"}
+    assert indexes == {indexed["index"]}
+    assert sales == 2
+
+
+def test_a_read_only_duckdb_url_describes_itself_and_refuses_writes(session):
+    """The URL form of issue #79, which the file form never had.
+
+    A file path carries the read-only posture in the URL both engines are
+    built from; a ``duckdb:///`` URL used to give it to the reader only, so the
+    two disagreed and ``directory`` and ``stats`` — which reach the writer —
+    failed on a datasource that was never granted a write.
+    """
+    write_csv(session / "extra.csv", "code,label\nx,one\n")
+    target = _attach_duckdb_by(session, "url")
+
+    listed = call("directory", nickname="wh")
+    assert listed["ok"] is True
+    assert listed["tables"] == ["sales"]
+    assert call("directory", nickname="wh", table="sales")["ok"] is True
+    assert call("stats", nickname="wh", table="sales")["ok"] is True
+
+    for verb, arguments in (
+        (
+            "create",
+            {"type": "table", "source": str(session / "extra.csv"), "delimiter": ","},
+        ),
+        ("create", {"type": "index", "table": "sales", "columns": ["region"]}),
+        ("update", {"type": "table", "name": "sales", "to": "renamed"}),
+        ("drop", {"type": "table", "name": "sales"}),
+    ):
+        refused = call(verb, nickname="wh", **arguments)
+        assert refused["ok"] is False, (verb, arguments)
+        assert refused["error"]
+
+    assert call("detach", nickname="wh")["ok"] is True
+    assert _duckdb_contents(target) == ({"sales"}, set(), 2)
+
+
+@pytest.mark.parametrize("reach", ["file", "url"])
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "INSERT INTO sales VALUES ('east', 1) RETURNING region",
+        "INSERT INTO sales VALUES ('east', 1)",
+        "COMMIT; INSERT INTO sales VALUES ('east', 1) RETURNING region",
+        "ROLLBACK; INSERT INTO sales VALUES ('east', 1) RETURNING region",
+    ],
+)
+def test_query_on_a_writable_duckdb_datasource_still_only_reads(session, reach, sql):
+    """A write grant is for ``create``, ``update`` and ``drop``, never for ``query``.
+
+    Before issue #79 the reader of a writable DuckDB slot opened the file
+    ``access_mode=read_only``, which is what broke the slot. Without it, the
+    reader runs every transaction ``READ ONLY`` instead, so DuckDB refuses the
+    write rather than this server discarding it afterwards — an ``INSERT …
+    RETURNING`` would otherwise answer with the row it never kept. A statement
+    that commits or rolls back is refused too, because ending the read-only
+    transaction is the one way out of it: measured, ``COMMIT; INSERT …``
+    persisted the row on DuckDB 1.5.5 when nothing stopped the ``COMMIT``.
+    """
+    target = _attach_duckdb_by(session, reach, writable=True)
+
+    refused = call("query", nickname="wh", sql=sql)
+
+    assert refused["ok"] is False, refused
+    counted = call("query", nickname="wh", sql="SELECT count(*) FROM sales")
+    assert counted["rows"] == [[2]]
+    assert call("detach", nickname="wh")["ok"] is True
+    assert _duckdb_contents(target)[2] == 2
+
+
+def test_query_names_the_transaction_statement_it_refuses(session):
+    """The refusal says what was attempted and which verbs write instead."""
+    _attach_duckdb_by(session, "file", writable=True)
+
+    refused = call(
+        "query",
+        nickname="wh",
+        sql="COMMIT; INSERT INTO sales VALUES ('east', 1) RETURNING region",
+    )
+
+    assert refused["ok"] is False
+    assert "transaction" in refused["error"]
+    assert "create" in refused["error"]

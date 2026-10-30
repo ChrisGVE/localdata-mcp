@@ -397,6 +397,19 @@ And seven found in this release's own code before it shipped:
   `attach` and `directory` now report `backend`, naming the engine (`sqlite`,
   `duckdb`, `postgresql` …), and `saveable`, which is `true` exactly where `save`
   writes the datasource out. Both are new keys; `kind` is unchanged.
+- **A DuckDB datasource failed every verb but `query` when its two connections
+  disagreed** ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)). A
+  slot opens a read and a write connection, and DuckDB refuses a second
+  connection to one file under a different configuration. A DuckDB file attached
+  `writable=true` therefore failed `directory`, `stats`, `create`, `update` and
+  `drop`, and a `duckdb:///` URL attached read-only failed `directory` and
+  `stats`. Both connections now share one configuration: `access_mode=read_only`
+  on both for a read-only datasource, on neither for a writable one. `query` on
+  a writable DuckDB datasource still only reads — every transaction it runs is
+  `READ ONLY`, so DuckDB refuses an `INSERT … RETURNING` instead of answering
+  with a row it then discards, and a statement that would begin, commit or roll
+  back a transaction of its own is refused, since that is the one way out of a
+  read-only transaction.
 
 ### Known limitations
 

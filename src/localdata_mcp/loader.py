@@ -2202,10 +2202,10 @@ class Workspace:
         always projects at least one column, so the distinction is exact rather
         than heuristic. This is the floor under every dialect: where the database
         itself refuses a write on a read-only connection (SQLite's authorizer,
-        DuckDB's ``access_mode``, a read-only session on the servers that have
-        one) the refusal arrives before this, and where it does not, a write that
-        was quietly rolled back would otherwise be reported as a statement that
-        succeeded and returned nothing.
+        DuckDB's ``access_mode`` or read-only transaction, a read-only session
+        on the servers that have one) the refusal arrives before this, and where
+        it does not, a write that was quietly rolled back would otherwise be
+        reported as a statement that succeeded and returned nothing.
 
         **The column half was added because ``returns_rows`` alone let a write
         through.** CrateDB answers an ``INSERT`` with a result its driver reports

@@ -54,6 +54,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -1124,6 +1125,68 @@ def _seal_duckdb(dbapi_conn, _record) -> None:  # noqa: ANN001 - SQLAlchemy's si
         cursor.close()
 
 
+#: How a DuckDB read connection opens every transaction. Measured on DuckDB
+#: 1.5.5: inside it, ``INSERT``, ``CREATE`` and the rest are refused with
+#: "transaction is launched in read-only mode", and nothing reaches the file.
+_DUCKDB_READ_ONLY_BEGIN = "BEGIN TRANSACTION READ ONLY"
+
+#: What a statement refused by :func:`_refuse_transaction_control` was asking
+#: to do, worded to follow "This statement asks to" in ``query``'s refusal.
+_DUCKDB_TRANSACTION_CONTROL = "begin, commit or roll back a transaction of its own"
+
+
+def _begin_read_only(dbapi_conn, _record) -> None:  # noqa: ANN001 - SQLAlchemy's signature
+    """Make every transaction on this connection a read-only one.
+
+    ``duckdb_engine`` begins a transaction by calling the DBAPI connection's
+    ``begin()``, which starts an ordinary read-write one, and DuckDB has no
+    session setting that changes that — there is no
+    ``default_transaction_read_only`` and no ``SET TRANSACTION`` (both
+    measured on 1.5.5). So the connection's own ``begin`` is replaced, once,
+    when the connection is made: from then on SQLAlchemy's autobegin opens
+    ``BEGIN TRANSACTION READ ONLY`` instead. The wrapper ``duckdb_engine``
+    hands SQLAlchemy is a plain Python object, so the replacement is an
+    instance attribute and touches nothing outside this connection.
+
+    Pinned by the server tests that send ``INSERT … RETURNING`` to ``query``
+    on a writable slot: if a later ``duckdb_engine`` begins some other way,
+    those writes stop being refused and the tests fail.
+    """
+    dbapi_conn.begin = partial(dbapi_conn.execute, _DUCKDB_READ_ONLY_BEGIN)
+
+
+def _refuse_transaction_control(refusal: Refusal, connection: Any, sql: str) -> None:
+    """Refuse a statement that would end the read-only transaction it runs in.
+
+    ``BEGIN TRANSACTION READ ONLY`` holds only until something ends the
+    transaction, and DuckDB runs every statement of a multi-statement string:
+    measured on 1.5.5, ``COMMIT; INSERT … RETURNING …`` committed the empty
+    read-only transaction and then ran the ``INSERT`` in autocommit, so the
+    row was kept. ``ROLLBACK`` does the same.
+
+    Which statements those are is DuckDB's answer, not this server's:
+    ``extract_statements`` is DuckDB's own parser, and every statement it
+    classifies as ``TRANSACTION`` — ``BEGIN``, ``COMMIT``, ``ROLLBACK``,
+    ``ABORT``, ``END`` — is refused before any of the string runs. Nothing
+    else is, because inside the read-only transaction DuckDB refuses every
+    write by itself. Measured escapes that do not get out: a prepared
+    ``COMMIT`` is a syntax error, ``DETACH`` of the default database and
+    ``USE`` of another catalog are refused, and configuration is locked by
+    :func:`_seal_duckdb`.
+
+    A statement DuckDB cannot parse raises its own parser error here, which
+    is the error running it would have raised.
+    """
+    import duckdb
+
+    kinds = [statement.type for statement in connection.extract_statements(sql)]
+    if duckdb.StatementType.TRANSACTION in kinds:
+        refusal.what = _DUCKDB_TRANSACTION_CONTROL
+        raise duckdb.PermissionException(
+            f"query may not {_DUCKDB_TRANSACTION_CONTROL}."
+        )
+
+
 @dataclass(frozen=True)
 class DuckDBBackend(Backend):
     """DuckDB, which can be *told* to open a file read-only.
@@ -1143,30 +1206,92 @@ class DuckDBBackend(Backend):
 
     And a third: DuckDB reaches files **by itself**, which no other dialect
     here does from inside a statement. See :meth:`open`.
+
+    And a fourth: DuckDB holds one configuration per file per process, so the
+    two engines of a slot cannot differ in posture the way the generic
+    :meth:`Backend.open` makes them. The URL posture above is therefore the
+    *slot's*, on both engines or on neither, and a writable slot's reader is
+    held to reading by a read-only transaction instead. See :meth:`open` and
+    :meth:`read_posture` (issue #79).
     """
 
     name: str = "duckdb"
     read_only_query: ClassVar[Mapping[str, str]] = {"access_mode": "read_only"}
 
     def open(self, url: str | URL, *, writable: bool) -> Engines:
-        """The generic two engines, each sealed off from every other file.
+        """Two engines onto one DuckDB configuration, each sealed off from other files.
 
-        **Why.** ``access_mode=read_only`` protects the *database file* and
-        nothing else. DuckDB's own table functions and ``COPY`` open files
-        directly — ``read_text('/etc/hosts')``, ``read_csv`` anywhere on disk,
-        ``COPY (...) TO '/tmp/x.csv'`` — and none of that passes through
-        :mod:`paths`, so on a file attached read-only ``query`` both read outside
-        the allowed paths and wrote a file (issue #105). Both engines are
-        sealed, not only the reader ``query`` uses: a statement the writer runs
-        for ``create`` must not reach a file either. :meth:`Backend.open_file`
-        comes through here, so a file and a URL are sealed by the same line.
+        **One configuration for both engines (issue #79).** DuckDB keeps one
+        database instance per file per process, and the first connection fixes
+        its configuration: a second connection asking for a different one is
+        refused with "Can't open a connection to same database file with a
+        different configuration than existing connections". The generic
+        :meth:`Backend.open` puts :attr:`read_only_query` on the reader only,
+        so on DuckDB whichever engine connected second failed — every verb
+        but ``query`` on a writable file, and ``directory`` and ``stats`` on a
+        read-only URL. So the posture follows the *slot* here, not the engine:
 
-        What the seal is, and what it costs, is :func:`_seal_duckdb`'s to say.
+        * **not writable** — both engines carry ``access_mode=read_only``, so
+          DuckDB itself refuses a write whichever engine is asked, which is
+          what :meth:`loader.Workspace.describe` says of a read-only
+          datasource;
+        * **writable** — neither carries it, and the reader is held to reading
+          by :meth:`read_posture` instead.
+
+        **Sealed, both of them.** ``access_mode=read_only`` protects the
+        *database file* and nothing else. DuckDB's own table functions and
+        ``COPY`` open files directly — ``read_text('/etc/hosts')``, ``read_csv``
+        anywhere on disk, ``COPY (...) TO '/tmp/x.csv'`` — and none of that
+        passes through :mod:`paths`, so on a file attached read-only ``query``
+        both read outside the allowed paths and wrote a file (issue #105). Both
+        engines are sealed, not only the reader ``query`` uses: a statement the
+        writer runs for ``create`` must not reach a file either.
+        :meth:`Backend.open_file` comes through here, so a file and a URL are
+        configured and sealed by the same lines. What the seal is, and what it
+        costs, is :func:`_seal_duckdb`'s to say.
         """
-        engines = super().open(url, writable=writable)
+        shared = make_url(url) if writable else self._read_only(url)
+        connect_args = dict(self.connect_args())
+        refusal = Refusal()
+        engines = Engines(
+            write=create_engine(shared, connect_args=connect_args),
+            read=create_engine(shared, connect_args=connect_args),
+            refusal=refusal,
+        )
+        self.read_posture(engines.read, refusal)
         for engine in (engines.read, engines.write):
             event.listen(engine, "connect", _seal_duckdb)
         return engines
+
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        """Run every read in a ``READ ONLY`` transaction it cannot leave.
+
+        Stronger than the generic floor, and needed: on a writable slot the
+        reader no longer opens the file ``access_mode=read_only`` (see
+        :meth:`open`), and under the floor alone ``INSERT … RETURNING`` sent to
+        ``query`` answers with the row it inserted while the closing rollback
+        throws the row away. A read-only transaction refuses the write instead,
+        so the answer and the outcome agree.
+
+        Two hooks, for the two halves: :func:`_begin_read_only` makes every
+        transaction read-only, and :func:`_refuse_transaction_control` refuses
+        the statements that would end one early. Installed on a read-only
+        slot's reader as well, where ``access_mode=read_only`` already refuses
+        every write — one posture for the reader however the slot was granted.
+        """
+        event.listen(engine, "connect", _begin_read_only)
+
+        @event.listens_for(engine, "do_execute")
+        def _with_parameters(cursor, statement, _parameters, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            connection = context.root_connection.connection.dbapi_connection
+            _refuse_transaction_control(refusal, connection, statement)
+            return False
+
+        @event.listens_for(engine, "do_execute_no_params")
+        def _without_parameters(cursor, statement, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            connection = context.root_connection.connection.dbapi_connection
+            _refuse_transaction_control(refusal, connection, statement)
+            return False
 
     def optional_aggregates(self) -> Mapping[str, Any]:
         """Both of them, driven against the engine rather than read about.
