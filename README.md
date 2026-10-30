@@ -500,11 +500,14 @@ answer belongs to whoever wrote the file, it reports and carries on.
   because the caller has misread the file. On the way out, `query(path=…)`
   **ignores** it, so one value can be carried across a mixed batch of
   destinations without the caller stripping it per file.
-- **A timestamp out of a typed format is reported only on the column itself**,
-  and this is the one entry here with **no warning attached**. It loads as an
-  integer count of nanoseconds since the epoch, which orders correctly and
-  compares wrongly against a date string; the `temporal` and `unit` fields on the
-  column say so and nothing else does. *Dates*, below, has the detail.
+- **A duration or a time of day out of a typed format is reported only on the
+  column itself**, and this is the one entry here with **no warning attached**.
+  It loads as an integer count of nanoseconds, which orders correctly and
+  compares wrongly against a string such as `'10:00:00'`; the `temporal` and
+  `unit` fields on the column are the only signal, and the `unit` they carry is
+  wrong for both ([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)).
+  A *date or timestamp* from a typed format is not in this list: it is stored
+  the way a CSV date is. *Dates*, below, has the detail.
 
 ## Dates
 
@@ -540,32 +543,24 @@ spelling for the whole column: a single value carrying a time takes the column t
 `…T00:00:00Z` throughout. Text in no recognised standard is left alone and
 reported, with the offending values named.
 
-All of that is the flat-file case, where the only thing a date can be is text. A
-**typed** format — `.parquet`, `.feather`, `.orc`, and the spreadsheet formats —
-carries a timestamp type of its own, and such a column arrives as an integer
-count of **nanoseconds since the Unix epoch**:
+A **typed** format — `.parquet`, `.feather`, `.orc`, the spreadsheet formats and
+YAML — hands a date or a timestamp over already parsed. Such a column is written
+in the same canonical UTC spelling and reported exactly as the same values from a
+CSV would be, so `WHERE order_date > '2024-03-02'` means the same thing whichever
+file the column came from. A tz-aware value is converted to UTC; a naive one is
+taken as UTC already and keeps its wall time; a missing one is `NULL`. Fractional
+seconds are kept to the microsecond on both paths, and a finer part is cut
+([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
 
-```python
-{"name": "order_date", "type": "INTEGER", "temporal": "timestamp", "unit": "nanoseconds_since_epoch"}
-```
-
-Ordering and `max()` are correct on it, for the same reason Unix time is left
-untouched above. What is not correct is comparing it against a date string:
-`WHERE order_date > '2024-03-02'` compares an integer to text and returns **zero
-rows with no error** — the same silent wrong answer this section opens with,
-arrived at from the other direction. Compare against a tick value, or read `unit`
-and convert. Two things make this the sharpest edge in the tool:
-
-- **Nothing warns about it.** Every entry under *What it tells you rather than
-  fixing* pairs its problem with a warning; this one has no warning channel at
-  all, so the `temporal` and `unit` pair on the column is the only signal there
-  is.
-- **That signal does not survive a round trip.** A column written out with
-  `query(path=…)` or `save()` and attached again comes back as a bare `INTEGER`
-  with no temporal key, so the second reader cannot know what the integers mean.
-
-Whether the split is the right design is open —
-[#87](https://github.com/ChrisGVE/localdata-mcp/issues/87).
+Until [#87](https://github.com/ChrisGVE/localdata-mcp/issues/87) these columns
+loaded as integer nanoseconds since the epoch, and a comparison against a date
+string returned zero rows with no error. Durations and bare times of day still
+load that way. They are not instants, and the tag they carry is
+`{"temporal": "duration" | "timestamp", "unit": "nanoseconds_since_epoch"}`,
+which is wrong for both: a duration counts from no epoch, and a time of day
+counts from midnight. Compare a time of day against a nanosecond count rather
+than against `'10:00:00'`
+([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)).
 
 ## Memory
 

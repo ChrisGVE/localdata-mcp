@@ -370,6 +370,60 @@ def test_a_gap_in_a_text_column_arrives_as_null(live):
     assert [row[0] for row in read_back["rows"]] == ["first", None, "third"]
 
 
+def test_a_typed_date_landed_in_the_endpoint_filters_by_a_date_literal(live):
+    """A Parquet timestamp lands as the CSV's canonical text, on every backend (#87).
+
+    It used to land as integer nanoseconds, so ``seen > '2024-03-02'`` compared
+    a number with a string, and what that does is each backend's own rule —
+    SQLite's is to answer false for every row. The comparison is therefore
+    asserted against each dialect in turn rather than against SQLite alone.
+    Every value carries a time of day and an offset, so the column is written
+    to the second, and an offset dropped rather than converted would move a row
+    across the filter.
+    """
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+    attach_writable(live)
+    source = live.root / "seen.parquet"
+    pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "seen": pd.to_datetime(
+                [
+                    "2024-03-01T23:30:00+01:00",
+                    "2024-03-02T23:30:00+01:00",
+                    "2024-03-03T00:30:00+01:00",
+                ],
+                utc=True,
+            ),
+        }
+    ).to_parquet(source)
+    table = live.table("seen")
+    made = call(
+        "create", nickname="endpoint", type="table", source=str(source), table=table
+    )
+    assert made["ok"] is True, made
+
+    after = call(
+        "query",
+        nickname="endpoint",
+        sql=f"SELECT id FROM {table} WHERE seen > '2024-03-02' ORDER BY seen",
+    )
+    stored = call(
+        "query", nickname="endpoint", sql=f"SELECT seen FROM {table} ORDER BY id"
+    )
+
+    assert after["ok"] is True, after
+    # 23:30 at +01:00 on the second is 22:30 UTC on the second, so both of the
+    # last two rows are after midnight UTC on the second; the first is not.
+    assert after["rows"] == [[2], [3]]
+    assert [row[0] for row in stored["rows"]] == [
+        "2024-03-01T22:30:00Z",
+        "2024-03-02T22:30:00Z",
+        "2024-03-02T23:30:00Z",
+    ]
+
+
 def _build_typed_table(live: Live) -> str:
     """A table of types SQLite does not have, built the way the user's would be.
 

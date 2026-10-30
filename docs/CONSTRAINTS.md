@@ -158,6 +158,12 @@ epoch-ns alone, so it needs its own column or the contract must say it is droppe
 (A lexical-ordering failure across a DST fall-back was *not* reproducible — `-04:00` and `-05:00`
 happen to sort chronologically as text. Don't claim it.)
 
+> **Amended 2026-10-30 — for instants, this section no longer governs storage.** Both paths now
+> store a date or timestamp as canonical UTC text: the text path since 2026-07-27 (§8.1), and the
+> typed readers since #87 (§30). The two measurements above are still answered. The cross-offset
+> join is answered by canonicalising to one offset, and the aggregate table is about durations,
+> which still land as ticks. The table above is left as it was measured.
+
 ### 1.5 A column with mixed types cannot be fixed by choosing an affinity
 
 Five numeric rows (1..5, true mean 3.0) followed by two text rows in the same column:
@@ -911,6 +917,9 @@ itself is not withdrawn — it is about what the *text* path should do, and noth
 that. What is withdrawn is the claim that the conversion is unreachable and the implication that
 the decision was settled for both paths. Filed as
 [#87](https://github.com/ChrisGVE/localdata-mcp/issues/87).
+
+**Amended 2026-10-30 — settled for both paths.** A typed reader's instant is now written in the same
+canonical UTC spelling as a CSV's. Measurements and reasoning are in §30.
 
 **The pattern, sixth instance and the sharpest yet.** `tests/test_binding.py` contains
 `test_same_instant_in_two_offsets_joins`, asserting `matched == 1`, and it passes — because it hands
@@ -5393,3 +5402,77 @@ SQL itself, which this server avoids by design. Filed as
 **Server-side equivalents on the container backends** — `pg_read_file`, `COPY … TO PROGRAM`,
 `INTO OUTFILE`, `load_file` — are not covered here. They run as the database server's user, not as
 this process, and are a different mechanism.
+
+---
+
+## §30 — A date from a typed format is stored the way a CSV date is (2026-10-30)
+
+Closes [#87](https://github.com/ChrisGVE/localdata-mcp/issues/87). Measured with pandas 3.0.2 and
+pyarrow 25.0.0, on `new-v3` from `9045f3a4`.
+
+### 30.1 What the typed readers hand over
+
+| Source | What pandas gives the loader |
+|---|---|
+| Parquet `timestamp`, naive | `datetime64[us]` |
+| Parquet `timestamp`, tz-aware | `datetime64[us, <zone>]` |
+| Parquet `date32` | `object`, holding `datetime.date` (pandas has no date dtype) |
+| `.xlsx` date or datetime cell | `datetime64[us]` |
+| YAML unquoted date / datetime | `object`, holding `datetime.date` / `datetime.datetime` |
+
+All of them went to `binding.adapt_column` and were stored as INTEGER nanoseconds since the epoch.
+`temporal.standardize`, the step every reader's frame passes through, looked only at text columns.
+
+### 30.2 What that cost, before the change
+
+- **SQLite slot:** `WHERE seen > '2024-03-02'` returned `{"ok": true, "rows": []}` on `.parquet`,
+  `.feather`, `.orc`, `.xlsx` and `.ods` alike. The same frame from a `.csv` returned the right row.
+- **PostgreSQL and MySQL:** the ticks did not land at all. `create` from the Parquet file was refused
+  with `integer out of range` (psycopg) and `(1264, "Out of range value for column 'seen' at row 1")`
+  (pymysql). The column is declared `INTEGER`, which is 32-bit on both. That width is its own
+  defect and outlives this change for any wide integer
+  ([#110](https://github.com/ChrisGVE/localdata-mcp/issues/110)).
+- **Round trip:** exported with `query(path=…)` and attached again, the column came back a bare
+  `INTEGER` with no temporal key.
+
+### 30.3 The choice, and why it is not a new decision
+
+Two representations were open. One was the backend's native timestamp type. The other was the
+canonical UTC text the CSV path already writes. The CSV path lands `TEXT` on every backend, and
+SQLite has no timestamp type at all. A native type would therefore have made one kind of value two
+kinds again, which is the split #87 reported. Canonical text was chosen.
+
+The argument for text is §8.1's, and it was already written for this case: the comparison a caller
+writes first is against a date literal, and text answers it on every backend while ticks do not.
+§1.4's two objections to text are answered as they were for the CSV path. Offsets are normalised to
+UTC, so one instant written in two offsets is one value. Durations, the subject of §1.4's aggregate
+table, are not touched.
+
+The rule is the text path's contract, applied to values that arrive already parsed. A tz-aware value
+is converted to UTC. A naive value is taken as UTC already and keeps its wall time. A missing value
+is `NULL`. The spelling is measured over the whole column. Durations and times of day are left on
+the tick path: they are not instants.
+
+### 30.4 After
+
+- All five typed formats: `WHERE seen > '2024-03-02'` returns the one later row. The column is
+  described as `{"type": "TEXT", "temporal": "iso8601_utc", "normalized": "UTC"}`, the same
+  description a CSV of the same frame produces.
+- A Zurich-zoned Parquet column (23:30 and 00:30 at `+01:00`) stores `…T22:30:00Z` and `…T23:30:00Z`.
+  Joined against a CSV writing the same two instants at `-05:00`, it matches 2 of 2.
+- PostgreSQL (three credential modes) and MySQL (two): the endpoint test lands the Parquet file and
+  filters it correctly. The other thirteen dialects were not running and that test skips on them.
+- Exported to Parquet and attached again, the column keeps its `iso8601_utc` description.
+
+### 30.5 What this did not change
+
+- **Sub-microsecond precision is cut, on both paths.** The canonical spelling has six fractional
+  digits, so two instants a nanosecond apart become one value. Only nanosecond sources, such as a
+  Parquet `timestamp[ns]`, carry such parts. The text path has always done this.
+  Filed as [#111](https://github.com/ChrisGVE/localdata-mcp/issues/111).
+- **Times of day and durations** still load as ticks, tagged `"unit": "nanoseconds_since_epoch"`,
+  which is wrong for both. A time of day is also tagged `"timestamp"`, and
+  `WHERE clock > '10:00:00'` against it returns zero rows: #87's failure for a different kind.
+  Filed as [#109](https://github.com/ChrisGVE/localdata-mcp/issues/109).
+- `Workspace.insert_frame`, which takes a frame directly and is not reached by any verb, still
+  converts instants to ticks. `tests/test_binding.py` exercises that path.

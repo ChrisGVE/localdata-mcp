@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And four found in this release's own code before it shipped:
+And five found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -371,6 +371,19 @@ And four found in this release's own code before it shipped:
   URL, shown the way `attach` shows it (`u:***`), with the route that does work:
   `attach` the database, write the rows wanted to a file with `query(path=…)`,
   and `create` that file.
+- **A date from a typed format compared wrongly against a date literal, with no
+  warning** ([#87](https://github.com/ChrisGVE/localdata-mcp/issues/87)). A
+  date or timestamp column from `.parquet`, `.feather`, `.orc`, a workbook or
+  YAML loaded as integer nanoseconds since the epoch, so
+  `WHERE seen > '2024-03-02'` returned zero rows with `ok: true` while the same
+  frame written to a CSV returned the right row. On PostgreSQL and MySQL the
+  ticks did not fit the column and `create` was refused outright. Such a column
+  is now written in the CSV path's canonical UTC spelling and reported as
+  `{"type": "TEXT", "temporal": "iso8601_utc", "normalized": "UTC"}`. A tz-aware
+  value is converted to UTC rather than shifted, and a missing one is `NULL`.
+  The description now also survives `query(path=…)` and a second `attach`.
+  Durations and times of day still load as nanoseconds
+  ([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)).
 
 ### Known limitations
 
@@ -408,7 +421,9 @@ And four found in this release's own code before it shipped:
 - **Formats that are not delimited are parsed whole**, so their load peak still
   tracks the file size.
 - **A normalised temporal column loses its original offset.** A file that needs
-  it must keep it in a column of its own.
+  it must keep it in a column of its own. Its fractional seconds stop at the
+  microsecond, so two instants a nanosecond apart become one value
+  ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
 - **No single test run covers the backend catalogue.** This machine runs six
   containers and starves them at around seven, so it takes five batches, and each
   reports a green suite while the dialects it never reached stay silent

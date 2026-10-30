@@ -15,6 +15,12 @@ The short version:
 * Temporals stored as ISO-8601 text bind fine and are wrong on every aggregate:
   `sum` and `avg` return `0.0`, `max` picks the lexically-largest string, and
   `ORDER BY` sorts `1 h, 10 d, 2 d`. We store **INTEGER ticks** instead.
+  That measurement is about durations, and it is durations and bare times of
+  day that reach these conversions from a file. An *instant* read from a file
+  never does: :func:`temporal.standardize` has already written it as canonical
+  UTC text, which compares against a date literal where ticks return zero rows
+  (#87, `CONSTRAINTS` §8.1). The instant conversions below serve a frame handed
+  to ``Workspace.insert_frame`` without going through a reader.
 * Two value classes cannot be represented at all and must be refused on their
   *value*, not their type: `np.uint64` above 2**63-1 (which stores a silent blob
   even with adapters registered, because it is genuinely out of range) and
@@ -343,6 +349,8 @@ def adapt_column(values: pd.Series) -> list[Any]:
     missing = values.isna().to_numpy()
 
     if pd.api.types.is_datetime64_any_dtype(dtype):
+        # Not reached from a file: every reader's frame goes through
+        # `temporal.standardize`, which turns these into canonical text (#87).
         instants = values
         if getattr(dtype, "tz", None) is not None:
             # To UTC first: the offset is deliberately not preserved, because

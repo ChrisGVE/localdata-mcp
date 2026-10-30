@@ -2509,3 +2509,301 @@ def test_create_refusing_a_url_adds_nothing(session):
     )
 
     assert call("directory", nickname="staff")["tables"] == ["simple"]
+
+
+# ---------------------------------------------------------------------------
+# A date from a typed format compares the way a date from a CSV does (#87)
+# ---------------------------------------------------------------------------
+#
+# Parquet, Feather, ORC, the workbooks and YAML all *declare* their dates, so
+# pandas hands them over already typed. Those columns used to land as INTEGER
+# nanoseconds since the epoch, and the obvious query against them —
+# `WHERE seen > '2024-03-02'` — compared an integer to text and returned zero
+# rows with `ok: true`. The same frame written to a CSV answered correctly.
+# Every assertion below is on what a query returns, never on the declaration
+# alone (CONSTRAINTS §5.1).
+
+#: Each typed writer, and the module it needs. Every one of them was driven in
+#: the issue and behaved identically, so every one is asserted.
+TYPED_WRITERS = {
+    ".parquet": ("pyarrow", lambda frame, path: frame.to_parquet(path)),
+    ".feather": ("pyarrow", lambda frame, path: _write_feather(frame, path)),
+    ".orc": ("pyarrow", lambda frame, path: frame.to_orc(path)),
+    # Named, so the workbook's one table is called what the other formats' is.
+    ".xlsx": (
+        "openpyxl",
+        lambda frame, path: frame.to_excel(path, index=False, sheet_name="days"),
+    ),
+    ".ods": (
+        "odf",
+        lambda frame, path: frame.to_excel(path, index=False, sheet_name="days"),
+    ),
+}
+
+
+def _write_feather(frame, path) -> None:
+    """Feather through Arrow IPC, as the server's own writer does.
+
+    ``DataFrame.to_feather`` goes through ``pyarrow.feather.write_feather``,
+    which pyarrow deprecates, and the warning it raises is not this test's.
+    """
+    import pyarrow as pa
+
+    table = pa.Table.from_pandas(frame, preserve_index=False)
+    with pa.OSFile(str(path), "wb") as sink:
+        with pa.ipc.new_file(sink, table.schema) as writer:
+            writer.write_table(table)
+
+
+def _days_frame():
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "seen": pd.to_datetime(["2024-03-01", "2024-03-02", "2024-03-03"]),
+            "v": [10, 20, 30],
+        }
+    )
+
+
+@pytest.mark.parametrize("suffix", sorted(TYPED_WRITERS))
+def test_a_typed_date_filters_by_a_date_literal(session, suffix):
+    """The repro from #87, for every typed format the issue drove."""
+    module, write = TYPED_WRITERS[suffix]
+    pytest.importorskip(module)
+    write(_days_frame(), session / f"days{suffix}")
+
+    attached = call("attach", database=str(session / f"days{suffix}"), nickname="d")
+    assert attached["ok"] is True, attached
+
+    answer = call(
+        "query", nickname="d", sql="SELECT id FROM days WHERE seen > '2024-03-02'"
+    )
+    assert answer["ok"] is True, answer
+    assert answer["rows"] == [[3]]
+
+
+def test_a_typed_date_is_described_the_way_the_same_csv_date_is(session):
+    """One representation for one kind of value, whichever file it came from.
+
+    The two descriptions used to differ — ``INTEGER`` with a tick unit against
+    ``TEXT`` in canonical UTC — and the difference was the bug: a caller reading
+    either has to be able to write the same query against both.
+    """
+    pytest.importorskip("pyarrow")
+    frame = _days_frame()
+    frame.to_parquet(session / "days.parquet")
+    frame.to_csv(session / "days.csv", index=False)
+
+    typed = call("attach", database=str(session / "days.parquet"), nickname="p")
+    text = call(
+        "attach", database=str(session / "days.csv"), nickname="c", delimiter=","
+    )
+
+    def seen(payload):
+        return next(c for c in payload["loaded"][0]["columns"] if c["name"] == "seen")
+
+    assert seen(typed) == seen(text)
+    assert seen(typed) == {
+        "name": "seen",
+        "type": "TEXT",
+        "temporal": "iso8601_utc",
+        "normalized": "UTC",
+    }
+
+
+def test_a_typed_datetime_orders_chronologically(session):
+    """Shuffled, spanning three years, with a time of day on every value."""
+    pytest.importorskip("pyarrow")
+    import pandas as pd
+
+    instants = [
+        ("rank4", "2025-03-01 14:30:00"),
+        ("rank1", "2023-11-30 00:01:00"),
+        ("rank5", "2025-12-25 12:00:00"),
+        ("rank2", "2024-01-05 09:15:00"),
+        ("rank3", "2024-07-04 23:59:00"),
+    ]
+    pd.DataFrame(
+        {
+            "label": [label for label, _ in instants],
+            "seen": pd.to_datetime([at for _, at in instants]),
+        }
+    ).to_parquet(session / "ranked.parquet")
+    call("attach", database=str(session / "ranked.parquet"), nickname="r")
+
+    ordered = call("query", nickname="r", sql="SELECT label FROM ranked ORDER BY seen")
+    latest = call(
+        "query",
+        nickname="r",
+        sql="SELECT label FROM ranked WHERE seen = (SELECT max(seen) FROM ranked)",
+    )
+    after = call(
+        "query",
+        nickname="r",
+        sql="SELECT label FROM ranked WHERE seen >= '2025-01-01' ORDER BY seen",
+    )
+
+    assert [row[0] for row in ordered["rows"]] == [
+        "rank1",
+        "rank2",
+        "rank3",
+        "rank4",
+        "rank5",
+    ]
+    assert latest["rows"] == [["rank5"]]
+    assert after["rows"] == [["rank4"], ["rank5"]]
+
+
+def test_a_tz_aware_datetime_keeps_its_instant(session):
+    """An offset is honoured, not dropped: the value is the same instant, in UTC.
+
+    23:30 in Zurich on the first of March is 22:30 UTC on the same day. Read
+    with its offset thrown away it would be 23:30 UTC — an hour late — and read
+    as local wall time it would sort after a UTC value it actually precedes.
+    Asserted three ways: the stored value, a filter whose answer flips if the
+    hour moves, and a join against a CSV writing the same instant in another
+    offset.
+    """
+    pytest.importorskip("pyarrow")
+    import pandas as pd
+
+    pd.DataFrame(
+        {
+            "id": [1, 2],
+            "seen": pd.to_datetime(
+                ["2024-03-01 23:30:00", "2024-03-02 00:30:00"]
+            ).tz_localize("Europe/Zurich"),
+        }
+    ).to_parquet(session / "zurich.parquet")
+    write_csv(
+        session / "newyork.csv",
+        "id,seen\n1,2024-03-01T17:30:00-05:00\n2,2024-03-01T18:30:00-05:00\n",
+    )
+    call("attach", database=str(session / "zurich.parquet"), nickname="z")
+
+    stored = call("query", nickname="z", sql="SELECT seen FROM zurich ORDER BY id")
+    before_eleven = call(
+        "query",
+        nickname="z",
+        sql="SELECT id FROM zurich WHERE seen < '2024-03-01T23:00:00Z'",
+    )
+    landed = call(
+        "create",
+        nickname="z",
+        type="table",
+        source=str(session / "newyork.csv"),
+        delimiter=",",
+    )
+    joined = call(
+        "query",
+        nickname="z",
+        sql="SELECT count(*) FROM zurich JOIN newyork ON zurich.seen = newyork.seen",
+    )
+
+    assert stored["rows"] == [["2024-03-01T22:30:00Z"], ["2024-03-01T23:30:00Z"]]
+    assert before_eleven["rows"] == [[1]]
+    assert landed["ok"] is True, landed
+    assert joined["rows"] == [[2]]
+
+
+def test_a_missing_typed_datetime_is_null(session):
+    """NaT is pandas' gap; SQL's is NULL, and ``IS NULL`` has to find it.
+
+    Not the string ``'NaT'`` that ``strftime`` renders, and not the smallest
+    int64, which is what NaT views as.
+    """
+    pytest.importorskip("pyarrow")
+    import pandas as pd
+
+    pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "seen": pd.to_datetime(["2024-03-01", None, "2024-03-03"]),
+        }
+    ).to_parquet(session / "gapped.parquet")
+    call("attach", database=str(session / "gapped.parquet"), nickname="g")
+
+    gaps = call("query", nickname="g", sql="SELECT id FROM gapped WHERE seen IS NULL")
+    earliest = call("query", nickname="g", sql="SELECT min(seen) FROM gapped")
+
+    assert gaps["rows"] == [[2]]
+    assert earliest["rows"] == [["2024-03-01"]]
+
+
+def test_a_parquet_date_column_filters_by_a_date_literal(session):
+    """A Parquet ``date32`` reaches pandas as ``datetime.date`` objects, not a dtype.
+
+    So it takes a different path from a ``datetime64`` column, and it was ticks
+    as well: midnight UTC in nanoseconds, declared INTEGER.
+    """
+    pytest.importorskip("pyarrow")
+    import datetime as dt
+
+    import pandas as pd
+
+    pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "day": [dt.date(2024, 3, 1), None, dt.date(2024, 3, 3)],
+        }
+    ).to_parquet(session / "dates.parquet")
+    attached = call("attach", database=str(session / "dates.parquet"), nickname="dd")
+
+    after = call(
+        "query", nickname="dd", sql="SELECT id FROM dates WHERE day > '2024-03-02'"
+    )
+    gaps = call("query", nickname="dd", sql="SELECT id FROM dates WHERE day IS NULL")
+
+    day = next(c for c in attached["loaded"][0]["columns"] if c["name"] == "day")
+    assert day["temporal"] == "iso8601_utc", day
+    assert after["rows"] == [[3]]
+    assert gaps["rows"] == [[2]]
+
+
+def test_a_yaml_date_filters_by_a_date_literal(session):
+    """YAML types an unquoted date as well, so it took the tick path too."""
+    pytest.importorskip("yaml")
+    (session / "events.yaml").write_text(
+        "- id: 1\n  seen: 2024-03-01\n"
+        "- id: 2\n  seen: 2024-03-02 10:00:00\n"
+        "- id: 3\n  seen: 2024-03-03\n"
+    )
+    call("attach", database=str(session / "events.yaml"), nickname="y")
+
+    answer = call(
+        "query",
+        nickname="y",
+        sql="SELECT id FROM events WHERE seen > '2024-03-02' ORDER BY seen",
+    )
+
+    assert answer["ok"] is True, answer
+    assert answer["rows"] == [[2], [3]]
+
+
+def test_a_typed_date_keeps_its_description_through_an_export(session):
+    """The tick tag did not survive a round trip; the canonical text does.
+
+    Exported with ``query(path=…)`` and attached again, a tick column came back
+    as a bare INTEGER with nothing to say it had ever been a date.
+    """
+    pytest.importorskip("pyarrow")
+    _days_frame().to_parquet(session / "days.parquet")
+    call("attach", database=str(session / "days.parquet"), nickname="d")
+    exported = call(
+        "query",
+        nickname="d",
+        sql="SELECT id, seen FROM days",
+        path=str(session / "again.parquet"),
+    )
+    assert exported["ok"] is True, exported
+
+    again = call("attach", database=str(session / "again.parquet"), nickname="a")
+    after = call(
+        "query", nickname="a", sql="SELECT id FROM again WHERE seen > '2024-03-02'"
+    )
+
+    seen = next(c for c in again["loaded"][0]["columns"] if c["name"] == "seen")
+    assert seen.get("temporal") == "iso8601_utc", seen
+    assert after["rows"] == [[3]]

@@ -65,6 +65,20 @@ text is also the form the engine is built for.
 * A column whose values are all plain dates stays ``YYYY-MM-DD``. One that
   carries any time of day is written ``YYYY-MM-DDTHH:MM:SSZ`` throughout, so a
   date-only value in it becomes midnight.
+* Fractional seconds are kept to the microsecond. A finer part — which only a
+  nanosecond-resolution source carries — is cut, not rounded.
+
+**A date a format already typed is stored the same way** (#87). Parquet,
+Feather, ORC, the workbooks and YAML declare their dates, so pandas hands them
+over as ``datetime64`` or as ``datetime.date`` / ``datetime.datetime`` objects
+rather than as text. Those used to go on to :mod:`binding` and land as integer
+nanoseconds, which is the representation the paragraph above rejects for the
+reason it gives: ``WHERE seen > '2024-03-02'`` against one returned zero rows
+with no error, while the same frame written to a CSV answered correctly. One
+kind of value now has one representation whichever file it came from, under the
+same contract: a tz-aware value is converted to UTC, a naive one is taken as
+UTC already, and the spelling is measured over the whole column. Durations and
+bare times of day are not instants and are not touched here.
 """
 
 from __future__ import annotations
@@ -87,6 +101,7 @@ __all__ = [
     "standardize",
     "standardize_as",
     "text_values",
+    "typed_instants",
     "unparsed_temporal_examples",
     "MAX_TEMPORAL_EXAMPLES",
 ]
@@ -322,18 +337,69 @@ def as_canonical(parsed: pd.Series, spelling: Spelling) -> pd.Series:
     return formatted.where(parsed.notna(), other=None)
 
 
+#: What ``infer_dtype`` calls a column of instants held as Python objects. A
+#: ``datetime.date``, a ``datetime.datetime``, a ``pd.Timestamp`` and an
+#: ``np.datetime64`` each name an instant on their own. ``"time"`` and
+#: ``"timedelta"`` are absent on purpose: a time of day and a duration are not
+#: instants, and "after the second of March" means nothing for either.
+_INSTANT_OBJECTS = frozenset({"date", "datetime", "datetime64"})
+
+
+def typed_instants(series: pd.Series) -> pd.Series | None:
+    """A column a reader already typed as instants, as UTC instants, or ``None``.
+
+    Two shapes reach here from a typed format. A ``datetime64`` column, naive or
+    tz-aware, is what Parquet, Feather, ORC and the workbooks produce for a
+    timestamp. An ``object`` column of ``datetime.date`` or ``datetime.datetime``
+    values is what a Parquet ``date32`` and a YAML date produce — pandas has no
+    date-only dtype, so it leaves the objects as they are.
+
+    A naive instant is taken as UTC and keeps its wall time; an aware one is
+    converted, so the same instant read from two offsets is one value. That is
+    the contract the text path states for a value with and without an offset,
+    applied to values that arrive already parsed.
+
+    ``None`` for a column of text, numbers, durations or times of day, and for
+    an ``object`` column with nothing in it — the same "no evidence, no
+    temporal" rule :func:`text_values` keeps.
+    """
+    dtype = series.dtype
+    if pd.api.types.is_datetime64_any_dtype(dtype):
+        if getattr(dtype, "tz", None) is None:
+            return series.dt.tz_localize("UTC")
+        return series.dt.tz_convert("UTC")
+    if not pd.api.types.is_object_dtype(dtype):
+        return None
+    present = series.dropna()
+    if present.empty:
+        return None
+    if pd.api.types.infer_dtype(present, skipna=True) not in _INSTANT_OBJECTS:
+        return None
+    return pd.to_datetime(series, utc=True)
+
+
 def standardize(frame: pd.DataFrame) -> pd.DataFrame:
-    """Canonicalise every column that is unambiguously ISO 8601.
+    """Canonicalise every column that is unambiguously ISO 8601, or already instants.
 
     Columns that do not qualify are untouched, including the ambiguous
     spellings — those are reported by :func:`unparsed_temporal_examples`
-    rather than guessed at.
+    rather than guessed at. A column a typed reader handed over as instants
+    (:func:`typed_instants`) is written in the same canonical spelling, so a
+    date compares the same way whichever kind of file it came from.
     """
     converted: dict[str, pd.Series] = {}
     for name in frame.columns:
         series = frame[name]
         present = text_values(series)
         if present is None:
+            # Not text, so possibly a column the reader typed. It has nothing
+            # left to recognise — its values are instants already — and is only
+            # written in the spelling a CSV date of the same instants would
+            # have been given (#87). Asked second so a text column, which is
+            # nearly every column, pays nothing for it.
+            instants = typed_instants(series)
+            if instants is not None:
+                converted[name] = as_canonical(instants, spelling_of(instants))
             continue
         # Already in the form this would rewrite it into, which is the case for
         # any file written the way the documentation asks for. Parsing it only

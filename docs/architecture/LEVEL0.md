@@ -569,14 +569,25 @@ for the whole column**: a single value carrying a time takes the column to
 > durations; canonical UTC text has neither problem, and SQLite's own date
 > functions all take ISO 8601 text.
 >
-> **This governs the text path only, and the typed readers do not take it.** A
-> `.parquet`, `.feather`, `.orc` or spreadsheet column that is a real timestamp
-> in the source arrives as integer nanoseconds since the epoch — reported as
-> `{"temporal": "timestamp", "unit": "nanoseconds_since_epoch"}` — and therefore
-> carries the exact failure this paragraph rejects, with no warning raised. The
-> reasoning above still holds for everything parsed out of text; it simply never
-> reached the readers that get a type handed to them. Whether that split is
-> intended is [#87](https://github.com/ChrisGVE/localdata-mcp/issues/87).
+> **A date a format already typed is stored the same way.** A `.parquet`,
+> `.feather`, `.orc`, workbook or YAML column the source declares as a date or a
+> timestamp is written in the same canonical UTC spelling and described the same
+> way — `{"type": "TEXT", "temporal": "iso8601_utc", "normalized": "UTC"}` — as
+> the same values read from a CSV. A tz-aware value is converted to UTC; a naive
+> one is taken as UTC already and keeps its wall time; a missing one is `NULL`.
+> These columns used to land as integer nanoseconds since the epoch, which is the
+> representation this paragraph rejects, and they failed the way it says:
+> `WHERE seen > '2024-03-02'` returned zero rows with `ok: true`, and on
+> PostgreSQL and MySQL the ticks did not fit the column and the load was refused
+> ([#87](https://github.com/ChrisGVE/localdata-mcp/issues/87)). Fractional
+> seconds are kept to the microsecond on both paths; a finer part is cut
+> ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
+>
+> Durations and bare times of day are not instants and still land as integer
+> nanoseconds, tagged `{"temporal": "duration" | "timestamp", "unit":
+> "nanoseconds_since_epoch"}` — a tag that is wrong for both, tracked with the
+> rest of that case in
+> [#109](https://github.com/ChrisGVE/localdata-mcp/issues/109).
 
 **Any other text is left alone and reported.** A column that reads as dates in
 no recognised standard comes back with the offending values named, saying that

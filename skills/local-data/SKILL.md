@@ -500,25 +500,26 @@ the earliest date. Say so before quoting any number that came out of an
 `ORDER BY` or a `max()` over it. Unix timestamps are integers and are left
 untouched; integer comparison is already chronological.
 
-**A third case, and it is the one that will catch you.** All of the above is
-about dates that arrive as text. A `.parquet`, `.feather`, `.orc`, `.xlsx`,
-`.xlsm` or `.ods` column that is a real timestamp in the source arrives as an
-integer instead, marked `"temporal": "timestamp", "unit":
-"nanoseconds_since_epoch"`, and **no warning is raised about it**. Ordering and
-`max()` are right; comparing it to a date string is not — `WHERE d >
-'2024-03-02'` compares an integer to text and comes back `"ok": true` with zero
-rows. Read the column list from `attach` or `directory` before writing a date
-predicate: if `unit` says nanoseconds, compare against a tick value or convert.
-The mark is also lost on export, so a column you wrote out with `query(path=…)`
-or `save()` and attached again is a bare `INTEGER` with nothing to tell you.
+**Dates from a typed format are the same.** A `.parquet`, `.feather`, `.orc`,
+workbook or YAML column the source declares as a date or a timestamp is
+written in the same canonical UTC spelling and carries the same
+`"iso8601_utc"` mark, so a date predicate is written the same way whichever
+file the column came from. A tz-aware value has been converted to UTC.
+
+**Durations and times of day are not.** They arrive as integer nanoseconds,
+marked `"unit": "nanoseconds_since_epoch"` — a wrong unit for both — and **no
+warning is raised about them**. `WHERE clock > '10:00:00'` against one compares
+an integer to text and comes back `"ok": true` with zero rows. If the column
+list shows that `unit`, compare against a nanosecond count. For a time of day
+that is nanoseconds since midnight, not since 1970.
 
 ## Checking your own work
 
 Before reporting a number:
 
 - Did any warning come back from `attach` about the columns it touches? A
-  nanosecond-timestamp column is the one problem that raises none, so check the
-  column's own `temporal` and `unit` fields too.
+  duration or time-of-day column held as nanoseconds is the one problem that
+  raises none, so check the column's own `temporal` and `unit` fields too.
 - If it is a join, was the match complete — and did you say so either way?
 - Does the row count make sense against what `directory` said was there?
 - **Is the column you are summing actually populated?** `stats(nickname, table)`
