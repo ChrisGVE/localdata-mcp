@@ -111,6 +111,7 @@ Then point it at a file and ask:
 ```python
 attach("./sales.csv", delimiter=",")
 # → {"ok": true, "nickname": "sales", "kind": "file",
+#    "backend": "sqlite", "saveable": true,
 #    "source": "…/sales.csv", "writable": true,
 #    "tables": ["sales"], "loaded": [{"table": "sales", "rows": 4,
 #    "source": "…/sales.csv",
@@ -285,7 +286,9 @@ carried out on some engines, and the refusal says so and names the way round:
   calls: `query(path=…)` writes the rows to a file, `attach` on that file makes
   a database of your own — file-derived, so writable — and `save` writes it
   out. The middle verb is `attach`, not `create`: `create` lands a file inside a
-  slot that is already open. The refusal says exactly this.
+  slot that is already open. The refusal says exactly this — and nobody has to
+  call `save` to find out: `attach` and `directory` report `"saveable"` for every
+  datasource, beside a `"backend"` field naming its engine.
 - **`create(type="index")` is refused on ClickHouse, Trino, CrateDB and
   Exasol** — each for its own reason: indexes that cannot be reflected, no
   storage to index, every column indexed already, or an engine that maintains

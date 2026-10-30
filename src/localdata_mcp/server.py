@@ -123,7 +123,9 @@ mcp = FastMCP(
         "'evicted' field an attach returns, and detach what you are done with. "
         "Nothing survives the session unless you save it — and save writes out "
         "only a database this server holds, so it is refused on every backend "
-        "but SQLite — a DuckDB file and a URL-attached database included. To "
+        "but SQLite — a DuckDB file and a URL-attached database included. "
+        "attach and directory say which in advance: 'saveable' is true exactly "
+        "where save will work, and 'backend' names the engine. To "
         "keep rows from one of those, write them to a file with "
         "query(nickname, sql, path=...), attach that file — a file-derived "
         "datasource is yours and is writable — and save that.\n\n"
@@ -392,9 +394,16 @@ def _unparsed_temporal_warning(info: TableInfo) -> str:
 
 
 def _slot_payload(slot: Slot, registry: Registry) -> dict[str, Any]:
+    backend = registry.backend(slot.nickname)
     return {
         "nickname": slot.nickname,
         "kind": slot.kind,
+        # `kind` says how the slot was opened, and a SQLite file and a DuckDB
+        # file are both "database". These two say what it *is* — the engine, by
+        # the name its own backend gives it — and whether `save` will write it
+        # out, so the caller can know before trying (issue #81).
+        "backend": backend.name,
+        "saveable": backend.saves(),
         "source": slot.source,
         "writable": slot.writable,
         # Bare names: this payload already says which nickname it describes, and
@@ -564,6 +573,14 @@ def attach(
     count and any warning — so calling ``directory`` straight afterwards returns the
     same thing again. Go and ask the question instead.
 
+    ``kind`` says how the datasource was opened — ``"file"``, ``"database"`` or
+    ``"engine"`` for a URL — and not which engine holds it: a SQLite file and a
+    DuckDB file are both ``"database"``. ``backend`` names the engine
+    (``"sqlite"``, ``"duckdb"``, ``"postgresql"`` …), and ``saveable`` says
+    whether ``save`` will write it out — ``true`` only on SQLite, which is what
+    every file-derived datasource is held on. Read it before offering to keep
+    the work, rather than finding out from a refusal.
+
     Warnings arrive in ``warnings``, a list of plain sentences, and the key is
     **absent** rather than empty when there is nothing to say. They name a column
     holding values of more than one type, a column of dates in no recognised
@@ -668,6 +685,9 @@ def directory(nickname: str | None = None, table: str | None = None) -> dict[str
     * ``nickname`` — that datasource, the tables inside it, and its indexes;
     * ``nickname`` and ``table`` — that table's columns, types, row count and
       indexes.
+
+    Each datasource is described as ``attach`` described it, ``backend`` and
+    ``saveable`` included, so whether ``save`` applies can be read here later.
 
     The indexes are what to consult before asking ``create`` for one: they are
     reported whoever made them, so an attached database arrives describing the
@@ -1211,7 +1231,8 @@ def save(nickname: str, path: str, force: bool = False) -> dict[str, Any]:
     file makes a datasource of your own (file-derived, so writable), and
     ``save`` writes that one out. ``create`` is for adding further tables to
     that new slot, not for making it. Offer that route rather than this verb
-    when the datasource is not SQLite.
+    when the datasource is not SQLite — ``attach`` and ``directory`` report it
+    as ``saveable: false``.
 
     Args:
         nickname: The datasource to write out.

@@ -506,6 +506,22 @@ class Backend:
             f"tables go into it with create before you save."
         )
 
+    def saves(self) -> bool:
+        """Whether ``save`` means anything here — whether :meth:`snapshot` writes one.
+
+        ``False`` generically, for the reason :meth:`snapshot` refuses: a
+        database this server reaches is not one it holds. ``True`` only on a
+        backend that overrides :meth:`snapshot` with a copy of its own, and the
+        two are pinned together by a test across every registered backend.
+
+        It exists so a caller can know *before* asking. ``attach`` and
+        ``directory`` report it as ``saveable``, because a SQLite file and a
+        DuckDB file both arrive as ``kind: "database"`` and only one of them can
+        be saved — and finding out by calling ``save`` is what a capability
+        answer is for avoiding (issue #81).
+        """
+        return False
+
     def renames_tables(self) -> bool:
         """Whether ``update(type='table', name=…, to=…)`` means anything here.
 
@@ -1001,6 +1017,10 @@ class SQLiteBackend(Backend):
         return (url.database or "") in ("", ":memory:")
 
     # -- snapshotting ------------------------------------------------------
+
+    def saves(self) -> bool:
+        """SQLite is the database this server holds, so ``save`` writes it out."""
+        return True
 
     def snapshot(self, engine: Engine, target: Path) -> None:
         """Write a consistent, compacted copy of this database to a file.

@@ -885,6 +885,26 @@ def test_the_generic_backend_writes_rows_beside_the_schema_that_holds_them():
     assert generic.renames_tables() is True
 
 
+def test_a_backend_says_it_saves_exactly_when_its_snapshot_writes_one(tmp_path):
+    """``saves()`` and :meth:`snapshot` are two answers to one question.
+
+    ``attach`` reports ``saves()`` as ``saveable`` (issue #81), and ``save``
+    calls :meth:`snapshot`. The predicate is only worth reporting if it agrees
+    with the method on every backend: one that says ``False`` must refuse
+    without touching anything, and one that says ``True`` must have replaced
+    the generic refusal with a snapshot of its own.
+    """
+    for backend in [*BACKENDS.values(), Backend(name="unregistered")]:
+        overridden = type(backend).snapshot is not Backend.snapshot
+        assert backend.saves() is overridden, backend.name
+        if not backend.saves():
+            with pytest.raises(UnsupportedOperation):
+                backend.snapshot(None, tmp_path / f"{backend.name}.db")
+            assert not (tmp_path / f"{backend.name}.db").exists()
+
+    assert backend_for("sqlite").saves() is True
+
+
 def test_a_backend_that_cannot_rename_refuses_rather_than_copying():
     """Firebird has no rename-table statement, and the refusal has to be usable.
 

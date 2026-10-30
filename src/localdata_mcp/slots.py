@@ -58,7 +58,7 @@ from sqlalchemy.exc import ArgumentError
 
 from . import config
 from .credentials import mask_credentials, redacted_url
-from .dialects import UnsupportedOperation
+from .dialects import Backend, UnsupportedOperation
 from .loader import (
     READERS,
     ColumnProfile,
@@ -265,6 +265,16 @@ class Registry:
 
     def capacity(self) -> int:
         return config.active().slots
+
+    def backend(self, nickname: str) -> Backend:
+        """The engine a slot is held on, as the workspace opened it.
+
+        Asked of the workspace rather than recorded on the ``Slot``: the
+        workspace is what chose it — by the file's header, the URL's dialect or
+        the server's own banner — and is what every verb is then answered by.
+        """
+        self.slot(nickname)
+        return self._workspace.entry(nickname).backend
 
     def slot(self, nickname: str) -> Slot:
         """The live slot for a nickname, or an explanation of its absence."""

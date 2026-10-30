@@ -242,7 +242,10 @@ including one from a verb that took a URL for a path and never knew it held a cr
 **`attach`.** A workbook becomes a database holding a table per sheet and a `.numbers`
 document one per table, snake_cased, and two whose names snake_case alike are told apart
 by a numeric suffix and a warning. `delimiter` applies to character-separated text only,
-where it is **required**, and is refused elsewhere.
+where it is **required**, and is refused elsewhere. The answer's `kind` says how the
+datasource was opened (`file`, `database`, `engine`), which does not tell a SQLite file from
+a DuckDB one; `backend` names the engine as its backend names itself, and `saveable` says
+whether `save` will write it out. `directory` describes each datasource the same way.
 
 **`query`.** Every write is refused whatever the slot allows, by the connection rather than
 by a check, and as far as each backend can refuse — see *Write is not the default*. The
@@ -269,6 +272,8 @@ engines named in the backend table.
 a live slot sits on is refused regardless. It writes out a database this server holds, so it
 is refused on every backend but SQLite; the refusal names the route round it, which is
 three calls — `query(path=…)`, `attach` that file as a datasource of your own, `save` that.
+Whether it applies is answered before anyone asks: `attach` and `directory` report
+`saveable`, read from the same backend that would carry out the save.
 
 **`stats`.** Governed by one rule — **cost: free we take, expensive we leave.** Every column
 reports `nulls` and `non_nulls`, because `count(*) - count(col)` is stock SQL on every engine

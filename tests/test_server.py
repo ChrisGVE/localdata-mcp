@@ -262,6 +262,8 @@ def test_directory_with_nothing_reports_every_datasource_and_the_posture(session
         {
             "nickname": "staff",
             "kind": "file",
+            "backend": "sqlite",
+            "saveable": True,
             "source": str(session / "simple.csv"),
             "writable": True,
             "tables": ["simple"],
@@ -1733,6 +1735,78 @@ def test_rows_can_be_copied_out_of_duckdb_into_a_slot_that_saves(session):
     )
     assert added["ok"] is True
     assert call("save", nickname="staff", path=str(session / "kept.db"))["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("make", "backend", "saveable"),
+    [
+        ("csv", "sqlite", True),
+        ("sqlite file", "sqlite", True),
+        ("sqlite url", "sqlite", True),
+        ("duckdb file", "duckdb", False),
+        ("duckdb url", "duckdb", False),
+    ],
+)
+def test_attach_says_which_engine_it_is_and_whether_save_applies(
+    session, make, backend, saveable
+):
+    """Issue #81: ``kind`` alone cannot tell a slot ``save`` takes from one it refuses.
+
+    A SQLite file and a DuckDB file both arrive as ``"kind": "database"``, and
+    ``save`` works on the one and is refused on the other. ``backend`` names the
+    engine and ``saveable`` answers the question directly, so an agent can know
+    from ``attach`` alone whether to offer to keep the work.
+
+    ``saveable`` is checked against what ``save`` then actually does, not
+    against a table of expectations: a field that disagreed with the verb would
+    be worse than no field.
+    """
+    lite, duck = session / "lite.db", session / "duck.db"
+    _build_database(lite)
+    _build_duckdb(duck)
+    database = {
+        "csv": str(session / "simple.csv"),
+        "sqlite file": str(lite),
+        "sqlite url": f"sqlite:///{lite}",
+        "duckdb file": str(duck),
+        "duckdb url": f"duckdb:///{duck}",
+    }[make]
+
+    attached = call(
+        "attach", database=database, nickname="src", **separator_for(database)
+    )
+
+    assert attached["ok"] is True, attached
+    assert attached["backend"] == backend
+    assert attached["saveable"] is saveable
+    saved = call("save", nickname="src", path=str(session / "kept.db"))
+    assert saved["ok"] is saveable, saved
+    # The listing describes the slot the same way the attach did.
+    (listed,) = call("directory")["datasources"]
+    assert (listed["backend"], listed["saveable"]) == (backend, saveable)
+
+
+@pytest.mark.parametrize(
+    ("build", "backend", "saveable"),
+    [(_build_database, "sqlite", True), (_build_duckdb, "duckdb", False)],
+)
+def test_directory_on_a_nickname_carries_the_engine_too(
+    session, build, backend, saveable
+):
+    """The one-datasource form says what ``attach`` said about the engine.
+
+    Files only. A DuckDB file attached as a ``duckdb:///`` URL cannot answer
+    this form at all yet: its two engines open the file under different
+    configurations and DuckDB refuses the second (issue #79).
+    """
+    target = session / "store.db"
+    build(target)
+    call("attach", database=str(target), nickname="src")
+
+    detail = call("directory", nickname="src")
+
+    assert detail["ok"] is True, detail
+    assert (detail["backend"], detail["saveable"]) == (backend, saveable)
 
 
 def test_a_local_file_url_is_still_subject_to_the_path_gate(session, tmp_path):

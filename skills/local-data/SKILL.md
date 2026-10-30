@@ -287,12 +287,13 @@ other backend is reached over its own connection and has no local database to
 write out, so `save` is refused there. A DuckDB file is one of those: it is a
 file on disk, and it is still reached over DuckDB's own connection.
 
-`attach` reports `"kind": "file"` for anything read out of a data file, and
-those can always be saved. `"kind": "database"` covers both SQLite (saveable)
-and everything else (not), and **the response does not say which engine it is**
-— so for a `"database"` datasource, go by the URL or the suffix they gave you, and
-otherwise treat a `save` refusal as the answer rather than as something to
-retry.
+**Read `saveable` in the `attach` answer — it says whether `save` will work.**
+`kind` does not: `"kind": "database"` covers a SQLite file, which saves, and a
+DuckDB file, which does not. `saveable` is `true` for anything read out of a
+data file and for SQLite, and `false` everywhere else; `backend` beside it names
+the engine. `directory` reports both too, so you can check again later. Offer
+`save` only where `saveable` is `true`, and the three-call route below where it
+is `false`.
 
 ```
 save(nickname, path="/path/analysis.db")

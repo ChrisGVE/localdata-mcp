@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And six found in this release's own code before it shipped:
+And seven found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -390,6 +390,13 @@ And six found in this release's own code before it shipped:
   one just dropped, one call after `drop` had reported it gone. The tables it
   left out were the ones its own description warns are lost on detach. It now
   reads the tables from the database as it closes, the way `directory` does.
+- **`attach` could not tell a datasource `save` takes from one it refuses**
+  ([#81](https://github.com/ChrisGVE/localdata-mcp/issues/81)). A SQLite file
+  and a DuckDB file both came back `"kind": "database"`, nothing in the answer
+  named the engine, and only calling `save` showed which one would work.
+  `attach` and `directory` now report `backend`, naming the engine (`sqlite`,
+  `duckdb`, `postgresql` …), and `saveable`, which is `true` exactly where `save`
+  writes the datasource out. Both are new keys; `kind` is unchanged.
 
 ### Known limitations
 
@@ -399,7 +406,8 @@ And six found in this release's own code before it shipped:
   the engine, not here. Every file-derived slot *is* SQLite, so `save` works on
   all of them. For the rest it takes three calls: send the rows to a file with
   `query(path=…)`, `attach` that file as a datasource of your own — file-derived,
-  so writable — and save that. The refusal says so.
+  so writable — and save that. The refusal says so, and `attach` reports
+  `saveable: false` before anyone has to try.
 - **`create(type="index")` is refused on ClickHouse, Trino, CrateDB and
   Exasol**, each for its own reason — indexes that cannot be reflected, no
   storage to index, every column indexed already, or an engine that maintains
