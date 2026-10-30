@@ -330,6 +330,9 @@ which is not equally far:
   ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). One file stays reachable:
   DuckDB exempts the database's own `.wal`, and a `COPY` can still write there
   (`CONSTRAINTS.md` §29.4, [#106](https://github.com/ChrisGVE/localdata-mcp/issues/106)).
+  This is accepted, not pending: the write cannot reach any file the database does not
+  already own, and closing it would mean inspecting SQL text, which this server does not do.
+  It is revisited only if DuckDB stops exempting that path.
 - **MySQL and MariaDB** open a read-only session, and they have to: DDL commits itself
   there, so a `CREATE TABLE` on a connection that never commits would otherwise be
   permanent.

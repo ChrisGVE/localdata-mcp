@@ -447,7 +447,8 @@ And seven found in this release's own code before it shipped:
 - **On DuckDB, `query` can still write one file: the database's own `.wal`.**
   DuckDB exempts that path from the switched-off file access, and no setting
   closes it ([#106](https://github.com/ChrisGVE/localdata-mcp/issues/106),
-  `docs/CONSTRAINTS.md` §29.4). A DuckDB file with a `?` in its name opens and
+  `docs/CONSTRAINTS.md` §29.4). Accepted rather than worked around: the write stays
+  inside the database's own files, and the only other remedy is matching SQL text. A DuckDB file with a `?` in its name opens and
   reads, but attached writable it cannot commit, because DuckDB names its WAL
   differently (§29.3).
 
