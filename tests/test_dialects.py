@@ -252,7 +252,11 @@ def test_the_generic_url_open_carries_the_read_only_posture(tmp_path):
     reachable from a file keeps it in the fast suite.
     """
     database = build_database(tmp_path / "warehouse.duckdb", dialect="duckdb")
-    engines = backend_for("duckdb").open(f"duckdb:///{database}", writable=True)
+    # Through the generic ``Backend.open`` explicitly: DuckDB's own ``open``
+    # gives both engines one configuration since issue #79.
+    engines = Backend.open(
+        backend_for("duckdb"), f"duckdb:///{database}", writable=True
+    )
     try:
         # The read engine is told, and the write engine is not — writable is the
         # absence of the posture on the writer, not a second code path.
