@@ -215,8 +215,8 @@ listed in §2, and `update(type="table")` on **Firebird**, which has no
 rename-table statement. Both name the reason.
 
 `create(nickname, type="table", source="./local.csv", delimiter=",")` reads a local file *into*
-that database, so a lookup against a server-side table is the same move as
-against a second file. On **two** backends a statement `query` refuses can still
+that database — a file, never a URL, which it refuses in favour of `attach` — so
+a lookup against a server-side table is the same move as against a second file. On **two** backends a statement `query` refuses can still
 have happened, and you should say so rather than reassure: on **Oracle** a
 refused `CREATE` or `DROP` stands, because Oracle commits DDL as it runs it,
 while DML still rolls back; on **CrateDB** there are no transactions at all, so

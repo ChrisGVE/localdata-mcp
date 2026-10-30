@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 from . import config
 from .credentials import mask_credentials, redacted_url
@@ -679,6 +680,7 @@ class Registry:
         used, which this module does not have.
         """
         slot = self._writable(nickname, "add a table to")
+        self._refuse_url_source(source)
         name = self._table_name(table, source)
         # Under the name the database would store it: on an engine that folds
         # case, landing `mytable` beside a stored `MyTable` is the same table,
@@ -692,6 +694,32 @@ class Registry:
                 f"Drop it first if you meant to replace it."
             )
         return self._read_into(slot, name, source, delimiter=delimiter)
+
+    @staticmethod
+    def _refuse_url_source(source: str) -> None:
+        """Refuse a URL as ``create``'s source, by name, before it is a path.
+
+        ``create`` reads a file. Taken as a path, a URL is normalised into
+        ``<cwd>/postgresql:/u:hunter2@…`` and refused as a missing file — a
+        message about a file nobody named, carrying the password in clear,
+        because by then there is no URL left for a masker to recognise (issue
+        #88). Recognised here first, the refusal is about the verb, names the
+        one that does take a URL, and shows the URL the way ``attach`` would.
+        """
+        if url_scheme(source) is None:
+            return
+        try:
+            shown = redacted_url(make_url(source))
+        except (ArgumentError, ValueError):
+            # Unparseable — a port that is not a number, say — is still a URL
+            # to refuse, and its userinfo is still a credential.
+            shown = mask_credentials(source)
+        raise SlotError(
+            f"create reads a file, and {shown} is a URL. To read that database, "
+            f"attach it as a datasource of its own; to bring some of its rows in "
+            f"here, write them to a file with query(nickname, sql, path=…) on that "
+            f"datasource, then create that file."
+        )
 
     def create_index(
         self, nickname: str, *, table: str, columns: Sequence[str]

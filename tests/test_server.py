@@ -2445,3 +2445,67 @@ def test_a_credential_read_as_a_path_is_masked_in_the_refusal(
 
     assert answer["ok"] is False
     assert "hunter2" not in answer["error"], answer["error"]
+
+
+# ---------------------------------------------------------------------------
+# create reads a file, and a URL handed to it is refused as one (#88)
+# ---------------------------------------------------------------------------
+#
+# create's source used to be taken as a path whatever it was, so a database
+# URL came back as "No such file: <cwd>/postgresql:/u:hunter2@…" — the password
+# in clear, and a message about a file nobody named. create reads a file; a
+# database is read by attach. A URL is refused as a URL, its password masked,
+# and the refusal names the verb that takes one.
+
+
+@pytest.mark.parametrize(
+    ("source", "secrets"),
+    [
+        pytest.param(
+            "postgresql://u:hunter2@localhost:5432/db", ["hunter2"], id="postgres"
+        ),
+        pytest.param("postgresql://u:e@localhost:5432/db", ["u:e@"], id="short"),
+        pytest.param(
+            f"mysql+pymysql://u:{_SPECIAL_IN_URL}@localhost/db",
+            [_SPECIAL, _SPECIAL_IN_URL, "p@ss", "p%40ss"],
+            id="url-special",
+        ),
+        pytest.param(
+            "postgresql://u:hunter2@localhost:notaport/db",
+            ["hunter2"],
+            id="unparseable",
+        ),
+        pytest.param("duckdb:///warehouse.duckdb", [], id="local-url"),
+        pytest.param("sqlite:///shop.db", [], id="sqlite-url"),
+    ],
+)
+def test_create_refuses_a_url_and_names_attach(session, source, secrets):
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
+
+    answer = call("create", nickname="staff", type="table", source=source)
+
+    assert answer["ok"] is False
+    error = answer["error"]
+    assert "attach" in error, error
+    assert "No such file" not in error, error
+    for secret in secrets:
+        assert secret not in error, error
+    # The URL is named, masked where it carried a password and nowhere else.
+    assert error.count("***") == (1 if secrets else 0), error
+
+
+def test_create_refusing_a_url_adds_nothing(session):
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
+
+    call(
+        "create",
+        nickname="staff",
+        type="table",
+        source="postgresql://u:hunter2@localhost:5432/db",
+    )
+
+    assert call("directory", nickname="staff")["tables"] == ["simple"]

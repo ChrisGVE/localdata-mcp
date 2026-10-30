@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And three found in this release's own code before it shipped:
+And four found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -363,6 +363,14 @@ And three found in this release's own code before it shipped:
   and every refusal passes through it on the way out, so a URL that a verb read
   as a path (`query(path=…)`, `save(path=…)`) no longer comes back with its
   password in the "directory does not exist" message either.
+- **`create` read a database URL as a path, and echoed its password**
+  ([#88](https://github.com/ChrisGVE/localdata-mcp/issues/88)).
+  `create(source="postgresql://u:hunter2@localhost:5432/db")` answered "No such
+  file: <cwd>/postgresql:/u:hunter2@localhost:5432/db" — the password in clear,
+  about a file nobody named. `create` reads a file, so a URL is now refused as a
+  URL, shown the way `attach` shows it (`u:***`), with the route that does work:
+  `attach` the database, write the rows wanted to a file with `query(path=…)`,
+  and `create` that file.
 
 ### Known limitations
 

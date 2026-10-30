@@ -1013,7 +1013,8 @@ def create(
         table: For a table, its name — derived from the filename when omitted.
             For an index, the existing table to index; required.
         source: For a table, the file to read in — one holding a single table.
-            Required for ``type="table"``.
+            Required for ``type="table"``. A URL is refused rather than read:
+            a database is opened with ``attach``.
         columns: For an index, the columns to index, in order. Required for
             ``type="index"``.
         delimiter: For a table read from .csv, .tsv or .txt, the character

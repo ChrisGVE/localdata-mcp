@@ -233,7 +233,7 @@ including one from a verb that took a URL for a path and never knew it held a cr
 | `detach` | `nickname` | Close a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if it had spilled. |
 | `query` | `nickname`, `sql`, `path?`, `force?`, `delimiter?` | Run SQL. **Reads only.** Returns the whole result, or writes it to `path` when it is too large to return. |
 | `directory` | — \| `nickname` \| `nickname`+`table` | Three levels of detail: bare → every slot and the path posture; nickname → its tables; nickname and table → schema, row count and indexes. |
-| `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a **file** in beside the tables already there — one holding a single table, since `create` makes one — which is what makes arc 2 possible. `type="index"` indexes columns of a table already there — asked for, never inferred. |
+| `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a **file** in beside the tables already there — one holding a single table, since `create` makes one — which is what makes arc 2 possible. A URL as `source` is refused, naming `attach`. `type="index"` indexes columns of a table already there — asked for, never inferred. |
 | `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes — the answer to a file that named its own tables. |
 | `drop` | `nickname`, `type`, `name` | Remove a table or an index. Composition needs both directions, for both types. |
 | `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. |
