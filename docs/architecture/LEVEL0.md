@@ -312,6 +312,13 @@ which is not equally far:
 - **SQLite** refuses at statement preparation, through an authorizer that whitelists four
   read actions; a read-only attach also carries `mode=ro` in its connection URI. **DuckDB**
   opens `access_mode=read_only`. Neither runs the statement at all.
+- **DuckDB** also reaches files by itself — `read_csv`, `read_text`, `COPY … TO`, `ATTACH` —
+  and `access_mode` covers only its own database. So every DuckDB connection, read and
+  write, has `enable_external_access` switched off and `lock_configuration` on, and a
+  statement reaches nothing but the database it was attached as
+  ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). One file stays reachable:
+  DuckDB exempts the database's own `.wal`, and a `COPY` can still write there
+  (`CONSTRAINTS.md` §29.4, [#106](https://github.com/ChrisGVE/localdata-mcp/issues/106)).
 - **MySQL and MariaDB** open a read-only session, and they have to: DDL commits itself
   there, so a `CREATE TABLE` on a connection that never commits would otherwise be
   permanent.
@@ -461,7 +468,7 @@ this server built is a database it holds.
 | Backend | Reached as | What it could not be asked portably |
 |---|---|---|
 | SQLite | file, URL | `query_only` and an authorizer; `VACUUM INTO`, which is what makes it the one backend `save` works on; residency from the page count; `typeof()` for mixed columns; the declared type *is* the affinity |
-| DuckDB | file, URL | `access_mode=read_only` on the read connection — refused by DuckDB itself at open time, so a read connection cannot write however it is reached, which is stronger than the generic transactional floor. That is the whole of the subclass, and everything else is the generic answer |
+| DuckDB | file, URL | `access_mode=read_only` on the read connection — refused by DuckDB itself at open time, so a read connection cannot write however it is reached, which is stronger than the generic transactional floor. And on both connections, `enable_external_access` off and the configuration locked, because DuckDB's table functions and `COPY` open files without asking `paths.py` ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). Everything else is the generic answer |
 | PostgreSQL | URL | nothing |
 | MySQL / MariaDB | URL | a read-only session, since DDL commits itself; an index over a *prefix*, since `TEXT` cannot be a key |
 | Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |

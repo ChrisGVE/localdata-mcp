@@ -210,6 +210,33 @@ def test_the_generic_file_open_carries_the_read_only_posture(tmp_path):
         writable.dispose()
 
 
+@pytest.mark.parametrize("writable", [False, True])
+def test_every_duckdb_engine_is_sealed_off_from_other_files(tmp_path, writable):
+    """Both engines, not only the reader ``query`` uses (issue #105).
+
+    The writer serves ``create``, ``update`` and ``drop``; a statement it runs
+    must no more reach a file than one ``query`` runs. Driven on the engines
+    directly because no verb hands caller SQL to the writer.
+    """
+    database = build_database(tmp_path / "warehouse.duckdb", dialect="duckdb")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret")
+    copied = tmp_path / "copied.csv"
+    engines = backend_for("duckdb").open_file(database, writable=writable)
+    try:
+        engine = engines.write if writable else engines.read
+        for statement in (
+            f"SELECT content FROM read_text('{outside}')",
+            f"COPY (SELECT 1) TO '{copied}'",
+        ):
+            with engine.connect() as connection:
+                with pytest.raises(Exception, match="disabled by configuration"):
+                    connection.execute(text(statement))
+        assert not copied.exists()
+    finally:
+        engines.dispose()
+
+
 def test_the_generic_url_open_carries_the_read_only_posture(tmp_path):
     """A server URL is not a weaker claim on the posture than a file path is.
 

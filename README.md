@@ -366,10 +366,11 @@ Changing a slot goes through `create`, `update` and `drop`, which is what
 `writable=true` governs. The enforcement is the connection's rather than a check
 that could be reached around, and each backend goes as far as it can: SQLite
 refuses at statement preparation through an authorizer, DuckDB opens
-`access_mode=read_only`, MySQL and MariaDB open a read-only session because their
-DDL commits itself, ClickHouse carries `readonly=1` because it has no transaction
-to withhold. **Two are exceptions.** Oracle commits DDL before anything
-can object and has no session-level read-only posture, so a `CREATE` sent to
+`access_mode=read_only` and has its own file access (`read_csv`, `COPY … TO`)
+switched off on every connection, MySQL and MariaDB open a read-only session
+because their DDL commits itself, ClickHouse carries `readonly=1` because it has
+no transaction to withhold. **Two are exceptions.** Oracle commits DDL before
+anything can object and has no session-level read-only posture, so a `CREATE` sent to
 `query` there really does take effect; its DML still rolls back. CrateDB has no
 transactions at all, so **both** a refused `CREATE` and a refused `INSERT` stand
 — the worse of the two. The refusal names what survived on the backend that

@@ -1049,6 +1049,61 @@ class SQLiteBackend(Backend):
 # ---------------------------------------------------------------------------
 
 
+def _seal_duckdb(dbapi_conn, _record) -> None:  # noqa: ANN001 - SQLAlchemy's signature
+    """Switch off DuckDB's own file access on a new connection, then lock it.
+
+    ``enable_external_access = false`` stops everything a statement can open
+    by itself: ``read_*``, ``glob``, ``COPY`` in either direction, ``ATTACH``
+    of another file, ``EXPORT DATABASE``, ``INSTALL``/``LOAD`` and URLs. It
+    does **not** stop DuckDB using its own files — the database, its WAL, its
+    spill directory — which is all a datasource needs. Measured on DuckDB
+    1.5.5: reads, ``CREATE``/``DROP``/``CHECKPOINT`` on a writable file, and a
+    sort spilling past ``memory_limit`` all still work. ``lock_configuration
+    = true`` then pins every other setting (``temp_directory``,
+    ``memory_limit``, extension autoloading), so no statement can move it.
+
+    **No ``allowed_directories``, deliberately.** Opening DuckDB onto the
+    allowed paths would let ``read_csv`` reach a file there, and ``COPY ...
+    TO`` write one there too — and ``query`` only reads. A second file reaches
+    a datasource through ``create(type='table')``, which the writable grant
+    governs.
+
+    **Set after the connection opens, not passed as startup config.** Two
+    measured reasons. ``duckdb_engine`` merges a URL's query parameters
+    *over* ``connect_args``, so ``duckdb:///x.db?enable_external_access=true``
+    would win; a ``SET`` after the open is the last word. And DuckDB names the
+    WAL of ``why? not.duckdb`` as ``why.wal? not.duckdb`` — it splits at the
+    ``?`` — while its startup exemption for its own files expects the other
+    spelling, so with startup config such a file does not open at all. The
+    cost of the ``SET`` route, also measured: a *writable* file with a ``?`` in
+    its name opens and reads but cannot commit, for the same WAL reason.
+
+    Settings are per database instance and DuckDB shares one instance between
+    connections to the same file, so a second connection finds the instance
+    already locked. That is the seal holding, not a failure — unless the lock
+    arrived with file access still on (a URL can ask for exactly that), in
+    which case the connection is refused rather than handed out open.
+    """
+    cursor = dbapi_conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT current_setting('lock_configuration'),"
+            " current_setting('enable_external_access')"
+        )
+        locked, external = cursor.fetchone()
+        if not locked:
+            cursor.execute("SET enable_external_access = false")
+            cursor.execute("SET lock_configuration = true")
+        elif external:
+            raise PermissionError(
+                "This DuckDB database has its configuration locked with file "
+                "access switched on, so it cannot be kept to its own file. "
+                "Attach it without lock_configuration in the URL."
+            )
+    finally:
+        cursor.close()
+
+
 @dataclass(frozen=True)
 class DuckDBBackend(Backend):
     """DuckDB, which can be *told* to open a file read-only.
@@ -1065,10 +1120,33 @@ class DuckDBBackend(Backend):
 
     It now holds a second: the two statistics DuckDB computes that SQLite does
     not. See :meth:`optional_aggregates`.
+
+    And a third: DuckDB reaches files **by itself**, which no other dialect
+    here does from inside a statement. See :meth:`open`.
     """
 
     name: str = "duckdb"
     read_only_query: ClassVar[Mapping[str, str]] = {"access_mode": "read_only"}
+
+    def open(self, url: str | URL, *, writable: bool) -> Engines:
+        """The generic two engines, each sealed off from every other file.
+
+        **Why.** ``access_mode=read_only`` protects the *database file* and
+        nothing else. DuckDB's own table functions and ``COPY`` open files
+        directly — ``read_text('/etc/hosts')``, ``read_csv`` anywhere on disk,
+        ``COPY (...) TO '/tmp/x.csv'`` — and none of that passes through
+        :mod:`paths`, so on a file attached read-only ``query`` both read outside
+        the allowed paths and wrote a file (issue #105). Both engines are
+        sealed, not only the reader ``query`` uses: a statement the writer runs
+        for ``create`` must not reach a file either. :meth:`Backend.open_file`
+        comes through here, so a file and a URL are sealed by the same line.
+
+        What the seal is, and what it costs, is :func:`_seal_duckdb`'s to say.
+        """
+        engines = super().open(url, writable=writable)
+        for engine in (engines.read, engines.write):
+            event.listen(engine, "connect", _seal_duckdb)
+        return engines
 
     def optional_aggregates(self) -> Mapping[str, Any]:
         """Both of them, driven against the engine rather than read about.

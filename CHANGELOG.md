@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And one found in this release's own code before it shipped:
+And two found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -342,6 +342,16 @@ And one found in this release's own code before it shipped:
   and a warning names the sheets and the tables they became. That rule had a
   hole of its own, closed with it: a header row of `a, A, a_1` made `a_1` twice
   and the file could not be attached; it now arrives as `a, a_1, a_1_1`.
+- **`query` on a DuckDB datasource read and wrote files outside the allowed
+  paths** ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)), even on a
+  file attached read-only. `read_text('/etc/hosts')` and `read_csv` returned
+  files from anywhere on disk, and `COPY (…) TO '/tmp/x.csv'` wrote one.
+  `access_mode=read_only` covers only DuckDB's own database, and DuckDB opens
+  those files itself without asking the path check. Every DuckDB connection now
+  has `enable_external_access` switched off and its configuration locked, so a
+  statement reaches only the database it was attached as. A second file still
+  arrives through `create(type="table")`, and a result is still written with
+  `query(path=…)`.
 
 ### Known limitations
 
@@ -386,6 +396,12 @@ And one found in this release's own code before it shipped:
   ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
 - **Db2 and OceanBase are eligible and unreachable** from a macOS host —
   measured, in `docs/CONSTRAINTS.md` §24 and §26.
+- **On DuckDB, `query` can still write one file: the database's own `.wal`.**
+  DuckDB exempts that path from the switched-off file access, and no setting
+  closes it ([#106](https://github.com/ChrisGVE/localdata-mcp/issues/106),
+  `docs/CONSTRAINTS.md` §29.4). A DuckDB file with a `?` in its name opens and
+  reads, but attached writable it cannot commit, because DuckDB names its WAL
+  differently (§29.3).
 
 ## [2.1.0] - unreleased
 

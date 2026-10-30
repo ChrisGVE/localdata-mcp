@@ -25,7 +25,10 @@ as a table called `sales` in a database called `shop` that this statement was
 never pointed at.
 
 **One statement reaches one datasource.** There is no join across nicknames; to
-put two files together, land one inside the other with `create` first.
+put two files together, land one inside the other with `create` first. That holds
+on DuckDB too: its own file readers and writers — `read_csv`, `read_parquet`,
+`read_text`, `COPY … TO`, `ATTACH` — are switched off, so a file is reached with
+`create`, and a result is written with `query(..., path=...)`.
 
 Users will not talk this way — they say *"the sales file"* — and the translation
 is yours to do silently. Never make someone say "table".

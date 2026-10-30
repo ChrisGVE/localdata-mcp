@@ -1691,6 +1691,166 @@ def test_a_local_file_url_is_still_subject_to_the_path_gate(session, tmp_path):
     assert "outside the allowed paths" in refused["error"]
 
 
+# DuckDB reaches files by itself — `read_csv`, `read_text`, `COPY ... TO` — and
+# never asks `paths.py`. Issue #105: on a file attached read-only, `query` read
+# /etc/hosts and wrote a CSV to /tmp. These drive that through the protocol.
+
+#: A line no datasource here contains, so finding it in an answer means the
+#: statement read the file it was planted in.
+_PLANTED = "planted-outside-the-allowed-paths"
+
+
+def _attach_duckdb(session, **extra) -> None:
+    target = session / "warehouse.db"
+    _build_duckdb(target)
+    assert call("attach", database=str(target), nickname="wh", **extra)["ok"]
+
+
+def test_a_duckdb_query_cannot_read_a_file_through_read_text(session, tmp_path):
+    outside = tmp_path / "secret.txt"
+    outside.write_text(_PLANTED)
+    _attach_duckdb(session)
+
+    answer = call(
+        "query", nickname="wh", sql=f"SELECT content FROM read_text('{outside}')"
+    )
+
+    assert answer["ok"] is False
+    assert _PLANTED not in json.dumps(answer)
+
+
+def test_a_duckdb_query_cannot_read_a_csv_outside_the_allowed_paths(session, tmp_path):
+    outside = write_csv(tmp_path / "outside.csv", f"word\n{_PLANTED}\n")
+    _attach_duckdb(session)
+
+    answer = call("query", nickname="wh", sql=f"SELECT * FROM read_csv('{outside}')")
+
+    assert answer["ok"] is False
+    assert _PLANTED not in json.dumps(answer)
+
+
+@pytest.mark.parametrize("where", ["outside", "inside"])
+def test_a_duckdb_query_cannot_copy_rows_into_a_file(session, tmp_path, where):
+    """``query`` only reads — inside the allowed paths as much as outside them.
+
+    The inside case is the read-only contract rather than the path boundary:
+    writing a file is ``query(..., path=...)``'s job, done by this server, and
+    a statement writing one itself is a write that verb never granted.
+    """
+    destination = (tmp_path if where == "outside" else session) / "copied.csv"
+    _attach_duckdb(session)
+
+    answer = call(
+        "query", nickname="wh", sql=f"COPY (SELECT * FROM sales) TO '{destination}'"
+    )
+
+    assert answer["ok"] is False
+    assert not destination.exists()
+
+
+def test_a_duckdb_query_cannot_switch_file_access_back_on(session, tmp_path):
+    """Try to undo the lock, then read in a separate call. The read is refused.
+
+    The attempt is its own call, and its answer is not what is asserted: a
+    ``SET`` is refused as "not a read" whether or not it worked, and DuckDB
+    rejects ``SET enable_external_access = true`` even where access was never
+    off. What proves anything is the read that follows on the same slot.
+    """
+    outside = tmp_path / "secret.txt"
+    outside.write_text(_PLANTED)
+    _attach_duckdb(session)
+
+    call(
+        "query",
+        nickname="wh",
+        sql="SET lock_configuration = false; SET GLOBAL enable_external_access = true",
+    )
+    answer = call(
+        "query", nickname="wh", sql=f"SELECT content FROM read_text('{outside}')"
+    )
+
+    assert answer["ok"] is False
+    assert _PLANTED not in json.dumps(answer)
+
+
+def test_a_duckdb_query_cannot_unlock_the_configuration(session):
+    """The lock is what keeps every *other* setting where the server put it.
+
+    ``enable_external_access`` refuses to be switched back on by itself, so a
+    test on that setting alone would stay green with the lock removed. This
+    asks the lock directly: either the ``SET`` is refused, or it did nothing.
+    """
+    _attach_duckdb(session)
+
+    answer = call(
+        "query",
+        nickname="wh",
+        sql=(
+            "SET lock_configuration = false; "
+            "SELECT current_setting('lock_configuration') AS locked"
+        ),
+    )
+
+    assert answer["ok"] is False or answer["rows"] == [[True]]
+
+
+def test_a_duckdb_url_cannot_ask_for_file_access_back(session, tmp_path):
+    """A URL's own query parameters must not outrank the server's posture.
+
+    The driver merges a URL's parameters over the connection arguments, so a
+    setting passed only as a connection argument loses to
+    ``?enable_external_access=true``.
+    """
+    outside = tmp_path / "secret.txt"
+    outside.write_text(_PLANTED)
+    target = session / "warehouse.db"
+    _build_duckdb(target)
+    attached = call(
+        "attach",
+        database=f"duckdb:///{target}?enable_external_access=true",
+        nickname="wh",
+    )
+    assert attached["ok"] is True
+
+    answer = call(
+        "query", nickname="wh", sql=f"SELECT content FROM read_text('{outside}')"
+    )
+
+    assert answer["ok"] is False
+    assert _PLANTED not in json.dumps(answer)
+
+
+def test_a_duckdb_url_locked_with_file_access_on_is_refused(session):
+    """A URL can lock the configuration before the server seals it.
+
+    Then file access can no longer be switched off, and the datasource is
+    refused at attach rather than handed out open.
+    """
+    target = session / "warehouse.db"
+    _build_duckdb(target)
+
+    refused = call(
+        "attach",
+        database=f"duckdb:///{target}?lock_configuration=true",
+        nickname="wh",
+    )
+
+    assert refused["ok"] is False
+    assert "lock_configuration" in refused["error"]
+
+
+def test_a_duckdb_file_still_answers_with_file_access_switched_off(session):
+    """The lock reaches only what is *not* the datasource: its own file still reads."""
+    _attach_duckdb(session)
+
+    answer = call(
+        "query", nickname="wh", sql="SELECT region FROM sales ORDER BY region"
+    )
+
+    assert answer["ok"] is True
+    assert answer["rows"] == [["north"], ["south"]]
+
+
 def test_the_output_delimiter_reaches_query_over_the_wire(session):
     call(
         "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","

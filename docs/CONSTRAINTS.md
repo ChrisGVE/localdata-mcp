@@ -42,6 +42,7 @@ that block is the current answer and the text above it is the record.
 | [§24] · [§25] (2026-07-30) | Db2, eligible and unreachable; ten ways into one database |
 | [§26] · [§27] (2026-07-31) | OceanBase, eligible and stopped by one instruction; Exasol |
 | [§28] (2026-07-31) | The load half of the streaming gap — a file measured in one pass, inserted in another |
+| [§29] (2026-10-30) | DuckDB reaches files by itself, and what sealing it off costs |
 
 [§7]: #7--driving-the-surface-as-an-agent-2026-07-26
 [§8]: #8--driving-the-live-server-through-a-real-client-2026-07-27
@@ -65,6 +66,7 @@ that block is the current answer and the text above it is the record.
 [§26]: #26--oceanbase-eligible-on-the-rule-and-stopped-by-one-instruction-2026-07-31
 [§27]: #27--exasol-and-a-database-that-will-not-say-what-went-wrong-2026-07-31
 [§28]: #28--the-load-half-of-the-streaming-gap-a-file-measured-in-one-pass-inserted-in-another-2026-07-31
+[§29]: #29--duckdb-reaches-files-by-itself-and-what-sealing-it-off-costs-2026-10-30
 
 Section numbers are cited from `README.md`, `LEVEL0.md` and `CONTRIBUTING.md` as `§N`, and
 every top-level section above is linked. **Sub-sections — `§8.1`, `§10.7`, `§5.1` — are cited
@@ -4669,6 +4671,11 @@ so the truncation had been happening on every case while the suite was green. Th
 its lesson is that maximal hostility in every field makes a round-trip test *weaker*, because a field
 that cannot represent the input can no longer be asserted at all.
 
+> **Amended 2026-10-30 — "opens perfectly" now holds for reading only.** Since issue #105 every
+> DuckDB connection switches its own file access off, and DuckDB names the WAL of `why? not.duckdb`
+> as `why.wal? not.duckdb`. A file with a `?` in its name still opens and reads; attached
+> `writable=true` it cannot commit. Measured in §29.3.
+
 ### 25.8 What this did not test
 
 Authentication *rotation* and expiry: a Kerberos ticket that runs out mid-session, a certificate that
@@ -5312,3 +5319,77 @@ the local number.
 **The 10-million-row tall corpus was not re-run.** The wide file is the one §10.6 measured and the
 one whose peak was the constraint; the tall file would cost another twenty minutes to say the same
 thing about a narrower row.
+
+## §29 — DuckDB reaches files by itself, and what sealing it off costs (2026-10-30)
+
+Issue #105. Measured on DuckDB 1.5.5 and duckdb-engine 0.17.0, directly and through the MCP surface.
+
+### 29.1 `access_mode=read_only` protects the database file and nothing else
+
+On a DuckDB file attached read-only, `query` ran `SELECT * FROM read_text('/etc/hosts')`, read a CSV
+under `/tmp` with `read_csv`, and ran `COPY (SELECT * FROM t) TO '/tmp/x.csv'`, which answered
+`ok: true` and left the file on disk. None of it went through `paths.py`. DuckDB's table functions
+and `COPY` open files themselves, and the read-only posture covers only the database it was opened
+on. SQLite-held datasources were not affected: there `ATTACH` is refused by the authorizer and
+`read_text` does not exist.
+
+### 29.2 `enable_external_access = false` closes it, and the database's own files still work
+
+With the setting off, each of these is refused with `Permission Error: … file system operations are
+disabled by configuration`: `read_text`, `read_csv`, `read_blob` and `glob` on any path, `COPY … TO`
+and `COPY … FROM`, `ATTACH` of another file, `EXPORT DATABASE` (which also creates no directory),
+`INSTALL`/`LOAD`, and an `https://` URL. These still work, whether the file is opened read-only or
+writable: reading the database, `CREATE`/`DROP`/`CHECKPOINT` on a writable file (so the WAL is
+written), and a sort that spills past a 100 MB `memory_limit` into the `.tmp` directory beside the
+database.
+
+`SET enable_external_access = true` is refused once access is off (*"Cannot enable external
+access while database is running"*), and so is `SET allowed_directories`. **It is also refused when
+access was never off**, so a test that sends it and checks for a refusal passes with or without the
+seal. `lock_configuration = true` is added on top: it is what stops `temp_directory`,
+`memory_limit` and the extension settings being moved by a statement.
+
+`allowed_directories` was considered and rejected. Opening DuckDB onto the allowed paths would let
+`read_csv` reach a file there, but it would let `COPY … TO` write one there as well, and `query` only
+reads.
+
+### 29.3 Where the setting goes was decided by two measurements
+
+**A URL outranks a connection argument.** duckdb-engine merges the URL's query parameters over
+`connect_args["config"]`. Measured: `connect_args` saying `false` with `?enable_external_access=true`
+on the URL gives `true`, so a caller could undo a setting that was passed only as a connection
+argument.
+
+**Startup config breaks a file with `?` in its name.** DuckDB names the WAL by inserting `.wal`
+before the first `?` (`why? not.duckdb` → `why.wal? not.duckdb`), and its startup exemption for the
+database's own files does not cover that name. With the setting passed at startup, such a file does
+not open at all, read-only or writable (*"Cannot access file …/why.wal? not.duckdb"*). A file without
+a `?` opens normally.
+
+So the setting is applied by `SET` on every new connection, read engine and write engine alike
+(`dialects._seal_duckdb`). That is the last word over the URL, and a `?` file opens and reads. **One
+cost remains:** a writable file with a `?` in its name cannot commit (*"Failed to commit: Cannot
+access file …/why.wal? not.duckdb"*). That is currently behind #79, which already stops a writable
+DuckDB file from reaching `create`.
+
+Settings belong to the database instance, and DuckDB gives every connection to one file the same
+instance, so a second connection finds it already locked. The seal checks first and does not set
+the value twice. The one case it refuses is a URL carrying `lock_configuration=true` with file access
+still on: the lock arrived first, file access can no longer be switched off, and `attach` answers
+`ok: false` instead of handing the datasource out open.
+
+### 29.4 What is still reachable
+
+**The database's own WAL path.** DuckDB's exemption covers the database file and `<file>.wal`. On a
+read-only connection with the seal on, `COPY (SELECT 'g') TO '<file>.wal'` succeeds and writes a CSV
+there. DuckDB reopened the database afterwards without complaint in the one case measured, but a WAL
+holding uncheckpointed writes from another process could be overwritten. No setting closes it:
+`allowed_paths` and `disabled_filesystems` cannot be passed at startup, and disabling
+`LocalFileSystem` after the open breaks spilling and aborted the process at exit (`libc++abi:
+terminating due to uncaught exception … PermissionException`). Closing it would take a check on the
+SQL itself, which this server avoids by design. Filed as
+[#106](https://github.com/ChrisGVE/localdata-mcp/issues/106).
+
+**Server-side equivalents on the container backends** — `pg_read_file`, `COPY … TO PROGRAM`,
+`INTO OUTFILE`, `load_file` — are not covered here. They run as the database server's user, not as
+this process, and are a different mechanism.
