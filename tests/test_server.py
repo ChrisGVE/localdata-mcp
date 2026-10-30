@@ -892,6 +892,66 @@ def test_detaching_frees_the_slot_and_reports_what_went(session):
     assert call("directory")["datasources"] == []
 
 
+def test_detach_reports_the_tables_the_slot_holds_when_it_closes(session):
+    """Issue #90: not the ones it arrived with.
+
+    ``detach``'s own docstring warns that tables added to the datasource are
+    gone once it closes — so the tables it names are read at the moment it
+    closes, the same way ``directory`` reads them. A table added with
+    ``create``, one renamed with ``update`` and one removed with ``drop`` all
+    have to show, or the answer is least accurate exactly where the caller is
+    told to look.
+    """
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
+    call(
+        "create",
+        nickname="staff",
+        type="table",
+        source=str(session / "mixed_tabs.tsv"),
+        table="extra",
+        delimiter="\t",
+    )
+    call(
+        "create",
+        nickname="staff",
+        type="table",
+        source=str(session / "semicolons.csv"),
+        table="draft",
+        delimiter=";",
+    )
+    call("update", nickname="staff", type="table", name="draft", to="final")
+    call("drop", nickname="staff", type="table", name="simple")
+    held = call("directory", nickname="staff")["tables"]
+    assert sorted(held) == ["extra", "final"]
+
+    closed = call("detach", nickname="staff")
+
+    assert closed["ok"] is True
+    assert closed["tables"] == held
+
+
+def test_detach_names_a_table_added_to_an_outside_database(session):
+    """The same for a database file attached writable: what it holds at the end."""
+    target = session / "company.db"
+    _build_database(target)
+    call("attach", database=str(target), nickname="co", writable=True)
+    call(
+        "create",
+        nickname="co",
+        type="table",
+        source=str(session / "simple.csv"),
+        table="staff",
+        delimiter=",",
+    )
+
+    closed = call("detach", nickname="co")
+
+    assert closed["ok"] is True
+    assert sorted(closed["tables"]) == ["departments", "staff"]
+
+
 def test_saving_then_attaching_again_brings_the_whole_session_back(session):
     write_csv(session / "sales.csv", "sku,qty\na,3\nb,4\n")
     write_csv(session / "prices.csv", "sku,price\na,10\nb,20\n")
@@ -2352,9 +2412,7 @@ def test_a_short_password_does_not_corrupt_the_drivers_complaint(
 
 
 @pytest.mark.parametrize("password", ["e", "con"])
-def test_a_duckdb_url_with_a_short_password_keeps_the_drivers_words(
-    session, password
-):
+def test_a_duckdb_url_with_a_short_password_keeps_the_drivers_words(session, password):
     """The repro in #82: duckdb's own complaint read `conn***ct()`."""
     target = session / "junk.db"
     target.write_bytes(b"")
@@ -2427,9 +2485,7 @@ def test_a_password_with_url_characters_is_masked_behind_the_closed_network(
         ),
     ],
 )
-def test_a_credential_read_as_a_path_is_masked_in_the_refusal(
-    session, tool, arguments
-):
+def test_a_credential_read_as_a_path_is_masked_in_the_refusal(session, tool, arguments):
     """A URL that never reaches the URL code is still a credential.
 
     Taken as a path, ``postgresql://u:hunter2@…`` is normalised to

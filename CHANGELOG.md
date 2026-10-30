@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And five found in this release's own code before it shipped:
+And six found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -384,6 +384,12 @@ And five found in this release's own code before it shipped:
   The description now also survives `query(path=…)` and a second `attach`.
   Durations and times of day still load as nanoseconds
   ([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)).
+- **`detach` named the tables a slot arrived with, not the ones it held**
+  ([#90](https://github.com/ChrisGVE/localdata-mcp/issues/90)). After a
+  `create` and a `drop`, `detach` left out the table just added and listed the
+  one just dropped, one call after `drop` had reported it gone. The tables it
+  left out were the ones its own description warns are lost on detach. It now
+  reads the tables from the database as it closes, the way `directory` does.
 
 ### Known limitations
 

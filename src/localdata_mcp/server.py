@@ -625,7 +625,9 @@ def detach(nickname: str) -> dict[str, Any]:
     written out with ``save`` first.
 
     The answer names what was closed — ``nickname``, ``source`` and the
-    ``tables`` it held — and the session's ``slots_used`` and
+    ``tables`` it held at the moment it closed, which counts any added with
+    ``create``, under the names ``update`` gave them, and none removed with
+    ``drop`` — and the session's ``slots_used`` and
     ``slots_available`` afterwards. ``slots_available`` is the slot **limit**
     and not the number free, the same as in ``directory``; the free slots are the
     subtraction.
@@ -636,6 +638,12 @@ def detach(nickname: str) -> dict[str, Any]:
     with _lock:
         registry = _session()
         try:
+            # Read before the slot closes, and from the database, the way
+            # `directory` reads it: the tables a slot holds at the end are not
+            # the ones it arrived with once `create`, `update` or `drop` has
+            # touched it, and the ones added since are exactly what this answer
+            # warns are about to be lost (issue #90).
+            tables = registry.tables(nickname)
             slot = registry.detach(nickname)
         except SlotError as exc:
             return _failed(exc)
@@ -643,7 +651,7 @@ def detach(nickname: str) -> dict[str, Any]:
             "ok": True,
             "nickname": slot.nickname,
             "source": slot.source,
-            "tables": list(slot.tables),
+            "tables": list(tables),
             "slots_used": len(registry.slots()),
             "slots_available": registry.capacity(),
         }

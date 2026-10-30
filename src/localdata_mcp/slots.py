@@ -166,6 +166,12 @@ class Slot:
     kind: str
     #: Where it came from, with any password removed.
     source: str
+    #: The tables it **arrived with** — a record of the attach, and nothing
+    #: more. It is never kept current: ``create``, ``update`` and ``drop`` change
+    #: the database, and the database is the one place that says what a slot
+    #: holds now. Ask :meth:`Registry.tables` for that. Two lists that are both
+    #: meant to be current drift apart, and a stale one reached ``detach``'s
+    #: answer before anyone noticed (issue #90).
     tables: tuple[str, ...]
     #: Whether this database may be written to. Only databases the server
     #: created are writable by default; anything attached from outside arrives
@@ -842,7 +848,7 @@ class Registry:
         create/update/drop and the first thing here that changes a table without
         rebuilding it — the rows, types and indexes all stay put.
         """
-        slot = self._writable(nickname, "rename a table in")
+        self._writable(nickname, "rename a table in")
         table = self.stored_name(nickname, table)
         if to == table:
             raise SlotError(f"{nickname}.{table} is already called {table!r}.")
@@ -879,9 +885,9 @@ class Registry:
 
         try:
             # Not `to`: a backend may store the name in a case it chose itself,
-            # and the workspace reports which. Everything below uses what landed
-            # rather than what was asked for, or the slot's list and the
-            # description would disagree with the database and with each other.
+            # and the workspace reports which. The description below uses what
+            # landed rather than what was asked for, or it would name a table
+            # the database does not hold.
             landed = self._workspace.rename_table(nickname, table, to)
         except UnsupportedOperation as exc:
             # Not a failed rename — a datasource with no statement that renames a
@@ -895,11 +901,6 @@ class Registry:
         except LoadError as exc:
             raise SlotError(str(exc)) from exc
 
-        # The slot's own table list is a fact about the database, and a stale
-        # one is the defect the live-client pass already caught once.
-        self._slots[nickname] = replace(
-            slot, tables=tuple(landed if one == table else one for one in slot.tables)
-        )
         return self._workspace.describe(nickname, landed)
 
     def drop_table(self, nickname: str, table: str) -> None:
