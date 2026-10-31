@@ -66,7 +66,7 @@ from uuid import UUID
 
 from fastmcp import FastMCP
 
-from . import binding, config, temporal
+from . import __version__, binding, config, temporal
 from .credentials import mask_credentials
 from .export import ExportError, export_rows
 from .loader import ColumnProfile, IndexInfo, TableInfo
@@ -75,6 +75,7 @@ from .slots import Attachment, Registry, Slot, SlotError, SlotNotAvailable
 
 mcp = FastMCP(
     "localdata",
+    version=__version__,
     instructions=(
         "SQL over local data files and databases.\n\n"
         "Attach each datasource with attach(database) — a tabular file (CSV, "
@@ -386,7 +387,7 @@ def _unparsed_temporal_warning(info: TableInfo) -> str:
 
     It says which order the comparison actually is, because the failure is not
     that the column is unusable but that it lies convincingly: ``max()``
-    returns a real value from the column, and on four of the spellings measured
+    returns a real value from the column, and on six of the spellings measured
     it is the earliest instant in the table (CONSTRAINTS §8.1).
     """
     lines = []
