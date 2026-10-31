@@ -508,6 +508,46 @@ def test_an_integer_wider_than_32_bits_lands_in_the_endpoint_and_reads_back(live
     assert beyond["rows"] == [[1]]
 
 
+def test_a_float_column_lands_in_the_endpoint_and_reads_back(live):
+    """A loaded float is a float64 on every backend, and it comes back exactly (#104).
+
+    No other endpoint test lands a float, so a backend whose float spelling
+    was wrong passed the whole suite: Firebird's dialect once rendered
+    ``DOUBLE``, which Firebird has no keyword for, and removing the
+    respelling that works round it turned nothing red. ``0.1`` is the value
+    that tells a float64 column from a 32-bit ``REAL`` one, which reads it
+    back as ``0.10000000149011612``. The filter makes the column compare as a
+    number, not as text that sorts like one.
+    """
+    attach_writable(live)
+    measured = live.root / "measured.csv"
+    measured.write_text("id,x\n1,0.1\n2,-2.5\n3,1234567.891\n")
+    table = live.table("measured")
+    made = call(
+        "create",
+        nickname="endpoint",
+        type="table",
+        source=str(measured),
+        table=table,
+        delimiter=",",
+    )
+    assert made["ok"] is True, made
+
+    stored = call(
+        "query", nickname="endpoint", sql=f"SELECT x FROM {table} ORDER BY id"
+    )
+    above = call(
+        "query",
+        nickname="endpoint",
+        sql=f"SELECT id FROM {table} WHERE x > 1 ORDER BY id",
+    )
+
+    assert stored["ok"] is True, stored
+    assert [row[0] for row in stored["rows"]] == [0.1, -2.5, 1234567.891]
+    assert above["ok"] is True, above
+    assert above["rows"] == [[3]]
+
+
 def _build_typed_table(live: Live) -> str:
     """A table of types SQLite does not have, built the way the user's would be.
 
