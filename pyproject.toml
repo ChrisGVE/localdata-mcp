@@ -219,7 +219,7 @@ Documentation = "https://github.com/ChrisGVE/localdata-mcp/blob/main/docs/archit
 localdata-mcp = "localdata_mcp.server:main"
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
