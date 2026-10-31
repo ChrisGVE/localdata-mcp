@@ -5564,6 +5564,18 @@ DuckDB's own parser names the statements that end a transaction. `extract_statem
 - `directory` lists no indexes on any DuckDB slot, because duckdb-engine reflects none. That is
   [#107](https://github.com/ChrisGVE/localdata-mcp/issues/107)'s root, not this section's.
 
+> **Amended 2026-10-31 — the first bullet above is half closed
+> ([#116](https://github.com/ChrisGVE/localdata-mcp/issues/116)).** On a writable slot, `query`
+> now answers a write DuckDB refused with *"query reads; it does not write. This statement asks
+> to INSERT …"*, naming `create`, `update` and `drop`. It recognises the refusal by its class,
+> `duckdb.TransactionException`, not by its prose. On the reader of a writable slot that class
+> has one cause: every transaction there is `READ ONLY` and may not be ended early, and
+> *"Current transaction is aborted"* needs an earlier failure in the same transaction, which a
+> one-string `query` never has. DuckDB's parser names the refused statement: the first one in
+> the string that is not a read. The read-only slot is unchanged. Its *"attached in read-only
+> mode"* arrives as `InvalidInputException`, measured on DuckDB 1.5.5, and that class covers
+> too much to recognise a write by.
+
 ---
 
 ## §32 — A time of day is text, and a duration says what it counts (2026-10-30)

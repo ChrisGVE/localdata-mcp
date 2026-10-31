@@ -1192,6 +1192,61 @@ def _refuse_transaction_control(refusal: Refusal, connection: Any, sql: str) -> 
         )
 
 
+#: Statement kinds that only read, so cannot be the one a read-only transaction
+#: refused. Everything else in a refused string is a candidate.
+_DUCKDB_READS = frozenset({"SELECT", "EXPLAIN", "RELATION", "LOGICAL_PLAN"})
+
+#: The one DuckDB statement kind whose name is not the SQL that spells it.
+_DUCKDB_KIND_WORDS = {"CREATE_FUNC": "CREATE FUNCTION"}
+
+
+def _name_refused_write(refusal: Refusal, context: Any) -> None:
+    """Name the write DuckDB's read-only transaction refused (issue #116).
+
+    DuckDB refuses a write inside ``BEGIN TRANSACTION READ ONLY`` by itself,
+    which is the guard (:func:`_begin_read_only`), but in its own words:
+    "TransactionContext Error: Cannot write to database … - transaction is
+    launched in read-only mode". That speaks of a transaction to an agent that
+    opened none and names no verb to write with. Recording what was attempted
+    on :class:`Refusal` lets ``query`` answer in the same words it uses for
+    the statements :func:`_refuse_transaction_control` refuses.
+
+    Recognised by the exception's **class**, ``duckdb.TransactionException``,
+    never by its prose. DuckDB's Python exceptions carry no error code, so the
+    class is the most structured signal it gives. On a connection whose every
+    transaction is read-only and which may not end one, it has one cause: the
+    write. A write-write conflict needs a write, ``BEGIN``, ``COMMIT`` and
+    ``ROLLBACK`` are refused before they run, and the other one DuckDB raises,
+    "Current transaction is aborted", needs an earlier failure in the same
+    transaction, which ``query`` never has: it runs one string per transaction
+    and DuckDB stops that string at its first error.
+
+    The read-only *slot's* refusal is not this one. ``access_mode=read_only``
+    refuses a write as ``InvalidInputException`` ("attached in read-only
+    mode"), a class far too broad to recognise a write by, so it is left as
+    DuckDB words it.
+
+    Which statement it was is DuckDB's own parser's answer, as in
+    :func:`_refuse_transaction_control`: the first in the string whose kind
+    is not a read, since DuckDB stops at the first statement it refuses.
+    """
+    import duckdb
+
+    if not isinstance(context.original_exception, duckdb.TransactionException):
+        return
+    if context.connection is None or context.statement is None:
+        return
+    connection = context.connection.connection.dbapi_connection
+    kinds = [
+        statement.type.name
+        for statement in connection.extract_statements(context.statement)
+    ]
+    written = next((kind for kind in kinds if kind not in _DUCKDB_READS), None)
+    if written is None:
+        return
+    refusal.what = _DUCKDB_KIND_WORDS.get(written, written.replace("_", " "))
+
+
 @dataclass(frozen=True)
 class DuckDBBackend(Backend):
     """DuckDB, which can be *told* to open a file read-only.
@@ -1283,8 +1338,17 @@ class DuckDBBackend(Backend):
         the statements that would end one early. Installed on a read-only
         slot's reader as well, where ``access_mode=read_only`` already refuses
         every write — one posture for the reader however the slot was granted.
+
+        A third names what the read-only transaction refused, so ``query``
+        answers in its own words rather than DuckDB's
+        (:func:`_name_refused_write`, issue #116).
         """
         event.listen(engine, "connect", _begin_read_only)
+        event.listen(
+            engine,
+            "handle_error",
+            lambda context: _name_refused_write(refusal, context),
+        )
 
         @event.listens_for(engine, "do_execute")
         def _with_parameters(cursor, statement, _parameters, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature

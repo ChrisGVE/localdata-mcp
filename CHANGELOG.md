@@ -425,6 +425,16 @@ And eight found in this release's own code before it shipped:
   which sum, average and order correctly, and is described
   `"temporal": "duration", "unit": "nanoseconds"` instead of counting from an
   epoch it has nothing to do with.
+- **`query` on a writable DuckDB datasource refused a write in DuckDB's words**
+  ([#116](https://github.com/ChrisGVE/localdata-mcp/issues/116)). An `INSERT`,
+  `UPDATE`, `CREATE` or any other write was refused, and the file kept its rows,
+  but the answer was *"TransactionContext Error: Cannot write to database … -
+  transaction is launched in read-only mode"*, which speaks of a transaction the
+  caller never opened and names no verb to use instead. It now reads *"query
+  reads; it does not write. This statement asks to INSERT …"* and points to
+  `create`, `update` and `drop`, as the refusal of `COMMIT; INSERT …` already
+  did. A DuckDB datasource attached read-only still refuses a write in DuckDB's
+  own words.
 
 ### Known limitations
 
