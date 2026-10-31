@@ -2666,7 +2666,9 @@ TYPED_WRITERS = {
     ),
     ".ods": (
         "odf",
-        lambda frame, path: frame.to_excel(path, index=False, sheet_name="days"),
+        lambda frame, path: frame.to_excel(
+            path, index=False, sheet_name="days", engine="odf"
+        ),
     ),
 }
 
