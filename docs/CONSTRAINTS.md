@@ -135,6 +135,17 @@ Not fixable by an adapter — these need a **value-domain** check, not a type-ke
 Refusal is the only correct answer for both, and it must be keyed on the **value**, not the column
 dtype.
 
+> **Amended 2026-10-31 — the second bullet no longer holds in this codebase
+> ([#72](https://github.com/ChrisGVE/localdata-mcp/issues/72)).** The `OverflowError` is still
+> what SQLite raises for such a value bound into an `INTEGER` column. But a wider Python `int`
+> never reaches one here. A numpy integer column cannot hold it, so it only ever arrives in an
+> `object` column, and the loader declares every `object` column `TEXT`. The refusal therefore
+> fired only on text columns, which hold the digits losslessly. `binding.adapt_value` now binds
+> such a value as its decimal digits, and the load warns that the column is text. That warning
+> exists because `sum()` over the digits converts each to a float: measured on SQLite, `1`, `2`
+> and `99999999999999999999` sum to `1e+20`. `ORDER BY`, `min()` and `max()` compare the digits
+> as text. The `np.uint64` refusal stands: its dtype declares an `INTEGER` column.
+
 ### 1.4 Temporal columns must be stored as INTEGER ticks
 
 Storing temporals as ISO-8601 text binds cleanly, passes a `typeof` check, and is **wrong on every
@@ -5302,6 +5313,13 @@ shapes needed explicit handling and are the reason the check was run rather than
   improved on, so that a file the materialised path refuses is not accepted by this one — see
   [#72](https://github.com/ChrisGVE/localdata-mcp/issues/72), which is where the question of
   whether that refusal is right at all is recorded.
+
+> **Amended 2026-10-31 — #72 is settled for both paths.** The refusal is gone: both paths now
+> bind a too-wide integer as its digits into the `TEXT` column, and the load warns that the
+> column is text (§1.3, amended). The `wide` family is still reproduced as Python ints rather
+> than left as raw text, so both paths hand binding the same values. `test_streaming.py` now
+> asserts that both paths store `wide_int_last.csv` identically, with the same notes and the same
+> digits, at chunk sizes 1, 2 and 5,000.
 
 **A caveat that belongs with the number**: 39 shapes agreeing is 39 shapes, not a proof. The
 guard against the rest is `test_streaming.py`, which loads every fixture both ways and compares

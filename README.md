@@ -475,6 +475,12 @@ answer belongs to whoever wrote the file, it reports and carries on.
   denominator — the answer is wrong and nothing says so, unless something says
   so. The warning names the offending values, because a column that came from a
   spreadsheet stores all of them as text and `typeof()` cannot tell them apart.
+- **An integer too wide for 64 bits is kept as its digits, and flagged.** A
+  column holding `99999999999999999999` is stored as text, exactly as the file
+  wrote it, because no integer column here can hold the value. The warning
+  names the column, because `sum()` and `avg()` over it convert each value to a
+  float and lose its last digits, and `ORDER BY`, `min()` and `max()` compare
+  the digits as text.
 - **What SQL cannot hold is encoded, not dropped.** A nested JSON value becomes
   its JSON text and a nested XML element its XML text — lossless and reversible,
   reachable with `json_extract(column, '$.key')` — and the warning names the

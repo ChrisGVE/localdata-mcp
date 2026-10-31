@@ -251,19 +251,20 @@ def test_uint64_within_range_still_works(workspace):
     assert answer(workspace, "SELECT v FROM t") == 2**63 - 1
 
 
-def test_python_int_wider_than_64_bits_is_refused_by_name(workspace):
-    """Not adaptable — a 64-bit signed column is a 64-bit signed column.
+def test_python_int_wider_than_64_bits_is_stored_as_its_digits(workspace):
+    """An object column is declared TEXT, and text holds the digits losslessly.
 
-    Refused here rather than left to the driver, which raises an OverflowError
-    naming neither the column nor the value.
+    Refused until #72, as though it were bound for a 64-bit column. But an
+    ``object`` column is never declared ``INTEGER``, so no such column was
+    involved, and the digits are exactly what the file held.
     """
-    with pytest.raises(LoadError, match="wider than the 64-bit"):
-        stored(workspace, [2**70], dtype=object)
+    stored(workspace, [2**70], dtype=object)
+    assert answer(workspace, "SELECT v FROM t") == str(2**70)
 
 
 def test_a_refused_value_is_reported_with_its_source(workspace):
     """The refusal has to reach the caller as their value, not as a statement."""
-    frame = pd.DataFrame({"v": pd.Series([2**70], dtype=object)})
+    frame = pd.DataFrame({"v": pd.Series([np.uint64(2**64 - 1)], dtype="uint64")})
     with pytest.raises(LoadError, match="prices.csv"):
         workspace.insert_frame(frame, "t", source="prices.csv", tag=TAG)
 

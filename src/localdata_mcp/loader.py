@@ -791,6 +791,48 @@ class ColumnMeasurement:
     non_numeric_values: int = 0
     non_numeric_examples: tuple[str, ...] = ()
     unparsed_temporal_examples: tuple[str, ...] = ()
+    #: The first integer in this column too wide for 64 bits, as its digits, or
+    #: ``None``. Such a column is stored as text (#72), and the load says so
+    #: (:func:`_wide_integer_note`).
+    wide_integer_example: str | None = None
+
+
+def _first_wide_integer(series: pd.Series) -> str | None:
+    """The first Python ``int`` in this column wider than 64 bits, as digits.
+
+    Only an ``object`` column can hold one, and only one ``infer_dtype`` calls
+    integer or mixed-integer, so every other column pays for one check.
+    """
+    if not pd.api.types.is_object_dtype(series.dtype):
+        return None
+    present = series.dropna()
+    if pd.api.types.infer_dtype(present, skipna=True) not in (
+        "integer",
+        "mixed-integer",
+    ):
+        return None
+    for value in present:
+        if binding.wider_than_64_bits(value):
+            return str(value)
+    return None
+
+
+def _wide_integer_note(column: ColumnMeasurement) -> str:
+    """Say that a column holds integers too wide for 64 bits, stored as text.
+
+    Measured on SQLite: ``sum()`` over the digits converts each to a float, so
+    1, 2 and 99999999999999999999 sum to ``1e+20``, and ``min``, ``max`` and
+    ``ORDER BY`` compare the digits as text. An agent about to aggregate the
+    column has to be told, because each of those answers looks like one.
+    """
+    return (
+        f"Column {column.name} holds integers too wide for a 64-bit integer "
+        f"column (for example {column.wide_integer_example}), so it is stored "
+        f"as text: each value is its digits, exactly as written. "
+        f"sum() and avg() over it convert each value to a floating-point number "
+        f"and lose its last digits, and ORDER BY, min() and max() compare the "
+        f"digits as text, so 10 sorts before 9."
+    )
 
 
 def measure_frame(frame: pd.DataFrame) -> tuple[ColumnMeasurement, ...]:
@@ -825,6 +867,7 @@ def measure_frame(frame: pd.DataFrame) -> tuple[ColumnMeasurement, ...]:
                 non_numeric_values=non_numeric,
                 non_numeric_examples=examples,
                 unparsed_temporal_examples=dates,
+                wide_integer_example=_first_wide_integer(series),
             )
         )
     return tuple(measured)
@@ -886,6 +929,9 @@ class _ColumnScan:
         self._numeric = 0
         self._non_numeric = 0
         self._numeric_examples: dict[str, None] = {}
+        #: The first value too wide for 64 bits, kept only if the column ends
+        #: up a column of integers — the one shape `read_csv` keeps them in.
+        self._wide_example: str | None = None
 
     def observe(self, raw: pd.Series) -> None:
         """Fold one chunk of this column's raw text into the measurements."""
@@ -927,6 +973,15 @@ class _ColumnScan:
             # this is its own family rather than text: the column is *declared*
             # text either way, but what the values are matters to what binds.
             self._families.add("wide")
+            if self._wide_example is None:
+                self._wide_example = next(
+                    (
+                        str(value)
+                        for value in parsed
+                        if binding.wider_than_64_bits(value)
+                    ),
+                    None,
+                )
         elif pd.api.types.is_integer_dtype(parsed.dtype):
             self._families.add("int")
         else:
@@ -1071,6 +1126,7 @@ class _ColumnScan:
                 and self._date_shaped_throughout
                 else ()
             ),
+            wide_integer_example=self._wide_example if family == "wide" else None,
         )
 
 
@@ -1083,9 +1139,9 @@ _COERCE: dict[str, Callable[[pd.Series], pd.Series]] = {
     "float": lambda values: pd.to_numeric(values).astype("float64"),
     "bool": lambda values: values.str.lower().map({"true": True, "false": False}),
     # Python ints in an object column, which is what `read_csv` gives a column
-    # of integers too wide for int64. Reproduced rather than improved on: the
-    # value is then refused by `binding.adapt_value` for being unrepresentable,
-    # and a file the materialised path refuses must not load here (issue #72).
+    # of integers too wide for int64. Reproduced rather than left as text, so
+    # both paths hand `binding.adapt_value` the same values and store the same
+    # digits (issue #72).
     "wide": lambda values: pd.to_numeric(values),
     "text": lambda values: values,
 }
@@ -1757,6 +1813,15 @@ class Workspace:
         # and the notes say why it is there, rather than surprising somebody
         # who later runs `SELECT *`.
         keyed = entry.backend.requires_primary_key()
+
+        notes = (
+            *notes,
+            *(
+                _wide_integer_note(column)
+                for column in measured
+                if column.wide_integer_example is not None
+            ),
+        )
 
         if keyed:
             notes = (

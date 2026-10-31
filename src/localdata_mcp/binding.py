@@ -22,10 +22,13 @@ The short version:
   where ticks return zero rows (#87, #109, `CONSTRAINTS` §8.1). The instant and
   time-of-day conversions below serve a frame handed to
   ``Workspace.insert_frame`` without going through a reader.
-* Two value classes cannot be represented at all and must be refused on their
-  *value*, not their type: `np.uint64` above 2**63-1 (which stores a silent blob
-  even with adapters registered, because it is genuinely out of range) and
-  Python `int` wider than 64 bits.
+* One value class cannot be represented at all and must be refused on its
+  *value*, not its type: `np.uint64` above 2**63-1, which stores a silent blob
+  even with adapters registered, because it is genuinely out of range for the
+  ``INTEGER`` column its dtype is declared as.
+* A Python `int` wider than 64 bits is **not** refused, and was until #72. It
+  only ever arrives in an `object` column, which is declared `TEXT`, so it is
+  bound as its decimal digits — exactly what the file held, and losslessly.
 
 **Nothing here registers anything with a driver.** These conversions used to be
 `sqlite3.register_adapter` entries, which made the correctness of a load depend
@@ -56,6 +59,7 @@ __all__ = [
     "temporal_kind",
     "to_timestamp",
     "to_timedelta",
+    "wider_than_64_bits",
 ]
 
 # ---------------------------------------------------------------------------
@@ -85,7 +89,8 @@ _NS_PER_SECOND = 1_000_000_000
 _NS_PER_DAY = 86_400 * _NS_PER_SECOND
 
 #: SQLite integers are 64-bit **signed**. This is the hard boundary behind the
-#: two value-domain refusals.
+#: tick-range and ``uint64`` refusals, and what sends a wider Python ``int`` to
+#: its column as text (:func:`wider_than_64_bits`).
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
 
@@ -328,6 +333,15 @@ _BY_TYPE: dict[type, Any] = {
 }
 
 
+def wider_than_64_bits(value: Any) -> bool:
+    """Whether this is a Python ``int`` no signed 64-bit column can hold.
+
+    ``bool`` is excluded by asking for exactly ``int``: it subclasses ``int``
+    and is never out of range anyway.
+    """
+    return type(value) is int and not _INT64_MIN <= value <= _INT64_MAX
+
+
 def adapt_value(value: Any) -> Any:
     """One value, converted to something any driver can bind.
 
@@ -340,11 +354,14 @@ def adapt_value(value: Any) -> Any:
         return handler(value)
     if value is None:
         return None
-    if type(value) is int and not _INT64_MIN <= value <= _INT64_MAX:
-        # Refused rather than passed on: it is wider than a 64-bit column can
-        # hold, and every backend either truncates it or raises from inside the
-        # driver, where the message names neither the column nor the value.
-        raise UnrepresentableValue(value, "integer wider than the 64-bit range")
+    if wider_than_64_bits(value):
+        # Bound as its digits (#72). A value reaches here only from an `object`
+        # column, and every `object` column is declared TEXT: a numpy integer
+        # column cannot hold this value, so no INTEGER column is ever involved.
+        # Passed on as an int instead, every backend would truncate it or raise
+        # from inside the driver, for a text column that holds it losslessly.
+        # The loader warns that the column is text (`_wide_integer_note`).
+        return str(value)
     if isinstance(value, np.generic):
         # A numpy scalar we did not name. ``item()`` is numpy's own answer for
         # "give me the Python equivalent", so this stays correct as numpy grows

@@ -451,6 +451,13 @@ would get commas. Handed to a `.parquet` or a workbook it is **refused** on
 misread the file; on `query(path=…)` it is ignored, so one value can be carried
 across a mix of destinations.
 
+**Integers too wide for 64 bits became text.** A column holding a value such as
+`99999999999999999999` loads as the digits the file held, declared `TEXT`, and
+the warning names the column. Do not `sum()` or `avg()` it and report the
+answer: each value is converted to a float and loses its last digits. And
+`ORDER BY`, `min()` and `max()` compare the digits as text, so `10` sorts
+before `9`. Tell the user the values exceed 64 bits.
+
 **Nested values became JSON text.** A JSON or XML column holding a structure
 comes back as `TEXT` carrying exactly what was in the file, and the warning names
 the columns. Reach into it with `json_extract(addr, '$.city')` rather than telling

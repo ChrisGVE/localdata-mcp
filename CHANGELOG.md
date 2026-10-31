@@ -445,6 +445,16 @@ And eight found in this release's own code before it shipped:
   `2024-03-01T13:30:00Z` for an instant with a time of day, and `14:30:00` for a
   time. A filter such as `WHERE seen >= '2024-03-01'` then finds it, as it does
   in a CSV holding the same text.
+- **A column of integers too wide for 64 bits was refused, though it is text**
+  ([#72](https://github.com/ChrisGVE/localdata-mcp/issues/72)). A CSV column
+  holding `99999999999999999999` beside ordinary integers was declared `TEXT`
+  and then refused with *"integer wider than the 64-bit range"*, while the same
+  value beside one decimal number loaded fine. It now loads as the digits the
+  file held, and `attach` and `create` warn that the column is text: `sum()` and
+  `avg()` over it convert each value to a float and lose its last digits, and
+  `ORDER BY`, `min()` and `max()` compare the digits as text. An unsigned 64-bit
+  value above the signed range, in a column declared `INTEGER`, is still
+  refused.
 
 ### Known limitations
 

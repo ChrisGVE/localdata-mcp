@@ -132,8 +132,8 @@ LATE_DECIDERS = {
     "dupe_headers.csv": "a,a,b c\n1,2,3\n4,5,6\n",
 }
 
-#: Built the same way, but for a named test rather than for the sweep — this
-#: one is refused by both paths, so there is no landing to compare.
+#: Built the same way, but for a named test rather than for the sweep — that
+#: test asserts the text the too-wide integer lands as, which the sweep cannot.
 BUILT_ELSEWHERE = {
     "wide_int_last.csv": "id,v\n1,1\n2,2\n3,99999999999999999999\n",
 }
@@ -436,26 +436,26 @@ def test_an_unreadable_file_is_refused_in_the_same_words_either_way(
 
 
 @pytest.mark.parametrize("chunked", [1, 2, 5_000], indirect=True)
-def test_an_integer_too_wide_to_store_is_refused_by_both_paths(
+def test_an_integer_too_wide_for_64_bits_lands_as_the_same_digits_by_both_paths(
     workspace, root, chunked
 ):
-    """Reproduced rather than improved on — see issue #72.
+    """Settled by issue #72: both paths store the digits as text, and agree.
 
     `read_csv` reads a column of integers too wide for int64 as Python ints in
-    an object column, and binding refuses the value for being unrepresentable.
-    The column is *declared* text and text would hold the digits losslessly, so
-    the refusal is arguably wrong — but it is the behaviour every other format
-    has, and a file that one read path refuses and the other accepts is worse
-    than either answer. Whichever way #72 is settled, it is settled for both.
+    an object column, which is declared text, and the chunked reader rebuilds
+    the same values. Text holds the digits losslessly, so both paths now load
+    them. A file that one read path refuses and the other accepts would be
+    worse than either answer, which is why the two are asserted together.
     """
     path = root / "wide_int_last.csv"
-    read = read_file(path, **separator_of(path))
-    with pytest.raises(LoadError) as whole:
-        workspace.insert_frame(read.tables[0].frame, "t", source=str(path), tag="whole")
-    measured = read_source(path, **separator_of(path))
-    with pytest.raises(LoadError) as parts:
-        workspace.insert_source(measured.tables[0], "t", source=str(path), tag="parts")
-    assert str(parts.value) == str(whole.value)
+    landed = assert_identical(workspace, path)
+    (value,) = [column for column in landed.columns if column.name == "v"]
+    assert value.declared_type == "TEXT"
+    assert [row[1] for row in rows(workspace, "parts")] == [
+        "1",
+        "2",
+        "99999999999999999999",
+    ]
 
 
 @pytest.mark.parametrize("chunked", [1, 5_000], indirect=True)
