@@ -100,13 +100,24 @@ A text column whose every value is in that spelling (:func:`is_time_of_day`) is
 described as a time of day whichever file it came from, which is what lets the
 description survive an export: the result of a query carries no column types,
 but it carries the text.
+
+**A date or a time beside a value of another kind is written as its text too**
+(#114). A YAML ``seen: 2024-03-01`` beside ``seen: unknown`` is not a date
+column, so it is stored as text — and the date in it used to be stored as its
+integer tick count, written as digits. Each date or time in such a column is
+written in the spelling of its kind above (:func:`temporal_values_as_text`), so
+the column holds what a CSV of the same text holds, and is described the same
+way: as text, with no temporal standard and no warning, since a CSV column of
+``2024-03-01`` and ``unknown`` gets neither.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 __all__ = [
@@ -123,6 +134,7 @@ __all__ = [
     "standard_of",
     "standardize",
     "standardize_as",
+    "temporal_values_as_text",
     "text_values",
     "typed_instants",
     "typed_times_of_day",
@@ -468,6 +480,58 @@ def typed_times_of_day(series: pd.Series) -> pd.Series | None:
     return written.where(series.notna(), other=None)
 
 
+#: What ``infer_dtype`` calls an ``object`` column holding more than one kind of
+#: value. Only such a column can hold a date or a time beside something else; a
+#: column of one kind is either temporal throughout or holds no temporal value.
+_MIXED_OBJECTS = frozenset({"mixed", "mixed-integer"})
+
+#: The value types :func:`temporal_values_as_text` writes as instants and as
+#: times of day. ``datetime.datetime`` is an instant through ``datetime.date``.
+_INSTANT_TYPES = (dt.date, pd.Timestamp, np.datetime64)
+_TIME_TYPES = (dt.time,)
+
+
+def temporal_values_as_text(series: pd.Series) -> pd.Series | None:
+    """A mixed column with each date and time in it written as text, or ``None``.
+
+    The column a typed reader hands over when a date or a time shares it with a
+    value of another kind: a YAML ``seen: 2024-03-01`` beside ``seen: unknown``,
+    or a workbook column holding a time cell and a cell openpyxl reads as a
+    datetime. It is not one temporal kind, so it is declared ``TEXT``, and
+    left alone each date or time in it reached :mod:`binding` and was stored as
+    its integer tick count written as digits (#114).
+
+    Each is written in the canonical spelling of its kind instead, which is
+    the text a column of only that kind is written as: an instant as
+    :func:`as_canonical` writes it, with the spelling measured over every
+    instant in the column and an offset normalised to UTC exactly as
+    :func:`typed_instants` does, and a time of day as ``isoformat`` writes it,
+    as :func:`typed_times_of_day` does. Every other value is left as it is.
+    A duration has no canonical text here and is left as well.
+
+    ``None`` for a column that is not mixed, and for one with no date or time
+    in it, which is the only case that pays for looking at every value.
+    """
+    if not pd.api.types.is_object_dtype(series.dtype):
+        return None
+    present = series.dropna()
+    if present.empty:
+        return None
+    if pd.api.types.infer_dtype(present, skipna=True) not in _MIXED_OBJECTS:
+        return None
+    instants = present[present.map(lambda value: isinstance(value, _INSTANT_TYPES))]
+    times = present[present.map(lambda value: isinstance(value, _TIME_TYPES))]
+    if instants.empty and times.empty:
+        return None
+    written = series.copy()
+    if not instants.empty:
+        parsed = pd.to_datetime(instants, utc=True)
+        written[instants.index] = as_canonical(parsed, spelling_of(parsed))
+    if not times.empty:
+        written[times.index] = times.map(lambda value: value.isoformat())
+    return written
+
+
 def standard_of(series: pd.Series) -> str | None:
     """Which canonical text a column is in, as named on the wire, or ``None``.
 
@@ -493,7 +557,10 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
     (:func:`typed_instants`) is written in the same canonical spelling, so a
     date compares the same way whichever kind of file it came from, and one it
     handed over as times of day (:func:`typed_times_of_day`) is written as the
-    text a CSV of the same times would hold.
+    text a CSV of the same times would hold. A date or a time sharing a column
+    with values of another kind is written as its text in the same spellings
+    (:func:`temporal_values_as_text`, #114), and the values beside it are left
+    alone.
     """
     converted: dict[str, pd.Series] = {}
     for name in frame.columns:
@@ -513,6 +580,12 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
             times = typed_times_of_day(series)
             if times is not None:
                 converted[name] = times
+                continue
+            # A date or a time beside values of another kind is not a temporal
+            # column, but each such value still means a date or a time (#114).
+            mixed = temporal_values_as_text(series)
+            if mixed is not None:
+                converted[name] = mixed
             continue
         # Already in the form this would rewrite it into, which is the case for
         # any file written the way the documentation asks for. Parsing it only

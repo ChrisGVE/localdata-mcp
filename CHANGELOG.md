@@ -435,6 +435,16 @@ And eight found in this release's own code before it shipped:
   `create`, `update` and `drop`, as the refusal of `COMMIT; INSERT …` already
   did. A DuckDB datasource attached read-only still refuses a write in DuckDB's
   own words.
+- **A typed date or time sharing a column with other values was stored as its
+  tick count, written as text**
+  ([#114](https://github.com/ChrisGVE/localdata-mcp/issues/114)). A YAML
+  `seen: 2024-03-01` beside `seen: unknown`, or a workbook column holding a time
+  cell and a datetime cell, is not one temporal kind, so the column is text, and
+  the date in it was stored as `'1709251200000000000'` with `ok: true`. Each date
+  or time in such a column is now written in its kind's spelling: `2024-03-01`,
+  `2024-03-01T13:30:00Z` for an instant with a time of day, and `14:30:00` for a
+  time. A filter such as `WHERE seen >= '2024-03-01'` then finds it, as it does
+  in a CSV holding the same text.
 
 ### Known limitations
 

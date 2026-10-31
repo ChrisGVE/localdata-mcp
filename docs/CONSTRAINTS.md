@@ -5678,6 +5678,23 @@ carries no zone, and a time of day has no date to resolve an offset against.
 - **A CSV time in another spelling** — `9:00`, `14:30`, `09:00:00.5` — is left as it was written
   and not described. It is not rewritten, because nothing recognises it as a time of day first.
 
+> **Amended 2026-10-31 — a date or a time beside other values was still ticks
+> ([#114](https://github.com/ChrisGVE/localdata-mcp/issues/114)).** The section above covers a
+> column that is one temporal kind throughout. Where a date or a time shares an `object` column
+> with a value of another kind, the column skipped both rewrites, because each asks
+> `infer_dtype` for one kind. It was declared `TEXT`, and each date or time in it was bound as
+> integer ticks and stored as their digits. Reported at `1e37ce21` and `dd187aaf`, and
+> reproduced at `fd2b2c91` through the tool surface: a YAML `seen: 2024-03-01`
+> beside `seen: unknown` stored `'1709251200000000000'`. An `.xlsx` column holding a `14:30`
+> time cell and a `1900-01-01 06:00` datetime cell stored `'52200000000000'` and
+> `'-2208967200000000000'`. `temporal.standardize` now writes each such value in its kind's
+> canonical spelling. That spelling is measured over every instant in the column, as for a
+> column of only instants, and every other value is left as it is. The three cases now store
+> `'2024-03-01'`, `'14:30:00'` and `'1900-01-01T06:00:00Z'`. The column gets no temporal
+> description and no warning, the same as a CSV column holding the same text. A duration
+> beside other values is still stored as its tick digits, because no canonical text spelling
+> for a duration exists here.
+
 ## §33 — A loaded integer is declared 64-bit on every backend (2026-10-31)
 
 Refs [#110](https://github.com/ChrisGVE/localdata-mcp/issues/110). Measured on `new-v3` from
