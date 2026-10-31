@@ -5704,3 +5704,43 @@ Not measured:
 - **The extremes of the range.** Values near `2^63` were not landed anywhere. Exasol has no binary
   integer type: its `BIGINT` is an alias of `DECIMAL(36,0)` (Exasol's data type aliases page),
   which holds the whole range in decimal digits.
+
+## §34 — `COMMIT; <write>` through `query`, measured on every endpoint (2026-10-31)
+
+Refs [#113](https://github.com/ChrisGVE/localdata-mcp/issues/113). Measured on `new-v3` from
+`fd2b2c91`, through the tool surface, on a writable slot holding a five-row table landed with
+`create`. Four strings were sent: `COMMIT; INSERT …` and `ROLLBACK; INSERT …`, each with and
+without `RETURNING name`. The rows were then counted on a fresh connection, after
+`backend.settle`.
+
+### 34.1 Result
+
+No backend kept the row. What stopped it differs, and only one of the answers is a posture:
+
+| Backend | What happened to the string |
+|---|---|
+| PostgreSQL 16, CockroachDB, YugabyteDB, openGauss | refused at parse: `stream_results` opens a server-side cursor, so the string arrives as `DECLARE … CURSOR FOR COMMIT; …`, and a cursor holds one statement |
+| MySQL 8.0, MariaDB 11 | refused at parse: PyMySQL does not enable multi-statements |
+| ClickHouse | refused: `Multi-statements are not allowed` |
+| Oracle | refused: `ORA-03405: End of query reached; no additional text should follow` |
+| Trino | refused at parse: `mismatched input ';'` |
+| CrateDB | refused: `ParsingException`, one statement per request |
+| Firebird 5 | refused: `Token unknown` at the `INSERT` |
+| YDB | refused: `Type annotation … At function: Commit!` |
+| Exasol | refused, with an empty message ([#117](https://github.com/ChrisGVE/localdata-mcp/issues/117)) |
+| MonetDB | **ran both statements**. The `INSERT` ran in the transaction that followed the `COMMIT`, which the read connection then rolled back. Count unchanged |
+| DuckDB | refused before execution since #79 (§31) |
+
+So the guarantee on every backend but DuckDB is a side effect of the driver or the parser, not a
+read-only session that survives a `COMMIT`. MonetDB is the one backend where the string runs, and
+there it is held only by the rollback on close. Made to commit on close, as a drill, the reader
+kept the row on MonetDB for both `RETURNING` strings, and
+`test_query_cannot_end_its_read_transaction_and_write_after_it` turned red.
+
+### 34.2 Found on the way, and not fixed here
+
+- **`INSERT … RETURNING` as a single statement** answers `ok` with the row on CrateDB, MonetDB and
+  Firebird, and CrateDB keeps it (settled count 6). MonetDB also answers `ok` for
+  `COMMIT; INSERT … RETURNING`. [#118](https://github.com/ChrisGVE/localdata-mcp/issues/118).
+- **SQL Server was not measured.** This machine has no SQL Server ODBC driver, so every `mssql`
+  target skipped. pyodbc runs multi-statement batches, so it is the backend most worth measuring.

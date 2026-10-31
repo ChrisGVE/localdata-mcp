@@ -961,6 +961,68 @@ def test_query_refuses_a_write_even_where_the_datasource_permits_it(live):
     assert after == expected, after
 
 
+@pytest.mark.parametrize("returning", [True, False], ids=["returning", "plain"])
+@pytest.mark.parametrize("control", ["COMMIT", "ROLLBACK"])
+def test_query_cannot_end_its_read_transaction_and_write_after_it(
+    live, control, returning
+):
+    """``COMMIT; INSERT …`` must not get past ``query`` on any backend (#113).
+
+    A read connection that merely never commits holds a write back only while
+    its transaction lasts. A string that ends the transaction first and then
+    writes would run the write in autocommit, wherever the driver runs several
+    statements from one ``execute`` — measured on DuckDB 1.5.5, where the row
+    was kept until #79 closed it. A read-only *session* survives a ``COMMIT``;
+    a transaction that is never committed does not.
+
+    Both forms are sent. ``RETURNING`` is the one the floor cannot see,
+    because the statement hands rows back like a read; the plain one is
+    refused by the floor, after the fact, so the count is what says whether
+    the row stayed. A backend whose parser rejects ``RETURNING`` refuses that
+    form for the wrong reason, which is why the plain form is here too.
+
+    **The count is the assertion, not the answer.** Measured on every backend
+    with a container, the string never kept the row: the drivers either refuse
+    a second statement outright or run the ``INSERT`` in a transaction the read
+    connection then rolls back. What MonetDB *says* about a ``RETURNING`` it
+    rolled back — ``ok`` with the row — is a separate defect of the single
+    ``INSERT … RETURNING``, with or without the ``COMMIT``, and is tracked on
+    its own rather than asserted here. Settled before counting, so CrateDB,
+    which keeps a write it is not refused in time, is counted too rather than
+    excused.
+    """
+    attach_writable(live)
+    table = land_people(live)
+    backend = backend_for_url(live.url)
+
+    # Columns named and a surrogate key supplied, for the reasons the
+    # single-statement write test above gives: a statement the backend refuses
+    # for its shape never reaches the posture this is about.
+    columns = ["name", "department", "salary"]
+    values = ["'x'", "'y'", "1"]
+    if backend.requires_primary_key():
+        columns.insert(0, "_row")
+        values.insert(0, "99")
+    insert = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(values)})"
+    if returning:
+        insert += " RETURNING name"
+
+    written = call("query", nickname="endpoint", sql=f"{control}; {insert}")
+
+    # On a backend where a write is durable before it is readable, counting
+    # straight away would report the refresh timer rather than the data.
+    engine = create_engine(live.url)
+    try:
+        with engine.begin() as conn:
+            backend.settle(conn, table)
+    finally:
+        engine.dispose()
+    after = call(
+        "query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}"
+    )["rows"]
+    assert after == [[5]], (after, written)
+
+
 def test_ddl_through_query_never_reaches_the_database(live):
     """Refusing after the fact is not enough where a rollback cannot undo it.
 
