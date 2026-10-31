@@ -503,7 +503,7 @@ this server built is a database it holds.
 
 Two things generalised out of that table and became generic rather than per-dialect. **A
 declared type is named by the backend**, because the portable spellings are what make one
-column `TEXT` on PostgreSQL, `CLOB` on Oracle and `INTEGER` on all of them — the literal
+column `TEXT` on PostgreSQL, `CLOB` on Oracle and a 64-bit integer on all of them — the literal
 uppercase forms used before could not create a table on Oracle at all, and quietly put
 float64 data into PostgreSQL's four-byte `REAL`. And **a value leaving `query` is spelled
 for JSON**, because a server-side database returns far more than SQLite's three storage

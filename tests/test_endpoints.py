@@ -470,6 +470,44 @@ def test_a_typed_time_of_day_landed_in_the_endpoint_filters_by_a_time_literal(li
     ]
 
 
+def test_an_integer_wider_than_32_bits_lands_in_the_endpoint_and_reads_back(live):
+    """A loaded integer is an int64 on every backend, not the dialect's INTEGER (#110).
+
+    Every integer column was declared ``INTEGER``, which is 32-bit on
+    PostgreSQL and MySQL, so one value past 2,147,483,647 refused the whole
+    load. Order numbers, byte counts and epoch milliseconds all live there.
+    Both signs are landed, and the column is filtered as well as read, so a
+    backend that stored the value as text would be caught by the comparison.
+    """
+    attach_writable(live)
+    wide = live.root / "wide.csv"
+    wide.write_text("id,n\n1,3000000000\n2,-3000000000\n3,7\n")
+    table = live.table("wide")
+    made = call(
+        "create",
+        nickname="endpoint",
+        type="table",
+        source=str(wide),
+        table=table,
+        delimiter=",",
+    )
+    assert made["ok"] is True, made
+
+    stored = call(
+        "query", nickname="endpoint", sql=f"SELECT n FROM {table} ORDER BY id"
+    )
+    beyond = call(
+        "query",
+        nickname="endpoint",
+        sql=f"SELECT id FROM {table} WHERE n > 2147483647 ORDER BY id",
+    )
+
+    assert stored["ok"] is True, stored
+    assert [row[0] for row in stored["rows"]] == [3000000000, -3000000000, 7]
+    assert beyond["ok"] is True, beyond
+    assert beyond["rows"] == [[1]]
+
+
 def _build_typed_table(live: Live) -> str:
     """A table of types SQLite does not have, built the way the user's would be.
 

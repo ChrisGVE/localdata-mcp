@@ -5665,3 +5665,42 @@ carries no zone, and a time of day has no date to resolve an offset against.
   microsecond, so no finer part reaches the text.
 - **A CSV time in another spelling** — `9:00`, `14:30`, `09:00:00.5` — is left as it was written
   and not described. It is not rewritten, because nothing recognises it as a time of day first.
+
+## §33 — A loaded integer is declared 64-bit on every backend (2026-10-31)
+
+Refs [#110](https://github.com/ChrisGVE/localdata-mcp/issues/110). Measured on `new-v3` from
+`fd2b2c91`, through the tool surface, against the containers in `docker-compose.test.yml`.
+
+### 33.1 Before
+
+`loader._declared_type` names every integer column `INTEGER`, and `Backend.column_type` turned that
+into Core's `Integer`, which renders `INTEGER`. That is 32-bit on PostgreSQL, MySQL, MariaDB and SQL
+Server, and on DuckDB. A CSV of `id,n` / `1,3000000000` attached to a writable slot and landed with
+`create` was refused whole:
+
+- PostgreSQL 16 (and the trust, `PGPASSWORD` and pgpass modes): `integer out of range`.
+- MySQL 8.0 (and its option-file mode), MariaDB 11: `Out of range value for column 'n'`.
+
+ClickHouse already passed: its backend declares `Nullable(Int64)` itself. SQLite was never affected,
+since its `INTEGER` is 64-bit and its backend keeps the exact token for affinity.
+
+### 33.2 The change
+
+`_PORTABLE_TYPES["INTEGER"]` is `BigInteger`. Compiled by each dialect: `BIGINT` on PostgreSQL,
+MySQL and SQL Server, `NUMBER(19)` on Oracle. SQLite and ClickHouse keep their own overrides, so
+nothing changes there.
+
+### 33.3 After
+
+`3000000000` and `-3000000000` land and read back as integers, and `WHERE n > 2147483647` selects
+the one row, on PostgreSQL (four modes), MySQL (two modes), MariaDB, ClickHouse, Oracle, Trino,
+CockroachDB, YugabyteDB, MonetDB, CrateDB, Firebird 5, openGauss, YDB and Exasol, and on a writable
+DuckDB file reached by path and by URL.
+
+Not measured:
+
+- **SQL Server.** This machine has neither FreeTDS nor Microsoft's ODBC driver, so every `mssql`
+  target skipped. The compiled type is `BIGINT`, asserted without a database.
+- **The extremes of the range.** Values near `2^63` were not landed anywhere. Exasol has no binary
+  integer type: its `BIGINT` is an alias of `DECIMAL(36,0)` (Exasol's data type aliases page),
+  which holds the whole range in decimal digits.

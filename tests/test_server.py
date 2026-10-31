@@ -3499,3 +3499,39 @@ def test_query_names_the_transaction_statement_it_refuses(session):
     assert refused["ok"] is False
     assert "transaction" in refused["error"]
     assert "create" in refused["error"]
+
+
+@pytest.mark.parametrize("reach", ["file", "url"])
+def test_an_integer_wider_than_32_bits_lands_in_a_writable_duckdb_datasource(
+    session, reach
+):
+    """DuckDB's ``INTEGER`` is 32-bit too, so a loaded integer is declared wider (#110).
+
+    The column type for a loaded file comes from the generic backend, and it
+    rendered ``INTEGER``: one value past 2,147,483,647 refused the whole
+    ``create``. Read back from the file after ``detach``, so the value is the
+    one DuckDB stored rather than one a slot remembers.
+    """
+    import duckdb
+
+    target = _attach_duckdb_by(session, reach, writable=True)
+    wide = session / "wide.csv"
+    wide.write_text("id,n\n1,3000000000\n2,-3000000000\n")
+
+    made = call(
+        "create",
+        nickname="wh",
+        type="table",
+        source=str(wide),
+        table="wide",
+        delimiter=",",
+    )
+
+    assert made["ok"] is True, made
+    assert call("detach", nickname="wh")["ok"] is True
+    connection = duckdb.connect(str(target), read_only=True)
+    try:
+        stored = connection.execute("SELECT n FROM wide ORDER BY id").fetchall()
+    finally:
+        connection.close()
+    assert stored == [(3000000000,), (-3000000000,)]

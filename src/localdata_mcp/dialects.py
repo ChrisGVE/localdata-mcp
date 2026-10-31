@@ -64,11 +64,11 @@ from sqlalchemy import (
     INTEGER,
     REAL,
     TEXT,
+    BigInteger,
     Connection,
     Double,
     Engine,
     Index,
-    Integer,
     LargeBinary,
     String,
     Table,
@@ -134,7 +134,12 @@ class Refusal:
 #: it. Keyed by the three names :mod:`loader` decides between; what each becomes
 #: in SQL is SQLAlchemy's business and differs per dialect, which is exactly what
 #: makes this the generic answer.
-_PORTABLE_TYPES: dict[str, Any] = {"INTEGER": Integer, "REAL": Double, "TEXT": Text}
+#:
+#: ``BigInteger`` rather than ``Integer`` because a loaded integer is an int64:
+#: ``Integer`` renders ``INTEGER``, which is 32-bit on PostgreSQL, MySQL and SQL
+#: Server, so one value past 2,147,483,647 refused the whole load (#110).
+#: ``BigInteger`` is ``BIGINT`` there and ``NUMBER(19)`` on Oracle.
+_PORTABLE_TYPES: dict[str, Any] = {"INTEGER": BigInteger, "REAL": Double, "TEXT": Text}
 
 
 # ---------------------------------------------------------------------------

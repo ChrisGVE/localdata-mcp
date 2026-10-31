@@ -1524,3 +1524,36 @@ def test_the_reader_of_a_writable_duckdb_slot_sees_what_the_writer_committed(
             assert counted.scalar_one() == 2
     finally:
         engines.dispose()
+
+
+@pytest.mark.parametrize(
+    ("dialect", "rendered"),
+    [
+        ("postgresql", "BIGINT"),
+        ("mysql", "BIGINT"),
+        ("mssql", "BIGINT"),
+        ("oracle", "NUMBER(19)"),
+    ],
+)
+def test_a_loaded_integer_column_is_declared_64_bit_on_a_server_dialect(
+    dialect, rendered
+):
+    """A loaded integer is an int64, so its column has to hold one (#110).
+
+    Declared as Core's ``Integer`` it rendered ``INTEGER``, which is 32-bit on
+    PostgreSQL, MySQL and SQL Server, so a CSV holding 3,000,000,000 refused the
+    whole load with ``integer out of range``. Compiled against each dialect's
+    own compiler rather than asserted on the Python type, because the width is
+    what the dialect renders, not what the class is called.
+    """
+    from sqlalchemy.dialects import mssql, mysql, oracle, postgresql
+
+    compilers = {
+        "postgresql": postgresql,
+        "mysql": mysql,
+        "mssql": mssql,
+        "oracle": oracle,
+    }
+    declared = backend_for(dialect).column_type("INTEGER")
+
+    assert declared.compile(dialect=compilers[dialect].dialect()) == rendered
