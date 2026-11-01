@@ -1557,3 +1557,75 @@ def test_a_loaded_integer_column_is_declared_64_bit_on_a_server_dialect(
     declared = backend_for(dialect).column_type("INTEGER")
 
     assert declared.compile(dialect=compilers[dialect].dialect()) == rendered
+
+
+# ---------------------------------------------------------------------------
+# Firebird's read-only transaction (#118)
+# ---------------------------------------------------------------------------
+
+
+def test_the_firebird_reader_opens_read_only_and_the_writer_does_not():
+    """``readonly=true`` reaches the read engine's driver, and only that engine.
+
+    Firebird answered ``INSERT … RETURNING`` through ``query`` with the row it
+    then rolled back, because the transactional floor declines to keep a write
+    without refusing it, and ``RETURNING`` hands back rows like a read (#118).
+    A read-only transaction refuses the statement instead. The posture travels
+    in the URL, and ``sqlalchemy-firebirdsql`` turns the parameter into the
+    driver's own ``readonly`` argument, which is asserted too, because a URL
+    parameter the dialect ignored would leave this test green and the reader
+    open.
+
+    The writer must not carry it: every write this server does would then be
+    refused.
+    """
+    firebird = backend_for("firebirdsql")
+
+    assert dict(firebird.read_only_query) == {"readonly": "true"}
+
+    engines = Backend.open(
+        firebird,
+        "firebirdsql://u:p@127.0.0.1:13050//var/lib/firebird/data/x.fdb",
+        writable=True,
+    )
+    try:
+        assert engines.read.url.query["readonly"] == "true"
+        assert "readonly" not in engines.write.url.query
+        _, read_options = engines.read.dialect.create_connect_args(engines.read.url)
+        _, write_options = engines.write.dialect.create_connect_args(engines.write.url)
+        assert read_options["readonly"] is True
+        assert "readonly" not in write_options
+    finally:
+        engines.dispose()
+
+
+def test_firebirds_read_only_refusal_is_recognised_by_its_code_and_nothing_else():
+    """``isc_read_only_trans`` (335544361), read off ``gds_codes``, never off prose.
+
+    Measured on Firebird 5 through ``firebirdsql`` 1.5.0: a read-only transaction
+    refuses ``INSERT … RETURNING`` with ``gds_codes == {335544361}`` and a
+    ``CREATE TABLE`` with that code among two others. Either is the backend's
+    own refusal of a write, so ``query`` names the verbs that do write. Another
+    code is not one, and an exception without ``gds_codes`` must pass by without
+    raising.
+    """
+    from types import SimpleNamespace
+
+    from firebirdsql import OperationalError
+
+    firebird = backend_for("firebirdsql")
+
+    def wrapped(origin):
+        return SimpleNamespace(orig=origin)
+
+    assert firebird.denies_write(
+        wrapped(OperationalError("attempted update", {335544361}))
+    )
+    assert firebird.denies_write(
+        wrapped(OperationalError("metadata update", {335544361, 336397286, 335544351}))
+    )
+    assert not firebird.denies_write(
+        wrapped(OperationalError("Table unknown", {335544580}))
+    )
+    assert not firebird.denies_write(wrapped(OperationalError("no codes")))
+    assert not firebird.denies_write(ValueError("nothing structured here"))

@@ -2128,6 +2128,13 @@ class CrateDBBackend(Backend):
 #: one configuration presented as a property of the engine.
 _FIREBIRD_VARCHAR_MAX = 8191
 
+#: ``isc_read_only_trans``: "attempted update during read-only transaction".
+#: Firebird's own code for a write its read-only transaction refused, carried by
+#: ``firebirdsql`` on the exception's ``gds_codes``. Measured on Firebird 5 with
+#: ``firebirdsql`` 1.5.0: an ``INSERT … RETURNING`` is refused with exactly this
+#: code, a ``CREATE TABLE`` with this code among two others.
+_FIREBIRD_READ_ONLY = 335544361
+
 
 @dataclass(frozen=True)
 class FirebirdBackend(Backend):
@@ -2143,7 +2150,19 @@ class FirebirdBackend(Backend):
     form: the earlier cases were two engines sharing one dialect, this is one
     engine whose dialect is named after neither.
 
-    Three facts had to be measured, and each is an override below.
+    Four facts had to be measured, and each is an override below.
+
+    **The read engine opens a read-only transaction** (#118). The transactional
+    floor alone declines to keep a write without refusing it, and that is not
+    enough for ``INSERT … RETURNING``: it hands rows back like a read, so
+    ``query`` answered ``ok`` with a row the closing rollback then discarded.
+    ``readonly=true`` in the read URL is how ``sqlalchemy-firebirdsql`` is told
+    to pass ``readonly=True`` to ``firebirdsql.connect``, which opens every
+    transaction ``ISOLATION_LEVEL_READ_COMMITED_RO``. Measured on Firebird 5
+    with ``firebirdsql`` 1.5.0: ``INSERT … RETURNING``, an ``EXECUTE BLOCK``
+    that inserts and ``CREATE TABLE`` are all refused before they change
+    anything, and ``SELECT`` reads as before. See :attr:`read_only_query` and
+    :meth:`denies_write`.
 
     **DDL cannot be followed by DML in the same transaction** (#53). Firebird's
     DDL is properly transactional — a ``CREATE TABLE`` that never commits leaves
@@ -2160,15 +2179,29 @@ class FirebirdBackend(Backend):
     ``BLOB`` in every version, which is accepted and then groups by identity
     rather than by value. See :meth:`column_type` for both.
 
-    Everything else is generic and was measured to be: the transactional floor
-    holds for rows and for schema alike, a quoted mixed-case name survives,
-    ``Numeric`` round-trips exactly where CrateDB truncated it, ``Time``,
-    ``Date``, ``TIMESTAMP`` and ``LargeBinary`` all store and read back, indexes
-    build and reflect and drop, and the driver's errors arrive properly wrapped as
-    ``SQLAlchemyError`` so :meth:`driver_errors` stays empty.
+    Everything else is generic and was measured to be: nothing a refused
+    statement did survives it, for rows or for schema, a quoted mixed-case name
+    survives, ``Numeric`` round-trips exactly where CrateDB truncated it,
+    ``Time``, ``Date``, ``TIMESTAMP`` and ``LargeBinary`` all store and read
+    back, indexes build and reflect and drop, and the driver's errors arrive
+    properly wrapped as ``SQLAlchemyError`` so :meth:`driver_errors` stays empty.
     """
 
     name: str = "firebird"
+    read_only_query: ClassVar[Mapping[str, str]] = {"readonly": "true"}
+
+    def denies_write(self, exc: Exception) -> bool:
+        """Recognise the read-only transaction's refusal, by its code.
+
+        ``gds_codes`` is the set of Firebird status codes the server sent, so
+        membership of :data:`_FIREBIRD_READ_ONLY` is the whole test and the
+        message, which carries the statement and the line it failed on, is
+        never read. A ``CREATE TABLE`` refusal carries the code beside the
+        generic metadata-update failures, which is why this asks for
+        membership rather than equality.
+        """
+        origin = getattr(exc, "orig", exc)
+        return _FIREBIRD_READ_ONLY in (getattr(origin, "gds_codes", None) or ())
 
     def sees_new_tables_in_transaction(self) -> bool:
         """``False`` — and the transactional floor is *why*, not a casualty of it.
