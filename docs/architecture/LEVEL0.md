@@ -612,8 +612,15 @@ for the whole column**: a single value carrying a time takes the column to
 > `WHERE seen > '2024-03-02'` returned zero rows with `ok: true`, and on
 > PostgreSQL and MySQL the ticks did not fit the column and the load was refused
 > ([#87](https://github.com/ChrisGVE/localdata-mcp/issues/87)). Fractional
-> seconds are kept to the microsecond on both paths; a finer part is cut
-> ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
+> seconds are kept to the microsecond on both paths; a finer part is cut, and
+> the cut is reported: `attach` and `create` warn, naming the column, that
+> instants less than a microsecond apart now compare equal
+> ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)). Six digits is
+> what PostgreSQL `timestamp`, MySQL `DATETIME(6)` and DuckDB `TIMESTAMP` hold,
+> so a finer spelling could not survive a load in general. A column whose only
+> fraction is below the microsecond is whole seconds once cut, and is written
+> `…:00Z`, the spelling the same instants get from a file holding them to the
+> second.
 >
 > Durations and bare times of day are not instants, and each has its own form
 > ([#109](https://github.com/ChrisGVE/localdata-mcp/issues/109)). A **time of

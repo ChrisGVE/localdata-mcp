@@ -710,15 +710,48 @@ def read_file(path: Path, *, delimiter: str | None = None) -> ReadResult:
     # `read_csv` infers numbers and leaves everything else as text, so without
     # this a date is compared as text and `ORDER BY` runs backwards on any
     # spelling whose lexical order is not its chronological one.
+    #
+    # Writing them out cuts any part below the microsecond, and the cut is a
+    # choice made about the caller's data, so it is reported with the reader's
+    # own notes (#111). The streamed path reports the same cut in the same words
+    # (`read_source`), so the two agree on what a load says.
     standardized = []
+    cut_notes: list[str] = []
     for table in result.tables:
-        frame = temporal.standardize(table.frame)
+        frame, cut = temporal.standardize_with_cuts(table.frame)
         if frame.empty and len(frame.columns) == 0:
             named = f" ({table.name})" if table.name else ""
             raise LoadError(f"{path.name}{named} contains no columns.")
         standardized.append(NamedFrame(frame, table.name))
+        cut_notes.extend(
+            _cut_to_microsecond_note(name, table.name)
+            for name, label in zip(_unique_columns(list(frame.columns)), frame.columns)
+            if label in cut
+        )
 
-    return ReadResult(tuple(standardized), result.notes)
+    return ReadResult(tuple(standardized), (*result.notes, *cut_notes))
+
+
+def _cut_to_microsecond_note(column: str, table: str | None) -> str:
+    """Say that a column's instants lost a part below the microsecond.
+
+    The canonical spelling keeps six fractional digits, because that is what
+    most backends this server writes to hold, so the part is cut rather than
+    kept (#111). The note names the column and what the cut does to a query:
+    two instants a nanosecond apart are now one value, and every comparison
+    between them says so. ``table`` is the name the file gave the table, given
+    for a file that names its tables: a reader's notes reach every table the
+    file holds, so a workbook's note has to say which sheet it is about.
+    """
+    where = f"Column {column}" if table is None else f"Column {column} of {table}"
+    return (
+        f"{where} holds instants with a part below the microsecond, and they "
+        f"were cut to the microsecond when written as ISO 8601 text, which keeps "
+        f"six fractional digits. Instants less than a microsecond apart now "
+        f"compare equal: DISTINCT and GROUP BY count them as one value, an "
+        f"equality join pairs them as the same instant, and ORDER BY cannot put "
+        f"them in order. The finer part is in the file, not in the table."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -904,6 +937,10 @@ class _ColumnScan:
         #: column is not, so a flag per chunk cannot answer this (#75).
         self._canonical_widths: set[int] = set()
         self._spelling: temporal.Spelling | None = None
+        #: Whether any instant parsed so far has a part below the microsecond,
+        #: which the canonical spelling cuts (#111). Only meaningful for a
+        #: column pass two rewrites, which is what :func:`read_source` asks.
+        self.saw_sub_microsecond = False
         self._date_examples: dict[str, None] = {}
         # The numeric split, for the mixed-column report.
         self._numeric = 0
@@ -996,6 +1033,8 @@ class _ColumnScan:
                     if self._spelling is None
                     else self._spelling.merged_with(found)
                 )
+                if not self.saw_sub_microsecond:
+                    self.saw_sub_microsecond = temporal.cut_below_microsecond(parsed)
 
         if self._time_of_day_throughout and not temporal.is_time_of_day(present):
             self._time_of_day_throughout = False
@@ -1245,6 +1284,18 @@ def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:
         raise LoadError(f"{path.name} contains no columns.")
 
     measured = tuple(scan.finish() for scan in scans)
+    # The cut `read_file` reports, in the same words and the same place after
+    # the reader's notes. A column carries a spelling exactly when pass two
+    # rewrites it as instants, which is the only case that writes to the
+    # microsecond: one that arrived canonical holds six digits at most.
+    notes = (
+        *notes,
+        *(
+            _cut_to_microsecond_note(column.name, None)
+            for scan, column in zip(scans, measured)
+            if scan.saw_sub_microsecond and column.spelling is not None
+        ),
+    )
 
     def coerced() -> Iterator[pd.DataFrame]:
         """Pass two: the same chunks, as the values pass one settled on."""

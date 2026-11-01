@@ -458,6 +458,14 @@ answer: each value is converted to a float and loses its last digits. And
 `ORDER BY`, `min()` and `max()` compare the digits as text, so `10` sorts
 before `9`. Tell the user the values exceed 64 bits.
 
+**Instants were cut to the microsecond.** A date column is stored with six
+fractional digits, so a value finer than that — a Parquet `timestamp[ns]`, or a
+CSV value with nine digits — lost its last three, and the warning names the
+column. Two instants less than a microsecond apart are now one value. Do not
+report a `count(DISTINCT …)`, a `GROUP BY`, an equality join or an order
+between such instants as if they were distinct; tell the user the column was
+cut, and that the finer part is only in the file.
+
 **Nested values became JSON text.** A JSON or XML column holding a structure
 comes back as `TEXT` carrying exactly what was in the file, and the warning names
 the columns. Reach into it with `json_extract(addr, '$.city')` rather than telling

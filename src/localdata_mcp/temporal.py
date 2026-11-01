@@ -66,7 +66,13 @@ text is also the form the engine is built for.
   carries any time of day is written ``YYYY-MM-DDTHH:MM:SSZ`` throughout, so a
   date-only value in it becomes midnight.
 * Fractional seconds are kept to the microsecond. A finer part — which only a
-  nanosecond-resolution source carries — is cut, not rounded.
+  nanosecond-resolution source carries — is cut, not rounded, and the cut is
+  **reported** (#111): :func:`standardize_with_cuts` names every column it cut,
+  and the load turns each name into a warning. Six digits is what most backends
+  this server writes to hold (PostgreSQL ``timestamp``, MySQL ``DATETIME(6)``,
+  DuckDB ``TIMESTAMP``), so a nine-digit spelling could not survive a load in
+  general; what was wrong was only that the cut said nothing, while two
+  instants a nanosecond apart became one value.
 
 **A date a format already typed is stored the same way** (#87). Parquet,
 Feather, ORC, the workbooks and YAML declare their dates, so pandas hands them
@@ -115,6 +121,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from collections.abc import Hashable
 from dataclasses import dataclass
 
 import numpy as np
@@ -125,6 +132,7 @@ __all__ = [
     "as_canonical",
     "canonical_width",
     "canonical_widths",
+    "cut_below_microsecond",
     "is_canonical",
     "is_date_shaped",
     "is_standard",
@@ -134,6 +142,7 @@ __all__ = [
     "standard_of",
     "standardize",
     "standardize_as",
+    "standardize_with_cuts",
     "temporal_values_as_text",
     "text_values",
     "typed_instants",
@@ -365,7 +374,18 @@ class Spelling:
 
 
 def spelling_of(parsed: pd.Series) -> Spelling:
-    """Measure which canonical spelling these instants call for."""
+    """Measure which canonical spelling these instants call for.
+
+    Measured on the instants **as they will be stored**, which is to the
+    microsecond: a part below it is cut (:func:`cut_below_microsecond`), so it
+    is not looked at here. A column whose only fraction is sub-microsecond is
+    therefore whole seconds once cut, and is written ``…:00Z`` — the spelling a
+    file holding the same instants to the second gets, so a join between the
+    two still matches. Writing it ``…:00.000000Z`` instead would be a second
+    spelling of the same instant, which is what :data:`_ZERO_FRACTION` refuses
+    for a time of day. The cut is reported, which is what keeps it from being
+    silent (#111).
+    """
     present = parsed.dropna()
     return Spelling(
         date_only=bool(
@@ -378,6 +398,18 @@ def spelling_of(parsed: pd.Series) -> Spelling:
         ),
         fractional=bool((present.dt.microsecond != 0).any()),
     )
+
+
+def cut_below_microsecond(parsed: pd.Series) -> bool:
+    """Whether writing these instants to the microsecond cuts a part off any of them.
+
+    ``.dt.nanosecond`` is the part below the microsecond, ``0`` to ``999``, and
+    it is ``0`` for every value of a column held at a coarser unit — so a
+    ``timestamp[ns]`` column whose values are all whole microseconds is not
+    reported. The dtype is not the evidence; a non-zero part is.
+    """
+    present = parsed.dropna()
+    return bool((present.dt.nanosecond != 0).any())
 
 
 #: How wide each canonical spelling is, in characters. Exact rather than
@@ -512,24 +544,36 @@ def temporal_values_as_text(series: pd.Series) -> pd.Series | None:
     ``None`` for a column that is not mixed, and for one with no date or time
     in it, which is the only case that pays for looking at every value.
     """
+    written, _ = _temporal_values_as_text(series)
+    return written
+
+
+def _temporal_values_as_text(series: pd.Series) -> tuple[pd.Series | None, bool]:
+    """:func:`temporal_values_as_text`, and whether it cut an instant to the microsecond.
+
+    The flag is measured here, where the instants are parsed, rather than by a
+    second pass over the column (:func:`standardize_with_cuts`).
+    """
     if not pd.api.types.is_object_dtype(series.dtype):
-        return None
+        return None, False
     present = series.dropna()
     if present.empty:
-        return None
+        return None, False
     if pd.api.types.infer_dtype(present, skipna=True) not in _MIXED_OBJECTS:
-        return None
+        return None, False
     instants = present[present.map(lambda value: isinstance(value, _INSTANT_TYPES))]
     times = present[present.map(lambda value: isinstance(value, _TIME_TYPES))]
     if instants.empty and times.empty:
-        return None
+        return None, False
     written = series.copy()
+    cut = False
     if not instants.empty:
         parsed = pd.to_datetime(instants, utc=True)
         written[instants.index] = as_canonical(parsed, spelling_of(parsed))
+        cut = cut_below_microsecond(parsed)
     if not times.empty:
         written[times.index] = times.map(lambda value: value.isoformat())
-    return written
+    return written, cut
 
 
 def standard_of(series: pd.Series) -> str | None:
@@ -551,6 +595,19 @@ def standard_of(series: pd.Series) -> str | None:
 def standardize(frame: pd.DataFrame) -> pd.DataFrame:
     """Canonicalise every column that is unambiguously ISO 8601, or already instants.
 
+    :func:`standardize_with_cuts` without the report of which columns lost a
+    part below the microsecond. The load path asks for the report; a caller
+    that only wants the frame calls this.
+    """
+    written, _ = standardize_with_cuts(frame)
+    return written
+
+
+def standardize_with_cuts(
+    frame: pd.DataFrame,
+) -> tuple[pd.DataFrame, tuple[Hashable, ...]]:
+    """Canonicalise the temporal columns, and name the ones cut to the microsecond.
+
     Columns that do not qualify are untouched, including the ambiguous
     spellings — those are reported by :func:`unparsed_temporal_examples`
     rather than guessed at. A column a typed reader handed over as instants
@@ -561,8 +618,17 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
     with values of another kind is written as its text in the same spellings
     (:func:`temporal_values_as_text`, #114), and the values beside it are left
     alone.
+
+    The second element holds the label, in column order, of every column in
+    which at least one instant had a part below the microsecond, which the
+    canonical spelling cannot hold and so cuts (:func:`cut_below_microsecond`,
+    #111). Measured on
+    the parsed instants each branch already holds, so the report costs no
+    second parse. A column left as text, or already canonical, names nothing:
+    canonical text carries at most six fractional digits.
     """
     converted: dict[str, pd.Series] = {}
+    cut: list[Hashable] = []
     for name in frame.columns:
         series = frame[name]
         present = text_values(series)
@@ -575,6 +641,8 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
             instants = typed_instants(series)
             if instants is not None:
                 converted[name] = as_canonical(instants, spelling_of(instants))
+                if cut_below_microsecond(instants):
+                    cut.append(name)
                 continue
             # A time of day is not an instant and has its own spelling (#109).
             times = typed_times_of_day(series)
@@ -583,9 +651,11 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
                 continue
             # A date or a time beside values of another kind is not a temporal
             # column, but each such value still means a date or a time (#114).
-            mixed = temporal_values_as_text(series)
+            mixed, mixed_cut = _temporal_values_as_text(series)
             if mixed is not None:
                 converted[name] = mixed
+                if mixed_cut:
+                    cut.append(name)
             continue
         # Already in the form this would rewrite it into, which is the case for
         # any file written the way the documentation asks for. Parsing it only
@@ -601,10 +671,12 @@ def standardize(frame: pd.DataFrame) -> pd.DataFrame:
         parsed = parse(present, series)
         if parsed is not None:
             converted[name] = as_canonical(parsed, spelling_of(parsed))
+            if cut_below_microsecond(parsed):
+                cut.append(name)
 
     if not converted:
-        return frame
-    return frame.assign(**converted)
+        return frame, ()
+    return frame.assign(**converted), tuple(cut)
 
 
 def standardize_as(frame: pd.DataFrame, spellings: dict[str, Spelling]) -> pd.DataFrame:

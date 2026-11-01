@@ -5527,6 +5527,26 @@ the tick path: they are not instants.
 > duration keeps its ticks under `"unit": "nanoseconds"`. Measurements in §32. The bullet is left as
 > it stood.
 
+> **Amended 2026-11-01 — the sub-microsecond bullet above is still true, and no longer silent
+> ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).** The cut stays. PostgreSQL
+> `timestamp`, MySQL `DATETIME(6)` and DuckDB `TIMESTAMP` hold six fractional digits, so a
+> nine-digit spelling could not survive a load in general. What changed is that it is reported.
+> `temporal.standardize_with_cuts` names every column in which an instant had a non-zero part
+> below the microsecond (`.dt.nanosecond != 0`), and `read_file` turns each name into a note
+> after the reader's own. The streamed path measures the same thing in pass one and adds the same
+> note in the same place, so `attach` and `create` warn identically on both. Measured through the
+> tool surface at `b91128bd` plus this change, for the issue's two instants a nanosecond apart, in a
+> CSV and in a Parquet `timestamp[ns, UTC]` column. Both answers carry one warning naming
+> column `v`. `count(DISTINCT v)` answers `1` and `min(v)` answers `'2024-03-01T00:00:00.123456Z'`
+> on both, exactly as before; the difference is the warning. A `timestamp[ns]` column whose
+> values are all whole microseconds, and a CSV column at six digits, warn about nothing:
+> the dtype is not the evidence, a non-zero part is. A column whose only fraction was below the
+> microsecond is whole seconds once cut, so it is written `…:00Z`, as a file holding the same
+> instants to the second writes them. A column of instants that are all midnight once cut is
+> written date-only, by the same rule. Writing it `…:00.000000Z` would give one instant a second
+> spelling, and a join against that other file would miss. `tests/test_sub_microsecond.py` holds
+> both paths to the same notes at chunk sizes 1, 2 and 5,000.
+
 ---
 
 ## §31 — A DuckDB slot opens both connections under one configuration (2026-10-30)

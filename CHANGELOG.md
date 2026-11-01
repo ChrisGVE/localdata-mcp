@@ -455,6 +455,16 @@ And eight found in this release's own code before it shipped:
   `ORDER BY`, `min()` and `max()` compare the digits as text. An unsigned 64-bit
   value above the signed range, in a column declared `INTEGER`, is still
   refused.
+- **An instant cut to the microsecond was cut silently**
+  ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)). A date column
+  is stored with six fractional digits, so two instants a nanosecond apart — from
+  a nine-digit CSV value or a Parquet, Feather or ORC `timestamp[ns]` column —
+  became one value, and `count(DISTINCT …)`, an equality join and `ORDER BY`
+  answered as if they were, with nothing to say so. The cut stays, since
+  PostgreSQL `timestamp`, MySQL `DATETIME(6)` and DuckDB `TIMESTAMP` hold six
+  digits too, but `attach` and `create` now warn, naming each column it cut. A
+  column whose only fraction was below the microsecond is written to the whole
+  second, as the same instants from a file holding them to the second are.
 
 ### Known limitations
 
@@ -496,7 +506,8 @@ And eight found in this release's own code before it shipped:
   tracks the file size.
 - **A normalised temporal column loses its original offset.** A file that needs
   it must keep it in a column of its own. Its fractional seconds stop at the
-  microsecond, so two instants a nanosecond apart become one value
+  microsecond, so two instants a nanosecond apart become one value; the load
+  warns when it cut one
   ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
 - **No single test run covers the backend catalogue.** This machine runs six
   containers and starves them at around seven, so it takes five batches, and each

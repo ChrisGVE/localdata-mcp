@@ -485,6 +485,13 @@ answer belongs to whoever wrote the file, it reports and carries on.
   names the column, because `sum()` and `avg()` over it convert each value to a
   float and lose its last digits, and `ORDER BY`, `min()` and `max()` compare
   the digits as text.
+- **An instant finer than a microsecond is cut, and flagged.** A date column is
+  stored as ISO 8601 text with six fractional digits, so a part below the
+  microsecond — which a Parquet `timestamp[ns]` or a nine-digit CSV value
+  carries — does not survive. The warning names the column, because two
+  instants a nanosecond apart are then one value: `DISTINCT` and `GROUP BY`
+  count them once, an equality join pairs them, and `ORDER BY` cannot put them
+  in order.
 - **What SQL cannot hold is encoded, not dropped.** A nested JSON value becomes
   its JSON text and a nested XML element its XML text — lossless and reversible,
   reachable with `json_extract(column, '$.key')` — and the warning names the
@@ -563,7 +570,10 @@ in the same canonical UTC spelling and reported exactly as the same values from 
 CSV would be, so `WHERE order_date > '2024-03-02'` means the same thing whichever
 file the column came from. A tz-aware value is converted to UTC; a naive one is
 taken as UTC already and keeps its wall time; a missing one is `NULL`. Fractional
-seconds are kept to the microsecond on both paths, and a finer part is cut
+seconds are kept to the microsecond on both paths, and a finer part is cut.
+The cut is not silent: the warning names the column, because instants less
+than a microsecond apart then compare equal, so `DISTINCT`, `GROUP BY`, an
+equality join and `ORDER BY` treat them as one value
 ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
 
 Until [#87](https://github.com/ChrisGVE/localdata-mcp/issues/87) these columns
