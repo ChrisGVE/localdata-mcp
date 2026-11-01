@@ -234,7 +234,9 @@ query(nickname, "SELECT …", path="/path/result.csv", delimiter=",")
 ```
 
 **The suffix chooses the format**, and one this server cannot write is refused
-by name rather than written as something else. Choose it rather than defaulting:
+by name rather than written as something else. `path` is a file, never a
+database URL — a URL is refused, here and on `save`, because putting rows into a
+database is `create`'s job. Choose it rather than defaulting:
 
 | They want | Ask for | Why |
 |---|---|---|

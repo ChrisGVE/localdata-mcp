@@ -3599,3 +3599,98 @@ def test_an_integer_wider_than_32_bits_lands_in_a_writable_duckdb_datasource(
     finally:
         connection.close()
     assert stored == [(3000000000,), (-3000000000,)]
+
+
+# ---------------------------------------------------------------------------
+# A destination is a file, and a URL handed to one is refused as a URL (#108)
+# ---------------------------------------------------------------------------
+#
+# query(path=…) and save write files. Before #108 a database URL given as
+# either destination was taken as a path, normalised to
+# "<cwd>/postgresql:/u:***@…", and refused as a directory that does not exist —
+# a message about a directory nobody named. #88 fixed the same defect on
+# create's source; this is the write side. Writing rows into a database is
+# create's job, so the refusal names it.
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments", "secrets"),
+    [
+        pytest.param(
+            "query",
+            {
+                "nickname": "staff",
+                "sql": "SELECT 1",
+                "path": "postgresql://u:hunter2@localhost:5432/db.csv",
+                "delimiter": ",",
+            },
+            ["hunter2"],
+            id="query-path",
+        ),
+        pytest.param(
+            "query",
+            {
+                "nickname": "staff",
+                "sql": "SELECT 1",
+                "path": "postgresql://u:hunter2@localhost:5432/db",
+                "delimiter": ",",
+            },
+            ["hunter2"],
+            id="query-path-no-suffix",
+        ),
+        pytest.param(
+            "save",
+            {"nickname": "staff", "path": "postgresql://u:hunter2@h/db.sqlite"},
+            ["hunter2"],
+            id="save-path",
+        ),
+        pytest.param(
+            "save",
+            {"nickname": "staff", "path": "postgresql://u:hunter2@h:notaport/db"},
+            ["hunter2"],
+            id="save-path-unparseable",
+        ),
+        pytest.param(
+            "save",
+            {"nickname": "staff", "path": "sqlite:///copy.sqlite"},
+            [],
+            id="save-local-url",
+        ),
+    ],
+)
+def test_a_url_as_a_destination_is_refused_as_a_url(session, tool, arguments, secrets):
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
+
+    answer = call(tool, **arguments)
+
+    assert answer["ok"] is False, answer
+    error = answer["error"]
+    assert "is a URL" in error, error
+    assert "destination is a file" in error, error
+    # Writing into a database is create's job, and the refusal says so.
+    assert "create" in error, error
+    assert "irectory" not in error, error
+    for secret in secrets:
+        assert secret not in error, error
+    # The URL is named, masked where it carried a password and nowhere else.
+    assert error.count("***") == (1 if secrets else 0), error
+
+
+def test_a_url_refused_as_a_destination_writes_nothing(session):
+    call(
+        "attach", database=str(session / "simple.csv"), nickname="staff", delimiter=","
+    )
+    before = sorted(Path.cwd().iterdir())
+
+    call(
+        "query",
+        nickname="staff",
+        sql="SELECT 1",
+        path="postgresql://u:hunter2@localhost:5432/db.csv",
+        delimiter=",",
+    )
+    call("save", nickname="staff", path="postgresql://u:hunter2@h/db.sqlite")
+
+    assert sorted(Path.cwd().iterdir()) == before

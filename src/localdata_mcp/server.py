@@ -915,7 +915,9 @@ def query(
             suffix chooses the format (.csv, .tsv, .txt, .json, .jsonl,
             .ndjson, .xml, .yaml, .yml, .md, .parquet, .feather, .orc, .xlsx,
             .ods); one this server cannot write is refused by name rather than
-            written as something else. Passing this changes what comes back:
+            written as something else. A file, never a database URL: a URL is
+            refused, since writing rows into a database is ``create``'s job.
+            Passing this changes what comes back:
             the response carries rows_written and the column names instead of
             the rows themselves. For a very large result the suffix is worth
             choosing rather than defaulting to. .csv and .jsonl write row by row
@@ -1255,7 +1257,8 @@ def save(nickname: str, path: str, force: bool = False) -> dict[str, Any]:
 
     Args:
         nickname: The datasource to write out.
-        path: Destination file, within the allowed paths.
+        path: Destination file, within the allowed paths. A database URL is
+            refused: save writes a file.
         force: Replace the file if it is already there. Set this only after the
             user has said to — the name is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file

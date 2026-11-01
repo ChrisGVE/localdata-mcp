@@ -33,21 +33,61 @@ and stay in force regardless.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Mapping
 
 from . import config
+from .credentials import shown_url
 
 __all__ = [
     "PathNotAllowed",
     "allowed_paths",
+    "refuse_url_destination",
     "resolve_read_path",
     "resolve_write_path",
+    "url_scheme",
 ]
+
+#: A scheme must be at least two characters, so a Windows drive letter is never
+#: mistaken for one, and the ``://`` must be present so a bare path never is.
+_URL = re.compile(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]+)://")
 
 
 class PathNotAllowed(ValueError):
     """A path that this server will not read from or write to."""
+
+
+def url_scheme(database: str) -> str | None:
+    """The scheme of a datasource URL, or ``None`` for a filesystem path.
+
+    The one test this server applies to tell the two apart, wherever a string
+    could be either: ``attach`` opens a URL as an engine, ``create`` refuses one
+    as its source (#88), and a destination refuses one too (#108). It lives here
+    because the last of those is the path boundary's own question.
+    """
+    match = _URL.match(database)
+    return match.group("scheme") if match else None
+
+
+def refuse_url_destination(raw: str) -> None:
+    """Refuse a URL as a place to write, by name, before it is taken as a path.
+
+    ``query(path=…)`` and ``save`` write files. Taken as a path, a database URL
+    is normalised into ``<cwd>/postgresql:/u:***@host`` and refused as a
+    directory that does not exist — a message about a directory nobody named
+    (issue #108). Recognised first, the refusal says what a destination is,
+    which verb puts rows into a database, and shows the URL the way ``attach``
+    would, password masked.
+    """
+    if url_scheme(raw) is None:
+        return
+    raise PathNotAllowed(
+        f"A destination is a file, and {shown_url(raw)} is a URL: query(path=…) "
+        f"and save write files. Writing rows into a database is create's job — "
+        f"attach the database with writable=true, then create(nickname, "
+        f"type='table', source=…) on it from a file."
+    )
 
 
 def allowed_paths() -> tuple[Path, ...]:
@@ -107,7 +147,10 @@ def resolve_write_path(
     ``claimed`` maps the files live slots are sitting on to the nickname of the
     slot holding each. Those are refused as targets whatever ``force`` says.
     Returns a path with nothing at it, so every caller may simply write.
+
+    A URL is refused before anything else, so it is never read as a path.
     """
+    refuse_url_destination(raw)
     try:
         path = Path(raw).expanduser().resolve(strict=False)
     except (OSError, ValueError) as exc:

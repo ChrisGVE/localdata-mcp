@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And eight found in this release's own code before it shipped:
+And nine found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -362,7 +362,7 @@ And eight found in this release's own code before it shipped:
   else, in its percent-encoded and decoded spellings both. One masker does it,
   and every refusal passes through it on the way out, so a URL that a verb read
   as a path (`query(path=…)`, `save(path=…)`) no longer comes back with its
-  password in the "directory does not exist" message either.
+  password in the refusal either — which since #108 names it as a URL.
 - **`create` read a database URL as a path, and echoed its password**
   ([#88](https://github.com/ChrisGVE/localdata-mcp/issues/88)).
   `create(source="postgresql://u:hunter2@localhost:5432/db")` answered "No such
@@ -371,6 +371,14 @@ And eight found in this release's own code before it shipped:
   URL, shown the way `attach` shows it (`u:***`), with the route that does work:
   `attach` the database, write the rows wanted to a file with `query(path=…)`,
   and `create` that file.
+- **`query(path=…)` and `save` read a database URL as a missing directory**
+  ([#108](https://github.com/ChrisGVE/localdata-mcp/issues/108)). The write side
+  of #88: `save(path="postgresql://u:hunter2@localhost:5432/db.sqlite")`
+  answered "Directory does not exist: <cwd>/postgresql:/u:***@localhost:5432",
+  about a directory nobody named. A destination is a file, so a URL is now
+  refused as a URL before it is taken as a path — on `query` before the suffix
+  is even looked at — shown the way `attach` shows it, with the verb that does
+  put rows into a database: `create`, on that database attached writable.
 - **A date from a typed format compared wrongly against a date literal, with no
   warning** ([#87](https://github.com/ChrisGVE/localdata-mcp/issues/87)). A
   date or timestamp column from `.parquet`, `.feather`, `.orc`, a workbook or

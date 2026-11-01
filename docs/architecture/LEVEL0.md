@@ -231,12 +231,12 @@ including one from a verb that took a URL for a path and never knew it held a cr
 |---|---|---|
 | `attach` | `database`, `nickname?`, `writable?`, `delimiter?` | Open a datasource as a database — flat file, database file (SQLite or DuckDB, told apart by header), or a URL. Returns the nickname **actually used**. |
 | `detach` | `nickname` | Close a slot deliberately instead of waiting for FIFO to guess. Deletes the temp file if it had spilled. Names the tables the slot held when it closed — what `directory` would have listed, not what it arrived with. |
-| `query` | `nickname`, `sql`, `path?`, `force?`, `delimiter?` | Run SQL. **Reads only.** Returns the whole result, or writes it to `path` when it is too large to return. |
+| `query` | `nickname`, `sql`, `path?`, `force?`, `delimiter?` | Run SQL. **Reads only.** Returns the whole result, or writes it to `path` when it is too large to return. A URL as `path` is refused: a destination is a file, and writing into a database is `create`'s job. |
 | `directory` | — \| `nickname` \| `nickname`+`table` | Three levels of detail: bare → every slot and the path posture; nickname → its tables; nickname and table → schema, row count and indexes. |
 | `create` | `nickname`, `type`, `table?`, `source?`, `columns?`, `delimiter?` | `type="table"` reads a **file** in beside the tables already there — one holding a single table, since `create` makes one — which is what makes arc 2 possible. A URL as `source` is refused, naming `attach`. `type="index"` indexes columns of a table already there — asked for, never inferred. |
 | `update` | `nickname`, `type`, `name`, `to` | Rename a table, keeping its rows, types and indexes — the answer to a file that named its own tables. |
 | `drop` | `nickname`, `type`, `name` | Remove a table or an index. Composition needs both directions, for both types. |
-| `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. |
+| `save` | `nickname`, `path`, `force?` | Relocate an in-memory or spilled database to a path the user chose — the "actually, keep this" escape from ephemerality. A URL as `path` is refused, as on `query`. |
 | `stats` | `nickname`, `table`, `columns?` | Profile a table's columns — missing values, and the range of the ones that are there. The verb that answers *"can I trust this data?"*, which no other verb does. |
 
 **`attach`.** A workbook becomes a database holding a table per sheet and a `.numbers`

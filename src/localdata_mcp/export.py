@@ -39,7 +39,7 @@ from .errors import ExportError, undeclared_separator
 # Imported into this namespace deliberately: the tests and the docs say
 # `export.WRITERS` and `export.DELIMITED`, and they name the same objects here.
 from .formats import DELIMITED, WRITERS
-from .paths import resolve_write_path
+from .paths import refuse_url_destination, resolve_write_path
 from .writers import SPREADSHEET_ROW_LIMIT, Writer, delimited_writer
 
 __all__ = [
@@ -89,6 +89,9 @@ def export_rows(
     # Before `resolve_write_path`, deliberately: that call deletes an existing
     # target under `force`, and a request this server was never going to be able
     # to satisfy must not cost the user a file on its way to failing.
+    # A URL first, though: it is not a file at all, and judged by its suffix it
+    # would be refused as a name with no suffix rather than as what it is (#108).
+    refuse_url_destination(raw_path)
     writer = _writer_for(raw_path, delimiter)
 
     path = resolve_write_path(raw_path, force=force, claimed=claimed)

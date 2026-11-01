@@ -35,9 +35,10 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy.engine import URL
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import ArgumentError
 
-__all__ = ["MASK", "mask_credentials", "redacted_url"]
+__all__ = ["MASK", "mask_credentials", "redacted_url", "shown_url"]
 
 #: What a password is replaced with. SQLAlchemy renders a hidden password the
 #: same way, so a URL masked here and one rendered by ``redacted_url`` agree.
@@ -74,6 +75,21 @@ def redacted_url(url: URL) -> str:
     mask there would tell the reader a secret was carried when none was.
     """
     return url.render_as_string(hide_password=True)
+
+
+def shown_url(raw: str) -> str:
+    """A URL the caller typed, as a refusal may quote it back.
+
+    The refusals that name a URL handed to the wrong verb — ``create``'s source
+    (#88), a destination path (#108) — show it the way ``attach`` would, through
+    :func:`redacted_url`. A URL SQLAlchemy cannot parse, a port that is not a
+    number say, is still a URL to name, and its userinfo is still a credential,
+    so it falls back to the generic masker rather than being quoted raw.
+    """
+    try:
+        return redacted_url(make_url(raw))
+    except (ArgumentError, ValueError):
+        return mask_credentials(raw)
 
 
 def mask_credentials(text: str, *, connecting_to: URL | None = None) -> str:

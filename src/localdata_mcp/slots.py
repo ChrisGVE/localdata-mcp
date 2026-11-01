@@ -54,10 +54,9 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
 
 from . import config
-from .credentials import mask_credentials, redacted_url
+from .credentials import mask_credentials, redacted_url, shown_url
 from .dialects import Backend, UnsupportedOperation
 from .loader import (
     READERS,
@@ -72,7 +71,11 @@ from .loader import (
     table_names,
 )
 from .names import clashes
-from .paths import PathNotAllowed, resolve_read_path, resolve_write_path
+
+# `url_scheme` lives with the path boundary because a destination path needs it
+# too (#108), and `paths` cannot import this module. Re-exported here, where
+# callers have always found it.
+from .paths import PathNotAllowed, resolve_read_path, resolve_write_path, url_scheme
 
 __all__ = [
     "AttachRefused",
@@ -104,10 +107,6 @@ FILE_SIGNATURES: tuple[tuple[str, int, bytes], ...] = (
 #: Enough of the head to cover every signature above.
 _SIGNATURE_BYTES = max(offset + len(magic) for _, offset, magic in FILE_SIGNATURES)
 
-#: A scheme must be at least two characters, so a Windows drive letter is never
-#: mistaken for one, and the ``://`` must be present so a bare path never is.
-_URL = re.compile(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]+)://")
-
 #: A nickname names the slot's own database and is carried in the URI that
 #: opens it, so it must be a plain identifier: punctuation would be read as URI
 #: syntax and open a database nobody chose.
@@ -131,12 +130,6 @@ class SlotNotAvailable(SlotError):
 
 class NotWritable(SlotError):
     """A slot this server will not change, and how to make it changeable."""
-
-
-def url_scheme(database: str) -> str | None:
-    """The scheme of a datasource URL, or ``None`` for a filesystem path."""
-    match = _URL.match(database)
-    return match.group("scheme") if match else None
 
 
 def _ours(rows: Iterator[tuple]) -> Iterator[tuple]:
@@ -724,14 +717,8 @@ class Registry:
         """
         if url_scheme(source) is None:
             return
-        try:
-            shown = redacted_url(make_url(source))
-        except (ArgumentError, ValueError):
-            # Unparseable — a port that is not a number, say — is still a URL
-            # to refuse, and its userinfo is still a credential.
-            shown = mask_credentials(source)
         raise SlotError(
-            f"create reads a file, and {shown} is a URL. To read that database, "
+            f"create reads a file, and {shown_url(source)} is a URL. To read that database, "
             f"attach it as a datasource of its own; to bring some of its rows in "
             f"here, write them to a file with query(nickname, sql, path=…) on that "
             f"datasource, then create that file."

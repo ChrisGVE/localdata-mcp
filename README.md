@@ -157,12 +157,12 @@ what every datasource becomes.
 | --- | --- |
 | `attach(database, nickname?, writable?, delimiter?)` | Open a datasource as a database. Returns the nickname used, plus anything it collided with or evicted. A workbook becomes a database holding a table per sheet, and a `.numbers` document one per table. |
 | `detach(nickname)` | Close it and free the slot. Deletes the temp file if the slot had been spilled to disk (see [Memory](#memory)). |
-| `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format and answers `rows_written` and the column names instead of the rows. |
+| `query(nickname, sql, path?, force?, delimiter?)` | Run SQL. **Reads only.** Returns the whole result; with `path`, writes it to a file whose suffix chooses the format and answers `rows_written` and the column names instead of the rows — a file, never a URL, which is refused in favour of `create`. |
 | `directory(nickname?, table?)` | Three levels of detail: bare → the session (see above); nickname → its tables; nickname and table → columns, row count and indexes. |
 | `create(nickname, type, table?, source?, columns?, delimiter?)` | `type="table"` lands a **file** *inside* an open database — one holding a single table, since `create` makes one, and a URL is refused in favour of `attach`; `type="index"` indexes columns of a table already there — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
 | `update(nickname, type, name, to)` | Rename a table, keeping its rows, types and indexes. For when the file chose the name — a workbook's `Sheet1`, which arrives as `sheet1` — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
 | `drop(nickname, type, name)` | Remove a table or an index. |
-| `save(nickname, path, force?)` | Write the database out to a SQLite file you keep — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
+| `save(nickname, path, force?)` | Write the database out to a SQLite file you keep — a file, never a URL — see [Not every verb reaches every backend](#not-every-verb-reaches-every-backend). |
 | `stats(nickname, table, columns?)` | Profile a table's columns: how many values are **missing**, and the range of the ones that are there. Nothing else reports a missing value — see [What stats will and will not tell you](#what-stats-will-and-will-not-tell-you). |
 
 ## What it reads, writes and connects to
