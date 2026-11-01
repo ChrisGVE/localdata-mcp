@@ -247,6 +247,22 @@ live in a script rather than in prose that has already gone stale twice:
 ./scripts/endpoint-batch.sh a --keep   # leave the containers and images up
 ```
 
+**SQL Server needs Microsoft's ODBC driver**, `msodbcsql18`
+(`brew tap microsoft/mssql-release && brew install msodbcsql18` on macOS). Version
+18.7 loads OpenSSL from Homebrew's unversioned `openssl`, which now points at
+OpenSSL 4. The driver refuses that, so every SQL Server target fails to connect
+with "OpenSSL library could not be loaded". The batch script handles this: on
+macOS it points `DYLD_LIBRARY_PATH` at `openssl@3` for the pytest run when that is
+installed and the variable is unset. Running pytest by hand, set it yourself:
+
+```bash
+DYLD_LIBRARY_PATH=/usr/local/opt/openssl@3/lib .venv/bin/python -m pytest -m endpoint -k mssql
+```
+
+Use `/opt/homebrew/opt/openssl@3/lib` on Apple silicon. Don't `brew link`
+openssl@3 to fix it: that changes the OpenSSL every other program on the machine
+uses.
+
 The fifteen images are about 32 GB, Exasol alone 12 GB, so the script removes them
 afterwards by default: re-download every time, and leave nothing behind. **Say in
 your PR which batches you actually ran** — a green run says nothing about a

@@ -37,6 +37,24 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE=(docker compose -f "$REPO/docker-compose.test.yml")
 PYTEST=("$REPO/.venv/bin/python" -m pytest)
 
+# Microsoft's ODBC driver for SQL Server (msodbcsql18 18.7) loads OpenSSL from
+# Homebrew's unversioned `opt/openssl`, which now points at openssl@4, and it
+# refuses that ("OpenSSL library could not be loaded"), so every mssql target
+# fails to connect. Pointing the loader at openssl@3 for the pytest run fixes
+# it without changing the machine. Never `brew link` openssl@3 over 4 to get
+# the same effect: that changes every other program's OpenSSL too. Set only on
+# macOS, only when openssl@3 is installed, and only if the caller has not set
+# DYLD_LIBRARY_PATH themselves.
+if [[ "$(uname -s)" == Darwin && -z "${DYLD_LIBRARY_PATH:-}" ]]; then
+	for prefix in /usr/local/opt/openssl@3 /opt/homebrew/opt/openssl@3; do
+		if [[ -d "$prefix/lib" ]]; then
+			export DYLD_LIBRARY_PATH="$prefix/lib"
+			echo "endpoint-batch: DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH (msodbcsql18 needs OpenSSL 3)"
+			break
+		fi
+	done
+fi
+
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-600}" # Oracle and Exasol are the slow ones.
 HEALTH_INTERVAL=5
 
