@@ -17,7 +17,7 @@ machine is landed, and one that landed has since been suspended (below).
 Reached is not the same as *carried out*. Three verbs mean nothing on some engines and are
 refused there, with the reason named: **`save` on every backend but SQLite** (a slot reached
 over its own connection holds no database here to write out), **`create(type='index')` on
-ClickHouse, Trino, CrateDB and Exasol**, and **`update(type='table')` on
+DuckDB, ClickHouse, Trino, CrateDB and Exasol**, and **`update(type='table')` on
 Firebird**. The per-backend table below carries each one, and they are the reason the surface
 is uniform while the outcomes are not.
 
@@ -265,8 +265,10 @@ that folds. The index name `drop` takes is the one `create` returned and `direct
 matched exactly — case is not folded there. The two `drop` answers echo differently too:
 for a table `dropped` is the name as the caller passed it, and the list of `tables` after
 the drop carries the stored spellings; for an index `dropped` is the stored name.
-`update(type='table')` is refused on Firebird, and `create(type='index')` on the four
-engines named in the backend table.
+`update(type='table')` is refused on Firebird, and `create(type='index')` on the five
+engines named in the backend table. On those five `directory` lists no indexes and reflection
+is not asked for any, so an index already in such a datasource — one a DuckDB file was given
+outside this server, say — is not listed either.
 
 **`save`.** An occupied path is refused until `force` carries the user's consent, and a path
 a live slot sits on is refused regardless. It writes out a database this server holds, so it
@@ -499,7 +501,7 @@ this server built is a database it holds.
 | Backend | Reached as | What it could not be asked portably |
 |---|---|---|
 | SQLite | file, URL | `query_only` and an authorizer; `VACUUM INTO`, which is what makes it the one backend `save` works on; residency from the page count; `typeof()` for mixed columns; the declared type *is* the affinity |
-| DuckDB | file, URL | One DuckDB configuration for both connections of a slot, because DuckDB refuses a second connection to one file under a different one ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)). A read-only datasource carries `access_mode=read_only` on both, refused by DuckDB itself at open time. A writable one carries it on neither, and its read connection opens every transaction `READ ONLY` and refuses a statement that would end it — DuckDB refuses the write rather than this server discarding it, which is stronger than the generic transactional floor. And on both connections, `enable_external_access` off and the configuration locked, because DuckDB's table functions and `COPY` open files without asking `paths.py` ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). Everything else is the generic answer |
+| DuckDB | file, URL | One DuckDB configuration for both connections of a slot, because DuckDB refuses a second connection to one file under a different one ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)). A read-only datasource carries `access_mode=read_only` on both, refused by DuckDB itself at open time. A writable one carries it on neither, and its read connection opens every transaction `READ ONLY` and refuses a statement that would end it — DuckDB refuses the write rather than this server discarding it, which is stronger than the generic transactional floor. And on both connections, `enable_external_access` off and the configuration locked, because DuckDB's table functions and `COPY` open files without asking `paths.py` ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). And the refusal of `create(type='index')`, since duckdb-engine reflects no index at all, so `directory` could not list one nor `drop` find it — and `directory` lists none, an index the file already held included ([#112](https://github.com/ChrisGVE/localdata-mcp/issues/112)). Everything else is the generic answer |
 | PostgreSQL | URL | nothing |
 | MySQL / MariaDB | URL | a read-only session, since DDL commits itself; an index over a *prefix*, since `TEXT` cannot be a key |
 | Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |

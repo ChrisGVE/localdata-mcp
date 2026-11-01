@@ -102,7 +102,7 @@ mcp = FastMCP(
         "the two tables there in an ordinary statement. Whether the join is "
         "complete is an anti-join you write yourself; if it is slow, "
         "create(nickname, type='index', table=..., columns=[...]) first — "
-        "refused on ClickHouse, Trino, CrateDB and Exasol, each for "
+        "refused on DuckDB, ClickHouse, Trino, CrateDB and Exasol, each for "
         "its own reason, which the refusal names — and directory(nickname, table) "
         "says which indexes are already there.\n\n"
         "**query only reads.** INSERT, UPDATE, CREATE TABLE and every other write "
@@ -707,7 +707,9 @@ def directory(nickname: str | None = None, table: str | None = None) -> dict[str
 
     The indexes are what to consult before asking ``create`` for one: they are
     reported whoever made them, so an attached database arrives describing the
-    indexes it already had.
+    indexes it already had. The exception is a backend where ``create`` refuses
+    an index: none is listed there, and on DuckDB that includes an index a file
+    already held, because this server's adapter cannot find one to list.
 
     ``slots_available`` is the slot **limit**, not the number of free slots — it
     is constant for the session, so a full one reports ``slots_used`` and
@@ -1035,11 +1037,12 @@ def create(
     nothing here guesses that for you, because which query is coming is yours to
     know. The index is named for you and the name comes back — that is the name
     ``drop`` wants. ``directory(nickname, table)`` lists the indexes that already
-    exist, which is the cheaper way to find out than asking twice. Four engines
-    refuse ``type="index"`` outright — ClickHouse, Trino, CrateDB and Exasol —
-    each for its own reason: indexes that cannot be reflected, no storage to
-    index, every column indexed already, or an engine that maintains its own.
-    The refusal says which, and arrives before any work is done.
+    exist, which is the cheaper way to find out than asking twice. Five engines
+    refuse ``type="index"`` outright — DuckDB, ClickHouse, Trino, CrateDB and
+    Exasol — each for its own reason: an index this server could not find
+    again to list or drop, an index of another kind, no storage to index,
+    every column indexed already, or an engine that maintains its own. The
+    refusal says which, and arrives before any work is done.
 
     Whether a join actually lines up is not reported here. It is an anti-join
     over two tables in one database — ordinary SQL you can write, and better

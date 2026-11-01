@@ -31,7 +31,8 @@ mean something different, or nothing at all, on another backend"**:
 * **Whether an index is a thing this verb can make.** Naming columns is the whole
   of an index on every backend whose indexes can afterwards be found by
   reflection. ClickHouse's cannot, and its secondary indexes answer a different
-  question, so the truthful answer there is that the verb does not apply.
+  question, so the truthful answer there is that the verb does not apply. Nor can
+  DuckDB's, whose adapter reflects no index at all, and the answer is the same.
 * **Whether a table may exist without a key.** Every backend here makes a heap
   table from a bare column list; YDB refuses one outright. A file has no key to
   offer, so what the loader does about it has to be decided once — and the axis
@@ -1259,6 +1260,9 @@ class DuckDBBackend(Backend):
     *slot's*, on both engines or on neither, and a writable slot's reader is
     held to reading by a read-only transaction instead. See :meth:`open` and
     :meth:`read_posture` (issue #79).
+
+    And a fifth: its indexes cannot be found again by reflection, so the index
+    verbs do not apply here. See :meth:`build_index` (issue #112).
     """
 
     name: str = "duckdb"
@@ -1358,6 +1362,46 @@ class DuckDBBackend(Backend):
         of the thing it describes far more often than it is the whole population.
         """
         return {"median": func.median, "stddev": func.stddev_samp}
+
+    def builds_indexes(self) -> bool:
+        return False
+
+    def build_index(
+        self, name: str, table: Table, columns: Sequence[str]
+    ) -> tuple[Index, tuple[str, ...]]:
+        """Refused, because nothing here could find the index again.
+
+        Unlike the four backends that refuse before it, DuckDB *does* build the
+        index — ``CREATE INDEX`` succeeds and ``duckdb_indexes()`` lists it. The
+        gap is in the adapter: duckdb-engine 0.17.0 answers every index
+        reflection with ``[]`` and a warning that it does not support one, so
+        ``directory`` would never list the index and ``drop`` would never find
+        it. Reading ``duckdb_indexes()`` directly is no way round it, because
+        that view gives an index's columns only as one string of SQL —
+        measured on DuckDB 1.5.5, an index on ``("Dept x", n)`` reads
+        ``['"Dept x"', n]``, one on a bare ``name`` reads ``['"name"']``,
+        quoted, and one on ``lower(name)`` reads ``['(lower("name"))']`` — and
+        reflecting columns out of that would mean parsing SQL, which fails
+        open on the first spelling it was not written for (issue #112).
+
+        The refusal says what DuckDB does instead, in its documentation's
+        words rather than this server's: a min-max index is created
+        automatically for the columns of all general-purpose types, and an
+        explicit (ART) index *"does not affect the performance of join,
+        aggregation, and sorting queries"*
+        (https://duckdb.org/docs/current/sql/indexes.html and
+        https://duckdb.org/docs/current/guides/performance/indexing.html).
+        """
+        article = article_for(self.name).capitalize()
+        raise UnsupportedOperation(
+            f"{article} {self.name} datasource can build an index on "
+            f"{', '.join(columns)}, but this adapter cannot list or find an index "
+            f"afterwards, so directory could not show it and drop could not "
+            f"remove it — creating one would hand back a name nothing else here "
+            f"can use. {self.name} already keeps a min-max index on the columns "
+            f"of {table.name} by itself, and its documentation says an explicit "
+            f"index does not speed up a join; run the join as it stands."
+        )
 
 
 # ---------------------------------------------------------------------------

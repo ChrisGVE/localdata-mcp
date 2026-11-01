@@ -70,7 +70,7 @@ from sqlalchemy import (
 )
 from sqlalchemy import types as sqltypes
 from sqlalchemy.engine import URL, make_url
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import NoSuchTableError, SQLAlchemyError
 
 from . import binding, temporal
 from .credentials import redacted_url
@@ -472,6 +472,34 @@ def _run_again_once(read: Callable[[], _T]) -> _T:
         if not _asks_to_be_retried(exc):
             raise
     return read()
+
+
+def _schema_of(entry: Tagged, table: str) -> Table:
+    """The live schema of one table, reflected only as far as the backend answers.
+
+    Columns always; indexes only on a backend whose indexes reflection can find
+    (:meth:`~localdata_mcp.dialects.Backend.builds_indexes`). SQLAlchemy's
+    ``autoload_with`` asks for the indexes with no way to leave them out, and on
+    DuckDB asking is what makes duckdb-engine warn that it cannot answer — which
+    fails ``stats`` wherever warnings are errors (issue #107). So a backend that
+    cannot answer gets a table built from its columns alone, read through the
+    same ``get_columns`` :meth:`Workspace.describe` uses: that is everything
+    ``stats`` selects from, and everything ``create`` checks a column against
+    before such a backend refuses the index.
+
+    Raises ``SQLAlchemyError`` when the table is not there, either way.
+    """
+    if entry.backend.builds_indexes():
+        return Table(table, MetaData(), autoload_with=entry.engines.write)
+    with entry.engines.write.connect() as conn:
+        described = inspect(conn).get_columns(table)
+    if not described:
+        raise NoSuchTableError(table)
+    return Table(
+        table,
+        MetaData(),
+        *(Column(column["name"], column["type"]) for column in described),
+    )
 
 
 def _not_a_read(entry: Tagged) -> str:
@@ -1630,8 +1658,20 @@ class Workspace:
         this is the server asking about the schema, not the caller's statement
         running, so it does not go through the posture the read engine carries
         on the caller's behalf.
+
+        **None at all on a backend that cannot build an index this verb could
+        find again** (:meth:`Backend.builds_indexes`), and reflection is not
+        asked. That is the same fact read from the other side: an index
+        reflection cannot find is one this cannot list either. On DuckDB the
+        question is not merely empty but noisy — duckdb-engine answers ``[]``
+        and warns that it does not support index reflection, which fails the
+        verb wherever warnings are errors (issue #107) — so not asking is the
+        fix at the root, not a suppression. An index already in such a
+        datasource, made outside this server, is therefore not listed.
         """
         entry = self.entry(tag)
+        if not entry.backend.builds_indexes():
+            return ()
         inspector = inspect(entry.engines.write)
         tables = (table,) if table is not None else self.table_names(tag)
 
@@ -1712,9 +1752,9 @@ class Workspace:
 
     @staticmethod
     def _reflect(entry: Tagged, tag: str, table: str) -> Table:
-        """The live schema of one table, columns and indexes both."""
+        """The live schema of one table, or ``LoadError`` if there is none."""
         try:
-            return Table(table, MetaData(), autoload_with=entry.engines.write)
+            return _schema_of(entry, table)
         except SQLAlchemyError as exc:
             raise LoadError(f"No such table: {tag}.{table}") from exc
 
@@ -2112,7 +2152,7 @@ class Workspace:
         alone.
         """
         entry = self.entry(tag)
-        reflected = Table(table, MetaData(), autoload_with=entry.engines.write)
+        reflected = _schema_of(entry, table)
         signals = {column.name: column for column in described.columns}
         offered = entry.backend.optional_aggregates()
 

@@ -3398,18 +3398,19 @@ def test_a_writable_duckdb_datasource_answers_every_verb(session, reach):
             delimiter=",",
         )
         assert landed["ok"] is True, landed
+    # Refused since issue #112, in DuckDB's own words rather than with the
+    # configuration error #79 was about: the verb still reaches the writer.
     indexed = call(
         "create", nickname="wh", type="index", table="sales", columns=["region"]
     )
-    assert indexed["ok"] is True, indexed
+    assert indexed["ok"] is False, indexed
+    assert "cannot list or find an index" in indexed["error"]
     renamed = call("update", nickname="wh", type="table", name="simple", to="staff")
     assert renamed["ok"] is True, renamed
     dropped = call("drop", nickname="wh", type="table", name="extra")
     assert dropped["ok"] is True, dropped
 
-    # The index is checked in the file below rather than through ``directory``:
-    # duckdb-engine reflects no indexes at all, so ``directory`` lists none on
-    # any DuckDB slot. That is issue #107's, not this one's.
+    # The file below shows that the refused index did not land either.
     assert sorted(call("directory", nickname="wh")["tables"]) == ["sales", "staff"]
     staffed = call("query", nickname="wh", sql="SELECT count(*) FROM staff")
     assert staffed["rows"][0][0] > 0
@@ -3417,8 +3418,69 @@ def test_a_writable_duckdb_datasource_answers_every_verb(session, reach):
     assert call("detach", nickname="wh")["ok"] is True
     tables, indexes, sales = _duckdb_contents(target)
     assert tables == {"sales", "staff"}
-    assert indexes == {indexed["index"]}
+    assert indexes == set()
     assert sales == 2
+
+
+@pytest.mark.parametrize("reach", ["file", "url"])
+def test_an_index_on_a_writable_duckdb_datasource_is_refused_and_none_lands(
+    session, reach
+):
+    """Issue #112: ``create`` used to answer ``ok`` with an index nothing could use.
+
+    The index was real — DuckDB built it — but duckdb-engine reflects no
+    indexes, so ``directory`` never listed it and ``drop`` answered "No such
+    index" for the name ``create`` had just handed back. Refused now, in the
+    backend's own words, and the file is opened by DuckDB afterwards to show
+    that the refusal came before any work rather than after it.
+    """
+    target = _attach_duckdb_by(session, reach, writable=True)
+
+    refused = call(
+        "create", nickname="wh", type="index", table="sales", columns=["region"]
+    )
+
+    assert refused["ok"] is False, refused
+    assert "duckdb" in refused["error"]
+    assert "cannot list or find an index" in refused["error"]
+    assert call("directory", nickname="wh", table="sales")["indexes"] == []
+    assert call("detach", nickname="wh")["ok"] is True
+    assert _duckdb_contents(target) == ({"sales"}, set(), 2)
+
+
+@pytest.mark.filterwarnings("error::duckdb_engine.DuckDBEngineWarning")
+@pytest.mark.parametrize("writable", [False, True])
+def test_a_duckdb_datasource_answers_without_the_index_reflection_warning(
+    session, writable
+):
+    """Issue #107: every DuckDB ``stats`` used to warn, and failed where warnings fail.
+
+    duckdb-engine warns *"doesn't yet support reflection on indices"* each time
+    it is asked for one, and this server asked on every ``directory`` and every
+    ``stats`` — so with the warning escalated, as here, those verbs answered with
+    the warning instead of the data. Each verb that reflects a DuckDB table is
+    driven with the warning turned into an error: none of them may ask.
+    """
+    _attach_duckdb_by(session, "file", writable=writable)
+
+    for verb, arguments in (
+        ("directory", {}),
+        ("directory", {"table": "sales"}),
+        ("stats", {"table": "sales"}),
+    ):
+        answer = call(verb, nickname="wh", **arguments)
+        assert answer["ok"] is True, (verb, answer)
+
+    if writable:
+        # Refused for its own reason, not because asking the question warned.
+        made = call(
+            "create", nickname="wh", type="index", table="sales", columns=["region"]
+        )
+        assert made["ok"] is False, made
+        assert "cannot list or find an index" in made["error"]
+        gone = call("drop", nickname="wh", type="index", name="ix_sales_region")
+        assert gone["ok"] is False, gone
+        assert gone["error"].startswith("No such index"), gone
 
 
 def test_a_read_only_duckdb_url_describes_itself_and_refuses_writes(session):

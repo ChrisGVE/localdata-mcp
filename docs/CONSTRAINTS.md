@@ -5636,6 +5636,58 @@ DuckDB's own parser names the statements that end a transaction. `extract_statem
 > mode"* arrives as `InvalidInputException`, measured on DuckDB 1.5.5, and that class covers
 > too much to recognise a write by.
 
+> **Amended 2026-11-01 — DuckDB no longer builds an index, and nothing here asks it for one
+> ([#112](https://github.com/ChrisGVE/localdata-mcp/issues/112),
+> [#107](https://github.com/ChrisGVE/localdata-mcp/issues/107)).** Two statements above are
+> past. §31.3's *"`create` (a table and an index)"*: `create(type='index')` on a writable
+> DuckDB slot is now refused, and nothing lands in the file. §31.4's second bullet: the gap is
+> unchanged, but this server no longer asks.
+>
+> The index `create` used to make was real, and nothing else could use it. duckdb-engine
+> 0.17.0 answers `get_indexes` and `get_multi_indexes` with `[]` and a `DuckDBEngineWarning`,
+> *"duckdb-engine doesn't yet support reflection on indices"*. So `directory` never listed the
+> index, and `drop` answered *"No such index"* for the name `create` had handed back. Reading
+> `duckdb_indexes()` directly was the other way out, and it was measured and not taken. Measured
+> on DuckDB 1.5.5, the view's `expressions` column is one `VARCHAR` of SQL, not a list of
+> columns:
+>
+> | Index created on | `expressions` |
+> |---|---|
+> | `("Dept x", n)` | `['"Dept x"', n]` |
+> | `(name)` | `['"name"']`, quoted though it was created bare |
+> | `(lower(name))` | `['(lower("name"))']` |
+>
+> Reflecting columns out of that means parsing SQL, which fails open on the first spelling it
+> was not written for. So `DuckDBBackend.builds_indexes()` is `False`, and `build_index` refuses
+> in the shape ClickHouse's does.
+>
+> The warning had three call sites, all reflection, and all are now asked only where
+> `builds_indexes()` is `True`:
+>
+> - `Workspace.indexes`, under both `directory` forms and the duplicate check `create` runs. It
+>   answers `()` without asking.
+> - `Workspace.profile`, under every `stats`. It built the table with
+>   `Table(autoload_with=…)`, which reflects indexes and has no switch to leave them out. This
+>   is the call site #107 was reported against. Measured: with `Workspace.indexes` fixed and
+>   this one restored, `stats` under `-W error::duckdb_engine.DuckDBEngineWarning` still
+>   answered `{"ok": false, "error": "DuckDBEngineWarning: …"}`.
+> - `Workspace._reflect`, under `create(type='index')` before the backend refuses.
+>
+> The last two now share `loader._schema_of`. It reflects the whole table where indexes can be
+> found. Elsewhere it builds the table from `get_columns` alone, the call `describe` already
+> makes on every backend.
+>
+> **What it costs.** A DuckDB file that already holds an index still has it. `directory` lists
+> none, as it already did, and `drop(type='index')` cannot remove it. The same holds on the
+> four other backends whose `builds_indexes()` is `False`. On three of them reflection already
+> answered nothing, read in the dialects installed here: `clickhouse_connect.cc_sqlalchemy`,
+> `sqlalchemy_cratedb` 0.44.0 and `sqlalchemy_exasol` 7.1.1 each define `get_indexes` as
+> `return []`. **Trino's does not.** `trino.sqlalchemy` 0.338.0 answers a *partitioned* table
+> with one pseudo-index named `partition`, over the partition columns. The test harness's
+> `memory` catalog has no partitioned tables, so this was read, not measured. `directory`
+> through Trino would have listed that `partition` entry, and `drop` could not have removed it,
+> because Trino has no `DROP INDEX`. It is no longer listed.
+
 ---
 
 ## §32 — A time of day is text, and a duration says what it counts (2026-10-30)

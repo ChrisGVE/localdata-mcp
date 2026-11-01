@@ -476,10 +476,12 @@ And eight found in this release's own code before it shipped:
   `query(path=…)`, `attach` that file as a datasource of your own — file-derived,
   so writable — and save that. The refusal says so, and `attach` reports
   `saveable: false` before anyone has to try.
-- **`create(type="index")` is refused on ClickHouse, Trino, CrateDB and
-  Exasol**, each for its own reason — indexes that cannot be reflected, no
-  storage to index, every column indexed already, or an engine that maintains
-  its own.
+- **`create(type="index")` is refused on DuckDB, ClickHouse, Trino, CrateDB
+  and Exasol**, each for its own reason — an index this server could not find
+  again to list or drop, indexes of another kind that cannot be reflected
+  either, no storage to index, every column indexed already, or an engine that
+  maintains its own. `directory` lists no indexes on those five, so an index a
+  DuckDB file already held is not shown.
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement and never has.
 - **On Oracle a statement `query` refuses can still have happened.** The

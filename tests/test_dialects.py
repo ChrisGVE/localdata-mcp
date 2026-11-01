@@ -1337,6 +1337,33 @@ def test_an_index_exasol_keeps_for_itself_is_refused_rather_than_reported():
     assert "maintains its own indexes" in message
 
 
+def test_an_index_duckdb_could_not_find_again_is_refused_rather_than_reported():
+    """DuckDB builds the index; nothing here could list it or drop it afterwards.
+
+    ``CREATE INDEX`` works on DuckDB, which is what makes this refusal different
+    from the four before it. The gap is on the way back: duckdb-engine 0.17.0
+    answers every index reflection with ``[]`` and a warning that it does not
+    support one (issues #112 and #107), so ``directory`` would never list the
+    index and ``drop`` would never find it. A name handed back for an index
+    nothing else can act on is the answer this axis exists to refuse.
+    """
+    from sqlalchemy import Column, Integer, MetaData, Table
+
+    backend = backend_for("duckdb")
+    assert backend.builds_indexes() is False
+
+    table = Table("orders", MetaData(), Column("region", Integer))
+    with pytest.raises(UnsupportedOperation) as refused:
+        backend.build_index("ix_orders_region", table, ["region"])
+
+    message = str(refused.value)
+    assert "duckdb" in message
+    assert "region" in message
+    # The reason is the adapter's blindness, said plainly, and what it would cost.
+    assert "cannot list or find an index" in message
+    assert "directory" in message and "drop" in message
+
+
 def test_exasol_declines_the_one_type_its_dialect_will_not_compile():
     """One, and refused before anything is sent — the honest end of this axis.
 

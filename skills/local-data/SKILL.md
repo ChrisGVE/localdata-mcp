@@ -124,9 +124,10 @@ create(nickname="shop", type="index", table="prices", columns=["sku"])
 `directory(nickname, table)` lists the indexes already there — cheaper than asking
 for one twice. The name comes back, and that is the name `drop` wants.
 
-**Four backends refuse an index** — ClickHouse, Trino, CrateDB and Exasol —
-because on those engines the request means nothing: every column is
-indexed already, or there is no storage to index, or the engine keeps its own.
+**Five backends refuse an index** — DuckDB, ClickHouse, Trino, CrateDB and
+Exasol — because on those engines the request means nothing here: the index
+could not be found again to list or drop, or every column is indexed already,
+or there is no storage to index, or the engine keeps its own.
 The refusal says which. It is not a permission problem and not something to
 retry; run the join as it stands, and if it is genuinely slow, narrow it in SQL.
 

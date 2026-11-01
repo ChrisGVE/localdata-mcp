@@ -289,10 +289,12 @@ carried out on some engines, and the refusal says so and names the way round:
   slot that is already open. The refusal says exactly this — and nobody has to
   call `save` to find out: `attach` and `directory` report `"saveable"` for every
   datasource, beside a `"backend"` field naming its engine.
-- **`create(type="index")` is refused on ClickHouse, Trino, CrateDB and
-  Exasol** — each for its own reason: indexes that cannot be reflected, no
-  storage to index, every column indexed already, or an engine that maintains
-  its own.
+- **`create(type="index")` is refused on DuckDB, ClickHouse, Trino, CrateDB
+  and Exasol** — each for its own reason: an index this server could not find
+  again to list or drop, indexes of another kind that cannot be reflected
+  either, no storage to index, every column indexed already, or an engine that
+  maintains its own. On those backends `directory` lists no indexes, so an
+  index a DuckDB file already held is not shown.
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement.
 
