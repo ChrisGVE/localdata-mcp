@@ -107,6 +107,8 @@ __all__ = [
     "Tagged",
     "Workspace",
     "LoadError",
+    "driver_message",
+    "failure_text",
     "measure_frame",
     "read_file",
     "read_source",
@@ -399,6 +401,87 @@ _NO_SUCH_TABLE = re.compile(
     """,
     re.IGNORECASE,
 )
+
+
+#: How far down an exception chain to look for a driver's words. A real chain
+#: is one or two links deep; the bound is only there so a pathological one —
+#: built by a driver re-raising in a loop, say — cannot cost more than this.
+_CHAIN_DEPTH = 16
+
+
+def _chained_words(exc: BaseException) -> str:
+    """The first words found below ``exc`` in its exception chain, or ``""``.
+
+    Each link is followed through ``__cause__`` where it has one — an explicit
+    ``raise … from`` — and through ``__context__`` otherwise, so a driver that
+    re-raised inside its handler without ``from`` is read too. Visited links are
+    remembered, so a cycle ends; the depth is bounded, so a long chain does too.
+
+    A link's words are its ``message`` attribute when it has a non-empty one,
+    and its ``str()`` otherwise. ``pyexasol`` is why: its errors keep the
+    server's reason in ``message``, while their ``str()`` is a multi-line block
+    that adds the DSN, the user, the schema and the whole query to it — measured
+    on Exasol 2026.1.0, ``docs/CONSTRAINTS.md`` 2026-11-01. The reason is what a
+    caller can act on; the rest is either already known to them or not theirs.
+    """
+    seen = {id(exc)}
+    link = exc.__cause__ or exc.__context__
+    for _ in range(_CHAIN_DEPTH):
+        if link is None or id(link) in seen:
+            return ""
+        seen.add(id(link))
+        message = getattr(link, "message", None)
+        words = message if isinstance(message, str) and message else str(link)
+        if words:
+            return words
+        link = link.__cause__ or link.__context__
+    return ""
+
+
+def driver_message(exc: BaseException) -> str:
+    """The driver's own words for a failure, taken from its chain if it has none.
+
+    For an error SQLAlchemy wrapped, that is ``str(exc.orig)``; for one a driver
+    raised unwrapped — see :meth:`dialects.Backend.driver_errors` — it is
+    ``str(exc)``. Either way, a driver with something to say is returned
+    exactly as it said it.
+
+    A driver with **nothing** to say is the case this exists for. The Exasol
+    DBAPI driver raises its PEP 249 ``Error`` with no arguments and chains the
+    real failure — ``raise Error() from ex`` — so its message is ``""`` and the
+    reason is one link down (issue #117). Every refused statement on Exasol
+    answered with an empty error until the words were looked for there.
+    """
+    origin = getattr(exc, "orig", None)
+    driver = origin if origin is not None else exc
+    own = str(driver)
+    return own or _chained_words(driver)
+
+
+def failure_text(exc: BaseException) -> str:
+    """``str(exc)``, with a driver's empty message filled in from its chain.
+
+    The ``Could not …: {exc}`` refusals quote the whole exception, and for a
+    wrapped driver error SQLAlchemy renders that as ``(module.Class) <driver
+    message>``, then the statement, then a link to its documentation. Where the
+    driver said something, that rendering is returned untouched, byte for byte.
+    Where it said nothing, the words from its chain go where its message would
+    have been, so the statement and the link still follow as they do for every
+    other backend (issue #117).
+    """
+    text = str(exc)
+    origin = getattr(exc, "orig", None)
+    if origin is None:
+        return text or _chained_words(exc)
+    if str(origin):
+        return text
+    words = _chained_words(origin)
+    if not words:
+        return text
+    header = f"({type(origin).__module__}.{type(origin).__name__}) "
+    if header in text:
+        return text.replace(header, header + words, 1)
+    return f"{words}\n{text}"
 
 
 def _driver_failures(entry: Tagged) -> tuple[type[BaseException], ...]:
@@ -1630,7 +1713,9 @@ class Workspace:
             with entry.engines.write.begin() as conn:
                 entry.backend.rename_table(conn, table, to)
         except SQLAlchemyError as exc:
-            raise LoadError(f"Could not rename {tag}.{table}: {exc}") from exc
+            raise LoadError(
+                f"Could not rename {tag}.{table}: {failure_text(exc)}"
+            ) from exc
 
         landed = self.landed_as(tag, to)
         known = self._tables.pop(f"{tag}.{table}", None)
@@ -1646,7 +1731,9 @@ class Workspace:
             with entry.engines.write.begin() as conn:
                 target.drop(conn)
         except SQLAlchemyError as exc:
-            raise LoadError(f"Could not drop {tag}.{table}: {exc}") from exc
+            raise LoadError(
+                f"Could not drop {tag}.{table}: {failure_text(exc)}"
+            ) from exc
         self._tables.pop(f"{tag}.{table}", None)
 
     # -- indexes -----------------------------------------------------------
@@ -1722,7 +1809,9 @@ class Workspace:
             with entry.engines.write.begin() as conn:
                 index.create(conn)
         except _driver_failures(entry) as exc:
-            raise LoadError(f"Could not create {name} on {tag}.{table}: {exc}") from exc
+            raise LoadError(
+                f"Could not create {name} on {tag}.{table}: {failure_text(exc)}"
+            ) from exc
         return IndexInfo(name=name, table=table, columns=tuple(columns), notes=notes)
 
     def drop_index(self, tag: str, name: str) -> IndexInfo:
@@ -1747,7 +1836,9 @@ class Workspace:
             with entry.engines.write.begin() as conn:
                 index.drop(conn)
         except _driver_failures(entry) as exc:
-            raise LoadError(f"Could not drop {tag}.{name}: {exc}") from exc
+            raise LoadError(
+                f"Could not drop {tag}.{name}: {failure_text(exc)}"
+            ) from exc
         return existing
 
     @staticmethod
@@ -1962,7 +2053,9 @@ class Workspace:
                     f"column without corrupting it."
                 ) from exc
             if isinstance(exc, (*_driver_failures(entry), OverflowError)):
-                raise LoadError(f"Could not insert rows from {source}: {exc}") from exc
+                raise LoadError(
+                    f"Could not insert rows from {source}: {failure_text(exc)}"
+                ) from exc
             raise
 
         info = TableInfo(
@@ -2466,7 +2559,7 @@ class Workspace:
             # words, which name no verb the caller could use instead.
             return LoadError(_not_a_read(entry))
 
-        message = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
+        message = driver_message(exc)
         if _objected_to_the_leading_verb(message, sql):
             return LoadError(_not_a_read(entry))
 

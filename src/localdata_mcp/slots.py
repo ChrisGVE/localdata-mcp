@@ -67,6 +67,7 @@ from .loader import (
     TableInfo,
     Workspace,
     _sanitize,
+    failure_text,
     read_source,
     table_names,
 )
@@ -642,7 +643,7 @@ class Registry:
         replacement turned a short password into a corruption of the driver's
         own words (issue #82).
         """
-        masked = mask_credentials(str(exc), connecting_to=url)
+        masked = mask_credentials(failure_text(exc), connecting_to=url)
         return masked.splitlines()[0] if masked else ""
 
     def _validate_nickname(self, nickname: str) -> None:
@@ -964,7 +965,9 @@ class Registry:
         except Exception as exc:
             # A partial file looks like a complete save, which is worse than none.
             target.unlink(missing_ok=True)
-            raise SlotError(f"Could not save {nickname} to {target}: {exc}") from exc
+            raise SlotError(
+                f"Could not save {nickname} to {target}: {failure_text(exc)}"
+            ) from exc
 
         # SQLite creates the file 0o644 — world-readable, holding the user's
         # actual data. Narrowed immediately; the window is small and known.

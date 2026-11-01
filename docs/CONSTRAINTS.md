@@ -5072,6 +5072,48 @@ This costs more than legibility here: `Workspace._explain` reads a driver's erro
 tell a caller which verb to use instead, and on this endpoint there is nothing to
 read. Every refusal Exasol produces is diagnosed by *this* server or not at all.
 
+> **Amended 2026-11-01 — the reason is one link down, and is now read from there
+> ([#117](https://github.com/ChrisGVE/localdata-mcp/issues/117)).** "Nothing to read" above
+> was true of `exc.orig` and not of its chain. Measured on `exasol/docker-db:2026.1.0` through
+> `sqlalchemy-exasol` 7.1.1 and `pyexasol` 2.3.0, with `SELECT 1 SELECT 2` on the read engine:
+>
+> | | value |
+> |---|---|
+> | `exc` | `sqlalchemy.exc.DBAPIError`, `str()` = `(exasol.driver.websocket._errors.Error) ` then `[SQL: …]` and the background link |
+> | `exc.orig` | `exasol.driver.websocket._errors.Error`, `args == ()`, `str() == ''` |
+> | `exc.orig.__cause__` | `pyexasol.exceptions.ExaQueryError`, also `exc.orig.__context__` (raised inside the handler) |
+> | its `args` | `(<itself>, message)` — `ExaError.__init__` passes `self` first, so `repr()` reads `ExaQueryError(ExaQueryError(...), '…')` |
+> | its `message` | `syntax error, unexpected SELECT_, expecting UNION_ or EXCEPT_ or MINUS_ or INTERSECT_ [line 1, column 10] (Session: 1880672662036807680)` |
+> | its `code` | `42000` |
+> | its `str()` | a multi-line block: `message`, `dsn`, `user`, `schema`, `session_id`, `code`, `query` — the DBAPI driver turns `verbose_error` on |
+>
+> Through `query`, every failed statement answered `{"ok": false, "error": ""}`: the syntax
+> error above, `COMMIT; INSERT …`, and a missing table alike. A wrong password on `attach`
+> answered `Could not open …: DBAPIError. (exasol.driver.websocket._errors.Error) ` and
+> stopped there — `_connection.py` raises the same bare `Error()` for everything but a lost
+> connection.
+>
+> The fix is generic, not Exasol's: a driver error with no words of its own takes them from
+> its chain (`loader.driver_message`, `loader.failure_text`), following `__cause__` and
+> falling back to `__context__`, cycle-safe and bounded at 16 links. A link's words are its
+> `message` attribute where it has a non-empty one, and its `str()` otherwise — which on
+> pyexasol keeps the reason and drops the block around it, so the DSN, the user, the schema
+> and the query are not added to a refusal. A driver that does say something is returned
+> byte for byte as before. After it, the same three statements answer Exasol's own reason,
+> and the wrong password answers `… Connection exception - authentication failed.`
+>
+> The `(Session: …)` suffix is Exasol's own text and is kept. It is the number of a session
+> this server opened, not a credential — it authenticates nothing, and it is what a DBA
+> needs to find the statement in `EXA_DBA_AUDIT_SQL`. The text still leaves through the
+> credential masker (`server._refusal`; `Registry._first_line` masks the open failure against
+> its URL first).
+>
+> Upstream closed [exasol/pyexasol#360](https://github.com/exasol/pyexasol/issues/360) on
+> 2026-09-14 as fixed in `pyexasol` 2.4.1, which passes the message on to the error. The lock
+> still resolves 2.3.0, inside `sqlalchemy-exasol`'s `pyexasol>=0.26,<3.0`, so every number
+> above is 2.3.0's. Under 2.4.1 the driver's own message is non-empty and this path is not
+> taken, which is the case `failure_text` leaves untouched; that version is not measured here.
+
 ### 27.7 What the database itself declines
 
 | axis | Exasol | how it refuses |

@@ -1274,3 +1274,52 @@ def test_detach_frees_the_slot_and_leaves_the_database_alone(live):
     # Detaching closed a connection; it did not drop anything.
     again = attach_writable(live)
     assert table in again["tables"]
+
+
+# ---------------------------------------------------------------------------
+# A failed statement says why (#117)
+# ---------------------------------------------------------------------------
+#
+# The Exasol driver raises its DBAPI `Error` with no words and chains the
+# server's reason, so every failed statement there answered `"error": ""`. The
+# fix is generic — a driver error with no words takes them from its chain — so
+# the generic half is asserted on every backend, and Exasol's own reason on
+# Exasol.
+
+
+def test_a_syntax_error_never_answers_an_empty_error(live):
+    attach_writable(live)
+
+    answer = call("query", nickname="endpoint", sql="SELECT 1 SELECT 2")
+
+    assert answer["ok"] is False, answer
+    assert answer["error"].strip(), answer
+
+
+_EXASOL = [target for target in TARGETS if target.name == "exasol"]
+
+
+@pytest.mark.parametrize("live", _EXASOL, indirect=True, ids=lambda target: target.name)
+def test_exasol_answers_a_syntax_error_in_its_own_words(live):
+    """The reason Exasol gave, which lives on the driver error's ``__cause__``."""
+    attach_writable(live)
+
+    answer = call("query", nickname="endpoint", sql="SELECT 1 SELECT 2")
+
+    assert answer["ok"] is False, answer
+    assert "syntax error, unexpected SELECT_" in answer["error"], answer
+    # The reason alone, not pyexasol's verbose block around it.
+    assert "dsn" not in answer["error"], answer
+
+
+@pytest.mark.parametrize("live", _EXASOL, indirect=True, ids=lambda target: target.name)
+def test_exasol_says_why_an_open_failed(live):
+    """Exasol's connect path chains its reason too: anything but a lost
+    connection is raised as an ``Error`` with no words of its own."""
+    wrong = make_url(live.url).set(password="definitely-not-the-password")
+
+    refused = call("attach", database=wrong.render_as_string(hide_password=False))
+
+    assert refused["ok"] is False, refused
+    assert "authentication failed" in refused["error"], refused
+    assert "definitely-not-the-password" not in refused["error"], refused

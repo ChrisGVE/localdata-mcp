@@ -217,7 +217,8 @@ drawn where it is follows underneath.
 
 Every verb answers with a payload carrying `ok`, and a refusal is one of those answers
 rather than a protocol error: `{"ok": false, "error": "…"}`, the reason in plain words and,
-where a name was wrong, the names that were right. That is the envelope the whole surface
+where a name was wrong, the names that were right. A driver that raises with no words of its
+own and chains the real failure — Exasol's does — is answered with the reason it chained. That is the envelope the whole surface
 shares, and it is why every refusal below is described as something the caller reads rather
 than something they catch.
 

@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And nine found in this release's own code before it shipped:
+And ten found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -379,6 +379,16 @@ And nine found in this release's own code before it shipped:
   refused as a URL before it is taken as a path — on `query` before the suffix
   is even looked at — shown the way `attach` shows it, with the verb that does
   put rows into a database: `create`, on that database attached writable.
+- **Every failed statement on Exasol answered with an empty error**
+  ([#117](https://github.com/ChrisGVE/localdata-mcp/issues/117)). A syntax error,
+  `COMMIT; INSERT …` and a missing table all came back `{"ok": false, "error":
+  ""}`, and a wrong password on `attach` stopped at the driver's class name. The
+  Exasol DBAPI driver raises its `Error` with no words and keeps the server's
+  reason on `__cause__`. A driver error with nothing of its own to say now takes
+  its words from what it chained — the reason, not `pyexasol`'s block of DSN,
+  user and query around it — in `query`'s answer, in every `Could not …`
+  refusal of `create`, `update`, `drop` and `save`, and in a failed `attach`.
+  Every other backend's wording is unchanged.
 - **A date from a typed format compared wrongly against a date literal, with no
   warning** ([#87](https://github.com/ChrisGVE/localdata-mcp/issues/87)). A
   date or timestamp column from `.parquet`, `.feather`, `.orc`, a workbook or

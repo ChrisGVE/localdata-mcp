@@ -69,7 +69,7 @@ from fastmcp import FastMCP
 from . import __version__, binding, config, temporal
 from .credentials import mask_credentials
 from .export import ExportError, export_rows
-from .loader import ColumnProfile, IndexInfo, TableInfo
+from .loader import ColumnProfile, IndexInfo, TableInfo, failure_text
 from .paths import PathNotAllowed, allowed_paths
 from .slots import Attachment, Registry, Slot, SlotError, SlotNotAvailable
 
@@ -555,7 +555,7 @@ def _answers(tool: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any
         try:
             return tool(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 - the envelope is the point
-            return _refusal(f"{type(exc).__name__}: {exc}")
+            return _refusal(f"{type(exc).__name__}: {failure_text(exc)}")
 
     return answered
 
@@ -963,7 +963,7 @@ def query(
             except SlotError as exc:
                 return _failed(exc)
             except Exception as exc:
-                return _refusal(f"{type(exc).__name__}: {exc}")
+                return _refusal(f"{type(exc).__name__}: {failure_text(exc)}")
 
             return {
                 "ok": True,
@@ -998,7 +998,7 @@ def query(
         except OSError as exc:
             return _refusal(f"Could not write {path}: {exc}")
         except Exception as exc:
-            return _refusal(f"{type(exc).__name__}: {exc}")
+            return _refusal(f"{type(exc).__name__}: {failure_text(exc)}")
 
         return {
             "ok": True,
