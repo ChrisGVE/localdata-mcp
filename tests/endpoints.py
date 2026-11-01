@@ -1577,7 +1577,10 @@ def _handshake(url: str, warmup: float) -> None:
 
     probe = select(literal(1))
     deadline = time.monotonic() + warmup
-    last: Exception | None = None
+    # Every distinct complaint, in the order first seen. Keeping only the last
+    # one hid the cause on SQL Server: the first attempt said the OpenSSL
+    # library could not be loaded, and every later one only said 08001 (#121).
+    complaints: dict[str, None] = {}
     while True:
         engine = create_engine(url)
         try:
@@ -1585,14 +1588,15 @@ def _handshake(url: str, warmup: float) -> None:
                 conn.execute(probe)
             return
         except Exception as exc:  # noqa: BLE001 - every driver has its own
-            last = exc
+            lines = [line for line in str(exc).splitlines() if line.strip()]
+            complaints[f"{type(exc).__name__}: {lines[0] if lines else ''}"] = None
         finally:
             engine.dispose()
         if time.monotonic() >= deadline:
             raise RuntimeError(
                 f"A container is listening but never completed a handshake "
-                f"within {warmup:.0f}s. Last complaint: {type(last).__name__}: "
-                f"{str(last).splitlines()[0] if last else ''}"
+                f"within {warmup:.0f}s. Complaints, first seen first: "
+                + " | ".join(complaints)
             )
         time.sleep(1.0)
 
