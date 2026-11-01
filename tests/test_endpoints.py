@@ -748,6 +748,83 @@ def test_directory_describes_a_table_the_endpoint_holds(live):
         assert not any("_row" in note for note in described.get("warnings", ()))
 
 
+def test_stats_profiles_a_table_the_endpoint_holds(live):
+    """``stats`` on every URL backend, with the numbers known from the file (#120).
+
+    No endpoint test called ``stats``, so ``Workspace.profile`` was exercised on
+    SQLite and DuckDB alone. On every backend whose indexes reflection cannot
+    find, the table it selects from is now built from ``get_columns`` rather than
+    reflected whole, and nothing said whether that holds on a live server.
+
+    One gap in a text column and one in a numeric column, so the null count is a
+    measurement rather than a zero every implementation would report. The
+    expected values are read off the CSV below by hand, never off the server:
+    four salaries, 75000 + 65000 + 80000 + 55000 = 275000, averaging 68750.
+
+    The column set is asserted as a whole before any column is read, so the
+    per-column loop cannot pass by having nothing to loop over. A surrogate key,
+    where the backend demanded one, is a real column ``stats`` must profile too;
+    it holds each row's position in the file, 0..4.
+    """
+    attach_writable(live)
+    gapped = live.root / "staffed.csv"
+    gapped.write_text(
+        "name,department,salary\n"
+        "alice,engineering,75000\n"
+        "bob,,65000\n"
+        "carol,marketing,\n"
+        "dave,engineering,80000\n"
+        "eve,hr,55000\n"
+    )
+    table = live.table("staffed")
+    made = call(
+        "create",
+        nickname="endpoint",
+        type="table",
+        source=str(gapped),
+        table=table,
+        delimiter=",",
+    )
+    assert made["ok"] is True, made
+
+    profiled = call("stats", nickname="endpoint", table=table)
+
+    assert profiled["ok"] is True, profiled
+    assert profiled["rows"] == 5
+    expected = ["name", "department", "salary"]
+    if backend_for_url(live.url).requires_primary_key():
+        expected = ["_row", *expected]
+    columns = {column["name"]: column for column in profiled["columns"]}
+    assert [column["name"] for column in profiled["columns"]] == expected, columns
+
+    # Nothing in this table is mixed or a date in no standard, so no column has
+    # a reason to be withheld; one that is would be a backend misreading its own
+    # storage, and would also hide the statistics asserted below.
+    withheld = {name: c["withheld"] for name, c in columns.items() if "withheld" in c}
+    assert withheld == {}, withheld
+
+    counts = {
+        name: (column["nulls"], column["non_nulls"]) for name, column in columns.items()
+    }
+    assert counts["name"] == (0, 5)
+    assert counts["department"] == (1, 4)
+    assert counts["salary"] == (1, 4)
+
+    salary = columns["salary"]
+    assert salary["min"] == 55000
+    assert salary["max"] == 80000
+    assert salary["avg"] == pytest.approx(68750)
+
+    # A text column gets its null count and nothing more.
+    for name in ("name", "department"):
+        assert not {"min", "max", "avg"} & set(columns[name]), columns[name]
+
+    if "_row" in columns:
+        assert counts["_row"] == (0, 5)
+        assert (columns["_row"]["min"], columns["_row"]["max"]) == (0, 4)
+        assert columns["_row"]["avg"] == pytest.approx(2)
+
+
 def test_the_slot_lists_the_table_that_was_added_to_it(live):
     attach_writable(live)
     table = land_people(live)
