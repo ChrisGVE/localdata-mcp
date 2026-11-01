@@ -6034,3 +6034,16 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > and the absence of the copy. With the gate reverted, only the no-separator shape keeps its row;
 > the other three were already held back by the never-commit floor, and stay as pins on the gate.
 > `mssql[odbc-dsn]` still times out at login and was not part of this measurement.
+
+> **Amended 2026-11-01 — pyexasol 2.4.1 copies the verbose block
+> ([#117](https://github.com/ChrisGVE/localdata-mcp/issues/117)).** The lock moved from pyexasol
+> 2.3.0 to 2.4.1, which needed pydantic 2.12.5 → 2.14.2. In 2.4.1 the DBAPI layer no longer raises
+> an empty `Error() from ex`. It raises `translate_exception(ex) from ex`, which copies `str(ex)`.
+> With `verbose_error` on, that is pyexasol's block: it starts with a newline and lists the DSN,
+> the user, the schema and the query around `ex.message`. So the error was no longer empty, the
+> chain lookup never ran, and the answer's first line was blank. Endpoint batch d failed
+> `test_exasol_answers_a_syntax_error_in_its_own_words` and `test_exasol_says_why_an_open_failed`.
+> Now `driver_message` and `failure_text` use a chained link's `message` when the driver's text
+> contains it and says more. A driver that chose different words keeps them. Batch d after the
+> change: 1197 passed, 0 failed. There is no pyexasol floor of our own, because the empty-error
+> shape of 2.3.0 is still handled.

@@ -438,6 +438,32 @@ def _chained_words(exc: BaseException) -> str:
     return ""
 
 
+def _copied_reason(driver: BaseException) -> str:
+    """The shorter reason ``driver`` copied from its chain, or ``""``.
+
+    A driver whose message is a copy of a lower error's rendering, wrapped
+    around that error's own ``message``, has said something, but not the
+    reason. ``pyexasol`` 2.4.1 is the instance: its DBAPI layer now raises
+    ``ProgrammingError(str(ex)) from ex``, and with ``verbose_error`` on (the
+    default) ``str(ex)`` is a block beginning with a newline that lists the
+    DSN, the user, the schema and the query around ``ex.message``. The reason
+    is found only when the driver's own text contains it and says more, so a
+    driver that chose different words keeps them.
+    """
+    own = str(driver)
+    seen = {id(driver)}
+    link = driver.__cause__ or driver.__context__
+    for _ in range(_CHAIN_DEPTH):
+        if link is None or id(link) in seen:
+            return ""
+        seen.add(id(link))
+        message = getattr(link, "message", None)
+        if isinstance(message, str) and message and message != own and message in own:
+            return message
+        link = link.__cause__ or link.__context__
+    return ""
+
+
 def driver_message(exc: BaseException) -> str:
     """The driver's own words for a failure, taken from its chain if it has none.
 
@@ -455,7 +481,7 @@ def driver_message(exc: BaseException) -> str:
     origin = getattr(exc, "orig", None)
     driver = origin if origin is not None else exc
     own = str(driver)
-    return own or _chained_words(driver)
+    return _copied_reason(driver) or own or _chained_words(driver)
 
 
 def failure_text(exc: BaseException) -> str:
@@ -472,8 +498,12 @@ def failure_text(exc: BaseException) -> str:
     text = str(exc)
     origin = getattr(exc, "orig", None)
     if origin is None:
-        return text or _chained_words(exc)
-    if str(origin):
+        return _copied_reason(exc) or text or _chained_words(exc)
+    own = str(origin)
+    copied = _copied_reason(origin)
+    if copied:
+        return text.replace(own, copied, 1)
+    if own:
         return text
     words = _chained_words(origin)
     if not words:
