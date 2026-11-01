@@ -1400,3 +1400,73 @@ def test_exasol_says_why_an_open_failed(live):
     assert refused["ok"] is False, refused
     assert "authentication failed" in refused["error"], refused
     assert "definitely-not-the-password" not in refused["error"], refused
+
+
+#: T-SQL shapes that write without starting with a write keyword, or that hide
+#: a write behind a read in one batch. Each is planned by SQL Server itself as
+#: something other than one ``SELECT`` and so must be refused by its reader
+#: (#122). ``{table}`` and ``{insert}`` are filled in per test.
+_MSSQL_HIDDEN_WRITES = {
+    "no-separator": "SELECT 1 {insert}",
+    "select-into": "SELECT * INTO {table}_copy FROM {table}",
+    "exec-string": "EXEC('{insert_quoted}')",
+    "declare-first": "DECLARE @n int = 1; {insert}",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_MSSQL_HIDDEN_WRITES))
+def test_sql_server_query_runs_nothing_its_plan_does_not_call_one_select(live, shape):
+    """On SQL Server, ``query`` refuses any batch not planned as one ``SELECT`` (#122).
+
+    T-SQL runs a whole batch and needs no separator, so a read can be followed
+    by a write in the same string, and ``SELECT … INTO`` or ``EXEC('…')``
+    write without a write keyword first. The reader asks SQL Server's own
+    ``SHOWPLAN_XML`` what each statement is before running any of them. The
+    count, and for ``SELECT … INTO`` the absence of the copy, is the
+    assertion: a refusal reported after the row was kept is the defect.
+    """
+    backend = backend_for_url(live.url)
+    if backend.name != "mssql":
+        pytest.skip("T-SQL batch shapes; SQL Server only")
+    attach_writable(live)
+    table = land_people(live)
+    insert = f"INSERT INTO {table} (name, department, salary) VALUES ('x', 'y', 1)"
+    sql = _MSSQL_HIDDEN_WRITES[shape].format(
+        table=table, insert=insert, insert_quoted=insert.replace("'", "''")
+    )
+
+    written = call("query", nickname="endpoint", sql=sql)
+
+    assert written["ok"] is False, written
+    assert "create" in written["error"], written
+    after = call(
+        "query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}"
+    )["rows"]
+    assert after == [[5]], (after, written)
+    copy = call(
+        "query", nickname="endpoint", sql=f"SELECT OBJECT_ID('{table}_copy') AS id"
+    )["rows"]
+    assert copy == [[None]], (copy, written)
+
+
+def test_sql_server_query_still_reads_a_cte_and_for_xml(live):
+    """The SQL Server gate costs no read: a CTE and a ``FOR XML`` still answer (#122)."""
+    backend = backend_for_url(live.url)
+    if backend.name != "mssql":
+        pytest.skip("T-SQL read shapes; SQL Server only")
+    attach_writable(live)
+    table = land_people(live)
+
+    cte = call(
+        "query",
+        nickname="endpoint",
+        sql=f"WITH q AS (SELECT name FROM {table}) SELECT count(*) AS n FROM q",
+    )
+    xml = call(
+        "query",
+        nickname="endpoint",
+        sql=f"SELECT TOP 1 name FROM {table} ORDER BY name FOR XML PATH",
+    )
+
+    assert cte["ok"] is True and cte["rows"] == [[5]], cte
+    assert xml["ok"] is True and len(xml["rows"]) == 1, xml

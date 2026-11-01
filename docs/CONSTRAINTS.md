@@ -5990,3 +5990,47 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > After the change, on the three containers: `INSERT … RETURNING` through `query` is refused on
 > Firebird and CrateDB with the count at 5, and answers `ok` on MonetDB with the count at 5. The
 > other backends were not re-run for this amendment; their rows in the #118 report stand.
+
+> **Amended 2026-11-01 — SQL Server kept the row
+> ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)).** §34 could not measure SQL
+> Server: this machine had no ODBC driver. With msodbcsql18 18.7.1.1 (loaded with
+> `DYLD_LIBRARY_PATH=/usr/local/opt/openssl@3/lib`, because `/usr/local/opt/openssl` now points at
+> openssl@4 and the driver refuses it) against `mcr.microsoft.com/mssql/server:2022-latest`:
+> `COMMIT; INSERT …` and `ROLLBACK; INSERT …` through `query` were refused, but the row was kept
+> (count 5 → 6). pyodbc sends the string as one batch, SQL Server runs every statement in it, and
+> the user's `COMMIT` ends the transaction the reader never commits, so the `INSERT` autocommits.
+> `SELECT 1 SELECT 2` answered `ok`: T-SQL needs no separator between statements. The `OUTPUT
+> inserted.*` form was refused with the count at 5.
+>
+> SQL Server has no read-only transaction or session to open the reader in, and a first-keyword
+> gate like CrateDB's would not be exact: a batch can follow a read with a write. What SQL Server
+> does have is `SET SHOWPLAN_XML ON`. With it on, the server compiles the batch and returns one plan
+> per statement without executing any of them. Measured: the `StatementType` of each top-level
+> statement is `SELECT`, `SELECT WITHOUT QUERY` (no `FROM`) or `XML SELECT` (`FOR XML`) for reads.
+> `COMMIT; INSERT` gives `COMMIT TRANSACTION`, `INSERT`. Other results: `SELECT … INTO` is
+> `SELECT INTO`, `EXEC('…')` is `EXECUTE STRING`, `DECLARE @x int = 1` is `ASSIGN`, `BEGIN TRAN`
+> is `BEGIN TRANSACTION`, and `SELECT 1 GO SELECT 2` is two statements. The row count did not
+> move, and no table was created. A syntax error comes back as the server's own error.
+>
+> So `MSSQLBackend.read_posture` installs the same two hooks as CrateDB's. It plans each
+> statement on the same cursor and switches `SHOWPLAN_XML` off again whatever happens. It runs
+> the statement only if the plan holds exactly one top-level statement of those three kinds and no
+> `Remote…` operator. A remote statement's kind is not in the local plan, so refusing it costs a
+> linked-server read, never a local one. Otherwise it raises pyodbc's own `ProgrammingError`, and
+> `query` answers "This statement asks to run an INSERT statement…" or "…to run 2 statements in
+> one batch". The server classifies its own grammar, and nothing here parses SQL.
+>
+> Two measured details shape it. First, only the batch's own statements are counted (the children
+> of `Batch/Statements`). The plan of `SELECT 1 FROM fn_listextendedproperty(…)`, which SQLAlchemy
+> sends on connect, also carries the function body: dozens of `INSERT` into its return table.
+> Second, a statement with bound parameters gets no plan at all (pyodbc: "No results. Previous
+> SQL was not a query"), so it is not planned. Only this server's own statements carry
+> parameters. `query` runs the caller's SQL as `text(sql)` with no values, so a `:name` is refused
+> by SQLAlchemy before it is sent, and a `?` reaches the driver with no values and fails there.
+>
+> After the change, on the container: 32/32 SQL Server endpoint tests pass, the three #122 cases
+> included. The new `test_sql_server_query_runs_nothing_its_plan_does_not_call_one_select` sends
+> four shapes (no separator, `SELECT … INTO`, `EXEC('…')`, `DECLARE` first) and asserts the count
+> and the absence of the copy. With the gate reverted, only the no-separator shape keeps its row;
+> the other three were already held back by the never-commit floor, and stay as pins on the gate.
+> `mssql[odbc-dsn]` still times out at login and was not part of this measurement.

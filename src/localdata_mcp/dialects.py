@@ -61,6 +61,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar
+from xml.etree import ElementTree
 
 from sqlalchemy import (
     DDL,
@@ -1632,6 +1633,108 @@ class OracleBackend(Backend):
 _VARCHAR_MAX = 8000
 
 
+#: The statement kinds SQL Server's own plan reports for a read, and the only
+#: ones its reader will run. ``SELECT WITHOUT QUERY`` is a ``SELECT`` with no
+#: ``FROM`` (``SELECT 1``); ``XML SELECT`` is one ending ``FOR XML``. Measured on
+#: 2022 (16.x): ``SELECT … INTO`` reports ``SELECT INTO``, a ``DECLARE`` with a
+#: value ``ASSIGN``, ``EXEC('…')`` ``EXECUTE STRING`` — none of them here.
+_MSSQL_READS = frozenset({"SELECT", "SELECT WITHOUT QUERY", "XML SELECT"})
+
+#: The namespace every ``SHOWPLAN_XML`` document is written in.
+_SHOWPLAN = "{http://schemas.microsoft.com/sqlserver/2004/07/showplan}"
+
+#: An operator that sends work to another server. A remote statement's own
+#: kind is not in the local plan, so a read cannot be told from a write there;
+#: refusing every remote operator is the fail-closed answer, and it costs a
+#: linked-server read, never a local one.
+_MSSQL_REMOTE_OPERATOR = re.compile(r'PhysicalOp="Remote')
+
+
+def _mssql_batch_kinds(plan: str) -> list[str]:
+    """The kinds of the statements the caller wrote, from one plan document.
+
+    Only the batch's own statements, the children of each
+    ``Batch/Statements``. A plan also carries the bodies of functions a
+    statement calls: ``SELECT 1 FROM fn_listextendedproperty(…)`` plans one
+    ``SELECT`` and, inside it, the function's dozens of ``INSERT`` into its
+    own return table, which writes nothing that outlives the call. Counting
+    those would refuse SQLAlchemy's own connect-time probe.
+    """
+    root = ElementTree.fromstring(plan)
+    return [
+        statement.get("StatementType", statement.tag.removeprefix(_SHOWPLAN))
+        for statements in root.iterfind(
+            f"{_SHOWPLAN}BatchSequence/{_SHOWPLAN}Batch/{_SHOWPLAN}Statements"
+        )
+        for statement in statements
+    ]
+
+
+def _mssql_planned_kinds(cursor: Any, statement: str) -> tuple[list[str], bool]:
+    """Every statement kind SQL Server plans for ``statement``, without running it.
+
+    ``SET SHOWPLAN_XML ON`` makes the server compile the batch and answer one
+    plan per statement instead of executing anything, so the kinds come from
+    SQL Server's own parser rather than from one of ours. Measured: with it on,
+    ``COMMIT; INSERT …`` answers ``COMMIT TRANSACTION`` and ``INSERT`` and the
+    row count does not move. Also answers whether any plan reaches another
+    server. Switched off again whatever happens, on the same cursor, so the
+    connection goes back to the pool executing statements.
+    """
+    cursor.execute("SET SHOWPLAN_XML ON")
+    try:
+        cursor.execute(statement)
+        kinds: list[str] = []
+        remote = False
+        while True:
+            for (plan,) in cursor.fetchall():
+                kinds += _mssql_batch_kinds(plan)
+                remote = remote or bool(_MSSQL_REMOTE_OPERATOR.search(plan))
+            if not cursor.nextset():
+                break
+        return kinds, remote
+    finally:
+        cursor.execute("SET SHOWPLAN_XML OFF")
+
+
+def _refuse_mssql_write(
+    refusal: Refusal, cursor: Any, statement: str, parameters: Any
+) -> None:
+    """Refuse ``statement`` unless SQL Server plans it as exactly one read.
+
+    One statement, because T-SQL runs a whole batch and needs no separator
+    between statements: ``SELECT 1 SELECT 2`` is two, and ``COMMIT; INSERT …``
+    ends the read transaction before writing outside it (#122). A batch of two
+    reads is refused as well; it is not a write, but ``query`` answers one
+    result, and the rule stays a count rather than a judgement.
+
+    **A statement with bound parameters is not planned, and is this server's
+    own.** ``SHOWPLAN_XML`` answers no plan at all for one (measured: pyodbc
+    then reports "No results"), so asking would refuse SQLAlchemy's
+    reflection. The caller's SQL cannot arrive with parameters:
+    :meth:`loader.Workspace.query_stream` runs it as ``text(sql)`` with no
+    values, so a ``:name`` in it is refused by SQLAlchemy before anything is
+    sent, and a ``?`` reaches the driver with no values and fails there. Every
+    parameterised statement on the reader is one this server composed. Raises
+    pyodbc's own ``ProgrammingError``, a DBAPI ``Error``, so SQLAlchemy wraps
+    it and ``query`` explains it as a refused write.
+    """
+    if parameters:
+        return
+    kinds, remote = _mssql_planned_kinds(cursor, statement)
+    if len(kinds) == 1 and kinds[0] in _MSSQL_READS and not remote:
+        return
+    import pyodbc
+
+    if remote:
+        refusal.what = "reach another server"
+    elif len(kinds) != 1:
+        refusal.what = f"run {len(kinds)} statements in one batch"
+    else:
+        refusal.what = f"run {article_for(kinds[0])} {kinds[0]} statement"
+    raise pyodbc.ProgrammingError(f"query may not {refusal.what}.")
+
+
 @dataclass(frozen=True)
 class MSSQLBackend(Backend):
     """SQL Server, which renames tables by procedure and has no usable ``TEXT``.
@@ -1672,6 +1775,34 @@ class MSSQLBackend(Backend):
         conn.execute(
             text("EXEC sp_rename :existing, :wanted"), {"existing": table, "wanted": to}
         )
+
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        """Refuse, before it runs, anything SQL Server does not plan as one read.
+
+        SQL Server has no read-only transaction or session to open the reader
+        in, and the generic floor (never commit) does not hold here: the batch
+        is the caller's, so ``COMMIT; INSERT …`` ends the transaction this
+        server wrapped around it and the ``INSERT`` autocommits outside it —
+        measured, the row stayed (#122). So every statement on the reader is
+        first compiled under ``SHOWPLAN_XML`` and run only if the server's own
+        plan says it is one ``SELECT`` (:func:`_refuse_mssql_write`). Nothing
+        here parses SQL; the server classifies its own grammar.
+
+        Installed on the reader only, through the same two hooks as
+        :meth:`CrateDBBackend.read_posture`. Every statement this server runs
+        on the reader itself, reflection, ``stats`` and the counts, is a single
+        ``SELECT``. The cost is one extra compile per statement.
+        """
+
+        @event.listens_for(engine, "do_execute")
+        def _with_parameters(cursor, statement, parameters, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_mssql_write(refusal, cursor, statement, parameters)
+            return False
+
+        @event.listens_for(engine, "do_execute_no_params")
+        def _without_parameters(cursor, statement, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_mssql_write(refusal, cursor, statement, None)
+            return False
 
 
 # ---------------------------------------------------------------------------

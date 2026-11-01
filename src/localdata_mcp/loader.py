@@ -2437,11 +2437,13 @@ class Workspace:
         Enforced by the connection's posture rather than by reading the SQL: this
         engine's connections are read-only from the moment they are opened, so
         there is no text to parse and mis-parse and no window in which the
-        posture is briefly something else. CrateDB is the one backend with no
-        posture to open, and there the backend reads the statement's first
-        keyword before it is sent, because its grammar makes that keyword the
-        statement's kind (:func:`dialects._cratedb_first_keyword`, #118). That
-        is CrateDB's posture, kept in :mod:`dialects`, and nothing here parses.
+        posture is briefly something else. Two backends have no posture to
+        open, and there the backend classifies the statement before it runs.
+        CrateDB reads its first keyword, because its grammar makes that keyword
+        the statement's kind (:func:`dialects._cratedb_first_keyword`, #118).
+        SQL Server asks its own ``SHOWPLAN_XML`` what each statement in the
+        batch is (:func:`dialects._refuse_mssql_write`, #122). Both are kept in
+        :mod:`dialects`, and nothing here parses.
 
         **The whole result comes back.** Bounding it here was tried and removed:
         a row cap measures the wrong dimension, since a hundred rows of a
