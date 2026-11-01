@@ -1138,11 +1138,18 @@ def _mssql_dsn(env: dict[str, str], port: int, scratch: Path) -> Reached:
     driver = _odbc_driver()
     dsn = "localdata-test-mssql-dsn"
     odbcini = scratch / "odbc.ini"
+    # The two drivers disagree about where the port goes. FreeTDS reads a
+    # `Port` key; Microsoft's driver ignores it and reaches 1433, which timed
+    # out at login (HYT00) — measured with msodbcsql18 18.7.1.1. It takes the
+    # port in `Server` as `host,port`.
+    if Path(driver).name == "libtdsodbc.so":
+        address = f"Server = {HOST}\nPort = {port}\n"
+    else:
+        address = f"Server = {HOST},{port}\n"
     odbcini.write_text(
         f"[{dsn}]\n"
         f"Driver = {driver}\n"
-        f"Server = {HOST}\n"
-        f"Port = {port}\n"
+        f"{address}"
         f"Database = master\n"
         f"TrustServerCertificate = yes\n"
     )
