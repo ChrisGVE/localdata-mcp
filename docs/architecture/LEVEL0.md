@@ -334,7 +334,8 @@ which is not equally far:
   DuckDB exempts the database's own `.wal`, and a `COPY` can still write there
   (`CONSTRAINTS.md` §29.4, [#106](https://github.com/ChrisGVE/localdata-mcp/issues/106)).
   This is accepted, not pending: the write cannot reach any file the database does not
-  already own, and closing it would mean inspecting SQL text, which this server does not do.
+  already own, and closing it would mean inspecting SQL text, which this server does not do
+  outside CrateDB's first-keyword gate (below), where the grammar makes it exact.
   It is revisited only if DuckDB stops exempting that path.
 - **MySQL and MariaDB** open a read-only session, and they have to: DDL commits itself
   there, so a `CREATE TABLE` on a connection that never commits would otherwise be
@@ -350,14 +351,27 @@ which is not equally far:
   a connection that never commits is simply applied. Its read engine therefore carries
   `readonly=1` in the URL, and the database refuses DML and DDL alike before either runs —
   which makes it *stronger* here than the backends that rely on rollback, not weaker.
-- **CrateDB** has no transactions either and no read-only posture to reach for, so it is
-  the one backend where the floor is absent on **both** axes: `dml_survives_refusal()` and
-  `ddl_survives_refusal()` are both `True`, and a refused `INSERT` is in the index before
-  this server has anything to say about it. It is worse than Oracle, which loses only the
-  DDL half. Both halves of the axis are read when the refusal is composed, so on CrateDB it
-  names the rows as well as `CREATE`/`DROP`: a caveat that names the wrong half points a
-  reader away from what happened, which is worse than none at all
-  ([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
+- **CrateDB** has no transactions either and no read-only session: the settings that look
+  like one are accepted and ignored, and its read-only switch is cluster-wide, so it would
+  stop the writer too. What its grammar gives instead is a statement whose first keyword is
+  its kind — one statement per request, and no write nested inside a read. So the read engine
+  reads that keyword before a statement is sent and refuses anything but `SELECT`, `WITH`,
+  `VALUES`, `SHOW` and `EXPLAIN`, skipping comments exactly where CrateDB does. This is the
+  one place the server reads SQL text, and it is CrateDB's posture rather than a parser: it
+  is exact only because CrateDB's grammar makes it so, and it fails closed. Nothing written
+  through `query` survives there, so CrateDB answers `ddl_survives_refusal()` with the
+  generic `False`, and a datasource attached without `writable` refuses a write through
+  `query` as it does everywhere else
+  ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)).
+- **Firebird** keeps its writes inside the transaction, and the floor rolls them back, but a
+  rollback is not a refusal: `INSERT … RETURNING` hands back rows like a read and came back
+  `ok` with a row that was then discarded. Its read engine therefore opens `readonly=true`, a
+  read-only transaction that refuses the statement before it changes anything
+  ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)).
+- **MonetDB** has no read-only transaction to ask for, and its grammar nests a write inside a
+  `WITH`, so neither a posture nor a first-keyword gate is available. The floor rolls a write
+  back, so nothing is kept, but `INSERT … RETURNING` through `query` still answers `ok` with
+  the row it returned ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).
 
 Underneath all of them is one dialect-free rule: **a statement that returns no rows is not
 a read**, and is refused on that ground. No SQL is parsed to decide it — a `SELECT` returns
@@ -494,10 +508,10 @@ this server built is a database it holds.
 | CockroachDB | URL | nothing — and on a different engine speaking PostgreSQL's wire, that is the result rather than an absence |
 | YugabyteDB | URL | nothing — reached on PostgreSQL's dialect, which is why the seam had to learn to ask the *engine* what it is rather than trust the dialect's name |
 | Trino | URL | an isolation level, since the driver connects in `AUTOCOMMIT` and there is no transaction left to withhold; `LargeBinary`; and `create(type='index')`, since it owns no storage to index |
-| MonetDB | URL | nothing — a column store, and not the first here in any sense: DuckDB (a file) and ClickHouse (a URL, which creates its tables as `MergeTree`) both came earlier. What it shows is that it answers every axis the way a row store does |
-| CrateDB | URL | that a refused write really happened, since it has neither transactions nor a read-only session; a `REFRESH TABLE` before a write can be read back; the driver's type converter, without which a date arrives as epoch milliseconds; `LargeBinary` and `Time`, which it does not have, and `Numeric`, which its dialect silently truncates; and the refusal of `create(type='index')`, since every column is indexed already |
+| MonetDB | URL | nothing — a column store, and not the first here in any sense: DuckDB (a file) and ClickHouse (a URL, which creates its tables as `MergeTree`) both came earlier. What it shows is that it answers every axis the way a row store does. It is also the one backend where `INSERT … RETURNING` through `query` answers `ok` with a row the floor then rolls back, since it has no read-only transaction to ask for ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)) |
+| CrateDB | URL | a first-keyword gate on the read engine that refuses anything but a query before it is sent, since it has neither transactions nor a read-only session; a `REFRESH TABLE` before a write can be read back; the driver's type converter, without which a date arrives as epoch milliseconds; `LargeBinary` and `Time`, which it does not have, and `Numeric`, which its dialect silently truncates; and the refusal of `create(type='index')`, since every column is indexed already |
 | openGauss | URL | nothing — but it is the first PostgreSQL fork here that cannot be *addressed* as PostgreSQL, since its version banner does not parse and SQLAlchemy's own PGDialect raises while initialising the connection; it ships its own dialect, so there is no impostor to resolve either |
-| Firebird | URL | that rows cannot be written in the transaction that created the table, since DDL is transactional *and* prepared against committed metadata; the refusal of `update(type='table', to=…)`, since no statement renames a table here; `DOUBLE PRECISION`, since the dialect renders `Double` as a keyword Firebird lacks; and `VARCHAR` sized from the data, since `Text` becomes a `BLOB` that groups by identity rather than by value |
+| Firebird | URL | a read-only transaction on the read engine (`readonly=true`), since the floor rolls a write back without refusing it; that rows cannot be written in the transaction that created the table, since DDL is transactional *and* prepared against committed metadata; the refusal of `update(type='table', to=…)`, since no statement renames a table here; `DOUBLE PRECISION`, since the dialect renders `Double` as a keyword Firebird lacks; and `VARCHAR` sized from the data, since `Text` becomes a `BLOB` that groups by identity rather than by value |
 | YDB | URL | a **primary key on every loaded table**, since it has no heap tables and a file has no key to offer — so one holding the row's position is added and reported; a **read-only isolation level**, since an uncommitted write here is not rolled back at all and the floor has to be a refusal rather than an undo; the two codes that refusal arrives under, one for rows and one for schema; and `Time`, which it does not have |
 | Exasol | URL | **autocommit turned off for the read engine**, since its driver commits every statement by default and the transactional floor is otherwise no floor at all; the driver's own type mapper, without which a number widened by `SUM` arrives as the *string* `'155000'` and a `TIMESTAMP` as text; `RENAME TABLE`; `LargeBinary`, which the database does not have and its dialect refuses at compile time; and the refusal of `create(type='index')`, since the engine maintains its own indexes and offers no statement for one |
 

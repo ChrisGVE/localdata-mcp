@@ -946,7 +946,6 @@ def test_the_backend_that_cannot_see_its_own_new_tables_says_so():
 
     assert backend.sees_new_tables_in_transaction() is False
     assert backend.ddl_survives_refusal() is False
-    assert backend.dml_survives_refusal() is False
 
 
 def test_firebird_respells_the_two_portable_types_its_dialect_renders_unusably():
@@ -1148,37 +1147,42 @@ def test_a_rename_is_issued_as_schema_rather_than_as_an_opaque_statement():
     assert str(executed[0]) == 'ALTER TABLE "orders" RENAME TO "sales"'
 
 
-def test_the_transactionless_backends_do_not_all_answer_the_same_way():
-    """ClickHouse has no transactions and still refuses before the write happens.
+def test_the_transactionless_backends_both_refuse_before_the_write_happens():
+    """Neither has transactions, and each refuses before the write happens.
 
-    CrateDB, the other transactionless entry, declares both survivals because it
-    has no posture to put in their place. ClickHouse supplies one of its own —
-    ``readonly=1`` refuses the statement before it reaches the data — so the
-    generic ``False`` is the truthful answer there, and asserting the two apart
-    is what keeps "no transactions" from being read as an excuse.
+    ClickHouse supplies a posture of its own — ``readonly=1`` refuses the
+    statement before it reaches the data. CrateDB has no such setting, and
+    until #118 it declared both survivals for want of one; its statement gate
+    now refuses anything but a query before it is sent. So the generic
+    ``False`` is the truthful answer on both, and each reaches it through a
+    posture of its own, which is what keeps "no transactions" from being read
+    as an excuse.
     """
     clickhouse = backend_for("clickhousedb")
     crate = backend_for("crate")
 
-    assert clickhouse.dml_survives_refusal() is False
     assert clickhouse.ddl_survives_refusal() is False
-    assert crate.dml_survives_refusal() is True
-    assert crate.ddl_survives_refusal() is True
+    assert crate.ddl_survives_refusal() is False
+    # Each by its own posture, not by the generic floor neither of them has.
+    assert dict(clickhouse.read_only_query) == {"readonly": "1"}
+    assert type(crate).read_posture is not Backend.read_posture
 
 
 def test_the_refusal_names_whichever_axis_actually_survives():
-    """Both halves of the axis are read, and the caveat is built from the answer.
+    """The caveat is built from what survives, and only schema still can.
 
     Only the DDL half used to be consulted, so a refused ``INSERT`` on CrateDB —
-    where the row really does land — came back with a caveat about ``CREATE``
+    where the row really did land — came back with a caveat about ``CREATE``
     and ``DROP``. To a caller that reads as *this was not DDL, so nothing
     happened*, which points away from the row instead of at it: worse than no
     caveat at all, since no caveat at least leaves them to check (issue #84).
+    Since #118 CrateDB refuses the write before it is sent, nothing survives
+    there, and the rows half of the axis went with it.
 
     Driven through :func:`loader._not_a_read` rather than through a live
     connection, because what is under test is the composition and the three
-    backends below give it its three distinct answers. That the row genuinely
-    survives on CrateDB is the container test's job, and it asserts it.
+    backends below give it its answers. That nothing survives on CrateDB is
+    the container test's job, and it asserts it.
     """
     from types import SimpleNamespace
 
@@ -1199,12 +1203,11 @@ def test_the_refusal_names_whichever_axis_actually_survives():
     assert "already taken effect" in oracle
     assert "rows" not in oracle.split("One caveat")[1]
 
-    # Both. The row is what the caller has to be told about, and the remedy is
-    # not `drop` on what a CREATE made — there is no verb here that deletes rows.
+    # Neither, since #118: the gate refuses before anything is sent, so a
+    # caveat that the statement already took effect would now be the lie.
     crate = refusal_for("crate")
-    assert "If this was a CREATE or a DROP" in crate
-    assert "If it wrote rows, those rows have already taken effect" in crate
-    assert "drop on the table and create again" in crate
+    assert "caveat" not in crate
+    assert "already taken effect" not in crate
 
 
 # ---------------------------------------------------------------------------
@@ -1629,3 +1632,149 @@ def test_firebirds_read_only_refusal_is_recognised_by_its_code_and_nothing_else(
     )
     assert not firebird.denies_write(wrapped(OperationalError("no codes")))
     assert not firebird.denies_write(ValueError("nothing structured here"))
+
+
+# ---------------------------------------------------------------------------
+# CrateDB's statement gate (#118)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sql", "keyword"),
+    [
+        ("SELECT 1", "SELECT"),
+        ("select 1", "SELECT"),
+        ("SeLeCt 1", "SELECT"),
+        ("WITH q AS (SELECT 1) SELECT * FROM q", "WITH"),
+        ("VALUES (1)", "VALUES"),
+        ("show tables", "SHOW"),
+        ("EXPLAIN SELECT 1", "EXPLAIN"),
+        ("\n\t  SELECT 1", "SELECT"),
+        ("-- note\nSELECT 1", "SELECT"),
+        ("--x\rSELECT 1", "SELECT"),
+        ("--x\rINSERT INTO t VALUES (1)", "INSERT"),
+        ("-- a\x0bSELECT 1\nINSERT INTO t VALUES (1)", "INSERT"),
+        ("-- a\x0c SELECT 1\nDELETE FROM t", "DELETE"),
+        ("/* a /* b */ SELECT 1", "SELECT"),
+        ("/* x */ INSERT INTO t VALUES (1)", "INSERT"),
+        ("/*+ hint */ SELECT 9", "SELECT"),
+        ("/* a */ -- b\n /* c */ SELECT 1", "SELECT"),
+        ("SELECT*FROM t", "SELECT"),
+        ("SELECTED", "SELECTED"),
+        ("selectx", "SELECTX"),
+        ("select1", "SELECT1"),
+        ("/* SELECT", None),
+        ("-- SELECT 1", None),
+        ("", None),
+        ("   \n\t", None),
+        ("(SELECT 1)", None),
+        ('"SELECT"', None),
+        ("\xa0SELECT 1", None),
+        ("﻿SELECT 1", None),
+    ],
+)
+def test_the_cratedb_gate_reads_the_first_keyword_as_cratedb_lexes_it(sql, keyword):
+    """Comments and whitespace are skipped exactly where CrateDB skips them.
+
+    Measured on ``crate:latest`` (6.5.0): ``/* */`` does not nest, a ``--``
+    comment ends at the first ``\\r`` or ``\\n`` and at nothing else, and a
+    leading no-break space or byte-order mark is a parse error. A disagreement
+    about where a comment ends is the one way this could read ``SELECT`` where
+    CrateDB reads ``INSERT``, so those cases are the point of the table. The
+    keyword is the whole identifier, so ``SELECTED`` is not ``SELECT``.
+    """
+    from localdata_mcp.dialects import _cratedb_first_keyword
+
+    assert _cratedb_first_keyword(sql) == keyword
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 1",
+        "with q as (select 1) select * from q",
+        "VALUES (1)",
+        "SHOW TABLES",
+        # Returns CrateDB's plan and runs nothing, measured. EXPLAIN ANALYZE of
+        # a write is refused by CrateDB itself; of a SELECT it runs the read.
+        "EXPLAIN INSERT INTO t VALUES (1)",
+        "/* a /* b */ SELECT 1",
+        "--x\rSELECT 1",
+    ],
+)
+def test_the_cratedb_gate_lets_a_read_through(sql):
+    from localdata_mcp.dialects import Refusal, _refuse_cratedb_write
+
+    refusal = Refusal()
+    _refuse_cratedb_write(refusal, sql)
+
+    assert refusal.what is None
+
+
+@pytest.mark.parametrize(
+    ("sql", "named"),
+    [
+        ("INSERT INTO t VALUES (1) RETURNING a", "run an INSERT statement"),
+        ("update t set a = 1", "run an UPDATE statement"),
+        ("DELETE FROM t", "run a DELETE statement"),
+        ("COPY t FROM 'file:///x'", "run a COPY statement"),
+        ("CREATE TABLE t (a INT)", "run a CREATE statement"),
+        ("DROP TABLE t", "run a DROP statement"),
+        ("REFRESH TABLE t", "run a REFRESH statement"),
+        ("SET GLOBAL stats.enabled = false", "run a SET statement"),
+        ("KILL ALL", "run a KILL statement"),
+        ("OPTIMIZE TABLE t", "run an OPTIMIZE statement"),
+        ("--x\rINSERT INTO t VALUES (1)", "run an INSERT statement"),
+        ("/* x */ INSERT INTO t VALUES (1)", "run an INSERT statement"),
+        ("SELECTED", "run a SELECTED statement"),
+    ],
+)
+def test_the_cratedb_gate_refuses_anything_else_in_the_drivers_own_error(sql, named):
+    """Refused before the request is sent, as the driver's DBAPI error.
+
+    CrateDB has no transaction to withhold and no read-only session, so a write
+    reaching it is kept. Raised as ``crate.client`` 's own ``ProgrammingError``
+    so SQLAlchemy wraps it like any refusal from the server, and ``query``
+    explains it with what :class:`Refusal` recorded.
+    """
+    from crate.client.exceptions import ProgrammingError
+
+    from localdata_mcp.dialects import Refusal, _refuse_cratedb_write
+
+    refusal = Refusal()
+    with pytest.raises(ProgrammingError):
+        _refuse_cratedb_write(refusal, sql)
+
+    assert refusal.what == named
+
+
+@pytest.mark.parametrize("sql", ["", "  \n", "/* SELECT", "(SELECT 1)", '"x"'])
+def test_the_cratedb_gate_refuses_a_statement_with_no_keyword_to_read(sql):
+    """Nothing to read is refused too: the gate fails closed, never open."""
+    from crate.client.exceptions import ProgrammingError
+
+    from localdata_mcp.dialects import Refusal, _refuse_cratedb_write
+
+    refusal = Refusal()
+    with pytest.raises(ProgrammingError):
+        _refuse_cratedb_write(refusal, sql)
+
+    assert refusal.what is not None
+    assert "SELECT" in refusal.what
+
+
+def test_the_cratedb_reader_carries_the_gate_and_the_writer_does_not():
+    """Installed on the read engine only, so ``create`` and ``drop`` still write.
+
+    Both execution hooks, because SQLAlchemy calls one for a statement with
+    parameters and the other for one without, and a gate on only one would let
+    the other kind through.
+    """
+    crate = backend_for("crate")
+    engines = crate.open("crate://crate@127.0.0.1:14200", writable=True)
+    try:
+        for hook in ("do_execute", "do_execute_no_params"):
+            assert len(list(getattr(engines.read.dialect.dispatch, hook))) == 1
+            assert not list(getattr(engines.write.dialect.dispatch, hook))
+    finally:
+        engines.dispose()

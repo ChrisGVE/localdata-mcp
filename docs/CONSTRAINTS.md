@@ -3078,6 +3078,17 @@ directions: `query` does not write here, *and* this particular statement was not
 claiming a statement did not happen, when it did, is the same lie as reporting a rolled-back write as
 a success — the judgement §5 recorded for Oracle, reaching rows for the first time.
 
+> **Amended 2026-11-01 — CrateDB now refuses a write before it is sent, so neither survival is
+> declared ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)).** The table above still
+> holds: there is no transaction and no session-level read-only posture. Re-measured on
+> `crate:latest` (6.5.0): `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` and `SET
+> default_transaction_read_only = true` are both accepted and ignored. What CrateDB's grammar gives
+> instead is a statement whose first keyword is its kind, so `CrateDBBackend.read_posture` reads that
+> keyword on the read engine and refuses anything but `SELECT`, `WITH`, `VALUES`, `SHOW` and
+> `EXPLAIN` before the request goes out. Both survival overrides were removed: CrateDB answers the
+> generic `ddl_survives_refusal() == False`, and `dml_survives_refusal()` no longer exists, since
+> no backend keeps a refused row. The measurements and the reasoning are in the §34 amendment.
+
 ### 19.3 Durable before readable, and why waiting was the wrong answer
 
 Rows land in a Lucene index that refreshes on a timer. Measured, on a fresh table:
@@ -3476,6 +3487,13 @@ listener is still starting, reporting a database ready that no client can reach.
 probe the address the server actually binds", after `yugabyted` and CrateDB's `network.host=_site_`;
 the first two were the wrong *interface*, this one is the wrong *transport*. The image ships no
 healthcheck of its own and reaches healthy in ~10 s.
+
+> **Amended 2026-11-01 — the read engine is no longer generic
+> ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)).** The floor held for rows, but
+> `INSERT … RETURNING` through `query` answered `ok` with a row the rollback then discarded, which
+> the not-a-read check cannot see. The reader now opens `readonly=true`, and `denies_write`
+> recognises `isc_read_only_trans` (335544361). The `dml_survives_refusal` half of the row above
+> names a method that has since been removed. See the §34 amendment.
 
 ### 20.7 The container ceiling is now exceeded by the catalogue (issue #46)
 
@@ -4214,6 +4232,10 @@ recorded rather than hidden.
 Because the write never happens, `dml_survives_refusal` and `ddl_survives_refusal` are both the
 generic `False` here — where CrateDB, the other transactionless entry, declares `True` for both
 (§19.4). "No transactions" is not by itself a reason to give up the guarantee.
+
+> **Amended 2026-11-01.** CrateDB no longer declares `True` for either: it refuses a write before it
+> is sent, by its first keyword, and `dml_survives_refusal` has been removed
+> ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118); §19.2 and §34 amendments).
 
 ### 23.5 An index that reports success and creates nothing (issue #65)
 
@@ -5791,3 +5813,66 @@ kept the row on MonetDB for both `RETURNING` strings, and
   `COMMIT; INSERT … RETURNING`. [#118](https://github.com/ChrisGVE/localdata-mcp/issues/118).
 - **SQL Server was not measured.** This machine has no SQL Server ODBC driver, so every `mssql`
   target skipped. pyodbc runs multi-statement batches, so it is the backend most worth measuring.
+
+> **Amended 2026-11-01 — `INSERT … RETURNING` through `query`: Firebird and CrateDB now refuse it,
+> MonetDB still answers `ok` ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118),
+> [#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).** Measured on `new-v3` from
+> `b91128bd`, against the containers in `docker-compose.test.yml`.
+>
+> **Firebird 5, `firebirdsql` 1.5.0.** A connection opened `readonly=True` runs every transaction
+> `ISOLATION_LEVEL_READ_COMMITED_RO`. On it, `INSERT … RETURNING`, an `EXECUTE BLOCK` that inserts,
+> and `CREATE TABLE` all raise `OperationalError` with `isc_read_only_trans` (335544361, "attempted
+> update during read-only transaction") in `gds_codes`: alone for the `INSERT`, beside 336397286 and
+> 335544351 for the `CREATE`. `SELECT` reads as before. `sqlalchemy-firebirdsql` pops a `readonly`
+> URL parameter and passes it to `firebirdsql.connect`, so the posture is
+> `FirebirdBackend.read_only_query = {"readonly": "true"}`, put on the reader only by `Backend.open`,
+> and `denies_write` matches the code by membership, never the message.
+>
+> **CrateDB 6.5.0 over HTTP, `crate` dialect.** There is no read-only session to ask for. `SET
+> SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` and `SET default_transaction_read_only = true`
+> are accepted and ignored: an `INSERT … RETURNING` after either kept its row. The only read-only
+> switch is cluster-wide and would stop the writer too. The grammar makes a statement's kind its
+> first keyword, exactly:
+>
+> - one statement per request: `SELECT 1; INSERT …` is a `ParsingException`, "expecting <EOF>";
+> - no write nests in a read: `WITH q AS (SELECT 1) INSERT …`, `WITH q AS (INSERT …) SELECT …` and
+>   `SELECT * FROM (INSERT … RETURNING …) x` are all `ParsingException`, and so is `(SELECT 1)`;
+> - `EXPLAIN INSERT …` returns a plan and runs nothing; `EXPLAIN ANALYZE INSERT …` is refused
+>   (`UnsupportedFeatureException`), and `EXPLAIN ANALYZE SELECT` runs the read;
+> - comments: `/* */` does not nest (`/* a /* b */ SELECT 3` runs `SELECT 3`; `/* a /* b */
+>   SELECT 1 */ SELECT 2` is a `ParsingException`). A `--` comment ends at the first `\r` or `\n`
+>   (`--x\rSELECT 1` runs `SELECT 1`); a space, `\x0b` or `\x0c` does not end it. `/*+ hint */
+>   SELECT 9` runs. Leading `\n\t ` is fine; a leading `\xa0` or BOM is a `ParsingException`.
+>
+> So `CrateDBBackend.read_posture` installs `do_execute` and `do_execute_no_params` hooks on the read
+> engine, the shape DuckDB's uses (§31). They skip whitespace and comments by those rules, read the
+> first keyword, and refuse anything but `SELECT`, `WITH`, `VALUES`, `SHOW` and `EXPLAIN`, nothing
+> at all included, by raising the `crate` driver's own `ProgrammingError`. SQLAlchemy wraps it, and
+> `query` answers "This statement asks to run an INSERT statement, which is refused here even on a
+> writable datasource…". This is CrateDB's posture, stated lexically because the grammar makes the
+> lexeme decisive. It is not a SQL parser and is applied nowhere else. Fail-closed is the invariant:
+> stricter than CrateDB costs a read, never a write. Every statement this server runs on a CrateDB
+> reader during the endpoint and server suites is a `SELECT` (51 distinct statements logged); the
+> only others were the tests' own writes through `query`. `settle`'s `REFRESH TABLE` runs on the
+> writer.
+>
+> With that, nothing written through `query` survives on CrateDB, so `ddl_survives_refusal()` is the
+> generic `False` there and the CrateDB overrides are gone. No backend kept a refused row any more,
+> so `Backend.dml_survives_refusal` and its caveat were removed. Where §19.2, §20.6, §22.8, §23.4
+> and §23.8 name it, they name a method that no longer exists. Oracle's DDL caveat is unchanged.
+> On CrateDB a datasource attached without `writable` now refuses a plain `INSERT` through `query`
+> too, which it did not before: the row was kept.
+>
+> **MonetDB 11.55.7 (Dec2025-SP3), `pymonetdb` 1.9.1, `sqlalchemy-monetdb` 2.1.0: not fixed.**
+> `START TRANSACTION READ ONLY` and `SET TRANSACTION READ ONLY` both fail with `42000!Readonly
+> transactions not supported`. pymonetdb runs multi-statement strings, and `WITH q AS (SELECT 1 AS a)
+> INSERT … RETURNING name` is accepted, so a first-keyword gate would not be exact. A `SELECT` and an
+> `INSERT … RETURNING` leave identical cursor metadata (`rowcount` 1, `lastrowid` None, the same
+> `description`). The rollback floor keeps the data safe, so nothing is written; the residual is that
+> `query` answers `ok` with rows a rolled-back write returned.
+> `test_query_refuses_insert_returning_even_where_the_datasource_permits_it[monetdb]` is a strict
+> xfail on #119.
+>
+> After the change, on the three containers: `INSERT … RETURNING` through `query` is refused on
+> Firebird and CrateDB with the count at 5, and answers `ok` on MonetDB with the count at 5. The
+> other backends were not re-run for this amendment; their rows in the #118 report stand.

@@ -11,9 +11,11 @@ mean something different, or nothing at all, on another backend"**:
 
 * **Read-only posture.** Every backend can refuse writes; none of them spell it
   the same way. SQLite sets ``query_only`` on the connection, MySQL opens a
-  read-only session. The *guarantee* is portable, the mechanism is not — and on
-  MySQL the generic guarantee is not even available, because DDL there commits
-  implicitly and there is nothing left to roll back.
+  read-only session, CrateDB, which has neither a transaction nor a session to
+  ask, reads each statement's first keyword, which its grammar makes decisive.
+  The *guarantee* is portable, the mechanism is not — and on MySQL the generic
+  guarantee is not even available, because DDL there commits implicitly and
+  there is nothing left to roll back.
 * **Residency.** How much a database is holding in *this process* is a question
   that only means anything for an in-process, memory-backed database. For a file
   or a server it is either unobservable or somebody else's memory, and the honest
@@ -51,6 +53,7 @@ statement as an opaque one rather than to give YDB an override for it (#59).
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -287,8 +290,8 @@ class Backend:
         has one, exactly as :meth:`open_file` does. A dialect that can be told
         in the URL to open read-only should be told so however it was reached:
         a server URL is not a weaker claim on the posture than a file path is,
-        and on a backend with no transactions the URL is the *only* place the
-        posture can be stated — there is no rollback floor underneath it.
+        and on ClickHouse, which has no transactions, the URL is where the
+        posture is stated — there is no rollback floor underneath it.
         Where the mapping is empty nothing is added and nothing changes.
 
         Anything the *driver* has to be told that a URL cannot carry comes from
@@ -400,28 +403,11 @@ class Backend:
         Reported rather than papered over. A refusal that says a statement did
         not happen, when it did, is the same lie in the other direction as
         reporting a rolled-back write as a success.
-        """
-        return False
 
-    def dml_survives_refusal(self) -> bool:
-        """Whether *data* sent to a read connection takes effect despite refusal.
-
-        The same admission as :meth:`ddl_survives_refusal`, asked about rows
-        rather than about schema, and ``False`` everywhere the transactional
-        floor exists — an ``INSERT`` on a connection that never commits is
-        rolled back, so the refusal and the outcome agree.
-
-        They come apart on a database with **no transactions at all**. ClickHouse
-        has none either, but supplies a posture of its own (``readonly=1``) that
-        refuses the statement before it reaches the data, so its answer is still
-        ``False``. CrateDB has neither: no transaction to withhold and no
-        read-only session to ask for, so a write reaches the data and the
-        refusal that follows is a true statement about what this server *permits*
-        and a false one about what happened.
-
-        Split from ``ddl_survives_refusal`` rather than folded into it because
-        the two are genuinely independent — Oracle's DDL survives while its DML
-        does not — and a single axis would have to lie about one of them.
+        There is no sibling for rows, because no backend here keeps a refused
+        row: each one either refuses the write before it runs or rolls it
+        back. CrateDB kept one until its statement gate (#118), and the axis
+        it needed went with it.
         """
         return False
 
@@ -1963,6 +1949,106 @@ class TrinoBackend(Backend):
 # ---------------------------------------------------------------------------
 
 
+#: The statement kinds CrateDB runs without writing, as their first keyword.
+#: ``EXPLAIN`` included because it returns a plan and runs nothing, measured on
+#: 6.5.0 with ``EXPLAIN INSERT …``. ``EXPLAIN ANALYZE`` does run its statement,
+#: and CrateDB refuses it for a write (``UnsupportedFeatureException``), so the
+#: one form that executes can only execute a read.
+_CRATEDB_READS = frozenset({"SELECT", "WITH", "VALUES", "SHOW", "EXPLAIN"})
+
+#: What a statement with no keyword to read was asking to do, worded to follow
+#: "This statement asks to" in ``query``'s refusal.
+_CRATEDB_NO_KEYWORD = (
+    "run a statement that does not begin with SELECT, WITH, VALUES, SHOW or EXPLAIN"
+)
+
+#: What CrateDB skips between tokens, ASCII only. Measured: a leading no-break
+#: space or byte-order mark is a ``ParsingException``, so treating either as
+#: text, and refusing, loses no read.
+_CRATEDB_WHITESPACE = frozenset(" \t\n\r\x0b\x0c")
+
+
+def _cratedb_first_keyword(sql: str) -> str | None:
+    """The first keyword of ``sql`` as CrateDB lexes it, upper-cased, or ``None``.
+
+    **Legitimate here and nowhere else.** This server does not parse SQL to
+    decide what a statement does: ``query`` relies on the connection's posture,
+    because a parser of its own would mis-parse somebody's grammar. CrateDB has
+    no posture to rely on, and its grammar makes the first keyword decisive,
+    measured on ``crate:latest`` (6.5.0) over HTTP:
+
+    * one statement per request: ``SELECT 1; INSERT …`` is a
+      ``ParsingException`` ("expecting <EOF>");
+    * no write nests in a read: ``WITH q AS (SELECT 1) INSERT …``,
+      ``WITH q AS (INSERT …) SELECT …`` and ``SELECT * FROM (INSERT … RETURNING
+      …) x`` are all ``ParsingException``, and so is ``(SELECT 1)``.
+
+    So this is CrateDB's posture, stated lexically because its grammar makes the
+    lexeme the statement's kind. On a backend whose grammar nests a write in a
+    read, MonetDB for one, the same reading would not be exact (#119).
+
+    What is skipped before the keyword, exactly as CrateDB skips it, measured:
+
+    * whitespace, ASCII only (:data:`_CRATEDB_WHITESPACE`);
+    * a ``--`` comment, up to and including the first ``\\r`` or ``\\n``.
+      ``--x\\rSELECT 1`` runs ``SELECT 1``; a vertical tab or a form feed does
+      not end the comment. With neither, it runs to the end of the string;
+    * a ``/* */`` comment, up to the first ``*/``, because CrateDB does not nest
+      them: ``/* a /* b */ SELECT 3`` runs ``SELECT 3``. An unterminated one
+      leaves nothing. ``/*+ hint */`` is a comment like any other.
+
+    The keyword is the whole identifier that follows, so ``SELECTED`` is not
+    ``SELECT``. Anything else in first place, a parenthesis or a quoted name or
+    nothing at all, gives ``None``.
+
+    **Fail-closed is the invariant.** Being stricter than CrateDB can cost a
+    read, never a write: ``None`` and an unknown keyword are both refused.
+    Disagreeing about where a comment ends could read ``SELECT`` where CrateDB
+    reads ``INSERT``, which is why those rules are the measured ones and are
+    pinned by test.
+    """
+    position, end = 0, len(sql)
+    while position < end:
+        if sql[position] in _CRATEDB_WHITESPACE:
+            position += 1
+        elif sql.startswith("--", position):
+            breaks = [
+                found
+                for found in (sql.find("\n", position), sql.find("\r", position))
+                if found >= 0
+            ]
+            position = min(breaks) + 1 if breaks else end
+        elif sql.startswith("/*", position):
+            closed = sql.find("*/", position + 2)
+            position = closed + 2 if closed >= 0 else end
+        else:
+            break
+    keyword = re.match(r"[A-Za-z_][A-Za-z0-9_]*", sql[position:])
+    return keyword.group(0).upper() if keyword else None
+
+
+def _refuse_cratedb_write(refusal: Refusal, sql: str) -> None:
+    """Refuse ``sql`` unless its first keyword is a query's (:data:`_CRATEDB_READS`).
+
+    Records what was attempted on :class:`Refusal`, worded to follow "This
+    statement asks to" in ``query``'s refusal, and raises the ``crate``
+    driver's own ``ProgrammingError``. That class is a subclass of the DBAPI
+    ``Error`` the dialect declares, so SQLAlchemy wraps it and ``query``
+    explains it as a refused write rather than passing on a driver error.
+    """
+    keyword = _cratedb_first_keyword(sql)
+    if keyword in _CRATEDB_READS:
+        return
+    from crate.client.exceptions import ProgrammingError
+
+    refusal.what = (
+        f"run {article_for(keyword)} {keyword} statement"
+        if keyword
+        else _CRATEDB_NO_KEYWORD
+    )
+    raise ProgrammingError(f"query may not {refusal.what}.")
+
+
 @dataclass(frozen=True)
 class CrateDBBackend(Backend):
     """CrateDB, where a write is durable before it is visible and cannot be undone.
@@ -1971,14 +2057,25 @@ class CrateDBBackend(Backend):
     search-engine lineage rather than the database one. Two of its properties
     follow from that ancestry and neither has a precedent in this seam.
 
-    **There are no transactions, and unlike ClickHouse there is no posture to put
-    in their place.** ClickHouse has no transactions either and answers
+    **There are no transactions and no read-only session, so the posture is a
+    statement gate.** ClickHouse has no transactions either and answers
     ``readonly=1``, which refuses a statement before it reaches the data.
-    CrateDB offers no session-level equivalent — its read-only setting is a
-    cluster-wide block that would stop the *write* engine too — so a write sent
-    through a read connection is simply applied. Measured: an ``INSERT`` on a
-    connection that never commits was still there afterwards, and so was a
-    ``CREATE TABLE``. Both survivals are declared rather than papered over.
+    CrateDB offers no session-level equivalent: its read-only setting is a
+    cluster-wide block that would stop the *write* engine too, and ``SET SESSION
+    CHARACTERISTICS AS TRANSACTION READ ONLY`` and ``SET
+    default_transaction_read_only = true`` are accepted and ignored (measured on
+    6.5.0, an ``INSERT … RETURNING`` after either kept its row). Left at the
+    generic floor, a write sent through a read connection was simply applied,
+    ``INSERT``, ``CREATE TABLE`` and ``INSERT … RETURNING`` alike, the last
+    answered ``ok`` with its row (#118).
+
+    What CrateDB does have is a grammar in which a statement's first keyword
+    *is* its kind: one statement per request, and no write can be nested inside
+    a read. So :meth:`read_posture` reads that keyword before a statement is
+    sent and refuses anything that is not a query (:func:`_refuse_cratedb_write`).
+    Nothing written through the reader survives any more, which is why this
+    class no longer overrides :meth:`Backend.ddl_survives_refusal`: CrateDB
+    answers the generic ``False``.
 
     **A committed write is not immediately readable.** Rows land in a Lucene
     index refreshed on a timer, so a count taken straight after an insert
@@ -2018,25 +2115,31 @@ class CrateDBBackend(Backend):
 
         return {"converter": DefaultTypeConverter()}
 
-    def dml_survives_refusal(self) -> bool:
-        """``True``, and it is the honest answer rather than a resigned one.
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        """Refuse, before it is sent, any statement that is not a query.
 
-        No transaction to withhold and no read-only session to ask for, so the
-        row is in the index by the time this server has anything to say about
-        it. The refusal that follows is true about what is permitted here and
-        false about what happened, and a caller told otherwise would go looking
-        for a row that exists.
+        The same two hooks as DuckDB's :meth:`DuckDBBackend.read_posture`,
+        because SQLAlchemy calls one for a statement with parameters and the
+        other for one without. Each runs :func:`_refuse_cratedb_write` and
+        returns ``False``, which lets SQLAlchemy send a statement that passed.
+        A refused one raises the driver's own DBAPI error, so it is wrapped and
+        explained like any refusal the server sends.
+
+        Installed on the reader only, so ``create``, ``update`` and ``drop``
+        keep writing through the writer. Every statement this server itself
+        runs on the reader, reflection, ``stats`` and the count reads, is a
+        ``SELECT``. :meth:`settle`'s ``REFRESH TABLE`` runs on the writer.
         """
-        return True
 
-    def ddl_survives_refusal(self) -> bool:
-        """``True``, for the same reason and measured the same way.
+        @event.listens_for(engine, "do_execute")
+        def _with_parameters(cursor, statement, _parameters, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_cratedb_write(refusal, statement)
+            return False
 
-        Oracle reaches this state by committing DDL implicitly; CrateDB reaches
-        it by never having had a transaction. The consequence is identical, which
-        is why the axis is asked rather than the dialect named.
-        """
-        return True
+        @event.listens_for(engine, "do_execute_no_params")
+        def _without_parameters(cursor, statement, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_cratedb_write(refusal, statement)
+            return False
 
     def settle(self, conn: Connection, table: str) -> None:
         """``REFRESH TABLE``, so a row just written can be read back.

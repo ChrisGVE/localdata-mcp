@@ -216,12 +216,12 @@ rename-table statement. Both name the reason.
 
 `create(nickname, type="table", source="./local.csv", delimiter=",")` reads a local file *into*
 that database — a file, never a URL, which it refuses in favour of `attach` — so
-a lookup against a server-side table is the same move as against a second file. On **two** backends a statement `query` refuses can still
-have happened, and you should say so rather than reassure: on **Oracle** a
-refused `CREATE` or `DROP` stands, because Oracle commits DDL as it runs it,
-while DML still rolls back; on **CrateDB** there are no transactions at all, so
-a refused `INSERT` stands too. The refusal names `CREATE`/`DROP` in both cases,
-so on CrateDB do not read it as meaning nothing happened.
+a lookup against a server-side table is the same move as against a second file. On **Oracle** a statement `query` refuses can still
+have happened, and you should say so rather than reassure: a refused `CREATE`
+or `DROP` stands, because Oracle commits DDL as it runs it, while DML still
+rolls back. The refusal says so. On **MonetDB**, `INSERT … RETURNING` sent to
+`query` comes back with its row even though the write was rolled back, so a
+returned row there is not proof that anything was written.
 
 ### 5. "Send me the result"
 

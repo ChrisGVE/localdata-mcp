@@ -472,20 +472,22 @@ And eight found in this release's own code before it shipped:
   its own.
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement and never has.
-- **On two backends a statement `query` refuses can still have happened.** The
-  read-only guarantee is enforced on the connection, and on these two engines
-  there is no open transaction left to withhold when the refusal is composed:
-  - **Oracle** commits DDL as it runs it, so a refused `CREATE` or `DROP`
-    stands. DML still rolls back, so the guarantee holds everywhere it can.
-  - **CrateDB** has no transactions at all, so **both** DDL *and* DML survive:
-    a refused `INSERT` stands. It is the worse of the two, and the refusal text
-    says so — it is composed from whichever axis survives on the backend it
-    came from, so there it names the rows as well as `CREATE`/`DROP`
-    ([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
+- **On Oracle a statement `query` refuses can still have happened.** The
+  read-only guarantee is enforced on the connection, and Oracle commits DDL as
+  it runs it, so there is no open transaction left to withhold when the refusal
+  is composed: a refused `CREATE` or `DROP` stands, and the refusal says so
+  ([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)). DML still rolls
+  back, so the guarantee holds everywhere it can.
 
-  These are the limitations where following the documentation can still leave
-  your database changed. Weigh them before pointing this at a production Oracle
-  or CrateDB.
+  This is the limitation where following the documentation can still leave
+  your database changed. Weigh it before pointing this at a production Oracle.
+  CrateDB used to share it for rows and schema alike, having no transactions;
+  it now refuses anything but a query before the statement is sent
+  ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)).
+- **On MonetDB, `INSERT … RETURNING` through `query` answers with its row.**
+  MonetDB has no read-only transaction, so the statement is not refused; the
+  write is rolled back and nothing is kept, but the answer reports a row that
+  does not exist ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).
 - **`.xlsx` and `.ods` are refused above 65,535 rows.** That is the older
   worksheet's own limit and it is what bounds the writer's memory: uncapped,
   `.xlsx` held 12.9 GB while writing a million rows. `.ods` is 13.5× slower than

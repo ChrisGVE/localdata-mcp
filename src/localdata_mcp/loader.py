@@ -158,30 +158,20 @@ _NOT_A_READ = (
     "either. A statement that does read returns rows even when it matches none."
 )
 
-#: Added where the refusal arrives too late to be the whole truth. Two backends
-#: need it, and they arrive by different routes: Oracle commits a CREATE or a
-#: DROP as it runs it, while CrateDB never had a transaction to withhold at all.
-#: The wording is about the *consequence* rather than the mechanism, so one
-#: sentence is true of both and of the next dialect that answers either way —
-#: which is the same reason the axis is asked instead of the dialect named.
+#: Added where the refusal arrives too late to be the whole truth. One backend
+#: needs it: Oracle commits a CREATE or a DROP as it runs it, before anything
+#: here can object. The wording is about the *consequence* rather than the
+#: mechanism, and the axis is asked rather than the dialect named, so the next
+#: dialect that answers the same way is told the same thing.
+#:
+#: It is about schema only. Rows have no caveat because no backend keeps a
+#: refused row: CrateDB did, having no transaction to withhold, until its
+#: statement gate refused writes before they run (#118).
 _ARRIVED_TOO_LATE = (
     "One caveat specific to {name}: this refusal reaches the statement after the "
-    "database has. {survived}"
-)
-
-#: What may have survived, asked separately for schema and for rows because a
-#: backend can answer differently for each — Oracle's DDL survives and its DML
-#: does not. Naming only the axis that happens to be consulted is how a refused
-#: INSERT on CrateDB came to be handed a caveat about CREATE and DROP, which
-#: reads as *this was not DDL, so nothing happened*, while the row stands.
-_DDL_SURVIVED = (
-    "If this was a CREATE or a DROP it has already taken effect and this refusal "
-    "did not undo it — check with info, and use drop to remove what it made."
-)
-_DML_SURVIVED = (
-    "If it wrote rows, those rows have already taken effect and are in the table "
-    "— check with query. Nothing on this surface deletes rows, so undoing that "
-    "means drop on the table and create again."
+    "database has. If this was a CREATE or a DROP it has already taken effect and "
+    "this refusal did not undo it — check with info, and use drop to remove what "
+    "it made."
 )
 
 
@@ -489,24 +479,14 @@ def _not_a_read(entry: Tagged) -> str:
 
     Where a statement reaches the data before anything here can object, saying
     only "refused" is the same lie in the other direction as calling a
-    rolled-back write a success. Both axes are consulted and the caveat is
-    composed from whichever survive on this backend, because a caveat that names
-    the wrong one points the caller away from what actually happened — worse
-    than no caveat, which at least leaves them to check.
+    rolled-back write a success. The backend says whether a refused CREATE or
+    DROP survives (:meth:`dialects.Backend.ddl_survives_refusal`), and only then
+    is the caveat added.
     """
     backend = entry.backend
-    survived = [
-        clause
-        for asked, clause in (
-            (backend.ddl_survives_refusal(), _DDL_SURVIVED),
-            (backend.dml_survives_refusal(), _DML_SURVIVED),
-        )
-        if asked
-    ]
-    if not survived:
+    if not backend.ddl_survives_refusal():
         return _NOT_A_READ
-    caveat = _ARRIVED_TOO_LATE.format(name=backend.name, survived=" ".join(survived))
-    return f"{_NOT_A_READ} {caveat}"
+    return f"{_NOT_A_READ} {_ARRIVED_TOO_LATE.format(name=backend.name)}"
 
 
 def _objected_to_the_leading_verb(message: str, sql: str) -> bool:
@@ -2273,7 +2253,11 @@ class Workspace:
         Enforced by the connection's posture rather than by reading the SQL: this
         engine's connections are read-only from the moment they are opened, so
         there is no text to parse and mis-parse and no window in which the
-        posture is briefly something else.
+        posture is briefly something else. CrateDB is the one backend with no
+        posture to open, and there the backend reads the statement's first
+        keyword before it is sent, because its grammar makes that keyword the
+        statement's kind (:func:`dialects._cratedb_first_keyword`, #118). That
+        is CrateDB's posture, kept in :mod:`dialects`, and nothing here parses.
 
         **The whole result comes back.** Bounding it here was tried and removed:
         a row cap measures the wrong dimension, since a hundred rows of a
@@ -2300,7 +2284,8 @@ class Workspace:
         through.** CrateDB answers an ``INSERT`` with a result its driver reports
         as returning rows — one row, of *zero* columns — so the statement passed
         the floor and came back ``ok`` while the row it inserted stayed inserted,
-        there being no transaction to withhold. That is the exact lie this
+        there being no transaction to withhold (its statement gate now refuses
+        the ``INSERT`` before it is sent, #118). That is the exact lie this
         function exists to prevent, and it was not a CrateDB fact so much as an
         assumption in shared code: that a driver saying "rows" means a caller was
         reading. Asking for a column as well is the same question asked

@@ -935,30 +935,21 @@ def test_query_refuses_a_write_even_where_the_datasource_permits_it(live):
     # The refusal has to name where mutation lives, or the same statement is
     # simply sent again.
     assert "create" in written["error"]
-    if backend.dml_survives_refusal():
-        # A database with no transactions and no read-only session applies the
-        # write before there is anything to refuse it with — the same shape as
-        # the DDL caveat below, asked about rows. What is tested here is that
-        # the refusal is still issued and the row really did land; claiming it
-        # did not would send the caller looking for a row that exists.
-        #
-        # Settled first, because on such a backend the row is durable before it
-        # is readable, and counting straight away would report the refresh
-        # timer's state rather than the database's.
-        engine = create_engine(live.url)
-        try:
-            with engine.begin() as conn:
-                backend.settle(conn, table)
-        finally:
-            engine.dispose()
-        expected = [[6]]
-    else:
-        expected = [[5]]
+    # Settled first, because on CrateDB a row is durable before it is readable,
+    # and counting straight away would report the refresh timer's state rather
+    # than the database's — a kept row would hide behind it. CrateDB kept the
+    # row here until its statement gate (#118); now no backend does.
+    engine = create_engine(live.url)
+    try:
+        with engine.begin() as conn:
+            backend.settle(conn, table)
+    finally:
+        engine.dispose()
 
     after = call(
         "query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}"
     )["rows"]
-    assert after == expected, after
+    assert after == [[5]], after
 
 
 @pytest.mark.parametrize("returning", [True, False], ids=["returning", "plain"])
@@ -987,9 +978,9 @@ def test_query_cannot_end_its_read_transaction_and_write_after_it(
     connection then rolls back. What MonetDB *says* about a ``RETURNING`` it
     rolled back — ``ok`` with the row — is a separate defect of the single
     ``INSERT … RETURNING``, with or without the ``COMMIT``, and is tracked on
-    its own rather than asserted here. Settled before counting, so CrateDB,
-    which keeps a write it is not refused in time, is counted too rather than
-    excused.
+    its own rather than asserted here. Settled before counting, so a row
+    CrateDB kept could not hide behind its refresh timer, and CrateDB is
+    counted too rather than excused.
     """
     attach_writable(live)
     table = land_people(live)
@@ -1021,6 +1012,120 @@ def test_query_cannot_end_its_read_transaction_and_write_after_it(
         "query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}"
     )["rows"]
     assert after == [[5]], (after, written)
+
+
+#: Engines whose grammar has no ``RETURNING`` clause, so the statement below is
+#: refused by their parser before any posture is reached. Measured for #118 on
+#: every one but SQL Server, whose T-SQL spells it ``OUTPUT inserted.*`` and
+#: which this machine cannot reach (no ODBC driver). On these the refusal is a
+#: syntax error rather than ``query``'s own, so only the outcome is asserted.
+_NO_RETURNING = frozenset(
+    {"mysql", "mariadb", "oracle", "trino", "clickhouse", "exasol", "mssql"}
+)
+
+#: MonetDB answers ``INSERT … RETURNING`` through ``query`` with the row it then
+#: rolls back: it has no read-only transaction to ask for, and the statement
+#: hands rows back like a read. Recorded rather than fixed.
+_MONETDB_RETURNING_ISSUE = "https://github.com/ChrisGVE/localdata-mcp/issues/119"
+
+
+def test_query_refuses_insert_returning_even_where_the_datasource_permits_it(
+    live, request
+):
+    """``INSERT … RETURNING`` hands rows back like a read, and is still a write (#118).
+
+    The generic floor asks whether a statement returned rows of at least one
+    column, and ``RETURNING`` answers yes. Before #118 that let the write
+    through on three backends: CrateDB kept the row and answered ``ok`` with
+    it, MonetDB and Firebird answered ``ok`` with a row their rollback then
+    discarded. A posture has to refuse it before it runs: Firebird's
+    read-only transaction, CrateDB's statement gate.
+
+    Set up as the plain-``INSERT`` test above is, for the reasons it gives:
+    columns named, the surrogate key supplied, and the table settled before it
+    is counted, so a row CrateDB kept cannot hide behind its refresh timer.
+    """
+    attach_writable(live)
+    table = land_people(live)
+    backend = backend_for_url(live.url)
+    if backend.name == "monetdb":
+        request.applymarker(
+            pytest.mark.xfail(
+                strict=True,
+                reason=f"MonetDB answers ok with a rolled-back row: {_MONETDB_RETURNING_ISSUE}",
+            )
+        )
+
+    columns = ["name", "department", "salary"]
+    values = ["'x'", "'y'", "1"]
+    if backend.requires_primary_key():
+        columns.insert(0, "_row")
+        values.insert(0, "99")
+    written = call(
+        "query",
+        nickname="endpoint",
+        sql=(
+            f"INSERT INTO {table} ({', '.join(columns)}) "
+            f"VALUES ({', '.join(values)}) RETURNING name"
+        ),
+    )
+
+    engine = create_engine(live.url)
+    try:
+        with engine.begin() as conn:
+            backend.settle(conn, table)
+    finally:
+        engine.dispose()
+    after = call(
+        "query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}"
+    )["rows"]
+
+    assert after == [[5]], (after, written)
+    assert written["ok"] is False, written
+    if backend.name not in _NO_RETURNING:
+        assert "create" in written["error"], written
+
+
+def test_a_read_only_attach_refuses_a_write_through_query(live):
+    """The read-only grant holds for ``query`` too, not only for ``create`` and ``drop``.
+
+    On CrateDB it did not (#118). With no transaction and no read-only session,
+    a plain ``INSERT`` sent to ``query`` on a datasource attached without
+    ``writable`` was refused in words and kept in fact. Now the statement gate
+    refuses it before it is sent, and the count says so. Asserted on every
+    backend, because a read-only attach is the grant a caller relies on most.
+    """
+    attach_writable(live, nickname="writable")
+    table = land_people(live, nickname="writable")
+    call("detach", nickname="writable")
+    call("attach", database=live.url, nickname="endpoint")
+    backend = backend_for_url(live.url)
+
+    columns = ["name", "department", "salary"]
+    values = ["'x'", "'y'", "1"]
+    if backend.requires_primary_key():
+        columns.insert(0, "_row")
+        values.insert(0, "99")
+    written = call(
+        "query",
+        nickname="endpoint",
+        sql=(
+            f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(values)})"
+        ),
+    )
+
+    assert written["ok"] is False, written
+    assert "create" in written["error"], written
+    engine = create_engine(live.url)
+    try:
+        with engine.begin() as conn:
+            backend.settle(conn, table)
+    finally:
+        engine.dispose()
+    after = call(
+        "query", nickname="endpoint", sql=f"SELECT count(*) AS n FROM {table}"
+    )["rows"]
+    assert after == [[5]], after
 
 
 def test_ddl_through_query_never_reaches_the_database(live):
