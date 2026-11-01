@@ -1715,7 +1715,9 @@ def _refuse_mssql_write(
     :meth:`loader.Workspace.query_stream` runs it as ``text(sql)`` with no
     values, so a ``:name`` in it is refused by SQLAlchemy before anything is
     sent, and a ``?`` reaches the driver with no values and fails there. Every
-    parameterised statement on the reader is one this server composed. Raises
+    parameterised statement on the reader is one this server composed.
+    ``tests/test_query_sends_no_parameters.py`` pins that, so the day
+    ``query`` takes values from its caller this gate is reconsidered. Raises
     pyodbc's own ``ProgrammingError``, a DBAPI ``Error``, so SQLAlchemy wraps
     it and ``query`` explains it as a refused write.
     """
