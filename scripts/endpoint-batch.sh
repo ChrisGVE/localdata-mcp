@@ -243,7 +243,9 @@ printf '%s\n' "${SUMMARY[@]}"
 echo
 echo "Dialects NOT covered by this run are every one not listed above —"
 echo "a green line from one batch is not a green line for the catalogue (issue #46)."
-[[ $KEEP -eq 0 ]] && docker system df | head -3
+# sed reads its whole input, where head would close the pipe early: under pipefail
+# the SIGPIPE that gives docker turns a green run into exit 141 through set -e.
+if [[ $KEEP -eq 0 ]]; then docker system df | sed -n '1,3p'; fi
 echo "=============================================================="
 
 exit "$worst"
