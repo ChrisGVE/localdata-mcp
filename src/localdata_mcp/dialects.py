@@ -625,6 +625,23 @@ class Backend:
         """
         return _PORTABLE_TYPES[declared]()
 
+    def column_note(
+        self, name: str, declared: str, *, longest: int | None = None
+    ) -> str | None:
+        """What the caller must be told about the type a column landed as.
+
+        ``None`` generically, because on every backend but one the type
+        :meth:`column_type` chose answers queries correctly or refuses them out
+        loud. The exception is a type that is accepted, stores every value, and
+        then answers some queries *wrongly* with no error — Firebird's ``BLOB``,
+        which groups by storage handle. A load that produced one has to say so
+        for that column, or the table looks perfectly ordinary.
+
+        Takes the same ``declared`` and ``longest`` as :meth:`column_type`, so
+        the two cannot disagree about which columns the fallback reached.
+        """
+        return None
+
     def table_options(self) -> Mapping[str, Any]:
         """Dialect keyword arguments every ``CREATE TABLE`` here must carry.
 
@@ -3393,17 +3410,17 @@ class CrateDBBackend(Backend):
 
 #: The widest ``VARCHAR`` this backend asks Firebird for, in **characters**.
 #:
-#: Firebird's limit is 32,765 *bytes*, and the two only coincide on a single-byte
-#: character set. A database created with UTF8 spends up to four bytes a
-#: character, so the same declaration that fits one database is refused by
-#: another — and which one the caller has is not something this server chooses or
-#: can see cheaply. 8,191 is the widest width that fits the byte limit under
-#: *every* character set (8191 × 4 = 32,764), so the declaration cannot fail for a
-#: reason that depends on how somebody else created their database.
+#: Firebird's limit is 32,765 *bytes*. A loaded text column is declared
+#: ``CHARACTER SET UTF8`` (see :meth:`FirebirdBackend.column_type`), which
+#: reserves four bytes a character, so the widest such column is 8,191
+#: characters — measured on Firebird 5: ``VARCHAR(8191) CHARACTER SET UTF8`` is
+#: created, ``VARCHAR(8192)`` is refused with ``Implementation limit exceeded``.
+#: Because the column names its character set, this holds on every database
+#: whatever its default, rather than only on one that happens to match.
 #:
-#: Deliberately not the measured 32,765: that number is true of the test
-#: container, which is charset ``NONE``, and using it would be a measurement from
-#: one configuration presented as a property of the engine.
+#: Deliberately not the 32,765 the test container accepts for a column with no
+#: character set: that column inherits the database default, which there is
+#: ``NONE``, and its width counts bytes.
 _FIREBIRD_VARCHAR_MAX = 8191
 
 #: ``isc_read_only_trans``: "attempted update during read-only transaction".
@@ -3567,11 +3584,33 @@ class FirebirdBackend(Backend):
         This is Oracle's problem with a different mechanism and the same remedy —
         there ``CLOB`` cannot be grouped and is refused outright, here ``BLOB``
         can be and lies. ``longest`` is the widest value the column actually
-        holds, measured from the frame, so the ``VARCHAR`` is sized to the data
-        rather than guessed at. Beyond :data:`_FIREBIRD_VARCHAR_MAX` there is
-        nothing else to use and it falls back to ``Text``: the grouping is lost,
-        which is bad, and the values are kept whole, which matters more than
-        truncating them to fit.
+        holds, measured over the whole source before the table is made, so the
+        ``VARCHAR`` is sized to the data rather than guessed at.
+
+        **The column states ``CHARACTER SET UTF8``**, because ``longest`` counts
+        characters and a ``VARCHAR`` with no character set does not. It takes
+        the database's default, and on a database created ``NONE`` — the
+        Firebird image's default, and the test container's — the width counts
+        *bytes*. Measured: ``été`` is three characters and five bytes, and a
+        ``VARCHAR(3)`` with no character set refused it with ``string right
+        truncation, expected length 3, actual 5``, so any file holding one
+        accented letter failed to load. Under UTF8 the width is characters on
+        every database — three emoji, twelve bytes, fit a ``VARCHAR(3)`` — and
+        every value a Python string can hold is storable, where a single-byte
+        default would refuse the characters it lacks. Ordering is unchanged:
+        UTF8's default collation orders by code point, which is the order the
+        same UTF-8 bytes had under ``NONE``.
+
+        Stated through ``with_variant`` and the dialect's own ``FBVARCHAR``,
+        which is how SQLAlchemy spells a type only one dialect has; the column
+        is still a portable ``String`` of that width to anything that inspects
+        it. The import is deferred to here for the reason ClickHouse's is: it is
+        only reached with the ``firebird`` extra installed.
+
+        Beyond :data:`_FIREBIRD_VARCHAR_MAX` there is nothing else to use and it
+        falls back to ``Text``: the grouping is lost, which is bad, and the
+        values are kept whole, which matters more than truncating them to fit.
+        :meth:`column_note` is what says so, column by column.
 
         Integers need no help. Both respellings are *client-library* defects
         rather than database limits — Firebird holds a float and a comparable
@@ -3581,8 +3620,39 @@ class FirebirdBackend(Backend):
             return DOUBLE_PRECISION()
         if declared == "TEXT":
             width = max(1, longest or 1)
-            return String(width) if width <= _FIREBIRD_VARCHAR_MAX else Text()
+            if width > _FIREBIRD_VARCHAR_MAX:
+                return Text()
+            from sqlalchemy_firebirdsql.types import FBVARCHAR
+
+            return String(width).with_variant(
+                FBVARCHAR(width, charset="UTF8"), "firebirdsql"
+            )
         return super().column_type(declared, longest=longest)
+
+    def column_note(
+        self, name: str, declared: str, *, longest: int | None = None
+    ) -> str | None:
+        """Name what a text column too wide for a ``VARCHAR`` will answer wrongly.
+
+        Such a column stays a ``BLOB`` (:meth:`column_type`). Measured on
+        Firebird 5 over twenty-one rows holding three values: ``GROUP BY``
+        answered twenty-one groups, ``DISTINCT`` twenty-one rows, ``ORDER BY``
+        left them in insertion order, and ``CREATE INDEX`` was refused — while
+        ``=`` and ``LIKE`` compared the text correctly. Only the first three are
+        silent, which is why the note leads with them; the index refusal at
+        least arrives as an error.
+        """
+        if declared != "TEXT" or (longest or 0) <= _FIREBIRD_VARCHAR_MAX:
+            return None
+        return (
+            f"Column {name} holds values up to {longest} characters, wider than "
+            f"the {_FIREBIRD_VARCHAR_MAX} a Firebird VARCHAR can hold, so it is "
+            f"stored as a BLOB: every value is kept whole, and = and LIKE compare "
+            f"the text correctly, but GROUP BY, DISTINCT and ORDER BY on it "
+            f"compare storage handles rather than text and answer wrongly with "
+            f"no error — one group per row, unsorted. It cannot be given an "
+            f"index either."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -2023,6 +2023,21 @@ class Workspace:
                 for column in measured
                 if column.wide_integer_example is not None
             ),
+            # What the type the backend chose for a column will answer wrongly,
+            # where it chose one that answers some queries wrongly rather than
+            # refusing them — Firebird's BLOB, past its widest VARCHAR (#56).
+            # Asked with the same arguments as `column_type` below, so the note
+            # and the declaration cannot disagree about which columns it is.
+            *(
+                note
+                for column in measured
+                if (
+                    note := entry.backend.column_note(
+                        column.name, column.declared_type, longest=column.longest
+                    )
+                )
+                is not None
+            ),
         )
 
         if keyed:
