@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And sixteen found in this release's own code before it shipped:
+And seventeen found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -489,6 +489,17 @@ And sixteen found in this release's own code before it shipped:
   no such release. It now carries the version `pyproject.toml` declares, and a
   test holds the two together and validates the manifest against the registry
   schema it names, which caps the description at 100 characters.
+- **On MonetDB, `query` answered `ok` with rows from a write it then rolled
+  back** ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).
+  `INSERT … RETURNING`, the same under `WITH`, and `SELECT 1; INSERT …` all came
+  back with rows, though nothing was kept. MonetDB has no read-only transaction,
+  so the reader now asks MonetDB's own `EXPLAIN` what a statement is before
+  running it, the way SQL Server's reader asks its plan. It runs only a single
+  statement whose plan holds read operators alone and which calls no function
+  that is not a side-effect-free system function. The last part matters because
+  MonetDB records a SQL function whose body is an `INSERT` as having no side
+  effects. The cost is a read with a `;` inside it, or one calling a
+  user-defined function: both are refused.
 
 ### Known limitations
 
@@ -520,10 +531,6 @@ And sixteen found in this release's own code before it shipped:
   CrateDB used to share it for rows and schema alike, having no transactions;
   it now refuses anything but a query before the statement is sent
   ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)).
-- **On MonetDB, `INSERT … RETURNING` through `query` answers with its row.**
-  MonetDB has no read-only transaction, so the statement is not refused; the
-  write is rolled back and nothing is kept, but the answer reports a row that
-  does not exist ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).
 - **`.xlsx` and `.ods` are refused above 65,535 rows.** That is the older
   worksheet's own limit and it is what bounds the writer's memory: uncapped,
   `.xlsx` held 12.9 GB while writing a million rows. `.ods` is 13.5× slower than

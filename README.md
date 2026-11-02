@@ -379,14 +379,16 @@ no transaction to withhold, Firebird reads in a read-only transaction, and
 CrateDB, which has neither transactions nor a read-only session, refuses any
 statement that does not begin with `SELECT`, `WITH`, `VALUES`, `SHOW` or
 `EXPLAIN` before it is sent — its grammar makes the first keyword a statement's
-kind ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)). **Two
-exceptions remain.** Oracle commits DDL before anything can object and has no
+kind ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)). MonetDB
+has no read-only transaction either, and its grammar nests a write inside a
+read, so there every statement is first put to MonetDB's own `EXPLAIN` and runs
+only if its plan is a read and every function it calls is a system function
+free of side effects. A `;` anywhere but at the end is refused there too
+([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)). **One exception
+remains.** Oracle commits DDL before anything can object and has no
 session-level read-only posture, so a `CREATE` sent to `query` there really does
 take effect; its DML still rolls back, and the refusal says the `CREATE` stands
-([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)). MonetDB has no
-read-only transaction, so `INSERT … RETURNING` through `query` answers with the
-row it returned, although the write itself is rolled back and nothing is kept
-([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).
+([#84](https://github.com/ChrisGVE/localdata-mcp/issues/84)).
 
 Landing the second file inside the first database is not just tidier. **`save`
 writes one database, not a join** — so attaching the two files separately gives

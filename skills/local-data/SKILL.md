@@ -220,9 +220,9 @@ that database — a file, never a URL, which it refuses in favour of `attach` �
 a lookup against a server-side table is the same move as against a second file. On **Oracle** a statement `query` refuses can still
 have happened, and you should say so rather than reassure: a refused `CREATE`
 or `DROP` stands, because Oracle commits DDL as it runs it, while DML still
-rolls back. The refusal says so. On **MonetDB**, `INSERT … RETURNING` sent to
-`query` comes back with its row even though the write was rolled back, so a
-returned row there is not proof that anything was written.
+rolls back. The refusal says so. On **MonetDB**, `query` refuses a statement
+with a `;` anywhere but at its end, and one that calls a user-defined function;
+the refusal names which.
 
 ### 5. "Send me the result"
 

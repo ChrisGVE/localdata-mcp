@@ -56,7 +56,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -96,6 +96,7 @@ __all__ = [
     "Engines",
     "ExasolBackend",
     "FirebirdBackend",
+    "MonetDBBackend",
     "MySQLBackend",
     "PostgreSQLBackend",
     "Refusal",
@@ -2122,6 +2123,230 @@ class TrinoBackend(Backend):
 
 
 # ---------------------------------------------------------------------------
+# MonetDB
+# ---------------------------------------------------------------------------
+
+
+#: The relational operators MonetDB's ``EXPLAIN`` prints for a read, and the
+#: only ones its reader runs. Measured on 11.55.7 (Dec2025-SP3) over reads of
+#: every shape ``query`` is for: projections, filters, ``LIMIT``/``OFFSET``,
+#: grouping, every join, the set operations, ``EXISTS``/``IN`` subqueries,
+#: window functions, ``SAMPLE``, recursive CTEs, catalog views and table
+#: functions. ``REF`` names a shared subplan; the operator it points at is
+#: listed in the same plan and is checked there. A write prints ``insert``,
+#: ``update``, ``delete``, ``truncate …`` or ``ddl`` (``CREATE``, ``COPY INTO``,
+#: ``CALL``, ``SET``), none of them here, and an operator nobody measured is
+#: refused rather than guessed at.
+_MONETDB_READ_OPERATORS = frozenset(
+    {
+        "REF",
+        "antijoin",
+        "crossproduct",
+        "distinct except",
+        "distinct intersect",
+        "distinct munion",
+        "full outer join",
+        "group by",
+        "join",
+        "left outer join",
+        "munion",
+        "project",
+        "recursive munion",
+        "right outer join",
+        "sample",
+        "select",
+        "semijoin",
+        "table",
+        "top N",
+    }
+)
+
+#: One line of an ``EXPLAIN`` plan: the tree drawing (``|`` and ``&``), then
+#: the operator's name, then its arguments, which open with ``(`` or ``[``, or
+#: a number for ``REF``. A line that opens with ``)`` or ``[`` after the
+#: drawing is the tail of an operator already read, not an operator.
+_MONETDB_PLAN_LINE = re.compile(r"[ |&]*(?:([A-Za-z][A-Za-z ]*?) *(?:[(\[]|\d|$))?")
+
+
+def _monetdb_single_statement(sql: str) -> bool:
+    """Whether ``sql`` is one statement, decided without reading its SQL.
+
+    MonetDB needs a ``;`` between two statements: ``SELECT 1 SELECT 2`` and a
+    statement on the next line are both ``expecting SCOLON``, measured. So a
+    string with no ``;`` but an optional trailing one is one statement. Any
+    other ``;`` is refused, including one inside a literal or a comment that
+    a lexer could have told apart: that costs the caller a read, never lets a
+    second statement through, and keeps this server from parsing MonetDB's
+    grammar, which it would one day parse differently from MonetDB.
+
+    Why it matters: ``EXPLAIN`` covers the first statement only. Measured,
+    ``EXPLAIN COMMIT; INSERT …`` printed the plan of the ``COMMIT`` and then
+    ran the ``INSERT``.
+    """
+    return ";" not in sql.rstrip().removesuffix(";")
+
+
+def _monetdb_plan_operators(plan: Iterable[str]) -> list[tuple[str | None, bool]]:
+    """Each operator in an ``EXPLAIN`` plan, and whether it is a read's.
+
+    An operator line that does not fit the shape :data:`_MONETDB_PLAN_LINE`
+    describes comes back as ``(None, False)``: unreadable is refused, the same
+    fail-closed rule as an operator nobody measured.
+    """
+    operators: list[tuple[str | None, bool]] = []
+    for line in plan:
+        start = line.lstrip(" |&")
+        if not start or not start[0].isalpha():
+            continue
+        name = _MONETDB_PLAN_LINE.match(line).group(1)
+        operators.append((name, name in _MONETDB_READ_OPERATORS))
+    return operators
+
+
+#: A quoted ``"a"."b"`` pair as an ``EXPLAIN`` plan prints it, with ``"`` and
+#: ``\\`` inside a name escaped by a backslash (measured: ``"we\\"ird"``).
+#: Functions, aggregates, tables, columns and aliases all print this way;
+#: which pairs are functions is the catalog's to say.
+_MONETDB_PLAN_NAME = re.compile(r'"((?:[^"\\]|\\.)*)"\."((?:[^"\\]|\\.)*)"')
+
+#: The functions among ``names`` that a read may not call: any not both a
+#: system function and recorded free of side effects. ``side_effect`` alone
+#: is not enough, measured: a SQL function whose body is an ``INSERT`` is
+#: recorded ``side_effect = false``. A user-defined function is refused
+#: whatever it does, which costs a read that calls one and is the only way
+#: to be sure. The system ones refused include ``hot_snapshot`` (writes a
+#: file), ``next_value_for`` (advances a sequence) and ``vacuum``.
+_MONETDB_UNSAFE_FUNCTIONS = (
+    "SELECT s.name, f.name FROM sys.functions f "
+    "JOIN sys.schemas s ON s.id = f.schema_id "
+    "WHERE (NOT f.system OR f.side_effect) AND ({pairs})"
+)
+
+
+def _monetdb_plan_names(plan: Iterable[str]) -> set[tuple[str, str]]:
+    """Every quoted ``"a"."b"`` pair in an ``EXPLAIN`` plan, unescaped."""
+
+    def unescape(name: str) -> str:
+        return re.sub(r"\\(.)", r"\1", name)
+
+    return {
+        (unescape(first), unescape(second))
+        for line in plan
+        for first, second in _MONETDB_PLAN_NAME.findall(line)
+    }
+
+
+def _monetdb_unsafe_function(cursor: Any, names: set[tuple[str, str]]) -> str | None:
+    """The first function in ``names`` a read may not call, as ``schema.name``.
+
+    Asked of the catalog with the pairs bound as parameters, so a name from
+    the plan is never spliced into SQL.
+    """
+    if not names:
+        return None
+    ordered = sorted(names)
+    pairs = " OR ".join("(s.name = %s AND f.name = %s)" for _ in ordered)
+    cursor.execute(
+        _MONETDB_UNSAFE_FUNCTIONS.format(pairs=pairs),
+        [part for pair in ordered for part in pair],
+    )
+    found = sorted(cursor.fetchall())
+    return f"{found[0][0]}.{found[0][1]}" if found else None
+
+
+def _refuse_monetdb_write(
+    refusal: Refusal, cursor: Any, statement: str, parameters: Any
+) -> None:
+    """Refuse ``statement`` unless it is one statement MonetDB plans as a read.
+
+    The plan comes from ``EXPLAIN`` on the same cursor, which prints the
+    relational plan and runs nothing: measured, ``EXPLAIN`` of an ``INSERT``, a
+    ``DELETE``, a ``TRUNCATE``, a ``DROP TABLE`` and a ``CREATE TABLE`` left the
+    data and the catalog as they were. An ``EXPLAIN`` that fails raises
+    MonetDB's own error for the statement, the one running it would have given.
+
+    **A statement with bound parameters is not planned, and is this server's
+    own**, for the reason :func:`_refuse_mssql_write` gives: ``query`` sends
+    the caller's SQL with no values (``tests/test_query_sends_no_parameters.py``).
+
+    **A function call is checked against the catalog.** A stored function
+    whose body writes, called as ``SELECT f()``, plans as a plain projection,
+    so every function the plan names must be a system function recorded free
+    of side effects (:data:`_MONETDB_UNSAFE_FUNCTIONS`).
+
+    Raises pymonetdb's own ``ProgrammingError``, a DBAPI ``Error``, so
+    SQLAlchemy wraps it and ``query`` explains it as a refused write.
+    """
+    if parameters:
+        return
+    if not _monetdb_single_statement(statement):
+        refused = "run more than one statement"
+    else:
+        cursor.execute(f"EXPLAIN {statement}")
+        plan = [line for (line,) in cursor.fetchall()]
+        writes = [name for name, read in _monetdb_plan_operators(plan) if not read]
+        if writes:
+            refused = (
+                f"run a statement MonetDB plans as {writes[0]}"
+                if writes[0]
+                else "run a statement MonetDB does not plan as a read"
+            )
+        else:
+            function = _monetdb_unsafe_function(cursor, _monetdb_plan_names(plan))
+            if function is None:
+                return
+            refused = (
+                f"call {function}, which is not a system function free of side effects"
+            )
+    from pymonetdb.exceptions import ProgrammingError
+
+    refusal.what = refused
+    raise ProgrammingError(f"query may not {refusal.what}.")
+
+
+@dataclass(frozen=True)
+class MonetDBBackend(Backend):
+    """MonetDB, which has no read-only transaction and runs several statements.
+
+    Every generic answer holds here but one: the read posture. The generic
+    floor never commits, and MonetDB keeps it, so nothing written through the
+    reader survives. But ``query`` also promises that an ``ok`` reports what
+    happened, and before #119 ``INSERT … RETURNING`` answered ``ok`` with a
+    row the rollback then removed. MonetDB offers nothing to refuse it with:
+    ``START TRANSACTION READ ONLY`` is ``Readonly transactions not
+    supported``, and the cursor describes ``INSERT … RETURNING name`` and
+    ``SELECT 'x' AS name`` identically. CrateDB's first-keyword gate is not
+    exact either, because MonetDB nests a write under ``WITH`` and runs a
+    string of statements.
+
+    So :meth:`read_posture` asks MonetDB itself, through ``EXPLAIN``, as SQL
+    Server's reader asks ``SHOWPLAN_XML`` (:func:`_refuse_monetdb_write`).
+    """
+
+    name: str = "monetdb"
+
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        """Refuse, before it runs, anything MonetDB does not plan as one read.
+
+        The same two hooks as :meth:`MSSQLBackend.read_posture`, one for a
+        statement with parameters and one without, installed on the reader
+        only, so ``create``, ``update`` and ``drop`` keep writing through the
+        writer. Every statement this server runs on the reader, reflection,
+        ``stats`` and the count reads, is a ``SELECT`` and plans as one.
+        """
+
+        @event.listens_for(engine, "do_execute")
+        def _with_parameters(cursor, statement, parameters, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_monetdb_write(refusal, cursor, statement, parameters)
+            return False
+
+        @event.listens_for(engine, "do_execute_no_params")
+        def _without_parameters(cursor, statement, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_monetdb_write(refusal, cursor, statement, None)
+            return False
+
+
+# ---------------------------------------------------------------------------
 # CrateDB
 # ---------------------------------------------------------------------------
 
@@ -2946,6 +3171,7 @@ BACKENDS: dict[str, Backend] = {
     "clickhousedb": ClickHouseBackend(),
     "trino": TrinoBackend(),
     "crate": CrateDBBackend(),
+    "monetdb": MonetDBBackend(),
     # The one key here that is not the name of an engine. `sqlalchemy-firebirdsql`
     # registers the dialect under its *driver's* name, so this is what a URL
     # resolves to, while the backend it maps to calls itself `firebird` — which is

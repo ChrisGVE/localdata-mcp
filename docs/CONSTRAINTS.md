@@ -6047,3 +6047,37 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > contains it and says more. A driver that chose different words keeps them. Batch d after the
 > change: 1197 passed, 0 failed. There is no pyexasol floor of our own, because the empty-error
 > shape of 2.3.0 is still handled.
+
+> **Amended 2026-11-02 — MonetDB is gated by its own `EXPLAIN`
+> ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).** The 2026-11-01 amendment found
+> no posture on MonetDB. Measured on `monetdb/monetdb:latest` (11.55.7, Dec2025-SP3), `pymonetdb`
+> 1.9.1, three facts made a gate possible:
+>
+> - **A second statement needs a `;`.** `SELECT 1 SELECT 2`, and an `INSERT` on the next line, are
+>   both `42000!syntax error … expecting SCOLON`. So the reader refuses any `;` but one trailing,
+>   without lexing anything. A `;` inside a literal or comment costs a read.
+> - **`EXPLAIN <statement>` prints the relational plan and runs nothing.** `EXPLAIN` of an `INSERT`,
+>   `DELETE`, `TRUNCATE`, `DROP TABLE` and `CREATE TABLE` left the count and the catalog unchanged.
+>   It covers the first statement only: `EXPLAIN COMMIT; INSERT …` printed `ddl` and ran the
+>   `INSERT`, which is why the `;` rule comes first. `PLAN` is no longer a keyword
+>   (`syntax error, unexpected IDENT in: "plan"`).
+> - **A write names itself in the plan.** `INSERT … RETURNING`, also under `WITH`, prints `insert(`
+>   inside the `project`. `UPDATE` prints `update(`, `DELETE` prints `delete(`, and `TRUNCATE`
+>   prints `truncate …`. `CREATE`, `COPY … INTO '<file>'`, `CALL` and `SET` print `ddl`. Reads of
+>   every measured shape print only `project`, `select`, `table`, `top N`, `group by`, the joins,
+>   `semijoin`, `antijoin`, `crossproduct`, the `munion`/`except`/`intersect` family, `sample` and
+>   `REF`. That list is the allowlist, and anything else is refused.
+>
+> **One write the plan cannot show: a function call.** `SELECT f()`, where `f` is a SQL function
+> whose body is an `INSERT`, plans as a bare `project`. `sys.functions.side_effect` does not help:
+> such a function is recorded `side_effect = false`. It is `system = false`, though. So every
+> `"schema"."name"` pair in the plan is looked up in `sys.functions`, and the statement is refused
+> if any match is not both `system` and free of side effects. That refuses user-defined functions
+> outright, and the system ones `hot_snapshot`, `next_value_for` and `vacuum`. Codex refused
+> sign-off on the gate until this was closed.
+>
+> After the change: `tests/test_monetdb_read_gate.py` passes 43/43 live. A revert drill
+> unregistering `MonetDBBackend` turned the five row-returning write shapes red. Disabling the
+> catalog check turned the two writing-function shapes red. The MonetDB endpoint suite, with the
+> #119 strict xfail removed under Codex sign-off, passes 53 with 0 failed. The residual in the
+> amendment above no longer holds.

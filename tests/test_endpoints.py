@@ -1100,15 +1100,7 @@ _NO_RETURNING = frozenset(
     {"mysql", "mariadb", "oracle", "trino", "clickhouse", "exasol", "mssql"}
 )
 
-#: MonetDB answers ``INSERT … RETURNING`` through ``query`` with the row it then
-#: rolls back: it has no read-only transaction to ask for, and the statement
-#: hands rows back like a read. Recorded rather than fixed.
-_MONETDB_RETURNING_ISSUE = "https://github.com/ChrisGVE/localdata-mcp/issues/119"
-
-
-def test_query_refuses_insert_returning_even_where_the_datasource_permits_it(
-    live, request
-):
+def test_query_refuses_insert_returning_even_where_the_datasource_permits_it(live):
     """``INSERT … RETURNING`` hands rows back like a read, and is still a write (#118).
 
     The generic floor asks whether a statement returned rows of at least one
@@ -1125,13 +1117,6 @@ def test_query_refuses_insert_returning_even_where_the_datasource_permits_it(
     attach_writable(live)
     table = land_people(live)
     backend = backend_for_url(live.url)
-    if backend.name == "monetdb":
-        request.applymarker(
-            pytest.mark.xfail(
-                strict=True,
-                reason=f"MonetDB answers ok with a rolled-back row: {_MONETDB_RETURNING_ISSUE}",
-            )
-        )
 
     columns = ["name", "department", "salary"]
     values = ["'x'", "'y'", "1"]

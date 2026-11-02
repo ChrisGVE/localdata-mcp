@@ -372,9 +372,11 @@ which is not equally far:
   read-only transaction that refuses the statement before it changes anything
   ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)).
 - **MonetDB** has no read-only transaction to ask for, and its grammar nests a write inside a
-  `WITH`, so neither a posture nor a first-keyword gate is available. The floor rolls a write
-  back, so nothing is kept, but `INSERT … RETURNING` through `query` still answers `ok` with
-  the row it returned ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).
+  `WITH`, so neither a posture nor a first-keyword gate is available. Its reader asks MonetDB's
+  own `EXPLAIN` instead: one statement only (a `;` anywhere but at the end is refused), every
+  plan operator a read's, and every function the plan names a system function recorded free of
+  side effects. Before that, `INSERT … RETURNING` answered `ok` with a row the floor then rolled
+  back ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).
 
 Underneath all of them is one dialect-free rule: **a statement that returns no rows is not
 a read**, and is refused on that ground. No SQL is parsed to decide it — a `SELECT` returns
@@ -511,7 +513,7 @@ this server built is a database it holds.
 | CockroachDB | URL | nothing — and on a different engine speaking PostgreSQL's wire, that is the result rather than an absence |
 | YugabyteDB | URL | nothing — reached on PostgreSQL's dialect, which is why the seam had to learn to ask the *engine* what it is rather than trust the dialect's name |
 | Trino | URL | an isolation level, since the driver connects in `AUTOCOMMIT` and there is no transaction left to withhold; `LargeBinary`; and `create(type='index')`, since it owns no storage to index |
-| MonetDB | URL | nothing — a column store, and not the first here in any sense: DuckDB (a file) and ClickHouse (a URL, which creates its tables as `MergeTree`) both came earlier. What it shows is that it answers every axis the way a row store does. It is also the one backend where `INSERT … RETURNING` through `query` answers `ok` with a row the floor then rolls back, since it has no read-only transaction to ask for ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)) |
+| MonetDB | URL | nothing — a column store, and not the first here in any sense: DuckDB (a file) and ClickHouse (a URL, which creates its tables as `MergeTree`) both came earlier. What it shows is that it answers every axis the way a row store does. Having no read-only transaction, its reader is gated by its own `EXPLAIN` ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)) |
 | CrateDB | URL | a first-keyword gate on the read engine that refuses anything but a query before it is sent, since it has neither transactions nor a read-only session; a `REFRESH TABLE` before a write can be read back; the driver's type converter, without which a date arrives as epoch milliseconds; `LargeBinary` and `Time`, which it does not have, and `Numeric`, which its dialect silently truncates; and the refusal of `create(type='index')`, since every column is indexed already |
 | openGauss | URL | nothing — but it is the first PostgreSQL fork here that cannot be *addressed* as PostgreSQL, since its version banner does not parse and SQLAlchemy's own PGDialect raises while initialising the connection; it ships its own dialect, so there is no impostor to resolve either |
 | Firebird | URL | a read-only transaction on the read engine (`readonly=true`), since the floor rolls a write back without refusing it; that rows cannot be written in the transaction that created the table, since DDL is transactional *and* prepared against committed metadata; the refusal of `update(type='table', to=…)`, since no statement renames a table here; `DOUBLE PRECISION`, since the dialect renders `Double` as a keyword Firebird lacks; and `VARCHAR` sized from the data, since `Text` becomes a `BLOB` that groups by identity rather than by value |
