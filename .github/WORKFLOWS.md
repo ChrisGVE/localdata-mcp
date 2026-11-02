@@ -13,7 +13,7 @@ re-derives it from a workflow file that looks plausible.
 |---|---|---|
 | `codeql.yml` | push and PR to `main`; Tuesdays 14:43 UTC | Works. Runs against `main`, which still carries 2.x. |
 | `publish-to-pypi.yml` | push to `main`; tags `v*.*.*`; manual | Works, and the registry it publishes to is decided by **the ref, not the trigger** — `main` goes to TestPyPI, a `v*.*.*` tag goes to PyPI, and a manual dispatch goes to whichever of the two the ref it is run from satisfies. See below. |
-| `docker-publish.yml` | tags `v*.*.*`; manual | Builds and pushes the image. **The image itself is broken** — see below. |
+| `docker-publish.yml` | tags `v*.*.*`; manual | Refuses a tag that disagrees with `project.version`, builds the image, smoke-tests it over stdio, then pushes it. `latest` moves only on a release tag. See below. |
 
 There is no `ci.yml`, no `release.yml` and no `security.yml` in this repository.
 A badge pointing at any of them renders as "no status".
@@ -49,18 +49,32 @@ this branch eventually gets has to be written against the package that exists.
 
 ## The Docker image
 
-`docker-publish.yml` fires on a `v*.*.*` tag, so **tagging 3.0.0 would publish a
-broken image.** The `Dockerfile` is 2.x's: it labels itself `version="2.0.0"`,
-installs redis, elasticsearch, pymongo, influxdb-client, neo4j and couchdb —
-none of which this package uses — and its `HEALTHCHECK` runs
+The `Dockerfile` builds the v3 server from `uv.lock` with every format and
+database extra (`[all]`), on `python:3.12-slim-bookworm`, running as a non-root
+user with `/app/data` as the mount point for files. SQL Server is reached
+through unixODBC and FreeTDS: Microsoft's ODBC driver needs its licence
+accepted, which an image built for anyone cannot do on their behalf. Its
+`HEALTHCHECK` imports the server's entry point; a stdio server has no port to
+probe. It was rebuilt on 2026-11-02 for
+[#76](https://github.com/ChrisGVE/localdata-mcp/issues/76): until then it was
+2.x's, labelled `2.0.0`, carrying six drivers this package never uses, and
+health-checking a module that no longer exists.
+
+`docker-publish.yml` runs three gates before it pushes anything:
+`scripts/check_release_version.py` refuses a tag whose version is not
+`project.version`; the image is built locally first; and
+`scripts/docker_smoke.py` runs it as a client would (`docker run -i`), and fails
+unless it answers `initialize` and `tools/list` and reports `project.version`.
+`latest` is tagged only when the run is for a `v*` tag, so a manual dispatch
+from a branch can no longer move it. Run the smoke test locally with:
 
 ```
-python -c "import localdata_mcp.localdata_mcp; print('OK')"
+docker build -t localdata-mcp:smoke .
+python scripts/docker_smoke.py localdata-mcp:smoke "$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
 ```
 
-against a module that was deleted, so every container reports itself unhealthy.
-`docker-compose.yml` (the development stack, not the test one) is the same
-vintage: postgres, mysql, mongodb, redis and elasticsearch.
+`docker-compose.yml` (the development stack, not the test one) is still 2.x's:
+postgres, mysql, mongodb, redis and elasticsearch.
 
 `docker-compose.test.yml` is separate, current, and the only compose file the
 test suite uses. See CONTRIBUTING.md for how it is run.
@@ -138,13 +152,12 @@ release tag is pushed**:
    names no environment, so nothing restricts what it publishes from. The Docker
    gap is listed under [Before the next release](#before-the-next-release).
 
-**Nothing verifies that the tag and `project.version` agree.** Push `v3.0.0` at
-this commit and the job builds `3.0.0.dev0` and uploads it under a tag saying
-otherwise. `twine check` passes, because a pre-release is valid metadata — and
-because it is a pre-release, `pip install localdata-mcp` and `uvx localdata-mcp`
-exclude it from resolution by default, so the release would look green while no
-user's install changed at all. A `refs/tags/v*` → `project.version` equality
-check in the `build` job is the standard guard.
+**The `build` job refuses a tag that disagrees with `project.version`**
+(`scripts/check_release_version.py`, since 2026-11-02, #76). Before it, pushing
+`v3.0.0` on a tree declaring `3.0.0.dev0` would have uploaded the pre-release,
+which `twine check` passes and which `pip install localdata-mcp` and
+`uvx localdata-mcp` exclude from resolution by default — a release that looked
+green while no user's install changed.
 
 **Nothing publishes `server.json` either.** No workflow runs `mcp-publisher`,
 and this server has never appeared in the MCP registry — a query for `localdata`,
@@ -152,9 +165,11 @@ and this server has never appeared in the MCP registry — a query for `localdat
 is a manual step somebody has to take, and `server.json` has to be valid first
 (see [Before the next release](#before-the-next-release)).
 
-**Nothing validates any manifest.** No workflow runs the `server.json` schema
-check or `claude plugin validate`; `twine check` is the only manifest gate there
-is, and it does not look at either file.
+**No workflow validates any manifest.** `tests/test_server_manifest.py` checks
+`server.json` against the registry schema it declares and against
+`project.version`, and `tests/test_plugin_manifests.py` checks the plugin
+manifests — but both run only where the tests are run, which is locally (gap 1
+below). `twine check` is the only manifest gate a workflow applies.
 
 ## What a release does, end to end
 
@@ -166,8 +181,8 @@ Nothing walks a release for you, so this is the whole of it:
    this branch.
 3. Push a `vX.Y.Z` tag. That is the only *push* that fires `publish-to-pypi.yml`'s
    PyPI job or `docker-publish.yml`, but it is not the only path to either: both
-   declare `workflow_dispatch`, `docker-publish.yml`'s job carries no `if:` at
-   all, and a dispatch may name a tag — **read the gaps below before doing it.**
+   declare `workflow_dispatch`, and a dispatch may name a tag. Both refuse a tag
+   that disagrees with `project.version`.
    Then wait: the `pypi` environment holds the upload for fifteen minutes, so a
    job that has not started is the timer doing its job.
 4. Create the GitHub release from the tag, for the notes; the upload has already
@@ -198,24 +213,21 @@ These are the known gaps, stated so a release does not walk into them:
    therefore gated by whatever was run locally and written into the pull request,
    and by nothing else. Writing one is a matter of `uv sync --all-extras` and the
    endpoint batches — not of restoring what was here.
-2. The `Dockerfile` needs rewriting or `docker-publish.yml` needs disabling
-   before a `v3.0.0` tag is pushed. `docker-publish.yml` also moves the `latest`
-   tag unconditionally, including on a `workflow_dispatch` run from any branch,
-   so it can publish the broken image with no tag involved at all.
-3. **The tag and `project.version` are not checked against each other**, and
-   `3.0.0.dev0` is a pre-release nobody's `pip install` would resolve
-   ([#76](https://github.com/ChrisGVE/localdata-mcp/issues/76)).
+2. ~~The `Dockerfile` is 2.x's and `latest` moves on any dispatch.~~ Fixed
+   2026-11-02 ([#76](https://github.com/ChrisGVE/localdata-mcp/issues/76)); see
+   [The Docker image](#the-docker-image).
+3. ~~The tag and `project.version` are not checked against each other.~~ Both
+   publish workflows check them since 2026-11-02 (#76). `project.version` is
+   still `3.0.0.dev0`, so it has to be set to the release before tagging.
 4. ~~**The `testpypi` and `pypi` GitHub environments have to exist.**~~ Not a
    gap: both have existed since 2025-08-29. Listed as outstanding until
    2026-08-05, when the repository was queried rather than assumed. The
    requirement itself, and the fifteen-minute hold the `pypi` environment
    imposes on the upload, are stated above.
-5. **`server.json`'s `packages[0].version` is `2.1.0`, and PyPI 404s on it.**
-   The registry resolves that field against the named `registryType` during
-   publish, so it has to name a release that exists — which today it does not,
-   and never did. It moves with the release version, so it is fixed when that is
-   decided ([#78](https://github.com/ChrisGVE/localdata-mcp/issues/78)). The
-   over-length `description` in the same file was fixed on 2026-08-04; it had
-   survived a deliberate rewrite of that very line, because **nothing in CI
-   validates this file** and the error only appears server-side at publish time.
+5. ~~`server.json`'s `packages[0].version` was `2.1.0`, which PyPI 404s on.~~
+   Fixed 2026-11-02 ([#78](https://github.com/ChrisGVE/localdata-mcp/issues/78)):
+   it carries `project.version`, and `tests/test_server_manifest.py` keeps the
+   two in step and validates the file against its schema. The registry resolves
+   the field against PyPI at publish time, so publish `server.json` only after
+   the PyPI upload has landed.
 6. `docker-compose.yml`, the issue templates and the PR template describe 2.x.

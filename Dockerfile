@@ -1,98 +1,59 @@
-# LocalData MCP Server Dockerfile
-# Provides a containerized environment for running the MCP server
+# LocalData MCP server, as a container.
+#
+# The server speaks MCP over stdio, so a client runs it with `docker run -i`
+# and mounts the files it should see under /app/data:
+#
+#   docker run --rm -i -v "$PWD:/app/data" chrisgve/localdata-mcp
+#
+# Dependencies come from uv.lock, so the image holds exactly the versions the
+# test suite ran against, with every format and database extra (`[all]`).
+# SQL Server is reached through unixODBC with the FreeTDS driver; Microsoft's
+# own ODBC driver needs its licence accepted, which an image built for anyone
+# cannot do on their behalf — install it in a derived image if you need it.
 
-FROM python:3.11-slim-bullseye
+FROM python:3.12-slim-bookworm AS build
 
-# Set metadata
-LABEL maintainer="Christian C. Berclaz <christian.berclaz@mac.com>"
-LABEL description="LocalData MCP Server - Comprehensive database and file format support"
-LABEL version="2.0.0"
-LABEL io.modelcontextprotocol.server.name="localdata-mcp"
+COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /usr/local/bin/uv
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
 
-# Install system dependencies required for various database and format support
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Build essentials for Python packages
-    gcc \
-    g++ \
-    # Database client libraries
-    libpq-dev \
-    default-libmysqlclient-dev \
-    # XML processing libraries
-    libxml2-dev \
-    libxslt1-dev \
-    # HDF5 support
-    libhdf5-dev \
-    pkg-config \
-    # Cleanup
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-# Create a non-root user for security
-RUN groupadd --gid 1000 mcpuser && \
-    useradd --uid 1000 --gid mcpuser --shell /bin/bash --create-home mcpuser
-
-# Set working directory
 WORKDIR /app
-
-# Copy requirements first for better Docker layer caching
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src/ src/
+RUN uv sync --frozen --no-dev --extra all --no-editable
 
-# Install the package and dependencies
-RUN pip install --no-cache-dir -e . && \
-    # Install optional modern database dependencies
-    pip install --no-cache-dir \
-    redis>=6.0.0 \
-    elasticsearch>=9.0.0 \
-    pymongo>=4.0.0 \
-    influxdb-client>=1.40.0 \
-    neo4j>=5.0.0 \
-    couchdb>=1.2.0 \
-    duckdb>=0.9.0
 
-# Create directories for data and ensure proper permissions
-RUN mkdir -p /app/data /app/temp && \
-    chown -R mcpuser:mcpuser /app
+FROM python:3.12-slim-bookworm
 
-# Switch to non-root user
+ARG VERSION=unknown
+LABEL org.opencontainers.image.title="LocalData MCP" \
+      org.opencontainers.image.description="SQL over local data files and databases, for LLM agents" \
+      org.opencontainers.image.source="https://github.com/ChrisGVE/localdata-mcp" \
+      org.opencontainers.image.version="${VERSION}" \
+      io.modelcontextprotocol.server.name="io.github.chrisgve/localdata-mcp"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unixodbc tdsodbc \
+    && rm -rf /var/lib/apt/lists/* \
+    && odbcinst -i -d -f /usr/share/tdsodbc/odbcinst.ini
+
+RUN groupadd --gid 1000 mcpuser \
+    && useradd --uid 1000 --gid mcpuser --create-home mcpuser \
+    && mkdir -p /app/data && chown mcpuser:mcpuser /app/data
+
+COPY --from=build /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1
+
 USER mcpuser
-
-# Create a simple entrypoint script
-RUN cat > /app/entrypoint.sh << 'EOF'
-#!/bin/bash
-set -e
-
-# Default to stdio transport if no arguments provided
-if [ $# -eq 0 ]; then
-    exec localdata-mcp
-else
-    exec "$@"
-fi
-EOF
-
-# Make entrypoint executable
-USER root
-RUN chmod +x /app/entrypoint.sh
-USER mcpuser
-
-# Set default working directory to /app/data for file operations
 WORKDIR /app/data
-
-# Expose the working directory as a volume
 VOLUME ["/app/data"]
 
-# Health check to ensure the server can start
+# A stdio server has no port to probe; this proves the installed server and
+# its entry point load, which is what a broken image fails first.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import localdata_mcp.localdata_mcp; print('OK')" || exit 1
+    CMD python -c "from localdata_mcp.server import main" || exit 1
 
-# Set the entrypoint
-ENTRYPOINT ["/app/entrypoint.sh"]
-
-# Default command - runs the MCP server with stdio transport
-CMD []
+ENTRYPOINT ["localdata-mcp"]
