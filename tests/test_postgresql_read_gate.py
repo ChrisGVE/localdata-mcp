@@ -37,6 +37,7 @@ from fastmcp import Client
 from sqlalchemy import DDL, create_engine, text
 
 from localdata_mcp import config as config_module
+from localdata_mcp import dialects as dialects_module
 from localdata_mcp import server as server_module
 from localdata_mcp.config import Config
 from localdata_mcp.dialects import (
@@ -806,3 +807,294 @@ def test_a_domain_check_cannot_move_a_sequence(server, request):
     finally:
         _try(server.admin, f"DROP DOMAIN IF EXISTS {t}_d")
         _try(server.admin, f"DROP FUNCTION IF EXISTS {t}_chk(INT)")
+
+
+# ---------------------------------------------------------------------------
+# Domains whose CHECK reaches a refused name (#126)
+# ---------------------------------------------------------------------------
+
+
+def test_a_domain_whose_check_reaches_one_is_refused_with_all_it_holds():
+    """A domain checked, its array, a domain over it, a composite, a table: all refused."""
+    types = {
+        10: _type("d_fn"),
+        11: _type("_d_fn"),
+        12: _type("d_over"),
+        13: _type("pair_c"),
+        14: _type("ledger", relation=True),
+        15: _type("plain_t", relation=True),
+    }
+    parts = [(11, 10), (12, 10), (13, 10), (14, 13), (15, 23)]
+
+    refused = dialects_module._pg_refused_types(set(), types, parts, {10})
+
+    assert set(refused) == {"d_fn", "_d_fn", "d_over", "pair_c", "ledger"}
+    assert "domain whose CHECK" in refused["d_fn"]
+    assert "column" in refused["ledger"] and "CHECK" in refused["ledger"]
+    assert "CHECK" in refused["pair_c"] and "column" not in refused["pair_c"]
+
+
+def test_a_type_reached_by_a_cast_and_a_check_is_explained_by_its_cast():
+    types = {1: _type("money_c"), 2: _type("both_d")}
+    refused = dialects_module._pg_refused_types({1}, types, [(2, 1)], {2})
+    assert "conversion" in refused["both_d"], refused
+
+
+class _Catalog:
+    """A cursor answering the gate's catalog questions from fixed rows.
+
+    Keyed by the exact question, and any other question fails the test: a gate
+    that started asking something new would otherwise read an empty answer
+    and pass. ``asked`` records the questions in order, for what a server
+    pays per statement.
+    """
+
+    def __init__(self, answers):
+        self.answers = answers
+        self.asked = []
+        self._rows = []
+
+    def execute(self, sql):
+        assert sql in self.answers, f"unexpected catalog question: {sql[:80]}"
+        self.asked.append(sql)
+        self._rows = list(self.answers[sql])
+
+    def fetchall(self):
+        return self._rows
+
+
+_RELATIONS = "the backend's relations question"
+
+
+def _catalog(*, checks, types=(), parts=(), views=(), casts=()):
+    """A catalog with a user function ``chk``, and ``nextval`` and ``abs`` of the server's."""
+    return _Catalog(
+        {
+            dialects_module._PG_FUNCTIONS: [
+                ("public", "chk", False, False, True),
+                ("pg_catalog", "nextval", True, False, False),
+                ("pg_catalog", "abs", False, False, False),
+            ],
+            dialects_module._PG_CASTS: list(casts),
+            dialects_module._PG_DOMAIN_CHECKS: list(checks),
+            dialects_module._PG_TYPES: list(types),
+            dialects_module._PG_TYPE_PARTS: list(parts),
+            _RELATIONS: list(views),
+            dialects_module._PG_OPERATORS: [],
+        }
+    )
+
+
+def _domain(oid, name, check):
+    return (oid, "public", name, True, False, check)
+
+
+def _row(oid, name, *, relation=False):
+    return (oid, "public", name, True, False, relation)
+
+
+def test_the_gate_refuses_a_domain_by_what_its_check_reaches():
+    """Through a function, through ``nextval``, through another such domain, in any order.
+
+    And what follows from a refused domain: its array, a domain over it, a
+    table with a column of it, a view naming it, and a view naming only that
+    table's row, which is refused only once the domain's closure is known.
+    What reaches nothing stays readable.
+    """
+    catalog = _catalog(
+        checks=[
+            _domain(13, "d_outer", "CHECK (((VALUE)::d_fn IS NOT NULL))"),
+            _domain(10, "d_fn", "CHECK (chk(VALUE))"),
+            _domain(11, "d_seq", "CHECK ((nextval('s'::regclass) > VALUE))"),
+            _domain(12, "d_plain", "CHECK ((abs(VALUE) > 0))"),
+        ],
+        types=[
+            _row(10, "d_fn"),
+            _row(11, "d_seq"),
+            _row(12, "d_plain"),
+            _row(13, "d_outer"),
+            _row(14, "_d_fn"),
+            _row(15, "d_over"),
+            _row(16, "ledger", relation=True),
+            _row(17, "plain_t", relation=True),
+        ],
+        parts=[(14, 10), (15, 10), (16, 11), (17, 12)],
+        views=[
+            ("v_cast", "SELECT (1)::d_fn AS x"),
+            ("v_row", "SELECT (ROW(1)::ledger).c AS x"),
+            ("v_plain", "SELECT 1 AS x"),
+        ],
+    )
+
+    words = dialects_module._pg_unsafe(catalog, _RELATIONS).words
+
+    refused_here = ("d_fn", "d_seq", "d_outer", "_d_fn", "d_over", "ledger")
+    for refused in (*refused_here, "v_cast", "v_row"):
+        assert refused in words, (refused, words)
+    for readable in ("d_plain", "plain_t", "v_plain", "abs"):
+        assert readable not in words, (readable, words)
+    assert "domain whose CHECK" in words["d_outer"], words
+    assert "column of a domain" in words["ledger"], words
+    assert "view" in words["v_cast"], words
+
+
+def test_a_domain_named_by_a_refused_type_is_refused():
+    """A check casting to a type a refused cast converts reaches that cast (#125)."""
+    catalog = _catalog(
+        casts=[(1, "public", "conv", False, False, True)],
+        checks=[_domain(10, "d_money", "CHECK (((VALUE)::money_c IS NOT NULL))")],
+        types=[_row(1, "money_c"), _row(10, "d_money")],
+    )
+
+    words = dialects_module._pg_unsafe(catalog, _RELATIONS).words
+
+    assert "domain whose CHECK" in words["d_money"], words
+
+
+def test_checks_reaching_nothing_cost_no_read_of_the_types():
+    """The gate runs on every statement: without a cast or check to follow, no type is read."""
+    catalog = _catalog(checks=[_domain(12, "d_plain", "CHECK ((VALUE > 0))")])
+
+    words = dialects_module._pg_unsafe(catalog, _RELATIONS).words
+
+    assert "d_plain" not in words
+    assert dialects_module._PG_DOMAIN_CHECKS in catalog.asked
+    assert dialects_module._PG_TYPES not in catalog.asked
+    assert dialects_module._PG_TYPE_PARTS not in catalog.asked
+
+
+def _drop_domain(admin, name: str) -> None:
+    """Drop domain ``name``; openGauss refuses DROP DOMAIN, measured, and takes DROP TYPE."""
+    if not _try(admin, f"DROP DOMAIN IF EXISTS {name}"):
+        _try(admin, f"DROP TYPE IF EXISTS {name}")
+
+
+#: Reads reaching a domain's CHECK that calls ``nextval`` (#126): directly
+#: (``_dn``) or through a function (``_dd``), and through what holds a value
+#: of it — a domain over it, its array, a composite and a table with a column
+#: of it. Each statement names only the type it builds.
+_DOMAIN_REACHED = {
+    "function-check": "SELECT 1::{t}_dd",
+    "nextval-check": "SELECT 1::{t}_dn",
+    "domain-over-it": "SELECT 1::{t}_dover",
+    "array-of-it": "SELECT '{{1}}'::_{t}_dd",
+    "composite-holding-it": "SELECT (ROW(1)::{t}_dc).a",
+    "table-holding-it": "SELECT (ROW(1)::{t}_dt).c",
+}
+
+
+@pytest.mark.endpoint
+@pytest.mark.parametrize("shape", sorted(_DOMAIN_REACHED))
+def test_a_read_reaching_a_refused_domain_check_is_refused_by_the_gate(server, shape):
+    """Refused by the gate, by name, so openGauss's read-only session is never asked."""
+    t = server.t
+    created = [
+        (
+            f"CREATE FUNCTION {t}_dchk(INT) RETURNS BOOLEAN LANGUAGE SQL AS "
+            f"'SELECT nextval(''{t}_seq'') > 0'"
+        ),
+        f"CREATE DOMAIN {t}_dd AS INT CHECK ({t}_dchk(VALUE))",
+        f"CREATE DOMAIN {t}_dn AS BIGINT CHECK (nextval('{t}_seq') > VALUE - 1000000)",
+        f"CREATE DOMAIN {t}_dover AS {t}_dd",
+        f"CREATE TYPE {t}_dc AS (a {t}_dd)",
+        f"CREATE TABLE {t}_dt (c {t}_dd)",
+    ]
+    try:
+        if not all(_try(server.admin, statement) for statement in created):
+            pytest.skip(f"{server.engine} has no domains with a function check")
+        if shape == "array-of-it" and not _scalar(
+            server.admin, f"SELECT count(*) FROM pg_type WHERE typname = '_{t}_dd'"
+        ):
+            pytest.skip(f"{server.engine} makes no array type for a domain")
+        before = _sequence_moves_from_here(server.admin, t)
+        answer = _call(
+            "query", nickname="endpoint", sql=_DOMAIN_REACHED[shape].format(t=t)
+        )
+        _refused(answer)
+        assert "CHECK" in answer["error"], answer
+        assert _scalar(server.admin, f"SELECT last_value FROM {t}_seq") == before
+    finally:
+        _try(server.admin, f"DROP TABLE IF EXISTS {t}_dt")
+        _try(server.admin, f"DROP TYPE IF EXISTS {t}_dc")
+        for domain in (f"{t}_dover", f"{t}_dd", f"{t}_dn"):
+            _drop_domain(server.admin, domain)
+        _try(server.admin, f"DROP FUNCTION IF EXISTS {t}_dchk(INT)")
+
+
+@pytest.mark.endpoint
+def test_a_domain_whose_check_reaches_nothing_still_reads(server):
+    """The gate costs no read of a domain whose check calls nothing it refuses."""
+    t = server.t
+    try:
+        if not _try(server.admin, f"CREATE DOMAIN {t}_dok AS INT CHECK (VALUE > 0)"):
+            pytest.skip(f"{server.engine} has no domains")
+        answer = _call("query", nickname="endpoint", sql=f"SELECT 1::{t}_dok AS x")
+        assert answer["ok"] is True, answer
+    finally:
+        _drop_domain(server.admin, f"{t}_dok")
+
+
+@pytest.mark.endpoint
+def test_a_cast_between_the_servers_own_types_is_stopped_by_the_session(
+    server, request
+):
+    """What the read-only session is for, now that domains are named: this cast.
+
+    ``CREATE CAST (INT AS BYTEA)`` through a function of the administrator's
+    that calls ``nextval``: ``SELECT 1::bytea`` then names only the server's
+    own types, which the gate cannot refuse without refusing every read of
+    them, so the statement is sent. On PostgreSQL and YugabyteDB the
+    read-only session refuses ``nextval``, which is all that stands between
+    this read and a moved sequence — revert the posture and this goes red.
+    The refusal must be the server's read-only one, not the gate's and not
+    any other error, or this would witness nothing.
+
+    **Not on openGauss**, whose read-only session runs ``nextval``: the
+    residual #129 records, pinned strict so that closing it
+    turns this red.
+    """
+    if server.engine == "opengauss":
+        request.applymarker(
+            pytest.mark.xfail(
+                strict=True,
+                reason="#129: openGauss's read-only session runs "
+                "nextval, and a cast between the server's own types calls a function "
+                "the statement does not name",
+            )
+        )
+    t = server.t
+    if _scalar(
+        server.admin,
+        "SELECT count(*) FROM pg_cast "
+        "WHERE castsource = 'int4'::regtype AND casttarget = 'bytea'::regtype",
+    ):
+        pytest.skip(f"{server.engine} already has a cast from INT to BYTEA")
+    try:
+        if not (
+            _try(
+                server.admin,
+                f"CREATE FUNCTION {t}_tobytes(INT) RETURNS BYTEA LANGUAGE SQL AS "
+                f"'SELECT decode(nextval(''{t}_seq'')::TEXT, ''escape'')'",
+            )
+            and _try(
+                server.admin,
+                f"CREATE CAST (INT AS BYTEA) WITH FUNCTION {t}_tobytes(INT)",
+            )
+        ):
+            pytest.skip(f"{server.engine} has no user-defined casts")
+        before = _sequence_moves_from_here(server.admin, t)
+        answer = _call("query", nickname="endpoint", sql="SELECT 1::bytea AS b")
+        if "Catalog Version Mismatch" in answer.get("error", ""):
+            # YugabyteDB, measured: a session opened before the cast existed
+            # first answers "cannot cast type integer to bytea … Catalog
+            # Version Mismatch … Try again", having run nothing. Asked again,
+            # it sees the cast.
+            answer = _call("query", nickname="endpoint", sql="SELECT 1::bytea AS b")
+        assert answer["ok"] is False, answer
+        # The server's refusal, which query explains as "query only reads";
+        # the gate's would say "query reads; it does not write" instead.
+        assert "query only reads" in answer["error"], answer
+        assert _scalar(server.admin, f"SELECT last_value FROM {t}_seq") == before
+    finally:
+        _try(server.admin, "DROP CAST IF EXISTS (INT AS BYTEA)")
+        _try(server.admin, f"DROP FUNCTION IF EXISTS {t}_tobytes(INT)")

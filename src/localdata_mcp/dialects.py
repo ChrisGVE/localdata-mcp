@@ -1529,20 +1529,48 @@ _PG_CASTS = (
     "OR p.provolatile = 'v')"
 )
 
-#: Every type that is not the server's own, as :class:`_PGType` describes
-#: one, keyed by oid. A table's or view's row is a type of the same name.
-_PG_TYPES = (
-    "SELECT t.oid, tn.nspname, t.typname, "
+#: Where type ``t`` (in namespace ``tn``) is, and whether the server has a
+#: type of the same name: what :class:`_PGType` needs to choose its word.
+_PG_TYPE_PLACE = (
     "tn.nspname = ANY (current_schemas(false)), "
     "EXISTS (SELECT 1 FROM pg_catalog.pg_type s "
     "JOIN pg_catalog.pg_namespace sn ON sn.oid = s.typnamespace "
     "WHERE s.typname = t.typname "
-    "AND sn.nspname IN ('pg_catalog', 'information_schema')), "
+    "AND sn.nspname IN ('pg_catalog', 'information_schema'))"
+)
+
+#: Every type that is not the server's own, as :class:`_PGType` describes
+#: one, keyed by oid. A table's or view's row is a type of the same name.
+_PG_TYPES = (
+    "SELECT t.oid, tn.nspname, t.typname, "
+    f"{_PG_TYPE_PLACE}, "
     "coalesce(r.relkind IN ('r', 'p', 'v', 'm', 'f'), false) "
     "FROM pg_catalog.pg_type t "
     "JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace "
     "LEFT JOIN pg_catalog.pg_class r ON r.oid = t.typrelid "
     "WHERE tn.nspname NOT IN ('pg_catalog', 'information_schema')"
+)
+
+#: Each ``CHECK`` on a domain that is not the server's own: the domain's oid,
+#: the domain as :class:`_PGType` describes one (less ``is_relation``, which a
+#: domain never is), then the check as the server prints it. A value becoming
+#: one of the domain runs its checks, and no word in the statement need name
+#: what they call: ``1::d``, or ``ROW(1)::t`` for a table with a column of it
+#: (#126). Answers on PostgreSQL 16, YugabyteDB 2.25 and openGauss 7.0.0-RC3,
+#: measured; CockroachDB 26.3 answers it too, and refuses a function or a
+#: sequence in a domain's check, so nothing it returns there reaches one.
+#: Asked from the domains outwards: only a domain has a ``contypid``, and
+#: CockroachDB, whose catalog is built per question, answers in 7.8 ms
+#: instead of 14.8 when it starts from ``pg_constraint``.
+_PG_DOMAIN_CHECKS = (
+    "SELECT t.oid, tn.nspname, t.typname, "
+    f"{_PG_TYPE_PLACE}, "
+    "coalesce(pg_catalog.pg_get_constraintdef(c.oid), '') "
+    "FROM pg_catalog.pg_type t "
+    "JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace "
+    "JOIN pg_catalog.pg_constraint c ON c.contypid = t.oid "
+    "WHERE t.typtype = 'd' AND c.contype = 'c' "
+    "AND tn.nspname NOT IN ('pg_catalog', 'information_schema')"
 )
 
 #: (type, part) for each type built from another: an array from its element,
@@ -1669,68 +1697,137 @@ class _PGType:
     is_relation: bool
 
 
+def _pg_type_word(found: _PGType) -> str:
+    """The word that refuses a statement for naming the type ``found``.
+
+    Its name, or its schema's when the name is also one of the server's own
+    types and the schema is off the search path, as :func:`_pg_refused_word`
+    does for functions.
+    """
+    hidden = found.named_like_a_system_type and not found.on_search_path
+    return found.schema if hidden else found.name
+
+
+def _pg_outwards(seeds: Iterable[int], wholes: Mapping[int, set[int]]) -> set[int]:
+    """``seeds``, and every type built from one of them, and so on outwards."""
+    reached = set(seeds)
+    frontier = list(reached)
+    while frontier:
+        for whole in wholes.get(frontier.pop(), ()):
+            if whole not in reached:
+                reached.add(whole)
+                frontier.append(whole)
+    return reached
+
+
 def _pg_refused_types(
     converted: set[int],
     types: Mapping[int, _PGType],
     parts: Iterable[tuple[int, int]],
+    checked: Iterable[int] = (),
 ) -> dict[str, str]:
     """The words, and why, for every type a read may not hold a value of.
 
-    ``converted`` are the types a refused cast converts (:data:`_PG_CASTS`).
-    Every type built from one of them — its arrays, its domains, the
-    composites and tables with a column of it, and so on outwards — is
-    refused with it, because a value of the whole reaches the cast through
-    the part: measured, ``SELECT c + 1 FROM t`` ran the cast's function with
-    neither the type nor the function named. A table is refused by its own
-    name, which is its row type's. A type's word is its name, or its
-    schema's when the name is also one of the server's own types and the
-    schema is off the search path, as :func:`_pg_refused_word` does for
-    functions.
+    ``converted`` are the types a refused cast converts (:data:`_PG_CASTS`);
+    ``checked`` are the domains whose ``CHECK`` reaches a refused name
+    (:data:`_PG_DOMAIN_CHECKS`). Every type built from one of them — its
+    arrays, its domains, the composites and tables with a column of it, and
+    so on outwards — is refused with it, because a value of the whole
+    reaches the cast or the check through the part: measured,
+    ``SELECT c + 1 FROM t`` ran a cast's function with neither the type nor
+    the function named (#125), and ``ROW(1)::t`` ran the check of a domain
+    one of ``t``'s columns has (#126). A table is refused by its own name,
+    which is its row type's; each type by :func:`_pg_type_word`. A type
+    reached both ways is explained by its cast.
     """
     wholes: dict[int, set[int]] = {}
     for whole, part in parts:
         wholes.setdefault(part, set()).add(whole)
-    refused = set(converted)
-    frontier = list(converted)
-    while frontier:
-        for whole in wholes.get(frontier.pop(), ()):
-            if whole not in refused:
-                refused.add(whole)
-                frontier.append(whole)
+    checked = set(checked)
+    by_cast = _pg_outwards(converted, wholes)
+    by_check = _pg_outwards(checked, wholes) - by_cast
     words: dict[str, str] = {}
-    for oid in sorted(refused):
+    for oid in sorted(by_cast | by_check):
         found = types.get(oid)
         if found is None:
             continue
-        hidden = found.named_like_a_system_type and not found.on_search_path
-        word = found.schema if hidden else found.name
-        words.setdefault(
-            word,
-            "a table or view with a column whose type converts through such a function"
-            if found.is_relation
-            else "a type whose conversion calls such a function",
-        )
+        if oid in by_cast:
+            why = (
+                "a table or view with a column whose type converts through such "
+                "a function"
+                if found.is_relation
+                else "a type whose conversion calls such a function"
+            )
+        elif oid in checked:
+            why = "a domain whose CHECK calls such a function"
+        elif found.is_relation:
+            why = "a table or view with a column of a domain whose CHECK calls such a function"
+        else:
+            why = "a type built from a domain whose CHECK calls such a function"
+        words.setdefault(_pg_type_word(found), why)
     return words
 
 
-def _pg_types_refused_by_casts(cursor: Any, system_names: set[str]) -> dict[str, str]:
-    """:func:`_pg_refused_types` for this server, asked on ``cursor``.
-
-    The types are read only when some cast calls a refused function, so a
-    server without one pays for one small query.
-    """
+def _pg_converted_types(cursor: Any, system_names: set[str]) -> set[int]:
+    """The types a cast calling a refused function converts, asked on ``cursor``."""
     cursor.execute(_PG_CASTS)
-    converted = {
+    return {
         oid
         for oid, *described in cursor.fetchall()
         if _pg_refused_word(_PGFunction(*described), system_names) is not None
     }
-    if not converted:
-        return {}
+
+
+def _pg_type_catalog(
+    cursor: Any,
+) -> tuple[dict[int, _PGType], list[tuple[int, int]]]:
+    """Every type that is not the server's own, and what each is built from."""
     cursor.execute(_PG_TYPES)
     types = {oid: _PGType(*described) for oid, *described in cursor.fetchall()}
     cursor.execute(_PG_TYPE_PARTS)
-    return _pg_refused_types(converted, types, cursor.fetchall())
+    return types, cursor.fetchall()
+
+
+def _pg_typed_and_reaching(
+    cursor: Any,
+    named: set[str],
+    converted: set[int],
+    checks: list[tuple[int, str, str]],
+    definitions: Mapping[str, str],
+) -> tuple[dict[str, str], set[str]]:
+    """The types a read may not hold a value of, and the names that reach a refused one.
+
+    ``named`` are the refused functions and schemas; ``converted`` the types
+    a refused cast converts; ``checks`` each domain's oid, word and ``CHECK``;
+    ``definitions`` the SQL a read of each relation runs, the checks among
+    them under their domains' words. Returns :func:`_pg_refused_types`'s
+    words, and every view, policy or domain reaching one of these names or
+    those types (:func:`_reachable_names`).
+
+    Followed to a fixed point, because each half feeds the other: a domain
+    whose check reaches a refused name is refused, and with it every type
+    built from it, whose names a view or another domain's check may mention
+    in turn. A domain sharing its word with a view that reaches is taken as
+    reaching too, which costs reads and admits none. The types are read only
+    when some cast or check needs them, so a server with neither pays for
+    nothing beyond its casts and checks.
+    """
+    catalog = _pg_type_catalog(cursor) if converted else None
+    typed = _pg_refused_types(converted, *catalog) if catalog else {}
+    checked: set[int] = set()
+    while True:
+        refused = named | set(typed)
+        reaching = _reachable_names(refused, definitions) - refused
+        newly = {oid for oid, word, _ in checks if word in reaching} - checked
+        if not newly:
+            return typed, reaching
+        checked |= newly
+        catalog = catalog or _pg_type_catalog(cursor)
+        typed = _pg_refused_types(converted, *catalog, checked)
+        if set(typed) <= refused | reaching:
+            # Nothing the pass above has not already followed: another would
+            # reach the same names, and find no domain it has not checked.
+            return typed, reaching - set(typed)
 
 
 def _pg_shape_refusal(sql: str) -> str | None:
@@ -1763,7 +1860,10 @@ def _pg_unsafe(cursor: Any, relations_query: str) -> _PGUnsafe:
     """Ask the catalog, on ``cursor``, for every word and operator a read may not use.
 
     ``relations_query`` is the backend's own :data:`_PG_RELATIONS`, the one
-    question whose catalog differs between the engines here.
+    question whose catalog differs between the engines here. A domain's
+    checks are followed as a view's definition is, under the domain's word:
+    a view's SQL runs when the view is read, a domain's checks when a value
+    becomes one of it (:func:`_pg_typed_and_reaching`).
     """
     cursor.execute(_PG_FUNCTIONS)
     functions = [_PGFunction(*row) for row in cursor.fetchall()]
@@ -1773,13 +1873,20 @@ def _pg_unsafe(cursor: Any, relations_query: str) -> _PGUnsafe:
         for function in functions
         if (word := _pg_refused_word(function, system_names)) is not None
     }
-    typed = _pg_types_refused_by_casts(cursor, system_names)
+    converted = _pg_converted_types(cursor, system_names)
+    cursor.execute(_PG_DOMAIN_CHECKS)
+    checks = [
+        (oid, _pg_type_word(_PGType(*described, is_relation=False)), check)
+        for oid, *described, check in cursor.fetchall()
+    ]
     cursor.execute(relations_query)
-    relations: dict[str, str] = {}
-    for name, definition in cursor.fetchall():
-        relations[name] = f"{relations.get(name, '')}\n{definition}".strip()
-    named = refused | set(typed)
-    reaching = _reachable_names(named, relations) - named
+    sources = [*cursor.fetchall(), *((word, check) for _, word, check in checks)]
+    definitions: dict[str, str] = {}
+    for name, definition in sources:
+        definitions[name] = f"{definitions.get(name, '')}\n{definition}".strip()
+    typed, reaching = _pg_typed_and_reaching(
+        cursor, refused, converted, checks, definitions
+    )
     words = dict.fromkeys(
         refused,
         "a function that can change what a rollback does not undo, or read "
