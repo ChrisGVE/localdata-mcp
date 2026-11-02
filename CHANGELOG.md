@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And nineteen found in this release's own code before it shipped:
+And twenty found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -489,6 +489,20 @@ And nineteen found in this release's own code before it shipped:
   no such release. It now carries the version `pyproject.toml` declares, and a
   test holds the two together and validates the manifest against the registry
   schema it names, which caps the description at 100 characters.
+- **On PostgreSQL, `query` ran functions whose effects a rollback does not undo**
+  ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)). On a read-only
+  attach, `lo_export` wrote a file on the server, `pg_reload_conf` reloaded its
+  configuration, and `pg_advisory_lock` left a lock on the pooled connection;
+  CockroachDB ran `setval` and the sequence stayed moved, and YugabyteDB and
+  openGauss had the same hole. The reader now opens a read-only session and asks
+  the server's own catalog what a read may not call: a server function that can
+  act past the transaction, any function nobody installed as an extension, and a
+  view, row-security policy or operator that calls one. A statement naming one,
+  holding more than one statement, or spelling a name with `U&"…"` escapes is
+  refused before it runs. YugabyteDB and openGauss get the gate under their own
+  names. What remains is a function called without its name, such as a
+  user-defined cast; on openGauss the read-only session does not stop that one
+  moving a sequence ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)).
 - **On SQL Server, a write sent to `query` after a `COMMIT` was kept**
   ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)).
   `COMMIT; INSERT …` was refused, but the row stayed: pyodbc sends the string as

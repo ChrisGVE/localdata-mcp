@@ -388,7 +388,14 @@ free of side effects. A `;` anywhere but at the end is refused there too
 no read-only session, and T-SQL needs no `;` between two statements, so there
 each statement is first compiled with `SHOWPLAN_XML` on and runs only if the
 server plans it as exactly one `SELECT` with no remote operator
-([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)). On MySQL and
+([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)). PostgreSQL,
+CockroachDB, YugabyteDB and openGauss open a read-only session, which still runs
+functions acting past the transaction (a file written, the configuration
+reloaded, a lock held, a sequence moved). So the reader asks the server's catalog
+which functions those are, and refuses a statement naming one, a view,
+row-security policy or operator calling one, any function not installed by the
+server or an extension, more than one statement, or a `U&"…"` identifier
+([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)). On MySQL and
 MariaDB the read-only session does not cover file writes, server settings or
 stored functions, and `EXPLAIN` cannot see them. So each statement must be a
 single one, begin with a read's keyword, contain no executable comment and

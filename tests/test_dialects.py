@@ -815,18 +815,25 @@ def test_a_resolved_engine_keeps_whatever_answers_it_has_of_its_own():
 
 
 def test_an_impostor_with_no_entry_of_its_own_still_gets_its_own_name():
-    """The user-facing half of #45, and all YugabyteDB actually needs.
+    """The user-facing half of #45, and all such an engine needs.
 
     ``Backend.name`` is printed at the caller: "A {name} datasource is reached
     over its own connection…". Reached as ``postgresql``, YugabyteDB put
     PostgreSQL's name in front of somebody who never opened PostgreSQL.
-    """
-    resolved = backend_for("postgresql").named_by(YUGABYTEDB_BANNER)
 
-    assert resolved.name == "yugabytedb"
-    assert "yugabytedb" not in BACKENDS, (
-        "this asserts the no-entry path; give YugabyteDB a subclass and it "
-        "belongs in the test above instead"
+    YugabyteDB was this path's instance until #124 gave it an entry (it needs
+    PostgreSQL's reader gate); that resolution is pinned in
+    ``tests/test_postgresql_read_gate.py``. The path itself is pinned here
+    with an engine that has no entry, built as the test above builds one.
+    """
+    sharer = Backend(name="shared")
+    object.__setattr__(sharer, "impostors", {"-NOBODY-": "nobody"})
+    resolved = sharer.named_by("Server 1.0-NOBODY-build")
+
+    assert resolved.name == "nobody"
+    assert type(resolved) is Backend
+    assert "nobody" not in BACKENDS, (
+        "this asserts the no-entry path, which needs an engine with no entry"
     )
 
 

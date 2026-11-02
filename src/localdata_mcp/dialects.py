@@ -56,7 +56,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -235,8 +235,8 @@ class Backend:
     #: should be known by. Empty for a dialect only its own engine speaks.
     #:
     #: **A dialect name identifies a wire protocol and a driver, never an
-    #: engine.** TiDB and OceanBase answer on MySQL's; YugabyteDB, Greenplum and
-    #: OpenGauss on PostgreSQL's. Keyed by dialect alone, every one of them is
+    #: engine.** TiDB and OceanBase answer on MySQL's; YugabyteDB and Greenplum
+    #: on PostgreSQL's. Keyed by dialect alone, every one of them is
     #: handed the answers written for the engine whose dialect it borrowed —
     #: which is at best the wrong name in a refusal and at worst, where that
     #: engine has a subclass, behaviour it never asked for. Issue #45.
@@ -1407,20 +1407,337 @@ class DuckDBBackend(Backend):
 
 
 # ---------------------------------------------------------------------------
-# PostgreSQL
+# One statement, for every reader gate that decides it without a lexer
 # ---------------------------------------------------------------------------
+
+
+#: What a reader gate says when a statement carries a second one.
+_MORE_THAN_ONE_STATEMENT = (
+    "run more than one statement (any ';' but a trailing one is refused, even "
+    "inside a quoted string)"
+)
+
+
+def _one_statement(sql: str) -> bool:
+    """Whether ``sql`` holds no ``;`` but an optional trailing one.
+
+    Decided without lexing, and failing closed: a ``;`` inside a literal or a
+    comment costs the caller that read, and never lets a second statement
+    through. Each gate using it says why a second statement matters on its
+    server; :func:`_monetdb_single_statement` was the first.
+    """
+    return ";" not in sql.rstrip().removesuffix(";")
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL, and the engines that answer on its wire with its catalog
+# ---------------------------------------------------------------------------
+
+
+#: PostgreSQL's code for "cannot execute … in a read-only transaction",
+#: ``read_only_sql_transaction``. CockroachDB answers a write with it too.
+_PG_READ_ONLY = "25006"
+
+#: The schemas the server itself provides. A function in one of these is the
+#: server's own, and is refused only if it can act past the transaction.
+_PG_SYSTEM_SCHEMAS = frozenset({"pg_catalog", "information_schema"})
+
+#: Return types that mark a function nothing can call from SQL: trigger
+#: functions, and the handlers behind access methods, languages, foreign data
+#: wrappers and ``TABLESAMPLE``. Left out so their names cost no read —
+#: ``system`` and ``bernoulli`` are both volatile, and both ordinary words.
+_PG_UNCALLABLE_RETURNS = (
+    "trigger",
+    "event_trigger",
+    "internal",
+    "table_am_handler",
+    "index_am_handler",
+    "language_handler",
+    "tsm_handler",
+    "fdw_handler",
+)
+
+#: Every callable function, with what decides whether a read may call it.
+#: ``pg_depend`` marks a function an extension installed (``deptype 'e'``);
+#: ``current_schemas(false)`` is the search path without the implicit
+#: ``pg_catalog``, which is where an unqualified name can resolve. Runs on
+#: PostgreSQL 16, YugabyteDB 2.25 and CockroachDB 26.3, measured;
+#: CockroachDB has no ``internal`` type, hence the names rather than casts.
+_PG_FUNCTIONS = (
+    "SELECT n.nspname, p.proname, p.provolatile = 'v', "
+    "EXISTS (SELECT 1 FROM pg_catalog.pg_depend d "
+    "WHERE d.classid = 'pg_catalog.pg_proc'::regclass "
+    "AND d.objid = p.oid AND d.deptype = 'e'), "
+    "n.nspname = ANY (current_schemas(false)) "
+    "FROM pg_catalog.pg_proc p "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
+    "WHERE p.prorettype NOT IN (SELECT oid FROM pg_catalog.pg_type "
+    f"WHERE typname IN ({', '.join(repr(t) for t in _PG_UNCALLABLE_RETURNS)}))"
+)
+
+#: Each operator whose function is not a plain read of the server's own,
+#: with that function described as :data:`_PG_FUNCTIONS` describes one. An
+#: operator is another spelling of a function call, one a name cannot catch.
+_PG_OPERATORS = (
+    "SELECT o.oprname, n.nspname, p.proname, p.provolatile = 'v', "
+    "EXISTS (SELECT 1 FROM pg_catalog.pg_depend d "
+    "WHERE d.classid = 'pg_catalog.pg_proc'::regclass "
+    "AND d.objid = p.oid AND d.deptype = 'e'), "
+    "n.nspname = ANY (current_schemas(false)) "
+    "FROM pg_catalog.pg_operator o "
+    "JOIN pg_catalog.pg_proc p ON p.oid = o.oprcode "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
+    "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') "
+    "OR p.provolatile = 'v'"
+)
+
+#: SQL that runs whenever a relation is read, by the relation's name: a
+#: view's definition, and a row-security policy's ``USING`` expression for
+#: reads. A view whose definition is withheld comes back empty, and an empty
+#: definition counts as reaching (:func:`_reachable_names`).
+_PG_VIEWS = "SELECT viewname, coalesce(definition, '') FROM pg_catalog.pg_views"
+_PG_RELATIONS = (
+    f"{_PG_VIEWS} UNION ALL "
+    "SELECT tablename, qual FROM pg_catalog.pg_policies "
+    "WHERE cmd IN ('SELECT', 'ALL') AND qual IS NOT NULL"
+)
+
+#: :data:`_PG_RELATIONS` for openGauss, which has no ``pg_policies``: its
+#: policies are in ``pg_rlspolicies``, under other column names, with the
+#: same ``SELECT`` / ``ALL`` / ``UPDATE`` … commands. Measured on 7.0.0-RC3.
+_OPENGAUSS_RELATIONS = (
+    f"{_PG_VIEWS} UNION ALL "
+    "SELECT tablename, policyqual FROM pg_catalog.pg_rlspolicies "
+    "WHERE policycmd IN ('SELECT', 'ALL') AND policyqual IS NOT NULL"
+)
+
+#: Volatile catalog functions a read may still call, because they are
+#: volatile only in that their answer varies: randomness, the clock, and how
+#: large something is. ``version`` is volatile on CockroachDB, and its
+#: SQLAlchemy dialect asks for it on every new connection.
+_PG_ANSWER_VARIES = frozenset(
+    {
+        "random",
+        "random_normal",
+        "array_sample",
+        "array_shuffle",
+        "gen_random_uuid",
+        "clock_timestamp",
+        "timeofday",
+        "version",
+        "pg_database_size",
+        "pg_relation_size",
+        "pg_table_size",
+        "pg_total_relation_size",
+        "pg_indexes_size",
+        "pg_tablespace_size",
+    }
+)
+
+#: Catalog functions that read whatever relation their argument names. Not
+#: volatile, but a computed name reaches a view no word in the statement
+#: names: ``table_to_xml``, ``schema_to_xml`` and ``database_to_xml`` and
+#: their ``xmlschema`` forms. (``query_to_xml`` and ``cursor_to_xml`` run SQL
+#: text and are volatile already.)
+_PG_RUNS_WHAT_IT_IS_GIVEN = re.compile(r"_to_xml", re.IGNORECASE)
+
+#: A quoted identifier spelled with Unicode escapes, ``U&"lo\005fexport"``,
+#: which names ``lo_export`` without containing the word. Measured: it ran.
+_PG_UNICODE_IDENTIFIER = re.compile(r'u&"', re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class _PGFunction:
+    """One row of :data:`_PG_FUNCTIONS`."""
+
+    schema: str
+    name: str
+    volatile: bool
+    from_extension: bool
+    on_search_path: bool
+
+
+def _pg_refused_word(function: _PGFunction, system_names: set[str]) -> str | None:
+    """The word that refuses a statement for reaching ``function``, if any.
+
+    * **The server's own** (:data:`_PG_SYSTEM_SCHEMAS`): its name, when it is
+      volatile and not in :data:`_PG_ANSWER_VARIES`, or when it reads a
+      relation its argument names. Volatile rather than a list of known
+      effects so that a function a later release adds is refused until
+      someone has looked at it: ``lo_export``, ``pg_reload_conf``,
+      ``pg_terminate_backend``, ``pg_advisory_lock``, ``set_config``,
+      ``setval`` and ``query_to_xml`` all fall out of it.
+    * **An extension's**: its name, when it is volatile. An extension is
+      installed by an administrator from the server's own files, so its
+      volatility is taken at its word, which is what keeps PostGIS readable
+      while ``dblink_exec`` is not.
+    * **Anyone else's**: always. Its body may do anything, whatever it
+      declares. Its name, if its schema is on the search path; otherwise it
+      can only be called qualified, so its name — unless that name is also
+      one of the server's own, when the word is its schema's instead, so that
+      ``crdb_internal.log`` does not cost every read of ``log(x)``.
+    """
+    if function.schema in _PG_SYSTEM_SCHEMAS:
+        if _PG_RUNS_WHAT_IT_IS_GIVEN.search(function.name):
+            return function.name
+        if function.volatile and function.name not in _PG_ANSWER_VARIES:
+            return function.name
+        return None
+    if function.from_extension:
+        return function.name if function.volatile else None
+    if function.on_search_path or function.name not in system_names:
+        return function.name
+    return function.schema
+
+
+def _pg_shape_refusal(sql: str) -> str | None:
+    """What ``sql``'s shape alone refuses it for, or ``None``.
+
+    One statement, because psycopg 2 sends a named cursor's ``DECLARE`` as a
+    simple query, where ``SELECT 1; COMMIT; …`` is three; psycopg 3 and
+    CockroachDB refuse a second statement themselves. And no ``U&"…"``
+    identifier, whose escapes spell a name no word match can see.
+    """
+    if not _one_statement(sql):
+        return _MORE_THAN_ONE_STATEMENT
+    if _PG_UNICODE_IDENTIFIER.search(sql):
+        return (
+            'spell a name with Unicode escapes (U&"…"), which hides what it '
+            "names; write the name itself"
+        )
+    return None
+
+
+@dataclass(frozen=True)
+class _PGUnsafe:
+    """What a read on this server may not mention, and why each is refused."""
+
+    words: dict[str, str]
+    operators: dict[str, str]
+
+
+def _pg_unsafe(cursor: Any, relations_query: str) -> _PGUnsafe:
+    """Ask the catalog, on ``cursor``, for every word and operator a read may not use.
+
+    ``relations_query`` is the backend's own :data:`_PG_RELATIONS`, the one
+    question whose catalog differs between the engines here.
+    """
+    cursor.execute(_PG_FUNCTIONS)
+    functions = [_PGFunction(*row) for row in cursor.fetchall()]
+    system_names = {f.name for f in functions if f.schema in _PG_SYSTEM_SCHEMAS}
+    refused = {
+        word
+        for function in functions
+        if (word := _pg_refused_word(function, system_names)) is not None
+    }
+    cursor.execute(relations_query)
+    relations: dict[str, str] = {}
+    for name, definition in cursor.fetchall():
+        relations[name] = f"{relations.get(name, '')}\n{definition}".strip()
+    reaching = _reachable_names(refused, relations) - refused
+    words = dict.fromkeys(
+        refused,
+        "a function that can change what a rollback does not undo, or read "
+        "a relation named at run time",
+    )
+    words.update(
+        dict.fromkeys(
+            reaching,
+            "a view or a row-security policy that calls such a function",
+        )
+    )
+    for word in refused - {f.name for f in functions}:
+        words[word] = "a schema holding a function that can do that"
+    cursor.execute(_PG_OPERATORS)
+    operators = {}
+    for symbol, *described in cursor.fetchall():
+        function = _PGFunction(*described)
+        if _pg_refused_word(function, system_names) is not None:
+            operators[symbol] = function.name
+    return _PGUnsafe(words=words, operators=operators)
+
+
+def _pg_refusal(sql: str, unsafe: _PGUnsafe) -> str | None:
+    """What ``sql`` is refused for by what it mentions, or ``None``."""
+    word = _named_as_word(sql, set(unsafe.words))
+    if word is not None:
+        return (
+            f"use {word}, {unsafe.words[word]} (refused wherever the name "
+            f"appears as a word)"
+        )
+    for symbol, function in sorted(unsafe.operators.items()):
+        if symbol in sql:
+            return (
+                f"use the operator {symbol}, which calls {function} (refused "
+                f"wherever the symbol appears)"
+            )
+    return None
+
+
+def _refuse_postgresql_write(
+    refusal: Refusal,
+    cursor: Any,
+    statement: str,
+    parameters: Any,
+    context: Any,
+    relations_query: str,
+) -> None:
+    """Refuse ``statement`` unless nothing in it can act past the read (#124).
+
+    The read-only session refuses a row change, DDL, ``lo_import`` and
+    ``nextval``. Measured on PostgreSQL 16 as a superuser, it still ran
+    ``lo_export`` (a file written on the server), ``pg_reload_conf``,
+    ``pg_terminate_backend``, ``pg_switch_wal`` and ``pg_advisory_lock``
+    (held on the pooled connection after the rollback); YugabyteDB ran
+    ``pg_reload_conf``, and CockroachDB ran ``setval``, whose sequence stayed
+    moved. So every statement on the reader passes its shape
+    (:func:`_pg_shape_refusal`) and then what it mentions
+    (:func:`_pg_unsafe`, asked of the catalog on a cursor of its own, since
+    ``cursor`` may be the named cursor about to be declared).
+
+    **A statement with bound parameters is not checked, and is this server's
+    own**, for the reason :func:`_refuse_mssql_write` gives.
+
+    Raises the driver's own ``ProgrammingError``, a DBAPI ``Error``, so
+    SQLAlchemy wraps it and ``query`` explains it as a refused write. Taken
+    from the dialect rather than imported, because psycopg 2 and psycopg 3 can
+    both reach this backend.
+    """
+    if parameters:
+        return
+    refused = _pg_shape_refusal(statement)
+    if refused is None:
+        catalog = cursor.connection.cursor()
+        try:
+            refused = _pg_refusal(statement, _pg_unsafe(catalog, relations_query))
+        finally:
+            catalog.close()
+        if refused is None:
+            return
+    refusal.what = refused
+    raise context.dialect.loaded_dbapi.ProgrammingError(
+        f"query may not {refusal.what}."
+    )
 
 
 @dataclass(frozen=True)
 class PostgreSQLBackend(Backend):
-    """PostgreSQL, which adds nothing — and is registered to say who borrows it.
+    """PostgreSQL, and the engines that answer with its catalog.
 
-    Every answer here is the generic one, and that is the finding rather than an
-    omission: five sessions of endpoint work have not turned up a single thing
-    PostgreSQL needs said for it. This class exists for the *other* reason a
-    dialect earns an entry — several engines answer on it and are not it.
+    **A transaction that never commits is not the whole floor here** (#124).
+    It undoes what a transaction can undo, and a function can act where a
+    rollback does not reach: a file, the server's configuration, another
+    session, a sequence, a session lock. So the reader is opened read-only
+    and passes every statement through :func:`_refuse_postgresql_write`. Set
+    once, at connect time, for the reason :class:`MySQLBackend` gives.
 
-    ``-YB-`` is read from a live YugabyteDB, not from its documentation:
+    Registered for CockroachDB's own dialect and for YugabyteDB as well,
+    because both have the hole and both answer the catalog questions the gate
+    asks, measured. CockroachDB does not report ``transaction_read_only`` as
+    ``on`` inside a cursor, yet refuses a write there with 25006, measured.
+
+    It is also registered to say who borrows the dialect. ``-YB-`` is read
+    from a live YugabyteDB, not from its documentation:
 
     * YugabyteDB — ``PostgreSQL 15.12-YB-2.25.2.0-b0 on x86_64-pc-linux-gnu…``
     * PostgreSQL — ``PostgreSQL 16.14 on x86_64-pc-linux-musl…``
@@ -1431,14 +1748,75 @@ class PostgreSQLBackend(Backend):
     engine, and a fragment that leans on a build detail is a fragment waiting to
     stop matching. ``-YB-`` is the part PostgreSQL itself can never carry.
 
-    Greenplum and OpenGauss belong here too and are absent on purpose: neither
-    has a container yet, so neither has a measured banner, and an entry guessed
-    from documentation is the failure mode the whole table is written to avoid.
+    Greenplum belongs here too and is absent on purpose: it has no container
+    yet, so no measured banner, and an entry guessed from documentation is the
+    failure mode the whole table is written to avoid. openGauss is not an
+    impostor at all: it has a dialect of its own (:class:`OpenGaussBackend`).
     """
 
     name: str = "postgresql"
     banner_query: ClassVar[str] = "SELECT version()"
     impostors: ClassVar[Mapping[str, str]] = {"-YB-": "yugabytedb"}
+
+    #: What the gate asks for the SQL a read of each relation runs; the one
+    #: catalog question that differs between the engines this class serves.
+    relations_query: ClassVar[str] = _PG_RELATIONS
+
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        @event.listens_for(engine, "connect")
+        def _posture(dbapi_conn, _record):  # noqa: ANN001 - SQLAlchemy's signature
+            cursor = dbapi_conn.cursor()
+            try:
+                cursor.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+            finally:
+                cursor.close()
+            # psycopg opens a transaction around the SET; ending it here keeps
+            # the posture and leaves the connection idle for the pool.
+            dbapi_conn.commit()
+
+        @event.listens_for(engine, "do_execute")
+        def _with_parameters(cursor, statement, parameters, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_postgresql_write(
+                refusal, cursor, statement, parameters, context, self.relations_query
+            )
+            return False
+
+        @event.listens_for(engine, "do_execute_no_params")
+        def _without_parameters(cursor, statement, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_postgresql_write(
+                refusal, cursor, statement, None, context, self.relations_query
+            )
+            return False
+
+    def denies_write(self, exc: Exception) -> bool:
+        """``read_only_sql_transaction``, under either psycopg's name for the code."""
+        origin = getattr(exc, "orig", exc)
+        return any(
+            getattr(origin, attribute, None) == _PG_READ_ONLY
+            for attribute in ("sqlstate", "pgcode")
+        )
+
+
+@dataclass(frozen=True)
+class OpenGaussBackend(PostgreSQLBackend):
+    """openGauss, through its own dialect, with PostgreSQL's reader gate (#124).
+
+    It had the hole, measured through ``query`` on a read-only attach:
+    ``setval`` persisted, ``pg_advisory_lock`` stayed held, and
+    ``pg_reload_conf`` and ``set_config`` ran. The gate fits it unchanged —
+    the function and operator questions answer, the read-only session
+    refuses a write with 25006 — except for row security, which lives in
+    :data:`_OPENGAUSS_RELATIONS`'s catalog.
+
+    No banner and no impostors: nobody else answers on this dialect, and a
+    banner that does not begin ``PostgreSQL`` is why PostgreSQL's own dialect
+    cannot reach openGauss at all (``tests/endpoints.py``).
+    """
+
+    name: str = "opengauss"
+    banner_query: ClassVar[str] = ""
+    impostors: ClassVar[Mapping[str, str]] = {}
+    relations_query: ClassVar[str] = _OPENGAUSS_RELATIONS
 
 
 # ---------------------------------------------------------------------------
@@ -1521,11 +1899,8 @@ def _mysql_shape_refusal(sql: str) -> str | None:
       string, which costs that read and says so, so the caller can rephrase.
     * **A first keyword in** :data:`_MYSQL_READS`.
     """
-    if ";" in sql.rstrip().removesuffix(";"):
-        return (
-            "run more than one statement (any ';' but a trailing one is "
-            "refused, even inside a quoted string)"
-        )
+    if not _one_statement(sql):
+        return _MORE_THAN_ONE_STATEMENT
     if _MYSQL_EXECUTABLE_COMMENT.search(sql):
         return "run an executable comment (/*! … */), which the server runs as SQL"
     if _MYSQL_FILE_WRITE.search(sql):
@@ -1543,39 +1918,102 @@ def _mysql_shape_refusal(sql: str) -> str | None:
     return f"run a {keyword} statement"
 
 
-def _mysql_named(sql: str, names: set[str]) -> str | None:
+def _named_as_word(sql: str, names: set[str]) -> str | None:
     """The first of ``names`` that ``sql`` mentions as a whole word, if any.
 
     A word, because ``fset`` is not in ``fset_total``; ``$`` counts as part of
-    a word because MySQL identifiers may contain it. Case-insensitive, because
-    function names are, and a view's may be. Anywhere in the statement, a
-    quoted string included: that costs a read naming one in a literal, and
-    never admits a call spelled in a way this did not anticipate.
+    a word because MySQL and PostgreSQL identifiers may both contain it.
+    Case-insensitive, because function names are, and a view's may be.
+    Anywhere in the statement, a quoted string included: that costs a read
+    naming one in a literal, and never admits a call spelled in a way this did
+    not anticipate. Shared by the MySQL (#123) and PostgreSQL (#124) gates.
+    Of several mentioned, the first in case-insensitive order is named.
     """
-    for name in sorted(names, key=str.lower):
-        if re.search(rf"(?<![\w$]){re.escape(name)}(?![\w$])", sql, re.IGNORECASE):
-            return name
-    return None
+    return _word_finder(names)(sql)
 
 
-def _mysql_reachable_names(functions: set[str], views: Mapping[str, str]) -> set[str]:
+#: A run of word characters as :func:`_named_as_word` counts them.
+_WORD = re.compile(r"[\w$]+")
+
+
+def _word_finder(names: Iterable[str]) -> Callable[[str], str | None]:
+    """:func:`_named_as_word` for one set of ``names``, built once.
+
+    Built once because the PostgreSQL gate asks it of every catalog view on
+    every statement: a search per name per view cost 1.8 s a statement on
+    PostgreSQL 16, measured (about 200 names, 140 views). A name made only of
+    word characters matches exactly where a maximal run of them equals it, so
+    each run of the statement is tried against one pattern holding every such
+    name, in order, and the first alternative that matches is the first name.
+    Any other name — a quoted view called ``my view`` — keeps its own search.
+    Where the run and every such name are ASCII, the pattern's
+    case-insensitive match is plain lower-case equality, so a lookup answers
+    instead; Unicode case-folding (``K``, the Kelvin sign, matches ``k``)
+    keeps the pattern for everything else.
+    """
+    ordered = sorted(names, key=str.lower)
+    plain = [i for i, name in enumerate(ordered) if _WORD.fullmatch(name)]
+    others = [i for i, name in enumerate(ordered) if not _WORD.fullmatch(name)]
+    either = re.compile(
+        "|".join(f"(?P<n{i}>{re.escape(ordered[i])})" for i in plain),
+        re.IGNORECASE,
+    )
+    all_ascii = all(ordered[i].isascii() for i in plain)
+    lowered: dict[str, int] = {}
+    for i in plain:  # ascending, so each entry keeps its first name
+        lowered.setdefault(ordered[i].lower(), i)
+
+    def first_of_run(run: str) -> int | None:
+        if all_ascii and run.isascii():
+            return lowered.get(run.lower())
+        match = either.fullmatch(run)
+        return None if match is None else int(match.lastgroup.removeprefix("n"))
+
+    def first(sql: str) -> str | None:
+        found = len(ordered)
+        if plain:
+            for run in dict.fromkeys(_WORD.findall(sql)):  # in order, once each
+                if (i := first_of_run(run)) is not None:
+                    found = min(found, i)
+        for i in others:
+            if i >= found:
+                break
+            pattern = rf"(?<![\w$]){re.escape(ordered[i])}(?![\w$])"
+            if re.search(pattern, sql, re.IGNORECASE):
+                found = i
+                break
+        return ordered[found] if found < len(ordered) else None
+
+    return first
+
+
+def _reachable_names(functions: set[str], views: Mapping[str, str]) -> set[str]:
     """Every name through which a read could reach one of ``functions``.
 
     The functions, and each view whose definition mentions one of them or
-    another such view, followed to a fixed point. A view whose definition is
-    hidden (empty) counts as reaching one whenever there is any to reach.
+    another such view, followed to a fixed point: a pass that adds a view
+    is followed by another, which looks for that view too. A view whose
+    definition is hidden (empty) counts as reaching one whenever there is
+    any to reach. Shared by the MySQL (#123) and PostgreSQL (#124) gates.
     """
     unsafe = set(functions)
-    changed = True
+    changed = bool(unsafe)
     while changed:
         changed = False
+        mentions = _word_finder(unsafe)
         for view, definition in views.items():
-            if view in unsafe or not unsafe:
+            if view in unsafe:
                 continue
-            if not definition or _mysql_named(definition, unsafe):
+            if not definition or mentions(definition):
                 unsafe.add(view)
                 changed = True
     return unsafe
+
+
+# The names these two had while only MySQL used them, which the frozen
+# tests/test_mysql_read_gate.py imports.
+_mysql_named = _named_as_word
+_mysql_reachable_names = _reachable_names
 
 
 def _mysql_unsafe_names(cursor: Any) -> set[str]:
@@ -1592,7 +2030,7 @@ def _mysql_unsafe_names(cursor: Any) -> set[str]:
         functions |= {name for (name,) in cursor.fetchall()}
     cursor.execute(_MYSQL_VIEWS)
     views = {name: definition or "" for name, definition in cursor.fetchall()}
-    return _mysql_reachable_names(functions, views)
+    return _reachable_names(functions, views)
 
 
 def _refuse_mysql_write(
@@ -1619,7 +2057,7 @@ def _refuse_mysql_write(
         return
     refused = _mysql_shape_refusal(statement)
     if refused is None:
-        name = _mysql_named(statement, _mysql_unsafe_names(cursor))
+        name = _named_as_word(statement, _mysql_unsafe_names(cursor))
         if name is None:
             return
         refused = (
@@ -2369,7 +2807,7 @@ def _monetdb_single_statement(sql: str) -> bool:
     ``EXPLAIN COMMIT; INSERT …`` printed the plan of the ``COMMIT`` and then
     ran the ``INSERT``.
     """
-    return ";" not in sql.rstrip().removesuffix(";")
+    return _one_statement(sql)
 
 
 def _monetdb_plan_operators(plan: Iterable[str]) -> list[tuple[str | None, bool]]:
@@ -3347,9 +3785,17 @@ _SQLITE = SQLiteBackend()
 BACKENDS: dict[str, Backend] = {
     "sqlite": _SQLITE,
     "duckdb": DuckDBBackend(),
-    # Nothing extra to say, and registered anyway: it is the dialect three other
-    # engines answer on, and `impostors` is where that is written down.
+    # PostgreSQL's reader gate (#124), and the dialect other engines answer on:
+    # `impostors` is where that is written down.
     "postgresql": PostgreSQLBackend(),
+    # Both had #124's hole and both answer the gate's catalog questions,
+    # measured. CockroachDB has a dialect of its own; YugabyteDB arrives
+    # through PostgreSQL's `-YB-` impostor, which resolves to this entry.
+    "cockroachdb": PostgreSQLBackend(name="cockroachdb"),
+    "yugabytedb": PostgreSQLBackend(name="yugabytedb"),
+    # The same hole and the same gate, through a dialect of its own, with row
+    # security asked of its own catalog.
+    "opengauss": OpenGaussBackend(),
     "mysql": MySQLBackend(),
     "mariadb": MySQLBackend(name="mariadb"),
     "oracle": OracleBackend(),

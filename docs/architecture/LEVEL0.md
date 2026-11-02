@@ -349,8 +349,19 @@ which is not equally far:
   no read begins with, or names a stored or loadable function or a view calling one. A view
   refused that way is listed with `rows: null`
   ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)).
-- **PostgreSQL** keeps the transactional floor — the read connection never commits, so a
-  write is rolled back — which is sufficient because its DDL is transactional too.
+- **PostgreSQL**, and CockroachDB, YugabyteDB and openGauss, keep the transactional floor —
+  the read connection never commits, so a write is rolled back, DDL included — and it is not
+  sufficient: a function can act where a rollback does not reach. Measured on a read-only
+  attach, `lo_export` wrote a server file, `pg_reload_conf` reloaded the configuration,
+  `pg_advisory_lock` left a lock on the pooled connection, and CockroachDB's `setval` stayed
+  moved. So the reader opens a read-only session and asks the catalog what a read may not
+  name: a volatile server function outside a short list whose answer merely varies (`random`,
+  the clock, sizes), every extension function declared volatile, every function nobody
+  installed as an extension, and every view, row-security policy or operator reaching one.
+  One statement only, and no `U&"…"` identifier. A function invoked without its name, such as
+  a user-defined cast, is not seen; on PostgreSQL the session still refuses a `nextval` there,
+  on openGauss it does not ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124),
+  [#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)).
 - **SQL Server** keeps the same floor, and on its own the floor does not hold: pyodbc sends a
   string as one batch, SQL Server runs every statement in it, and a `COMMIT` in the batch ends
   the transaction the reader never commits, so a write after it commits itself. T-SQL needs no
@@ -517,17 +528,17 @@ this server built is a database it holds.
 |---|---|---|
 | SQLite | file, URL | `query_only` and an authorizer; `VACUUM INTO`, which is what makes it the one backend `save` works on; residency from the page count; `typeof()` for mixed columns; the declared type *is* the affinity |
 | DuckDB | file, URL | One DuckDB configuration for both connections of a slot, because DuckDB refuses a second connection to one file under a different one ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)). A read-only datasource carries `access_mode=read_only` on both, refused by DuckDB itself at open time. A writable one carries it on neither, and its read connection opens every transaction `READ ONLY` and refuses a statement that would end it — DuckDB refuses the write rather than this server discarding it, which is stronger than the generic transactional floor. And on both connections, `enable_external_access` off and the configuration locked, because DuckDB's table functions and `COPY` open files without asking `paths.py` ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). And the refusal of `create(type='index')`, since duckdb-engine reflects no index at all, so `directory` could not list one nor `drop` find it — and `directory` lists none, an index the file already held included ([#112](https://github.com/ChrisGVE/localdata-mcp/issues/112)). Everything else is the generic answer |
-| PostgreSQL | URL | nothing |
+| PostgreSQL | URL | a read-only session and a catalog-driven reader gate ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)) |
 | MySQL / MariaDB | URL | a read-only session, since DDL commits itself; an index over a *prefix*, since `TEXT` cannot be a key |
 | Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |
 | SQL Server | URL | `sp_rename`; `VARCHAR` sized from the data, since `TEXT` is deprecated and unindexable; a reader that runs only what `SHOWPLAN_XML` plans as one local `SELECT` ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)) |
 | ClickHouse | URL | `readonly=1`, since there is no transaction to withhold; `Nullable` columns, since a non-nullable one takes a missing value and stores `''`; `RENAME TABLE`; an engine clause on every `CREATE TABLE`; and the refusal of `create(type='index')`, since its indexes cannot be reflected |
-| CockroachDB | URL | nothing — and on a different engine speaking PostgreSQL's wire, that is the result rather than an absence |
-| YugabyteDB | URL | nothing — reached on PostgreSQL's dialect, which is why the seam had to learn to ask the *engine* what it is rather than trust the dialect's name |
+| CockroachDB | URL | PostgreSQL's reader gate, under its own dialect ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)) |
+| YugabyteDB | URL | PostgreSQL's reader gate under its own name — reached on PostgreSQL's dialect, which is why the seam had to learn to ask the *engine* what it is rather than trust the dialect's name ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)) |
 | Trino | URL | an isolation level, since the driver connects in `AUTOCOMMIT` and there is no transaction left to withhold; `LargeBinary`; and `create(type='index')`, since it owns no storage to index |
 | MonetDB | URL | nothing — a column store, and not the first here in any sense: DuckDB (a file) and ClickHouse (a URL, which creates its tables as `MergeTree`) both came earlier. What it shows is that it answers every axis the way a row store does. Having no read-only transaction, its reader is gated by its own `EXPLAIN` ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)) |
 | CrateDB | URL | a first-keyword gate on the read engine that refuses anything but a query before it is sent, since it has neither transactions nor a read-only session; a `REFRESH TABLE` before a write can be read back; the driver's type converter, without which a date arrives as epoch milliseconds; `LargeBinary` and `Time`, which it does not have, and `Numeric`, which its dialect silently truncates; and the refusal of `create(type='index')`, since every column is indexed already |
-| openGauss | URL | nothing — but it is the first PostgreSQL fork here that cannot be *addressed* as PostgreSQL, since its version banner does not parse and SQLAlchemy's own PGDialect raises while initialising the connection; it ships its own dialect, so there is no impostor to resolve either |
+| openGauss | URL | PostgreSQL's reader gate, asking `pg_rlspolicies` for row security ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)) — and it is the first PostgreSQL fork here that cannot be *addressed* as PostgreSQL, since its version banner does not parse and SQLAlchemy's own PGDialect raises while initialising the connection; it ships its own dialect, so there is no impostor to resolve either |
 | Firebird | URL | a read-only transaction on the read engine (`readonly=true`), since the floor rolls a write back without refusing it; that rows cannot be written in the transaction that created the table, since DDL is transactional *and* prepared against committed metadata; the refusal of `update(type='table', to=…)`, since no statement renames a table here; `DOUBLE PRECISION`, since the dialect renders `Double` as a keyword Firebird lacks; and `VARCHAR` sized from the data, since `Text` becomes a `BLOB` that groups by identity rather than by value |
 | YDB | URL | a **primary key on every loaded table**, since it has no heap tables and a file has no key to offer — so one holding the row's position is added and reported; a **read-only isolation level**, since an uncommitted write here is not rolled back at all and the floor has to be a refusal rather than an undo; the two codes that refusal arrives under, one for rows and one for schema; and `Time`, which it does not have |
 | Exasol | URL | **autocommit turned off for the read engine**, since its driver commits every statement by default and the transactional floor is otherwise no floor at all; the driver's own type mapper, without which a number widened by `SUM` arrives as the *string* `'155000'` and a `TIMESTAMP` as text; `RENAME TABLE`; `LargeBinary`, which the database does not have and its dialect refuses at compile time; and the refusal of `create(type='index')`, since the engine maintains its own indexes and offers no statement for one |

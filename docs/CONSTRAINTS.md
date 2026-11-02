@@ -6115,3 +6115,100 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > `SET PERSIST`, and its `secure_file_priv` is NULL, so no file can appear there). Revert drills:
 > removing the gate turned 15 live tests red, the shape half alone 9, the name half alone 6.
 > Full suite, MySQL and MariaDB live: 1274 passed, 0 failed.
+
+> **Amended 2026-11-02 — the PostgreSQL family: a rollback does not reach a function's effects
+> ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)).** Measured on `postgres:16`
+> (16.14), CockroachDB 26.3, YugabyteDB 2.25 (PostgreSQL 15.12) and openGauss 7.0.0-RC3, each as
+> the container's administrator, through `query` on a read-only attach.
+>
+> **Before the change.** The reader never commits, and on PostgreSQL that rolls back DML and DDL.
+> It does not roll back a function's effects outside the transaction:
+>
+> - **PostgreSQL 16:** `lo_export` wrote a file on the server; `pg_reload_conf`,
+>   `pg_terminate_backend` and `pg_switch_wal` ran; `pg_advisory_lock` left the lock held on the
+>   pooled connection after the rollback; `lo_import` answered `ok` with an oid the rollback then
+>   removed. Opened `READ ONLY`, the session refuses `lo_import`, `nextval` and `setval` (25006),
+>   and still runs the rest. `U&"lo\005fexport"(…)`, a Unicode-escaped identifier, reached
+>   `lo_export` without containing the word. `set_config('transaction_read_only', 'off', true)`
+>   is refused by the server (25001) once the transaction has a snapshot.
+> - **CockroachDB 26.3:** `setval` ran under a read-only session and persisted (`setval` 50, a
+>   later `nextval` 51). `crdb_internal.*` (`force_panic`, `reset_sql_stats`, …) is refused
+>   "Access to crdb_internal and system is restricted" even for `root`. A `DECLARE` runs in
+>   `$ internal-sql-cursor`, so a `set_config` there does not persist. A write in a CTE is 25006.
+> - **YugabyteDB 2.25:** `pg_reload_conf()` ran under `READ ONLY`. `lo_import` fails (XX000), and
+>   advisory locks are "in preview" (0A000).
+> - **openGauss 7.0.0-RC3:** `setval` persisted (`last_value` 50), `pg_advisory_lock` stayed held,
+>   and `pg_reload_conf` and `set_config` ran.
+>
+> **Correction to §34.1's PostgreSQL row.** "A cursor holds one statement" holds for psycopg 3,
+> which declares the cursor through the extended protocol. psycopg 2 sends a named cursor's
+> `DECLARE` as a simple query, and psycopg 2 reaches this backend family: openGauss's dialect uses
+> it, and installing the `opengauss` extra puts `psycopg2-binary` beside psycopg 3.
+>
+> **Identity, corrected.** CockroachDB has its own dialect (`cockroachdb+psycopg`) and YugabyteDB
+> resolved through the `-YB-` impostor to a plain `Backend(name="yugabytedb")`; openGauss has its
+> own dialect too. None shared PostgreSQL's backend before this change, so each is registered:
+> `cockroachdb` and `yugabytedb` as `PostgreSQLBackend(name=…)`, `opengauss` as
+> `OpenGaussBackend`.
+>
+> **The gate.** The reader opens `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` on
+> connect. Each statement without bound parameters must then be one statement with no `U&"`
+> identifier, and is checked against the catalog, read on a separate cursor of the same
+> connection:
+>
+> - a function in `pg_catalog` or `information_schema` is refused by name if it is volatile and
+>   not one whose answer merely varies (`random`, `random_normal`, `array_sample`,
+>   `array_shuffle`, `gen_random_uuid`, `clock_timestamp`, `timeofday`, `version`, and the
+>   `pg_*_size` family). Volatile rather than a list of known effects, so a function a later
+>   release adds is refused until someone has looked at it. PostgreSQL 16 has 228 distinct
+>   volatile catalog names, about 195 of them callable. The stable `table_to_xml`,
+>   `schema_to_xml`, `database_to_xml` and their `xmlschema` forms read a relation named at run
+>   time, so the `_to_xml` family is refused too. `version()` is volatile on CockroachDB, and its
+>   dialect asks for it on connect.
+> - an extension's function (`pg_depend`, `deptype 'e'`) is refused if it declares itself
+>   volatile, which keeps PostGIS readable and refuses `dblink_exec`;
+> - any other function is refused, whatever it declares: by name if its schema is on the search
+>   path; otherwise by its schema's name when its own name is also a server function's, so that
+>   `crdb_internal.log` does not cost `log(x)`;
+> - a view whose definition, or a row-security policy whose `USING` expression for `SELECT` or
+>   `ALL`, reaches a refused name, followed to a fixed point; a hidden definition counts as
+>   reaching. On PostgreSQL 16, 13 catalog views are refused this way (`pg_locks`,
+>   `pg_sequences`, `pg_file_settings`, `pg_stat_xact_*`, …). openGauss has no `pg_policies`; its
+>   policies are read from `pg_rlspolicies` (`policycmd`, `policyqual`);
+> - an operator whose function is refused, by its symbol.
+>
+> Functions returning `trigger`, `event_trigger`, `internal` or an access-method, language,
+> sampling or foreign-data-wrapper handler cannot be called from SQL and are left out (CockroachDB
+> rejects `'internal'::regtype`, so they are filtered by `pg_type.typname`). A name is matched as a
+> whole word anywhere in the statement, quoted strings included, so a word in a literal costs a
+> read.
+>
+> **Cost.** The first version matched one regular expression per name per view: 1.8 s per
+> statement on PostgreSQL 16, about 6 s per `attach`, and the live test file did not finish in 10
+> minutes. Matching each identifier-shaped run of the text against one table of names takes it to
+> 0.065 s per statement. openGauss has 4415 functions and 368 views.
+>
+> **Residual.** A function invoked without its name is not seen: a user-defined cast, type input
+> or output, a domain check, an extension function that declares itself non-volatile and is not.
+> On PostgreSQL the read-only session still refuses `nextval` and `setval` reached that way
+> (`test_a_function_called_without_its_name_cannot_move_a_sequence`; with the posture removed as a
+> drill, the sequence moved). It does not refuse what it runs when named, such as `lo_export`.
+> **On openGauss the read-only session runs `nextval`** (on the administrator's connection, after
+> `SET TRANSACTION READ ONLY`, `SELECT nextval(…)` returned the next value and it stayed), so a cast
+> calling it moved the sequence through `query`
+> ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125), a strict xfail). Each case needs
+> an administrator to have created the cast or function; the `query` caller cannot.
+>
+> For #36: `pg_read_file`, `pg_ls_dir` and `pg_stat_file` are volatile, so the gate refuses them on
+> PostgreSQL, YugabyteDB and openGauss.
+>
+> **After the change:** `tests/test_postgresql_read_gate.py`, all four containers up: 162 passed,
+> 14 skipped, each for an engine without the feature (CockroachDB: no `query_to_xml`/`table_to_xml`,
+> `pg_reload_conf`, user-defined casts, `CREATE OPERATOR` or session advisory locks; YugabyteDB: no
+> session advisory locks; openGauss: `CREATE OPERATOR` "permission denied", no `gen_random_uuid`; large objects
+> measured on PostgreSQL only), and 1 strict
+> xfail (#125). Revert drills, each red: the read-only posture (the cast test), the shape rule,
+> the name rule, view and policy reachability, the answer-varies list, the first-in-order word
+> match, the YugabyteDB and openGauss registrations (openGauss's lock test among them), the
+> `_to_xml` rule, and openGauss's policy query. Full suite with only the PostgreSQL family up:
+> 1493 passed, 0 failed, 1 xfailed; the 772 skipped are endpoint targets whose containers were down.
