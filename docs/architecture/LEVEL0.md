@@ -348,7 +348,9 @@ which is not equally far:
   statement that is more than one, holds `/*!` or `OUTFILE`/`DUMPFILE`, begins with a keyword
   no read begins with, or names a stored or loadable function or a view calling one. A view
   refused that way is listed with `rows: null`
-  ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)).
+  ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). `LOAD_FILE()` is left
+  alone: it reads a file on the database server, and whether it may is the account's `FILE`
+  privilege and the server's `secure_file_priv` — the database's grant, not this server's.
 - **PostgreSQL**, and CockroachDB, YugabyteDB and openGauss, keep the transactional floor —
   the read connection never commits, so a write is rolled back, DDL included — and it is not
   sufficient: a function can act where a rollback does not reach. Measured on a read-only
@@ -358,6 +360,8 @@ which is not equally far:
   name: a volatile server function outside a short list whose answer merely varies (`random`,
   the clock, sizes), every extension function declared volatile, every function nobody
   installed as an extension, and every view, row-security policy or operator reaching one.
+  That takes in reading the server's own files: `pg_read_file`, `pg_ls_dir` and
+  `pg_stat_file` are volatile, so they are refused too.
   One statement only, and no `U&"…"` identifier. A function invoked without its name, such as
   a user-defined cast, is not seen; on PostgreSQL the session still refuses a `nextval` there,
   on openGauss it does not ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124),

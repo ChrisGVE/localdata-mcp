@@ -465,6 +465,26 @@ def test_no_file_is_written(server):
             conn.execute(text(f"SELECT lo_unlink({oid})"))
 
 
+#: Reads of the server's own files (#36, class B). Each is volatile, so the
+#: name rule refuses it; ``PG_VERSION`` and ``.`` are in every data directory.
+_SERVER_FILE_READS = {
+    "pg_read_file": "SELECT pg_read_file('PG_VERSION')",
+    "pg_ls_dir": "SELECT * FROM pg_ls_dir('.')",
+    "pg_stat_file": "SELECT (pg_stat_file('PG_VERSION')).size",
+}
+
+
+@pytest.mark.endpoint
+@pytest.mark.parametrize("function", sorted(_SERVER_FILE_READS))
+def test_no_server_file_is_read(server, function):
+    """A superuser could read the server's files through ``query``; the gate names the call."""
+    if server.engine == "cockroachdb":
+        pytest.skip("CockroachDB has no server-file functions")
+    answer = _call("query", nickname="endpoint", sql=_SERVER_FILE_READS[function])
+    _refused(answer)
+    assert function in answer["error"], answer
+
+
 @pytest.mark.endpoint
 def test_no_lock_is_left(server):
     """A session advisory lock outlives the rollback on the pooled connection."""
