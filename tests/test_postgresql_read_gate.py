@@ -44,9 +44,11 @@ from localdata_mcp.dialects import (
     _named_as_word,
     _one_statement,
     _pg_refusal,
+    _pg_refused_types,
     _pg_refused_word,
     _pg_shape_refusal,
     _PGFunction,
+    _PGType,
     _PGUnsafe,
     _reachable_names,
     backend_for,
@@ -215,6 +217,47 @@ def test_a_name_is_matched_only_as_a_whole_word(sql, names, found):
 def test_reachability_follows_views_through_views_whatever_their_order():
     views = {"c": "SELECT * FROM b", "b": "SELECT * FROM a", "a": "SELECT f(1)"}
     assert _reachable_names({"f"}, views) == {"f", "a", "b", "c"}
+
+
+# ---------------------------------------------------------------------------
+# Types whose conversion calls a refused function (#125)
+# ---------------------------------------------------------------------------
+
+
+def _type(name, *, schema="public", on_path=True, collides=False, relation=False):
+    return _PGType(schema, name, on_path, collides, relation)
+
+
+#: oid -> type: a composite converted by a refused cast (1), an array of it
+#: (2), a domain over it (3), a table with a column of it (4), a type nesting
+#: the table's row (5), a view over nothing of the sort (6), and a table of
+#: plain columns (7).
+_TYPES = {
+    1: _type("money_c"),
+    2: _type("_money_c"),
+    3: _type("money_d"),
+    4: _type("ledger", relation=True),
+    5: _type("audit_c"),
+    6: _type("plain_v", relation=True),
+    7: _type("plain_t", relation=True),
+}
+_PARTS = [(2, 1), (3, 1), (4, 1), (5, 4), (7, 23), (6, 25)]
+
+
+def test_a_type_converted_by_a_refused_function_is_refused_with_all_it_holds():
+    refused = _pg_refused_types({1}, _TYPES, _PARTS)
+    assert set(refused) == {"money_c", "_money_c", "money_d", "ledger", "audit_c"}
+    assert "column" in refused["ledger"]
+    assert "column" not in refused["money_c"]
+
+
+def test_no_cast_to_refuse_means_no_type_is_refused():
+    assert _pg_refused_types(set(), _TYPES, _PARTS) == {}
+
+
+def test_a_type_off_the_search_path_named_like_a_system_one_costs_its_schema():
+    types = {1: _type("text", schema="vault", on_path=False, collides=True)}
+    assert set(_pg_refused_types({1}, types, [])) == {"vault"}
 
 
 # ---------------------------------------------------------------------------
@@ -567,28 +610,17 @@ def test_a_trigger_cannot_act_past_the_read(server):
 
 
 @pytest.mark.endpoint
-def test_a_function_called_without_its_name_cannot_move_a_sequence(server, request):
-    """What the read-only session is for: a call the gate cannot see.
+def test_a_function_called_without_its_name_cannot_move_a_sequence(server):
+    """A cast runs its function without the statement naming the function.
 
-    A cast runs its function without the statement naming it, so the word
-    match passes ``SELECT 1::<type>``. The function calls ``nextval``, whose
-    effect a rollback does not undo. The read-only session refuses
-    ``nextval`` wherever it is called from, which is the only thing between
-    this statement and a moved sequence.
-
-    **Not on openGauss**, whose read-only session runs ``nextval``, measured
-    directly as well as through ``query`` (the sequence moved). There nothing
-    stands between this statement and the sequence: the residual CONSTRAINTS
-    §34 records (#125), pinned strict so that closing it turns this red.
+    ``SELECT 1::<type>`` names only the type; the cast's function calls
+    ``nextval``, whose effect a rollback does not undo. On openGauss, whose
+    read-only session runs ``nextval`` (measured, the sequence moved), this
+    was the residual #125 recorded; since the gate refuses a type converted
+    by a refused function, it is refused there too. What the read-only
+    session alone still stops is pinned by
+    ``test_a_domain_check_cannot_move_a_sequence``.
     """
-    if server.engine == "opengauss":
-        request.applymarker(
-            pytest.mark.xfail(
-                strict=True,
-                reason="#125: openGauss's read-only session runs nextval, and an "
-                "implicit call is the recorded residual",
-            )
-        )
     t = server.t
     if not (
         _try(server.admin, f"CREATE TYPE {t}_c AS (a BIGINT)")
@@ -665,3 +697,112 @@ def test_a_view_calling_a_refused_function_is_listed_but_not_counted(server):
     assert rows[f"{server.t}_v"] is None, rows
     assert any(f"{server.t}_v was not counted" in w for w in listed["warnings"]), listed
     assert detail["ok"] is True and detail["rows"] is None, detail
+
+
+def _sequence_moves_from_here(admin, t: str):
+    """Call ``nextval`` once as the administrator, so any later call moves ``last_value``.
+
+    A fresh sequence's first ``nextval`` returns its start and leaves
+    ``last_value`` where it was, which would hide exactly the call a test
+    looks for.
+    """
+    with admin.begin() as conn:
+        conn.execute(text(f"SELECT nextval('{t}_seq')"))
+    return _scalar(admin, f"SELECT last_value FROM {t}_seq")
+
+
+#: Reads reaching a cast whose function calls ``nextval`` (#125). The first
+#: names the type; the others name only a table with a column of it, and the
+#: cast runs implicitly — measured on PostgreSQL and openGauss, each moved the
+#: sequence before the gate knew about casts.
+_CAST_REACHED = {
+    "explicit": "SELECT (1::{t}_k).a",
+    "implicit-arithmetic": "SELECT c + 1 FROM {t}_kt",
+    "implicit-comparison": "SELECT count(*) FROM {t}_kt WHERE c = 1",
+}
+
+
+@pytest.mark.endpoint
+@pytest.mark.parametrize("shape", sorted(_CAST_REACHED))
+def test_a_read_reaching_a_refused_cast_is_refused_by_the_gate(server, shape):
+    """Refused before it is sent, so openGauss's read-only session is not asked."""
+    t = server.t
+    created = [
+        f"CREATE TYPE {t}_k AS (a BIGINT)",
+        (
+            f"CREATE FUNCTION {t}_kin(INT) RETURNS {t}_k LANGUAGE SQL AS "
+            f"'SELECT ROW(nextval(''{t}_seq''))::{t}_k'"
+        ),
+        f"CREATE CAST (INT AS {t}_k) WITH FUNCTION {t}_kin(INT)",
+        (
+            f"CREATE FUNCTION {t}_kout({t}_k) RETURNS INT LANGUAGE SQL AS "
+            f"'SELECT nextval(''{t}_seq'')::INT'"
+        ),
+        f"CREATE CAST ({t}_k AS INT) WITH FUNCTION {t}_kout({t}_k) AS IMPLICIT",
+        f"CREATE TABLE {t}_kt (c {t}_k)",
+    ]
+    try:
+        if not all(_try(server.admin, statement) for statement in created):
+            pytest.skip(f"{server.engine} has no user-defined casts")
+        with server.admin.begin() as conn:
+            conn.execute(text(f"INSERT INTO {t}_kt VALUES (ROW(1))"))
+        before = _sequence_moves_from_here(server.admin, t)
+        answer = _call(
+            "query", nickname="endpoint", sql=_CAST_REACHED[shape].format(t=t)
+        )
+        _refused(answer)
+        assert "converts through such a function" in answer["error"] or (
+            "conversion calls such a function" in answer["error"]
+        ), answer
+        assert _scalar(server.admin, f"SELECT last_value FROM {t}_seq") == before
+    finally:
+        for cleanup in [
+            f"DROP TABLE IF EXISTS {t}_kt",
+            f"DROP CAST IF EXISTS ({t}_k AS INT)",
+            f"DROP CAST IF EXISTS (INT AS {t}_k)",
+            f"DROP FUNCTION IF EXISTS {t}_kout({t}_k)",
+            f"DROP FUNCTION IF EXISTS {t}_kin(INT)",
+            f"DROP TYPE IF EXISTS {t}_k",
+        ]:
+            _try(server.admin, cleanup)
+
+
+@pytest.mark.endpoint
+def test_a_domain_check_cannot_move_a_sequence(server, request):
+    """What the read-only session is for, now that casts are named: a domain check.
+
+    ``SELECT 1::<domain>`` runs the domain's ``CHECK``, whose function calls
+    ``nextval``; neither the function nor anything the gate refuses is named.
+    On PostgreSQL and YugabyteDB the read-only session refuses ``nextval``
+    wherever it is called from, which is all that stands between this read
+    and a moved sequence — revert the posture and this goes red.
+
+    **Not on openGauss**, whose read-only session runs ``nextval``: the
+    residual #126 records, pinned strict so that closing it turns this red.
+    """
+    if server.engine == "opengauss":
+        request.applymarker(
+            pytest.mark.xfail(
+                strict=True,
+                reason="#126: openGauss's read-only session runs nextval, and a "
+                "domain check calls a function the statement does not name",
+            )
+        )
+    t = server.t
+    try:
+        if not (
+            _try(
+                server.admin,
+                f"CREATE FUNCTION {t}_chk(INT) RETURNS BOOLEAN LANGUAGE SQL AS "
+                f"'SELECT nextval(''{t}_seq'') > 0'",
+            )
+            and _try(server.admin, f"CREATE DOMAIN {t}_d AS INT CHECK ({t}_chk(VALUE))")
+        ):
+            pytest.skip(f"{server.engine} has no domains with a function check")
+        before = _sequence_moves_from_here(server.admin, t)
+        answer = _call("query", nickname="endpoint", sql=f"SELECT 1::{t}_d")
+        assert answer["ok"] is False, answer
+        assert _scalar(server.admin, f"SELECT last_value FROM {t}_seq") == before
+    finally:
+        _try(server.admin, f"DROP DOMAIN IF EXISTS {t}_d")
+        _try(server.admin, f"DROP FUNCTION IF EXISTS {t}_chk(INT)")

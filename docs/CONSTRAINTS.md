@@ -6212,3 +6212,31 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > match, the YugabyteDB and openGauss registrations (openGauss's lock test among them), the
 > `_to_xml` rule, and openGauss's policy query. Full suite with only the PostgreSQL family up:
 > 1493 passed, 0 failed, 1 xfailed; the 772 skipped are endpoint targets whose containers were down.
+
+> **Amendment 2026-11-02 — casts are named now
+> ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)).** The residual above held a
+> user-defined cast unseen. Measured on PostgreSQL 16 and openGauss 7.0.0-RC3, as the
+> administrator, with a cast `(<type> AS INT) … AS IMPLICIT` whose function calls `nextval`, and a
+> table with a column of the type: `SELECT c::int`, `SELECT abs(c)` and `… WHERE c = 1` each ran the
+> function, and the last three name neither the type nor the function. `c + 1` ran it too on
+> YugabyteDB. (A fresh sequence's first `nextval` leaves `last_value` where it was, so the first
+> call of a probe reads as "not moved"; the tests call it once first.)
+>
+> The gate now reads `pg_cast` for every cast whose function it refuses, and refuses each type on
+> either side that is not the server's own — then every type built from one (an array, a domain
+> over it, a composite with an attribute of it, outwards to a fixed point), and so every table and
+> view with a column of one, since a relation's row is a type of its name. The types are read only
+> when such a cast exists, so on a server without one the gate pays one query: 1.3 ms on
+> PostgreSQL, 4.8 on openGauss, 9.1 on YugabyteDB, 40 on CockroachDB (which has no user casts),
+> against a whole gate of 74 to 282 ms, within run-to-run noise of the gate before.
+>
+> **Still residual:** a function with no name in the statement and no cast — a domain's `CHECK`,
+> type input or output, a cast between two of the server's own types. On openGauss
+> `SELECT 1::<domain>` whose check calls `nextval` moves the sequence
+> ([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126), a strict xfail); on PostgreSQL and
+> YugabyteDB the read-only session refuses it, and that test is now the posture's witness.
+>
+> **After the change:** `tests/test_postgresql_read_gate.py`, all four containers up: 186 passed,
+> 21 skipped, 1 strict xfail (#126). Revert drills, each red: the cast rule off (10: the nine new
+> cast tests and the former #125 test on openGauss), the closure off (6: the implicit forms), the
+> read-only posture off (2: the domain test on PostgreSQL and YugabyteDB).

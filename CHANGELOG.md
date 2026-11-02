@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And twenty found in this release's own code before it shipped:
+And twenty-one found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -500,9 +500,16 @@ And twenty found in this release's own code before it shipped:
   view, row-security policy or operator that calls one. A statement naming one,
   holding more than one statement, or spelling a name with `U&"…"` escapes is
   refused before it runs. YugabyteDB and openGauss get the gate under their own
-  names. What remains is a function called without its name, such as a
-  user-defined cast; on openGauss the read-only session does not stop that one
-  moving a sequence ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)).
+  names.
+- **On openGauss, a read reaching a user-defined cast moved a sequence**
+  ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)). A cast runs
+  its function without the statement naming it — `1::money_c`, or `c + 1` over
+  a column of the type — and openGauss's read-only session runs `nextval`, which
+  PostgreSQL's refuses. The reader now also refuses a type that a cast converts
+  through such a function, every type built from it (its arrays, domains and
+  composites), and every table or view with a column of one, by name. What
+  remains is a domain `CHECK` calling one, which on openGauss still moves a
+  sequence ([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)).
 - **On SQL Server, a write sent to `query` after a `COMMIT` was kept**
   ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)).
   `COMMIT; INSERT …` was refused, but the row stayed: pyodbc sends the string as

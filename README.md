@@ -395,7 +395,10 @@ reloaded, a lock held, a sequence moved). So the reader asks the server's catalo
 which functions those are, and refuses a statement naming one, a view,
 row-security policy or operator calling one, any function not installed by the
 server or an extension, more than one statement, or a `U&"…"` identifier
-([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)). On MySQL and
+([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)). A type whose
+cast calls one is refused too, with every table or view holding a column of it,
+because a cast runs even when nothing names it
+([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)). On MySQL and
 MariaDB the read-only session does not cover file writes, server settings or
 stored functions, and `EXPLAIN` cannot see them. So each statement must be a
 single one, begin with a read's keyword, contain no executable comment and

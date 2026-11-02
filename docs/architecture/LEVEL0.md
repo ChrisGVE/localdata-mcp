@@ -362,10 +362,14 @@ which is not equally far:
   installed as an extension, and every view, row-security policy or operator reaching one.
   That takes in reading the server's own files: `pg_read_file`, `pg_ls_dir` and
   `pg_stat_file` are volatile, so they are refused too.
-  One statement only, and no `U&"…"` identifier. A function invoked without its name, such as
-  a user-defined cast, is not seen; on PostgreSQL the session still refuses a `nextval` there,
-  on openGauss it does not ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124),
-  [#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)).
+  One statement only, and no `U&"…"` identifier. A cast runs its function unnamed, even
+  implicitly over a column, so a type a cast converts through a refused function is refused
+  by name, with every type built from it and every table or view holding a column of one
+  ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)). A function reached with no
+  name at all, such as a domain's `CHECK`, is not seen; on PostgreSQL the session still
+  refuses a `nextval` there, on openGauss it does not
+  ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124),
+  [#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)).
 - **SQL Server** keeps the same floor, and on its own the floor does not hold: pyodbc sends a
   string as one batch, SQL Server runs every statement in it, and a `COMMIT` in the batch ends
   the transaction the reader never commits, so a write after it commits itself. T-SQL needs no

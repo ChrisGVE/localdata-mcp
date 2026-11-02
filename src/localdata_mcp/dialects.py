@@ -1491,6 +1491,57 @@ _PG_OPERATORS = (
     "OR p.provolatile = 'v'"
 )
 
+#: Each cast whose function is not a plain read of the server's own, once
+#: for each type it converts from or to that is not the server's own: that
+#: type's oid, then the function as :data:`_PG_FUNCTIONS` describes one. A
+#: cast is a function call no word names, ``1::money_c`` or, implicitly,
+#: ``c + 1`` over a column of the type (#125).
+_PG_CASTS = (
+    "SELECT t.oid, n.nspname, p.proname, p.provolatile = 'v', "
+    "EXISTS (SELECT 1 FROM pg_catalog.pg_depend d "
+    "WHERE d.classid = 'pg_catalog.pg_proc'::regclass "
+    "AND d.objid = p.oid AND d.deptype = 'e'), "
+    "n.nspname = ANY (current_schemas(false)) "
+    "FROM pg_catalog.pg_cast c "
+    "JOIN pg_catalog.pg_proc p ON p.oid = c.castfunc "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
+    "JOIN pg_catalog.pg_type t ON t.oid IN (c.castsource, c.casttarget) "
+    "JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace "
+    "WHERE tn.nspname NOT IN ('pg_catalog', 'information_schema') "
+    "AND (n.nspname NOT IN ('pg_catalog', 'information_schema') "
+    "OR p.provolatile = 'v')"
+)
+
+#: Every type that is not the server's own, as :class:`_PGType` describes
+#: one, keyed by oid. A table's or view's row is a type of the same name.
+_PG_TYPES = (
+    "SELECT t.oid, tn.nspname, t.typname, "
+    "tn.nspname = ANY (current_schemas(false)), "
+    "EXISTS (SELECT 1 FROM pg_catalog.pg_type s "
+    "JOIN pg_catalog.pg_namespace sn ON sn.oid = s.typnamespace "
+    "WHERE s.typname = t.typname "
+    "AND sn.nspname IN ('pg_catalog', 'information_schema')), "
+    "coalesce(r.relkind IN ('r', 'p', 'v', 'm', 'f'), false) "
+    "FROM pg_catalog.pg_type t "
+    "JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace "
+    "LEFT JOIN pg_catalog.pg_class r ON r.oid = t.typrelid "
+    "WHERE tn.nspname NOT IN ('pg_catalog', 'information_schema')"
+)
+
+#: (type, part) for each type built from another: an array from its element,
+#: a domain from its base, a composite (a table's row among them) from each
+#: of its columns. A value of the whole carries a value of the part, and
+#: with it the part's casts.
+_PG_TYPE_PARTS = (
+    "SELECT oid, typelem FROM pg_catalog.pg_type WHERE typelem <> 0 "
+    "UNION ALL "
+    "SELECT oid, typbasetype FROM pg_catalog.pg_type WHERE typbasetype <> 0 "
+    "UNION ALL "
+    "SELECT t.oid, a.atttypid FROM pg_catalog.pg_type t "
+    "JOIN pg_catalog.pg_attribute a ON a.attrelid = t.typrelid "
+    "WHERE t.typrelid <> 0 AND a.attnum > 0 AND NOT a.attisdropped"
+)
+
 #: SQL that runs whenever a relation is read, by the relation's name: a
 #: view's definition, and a row-security policy's ``USING`` expression for
 #: reads. A view whose definition is withheld comes back empty, and an empty
@@ -1590,6 +1641,81 @@ def _pg_refused_word(function: _PGFunction, system_names: set[str]) -> str | Non
     return function.schema
 
 
+@dataclass(frozen=True)
+class _PGType:
+    """One row of :data:`_PG_TYPES`."""
+
+    schema: str
+    name: str
+    on_search_path: bool
+    named_like_a_system_type: bool
+    is_relation: bool
+
+
+def _pg_refused_types(
+    converted: set[int],
+    types: Mapping[int, _PGType],
+    parts: Iterable[tuple[int, int]],
+) -> dict[str, str]:
+    """The words, and why, for every type a read may not hold a value of.
+
+    ``converted`` are the types a refused cast converts (:data:`_PG_CASTS`).
+    Every type built from one of them — its arrays, its domains, the
+    composites and tables with a column of it, and so on outwards — is
+    refused with it, because a value of the whole reaches the cast through
+    the part: measured, ``SELECT c + 1 FROM t`` ran the cast's function with
+    neither the type nor the function named. A table is refused by its own
+    name, which is its row type's. A type's word is its name, or its
+    schema's when the name is also one of the server's own types and the
+    schema is off the search path, as :func:`_pg_refused_word` does for
+    functions.
+    """
+    wholes: dict[int, set[int]] = {}
+    for whole, part in parts:
+        wholes.setdefault(part, set()).add(whole)
+    refused = set(converted)
+    frontier = list(converted)
+    while frontier:
+        for whole in wholes.get(frontier.pop(), ()):
+            if whole not in refused:
+                refused.add(whole)
+                frontier.append(whole)
+    words: dict[str, str] = {}
+    for oid in sorted(refused):
+        found = types.get(oid)
+        if found is None:
+            continue
+        hidden = found.named_like_a_system_type and not found.on_search_path
+        word = found.schema if hidden else found.name
+        words.setdefault(
+            word,
+            "a table or view with a column whose type converts through such a function"
+            if found.is_relation
+            else "a type whose conversion calls such a function",
+        )
+    return words
+
+
+def _pg_types_refused_by_casts(cursor: Any, system_names: set[str]) -> dict[str, str]:
+    """:func:`_pg_refused_types` for this server, asked on ``cursor``.
+
+    The types are read only when some cast calls a refused function, so a
+    server without one pays for one small query.
+    """
+    cursor.execute(_PG_CASTS)
+    converted = {
+        oid
+        for oid, *described in cursor.fetchall()
+        if _pg_refused_word(_PGFunction(*described), system_names) is not None
+    }
+    if not converted:
+        return {}
+    cursor.execute(_PG_TYPES)
+    types = {oid: _PGType(*described) for oid, *described in cursor.fetchall()}
+    cursor.execute(_PG_TYPE_PARTS)
+    return _pg_refused_types(converted, types, cursor.fetchall())
+
+
 def _pg_shape_refusal(sql: str) -> str | None:
     """What ``sql``'s shape alone refuses it for, or ``None``.
 
@@ -1630,11 +1756,13 @@ def _pg_unsafe(cursor: Any, relations_query: str) -> _PGUnsafe:
         for function in functions
         if (word := _pg_refused_word(function, system_names)) is not None
     }
+    typed = _pg_types_refused_by_casts(cursor, system_names)
     cursor.execute(relations_query)
     relations: dict[str, str] = {}
     for name, definition in cursor.fetchall():
         relations[name] = f"{relations.get(name, '')}\n{definition}".strip()
-    reaching = _reachable_names(refused, relations) - refused
+    named = refused | set(typed)
+    reaching = _reachable_names(named, relations) - named
     words = dict.fromkeys(
         refused,
         "a function that can change what a rollback does not undo, or read "
@@ -1648,6 +1776,8 @@ def _pg_unsafe(cursor: Any, relations_query: str) -> _PGUnsafe:
     )
     for word in refused - {f.name for f in functions}:
         words[word] = "a schema holding a function that can do that"
+    for word, why in typed.items():
+        words.setdefault(word, why)
     cursor.execute(_PG_OPERATORS)
     operators = {}
     for symbol, *described in cursor.fetchall():
