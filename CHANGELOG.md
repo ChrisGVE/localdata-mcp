@@ -530,7 +530,10 @@ And twenty-one found in this release's own code before it shipped:
   that is not a side-effect-free system function. The last part matters because
   MonetDB records a SQL function whose body is an `INSERT` as having no side
   effects. The cost is a read with a `;` inside it, or one calling a
-  user-defined function: both are refused.
+  user-defined function: both are refused. The `;` refusal says it fires inside
+  a quoted string too, and offers `code(59)` for a `;` in the data:
+  `SELECT 'a' || code(59) || 'b'` returns `a;b` (MonetDB has no `chr`, and
+  `char(59)` does not parse there).
 - **On MySQL and MariaDB, a read-only `query` could write a file and change
   server settings, then report the statement as refused**
   ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). A read-only

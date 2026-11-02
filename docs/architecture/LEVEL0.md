@@ -404,8 +404,9 @@ which is not equally far:
   ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)).
 - **MonetDB** has no read-only transaction to ask for, and its grammar nests a write inside a
   `WITH`, so neither a posture nor a first-keyword gate is available. Its reader asks MonetDB's
-  own `EXPLAIN` instead: one statement only (a `;` anywhere but at the end is refused), every
-  plan operator a read's, and every function the plan names a system function recorded free of
+  own `EXPLAIN` instead: one statement only (a `;` anywhere but at the end is refused, inside a
+  quoted string too, and the refusal offers `code(59)` for a `;` in the data), every plan
+  operator a read's, and every function the plan names a system function recorded free of
   side effects. Before that, `INSERT … RETURNING` answered `ok` with a row the floor then rolled
   back ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).
 

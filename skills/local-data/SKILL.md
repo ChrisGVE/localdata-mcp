@@ -221,8 +221,9 @@ a lookup against a server-side table is the same move as against a second file. 
 have happened, and you should say so rather than reassure: a refused `CREATE`
 or `DROP` stands, because Oracle commits DDL as it runs it, while DML still
 rolls back. The refusal says so. On **MonetDB**, `query` refuses a statement
-with a `;` anywhere but at its end, and one that calls a user-defined function;
-the refusal names which. On **SQL Server** it runs only a statement the server
+with a `;` anywhere but at its end, even inside a quoted string, and one that
+calls a user-defined function; the refusal names which. For a `;` in the data
+there, write `code(59)`: `SELECT 'a' || code(59) || 'b'` returns `a;b`. On **SQL Server** it runs only a statement the server
 plans as one `SELECT`, so two statements in one string and a read through a
 linked server are both refused. On **PostgreSQL, CockroachDB, YugabyteDB and
 openGauss** it refuses one statement in one string only, a name spelled

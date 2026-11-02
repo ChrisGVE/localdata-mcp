@@ -383,7 +383,10 @@ kind ([#118](https://github.com/ChrisGVE/localdata-mcp/issues/118)). MonetDB
 has no read-only transaction either, and its grammar nests a write inside a
 read, so there every statement is first put to MonetDB's own `EXPLAIN` and runs
 only if its plan is a read and every function it calls is a system function
-free of side effects. A `;` anywhere but at the end is refused there too
+free of side effects. A `;` anywhere but at the end is refused there too, even
+inside a quoted string, because the server does not parse SQL to tell one from
+a statement's end; for a `;` in the data, write `code(59)`, as in
+`SELECT 'a' || code(59) || 'b'`
 ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)). SQL Server has
 no read-only session, and T-SQL needs no `;` between two statements, so there
 each statement is first compiled with `SHOWPLAN_XML` on and runs only if the

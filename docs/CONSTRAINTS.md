@@ -6240,3 +6240,30 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > 21 skipped, 1 strict xfail (#126). Revert drills, each red: the cast rule off (10: the nine new
 > cast tests and the former #125 test on openGauss), the closure off (6: the implicit forms), the
 > read-only posture off (2: the domain test on PostgreSQL and YugabyteDB).
+
+> **Amended 2026-11-02 — MonetDB's `;` refusal: what it says, and a rephrase that works.** The
+> MonetDB amendment above refuses any `;` but a trailing one without lexing, so `SELECT 'a;b'` — one
+> statement — is refused with the rest. That refusal said "run more than one statement", which is
+> false for that caller and offered no way forward. The gate is unchanged; its words now name the
+> `;`, say a quoted one or one in a comment is refused too and why, and offer a rephrase.
+>
+> Measured on `monetdb/monetdb:latest` (11.55.7), `pymonetdb` 1.9.1, which spelling yields a `;`:
+>
+> | Statement | MonetDB's answer |
+> |---|---|
+> | `SELECT char(59)` | `42000!syntax error, unexpected '(', expecting SCOLON or ':'` (`CHAR` is a type keyword) |
+> | `SELECT "char"(59)` | `42000!SELECT: no such operator 'char'(tinyint)` |
+> | `SELECT chr(59)` | `42000!SELECT: no such operator 'chr'(tinyint)` |
+> | `SELECT code(59)` | `;` (varchar) |
+> | `SELECT 'a' \|\| code(59) \|\| 'b'` | `a;b` |
+>
+> `U&'\003B'` and `E'\x3b'` also answer `;`. The refusal offers `code(59)` alone: its plan names
+> `"sys"."code"` and `"sys"."concat"`, and `sys.functions` records both `system = true`,
+> `side_effect = false`, so the catalog half of the gate admits them.
+>
+> **After the change:** `tests/test_monetdb_read_gate.py` passes 50/50 live, seven of them new:
+> the wording for a `;` in a literal, a comment and between two statements, with no SQL sent to
+> MonetDB; the rephrase in the refusal, offline and through `query`; and the rephrase itself through
+> `query`, answering `a;b`. Restoring the old wording turned six red; the seventh was green before,
+> since the gate already admitted `code(59)`. `tests/test_endpoints.py -k monetdb`: 32 passed,
+> 5 skipped (SQL Server shapes).
