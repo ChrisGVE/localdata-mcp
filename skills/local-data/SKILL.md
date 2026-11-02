@@ -215,6 +215,12 @@ Two smaller refusals live here too: `create(type="index")` on the four engines
 listed in §2, and `update(type="table")` on **Firebird**, which has no
 rename-table statement. Both name the reason.
 
+One Firebird warning is not a refusal and matters more: a text column wider
+than 8,191 characters is stored as a BLOB, and the `create` answer says so for
+that column. Do not group, `DISTINCT` or sort on such a column — Firebird
+compares BLOBs by storage handle, so each row becomes its own group with no
+error. `=` and `LIKE` on it still compare the text correctly.
+
 `create(nickname, type="table", source="./local.csv", delimiter=",")` reads a local file *into*
 that database — a file, never a URL, which it refuses in favour of `attach` — so
 a lookup against a server-side table is the same move as against a second file. On **Oracle** a statement `query` refuses can still

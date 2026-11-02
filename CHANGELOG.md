@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And twenty-one found in this release's own code before it shipped:
+And twenty-two found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -473,6 +473,16 @@ And twenty-one found in this release's own code before it shipped:
   `ORDER BY`, `min()` and `max()` compare the digits as text. An unsigned 64-bit
   value above the signed range, in a column declared `INTEGER`, is still
   refused.
+- **On Firebird a text column grouped by storage handle, and then one accented
+  letter failed the load** ([#56](https://github.com/ChrisGVE/localdata-mcp/issues/56)).
+  Core's `Text` is a BLOB there, and `GROUP BY department` over five rows
+  answered five groups with no error. A text column is now a `VARCHAR` sized
+  from the widest value — declared `CHARACTER SET UTF8`, because without it the
+  width counted bytes on a charset-`NONE` database and `été`, three characters
+  and five bytes, was refused by the column sized for it. A column wider than
+  8,191 characters stays a BLOB, keeping every value whole, and `create` now
+  warns for that column that `GROUP BY`, `DISTINCT` and `ORDER BY` on it answer
+  wrongly and that it cannot be indexed.
 - **An instant cut to the microsecond was cut silently**
   ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)). A date column
   is stored with six fractional digits, so two instants a nanosecond apart — from
@@ -568,6 +578,12 @@ And twenty-one found in this release's own code before it shipped:
   DuckDB file already held is not shown.
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement and never has.
+- **On Firebird a text column wider than 8,191 characters is a BLOB**, the
+  widest `VARCHAR` being 8,191 characters. Its values are whole, `=` and `LIKE`
+  work, but `GROUP BY`, `DISTINCT` and `ORDER BY` on it compare storage handles
+  and answer wrongly with no error, and it cannot be indexed. `create` warns for
+  that column. An index on a narrower text column is refused past 2,047
+  characters on Firebird's default 8 KB page.
 - **On Oracle a statement `query` refuses can still have happened.** The
   read-only guarantee is enforced on the connection, and Oracle commits DDL as
   it runs it, so there is no open transaction left to withhold when the refusal

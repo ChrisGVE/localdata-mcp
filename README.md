@@ -297,6 +297,12 @@ carried out on some engines, and the refusal says so and names the way round:
   index a DuckDB file already held is not shown.
 - **`update(type="table")` is refused on Firebird**, which has no rename-table
   statement.
+- **On Firebird, a text column wider than 8,191 characters is stored as a
+  BLOB**, because that is the widest `VARCHAR` it has. Every value is kept
+  whole, but `GROUP BY`, `DISTINCT` and `ORDER BY` on that column compare
+  storage handles instead of text and answer wrongly without an error, and it
+  cannot be indexed. `create` warns, naming the column. Every
+  narrower text column is an ordinary `VARCHAR` and behaves normally.
 
 Per-backend detail, and what each engine needed, is in
 [`docs/architecture/LEVEL0.md`](docs/architecture/LEVEL0.md#the-backends-and-what-each-one-needed).

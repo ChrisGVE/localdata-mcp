@@ -3382,6 +3382,51 @@ introduces. The choice that produced the corruption was **ours** — `_PORTABLE_
 > paragraph above predicts: the behaviour belongs to the engine's BLOB, and no dialect release can
 > change it. The sized `VARCHAR` in `FirebirdBackend.column_type` stays.
 
+> **Amended 2026-11-02 — the sized `VARCHAR` counted characters and Firebird counted bytes, so one
+> accented letter failed the load; the column now declares `CHARACTER SET UTF8`, and the BLOB past
+> the ceiling is announced.** The ceiling paragraph above reasons about a *UTF8 database*, but the
+> `VARCHAR` it sized named no character set, so it took the database's default — `NONE` on this
+> container — where the width counts **bytes**. `longest` counts characters. Measured on
+> `firebirdsql/firebird:5`, page 8,192, charset `NONE`, `firebirdsql` 1.5.0 (connection charset
+> `UTF8`), `sqlalchemy-firebirdsql` 0.3.0:
+>
+> | Declaration | value | result |
+> |---|---|---|
+> | `VARCHAR(3)` (inherits `NONE`) | `été` — 3 characters, 5 bytes | refused: `string right truncation, expected length 3, actual 5` |
+> | `VARCHAR(3) CHARACTER SET UTF8` | `été` | stored; `char_length` 3, `octet_length` 5 |
+> | `VARCHAR(3) CHARACTER SET UTF8` | `😀😀😀` — 3 characters, 12 bytes | stored |
+> | `VARCHAR(3) CHARACTER SET UTF8` | `abcd` | refused: `string right truncation, expected length 3, actual 4` |
+> | `VARCHAR(8191) CHARACTER SET UTF8` | — | created |
+> | `VARCHAR(8192) CHARACTER SET UTF8` | — | refused: `Implementation limit exceeded` |
+>
+> So through `create` a CSV holding a single `é` failed to land on this endpoint: `Could not insert
+> rows … arithmetic exception, numeric overflow, or string truncation`. The endpoint suite never saw
+> it because its fixture is ASCII. A loaded text column is now `VARCHAR(n) CHARACTER SET UTF8`, where
+> `n` is characters on every database, every value a Python string holds is storable, and 8,191 is no
+> longer a cross-charset compromise but the measured UTF8 limit. UTF8's default collation orders by
+> code point, the order UTF-8 bytes already had, so `ORDER BY` is unchanged. A `GROUP BY` over two
+> 8,191-character values of 4-byte characters groups correctly, so the ceiling holds for the
+> sort as well as for the declaration.
+>
+> **An overlong value is refused, never truncated.** That is the measured `abcd` row, and it is moot
+> for this server today: no verb writes into an existing table — `create(type='table')` drops and
+> recreates a table measured from its whole source, `update` only renames, `query` only reads. A
+> delimited file is measured in full in pass one (§28) before the table is made, so a widest value in
+> the last chunk sizes the column; a test shrinks the chunk to ten rows and puts it on row 96.
+>
+> **Past 8,191 the column is still a BLOB, and the load now says so per column**, beside the #72
+> note for a too-wide integer. The same engine, three values over twenty-one rows in
+> `BLOB SUB_TYPE TEXT`: `GROUP BY` 21 groups, `DISTINCT` 21 rows, `ORDER BY` in insertion order,
+> `CREATE INDEX` refused — while `= 'aa'` and `LIKE 'a%'` both counted 7, correctly. The note names
+> the three silent ones and the index.
+>
+> Index key ceiling, re-measured by bisection on the same 8,192-byte page: `CHARACTER SET UTF8`
+> indexes up to **2,047** characters and refuses 2,048; charset `NONE` indexes up to **8,188** bytes
+> and refuses 8,189. 2,047 is exactly 8,188 ÷ 4 — the key reserves four bytes a UTF8 character —
+> and both depend on the database's page size, which this server neither chooses nor reads.
+> A refusal there arrives as an error (`Could not create … unsuccessful metadata update`), not as a
+> wrong answer.
+
 ### 20.4 The dialect cannot spell a 64-bit float (issue #55)
 
 `_PORTABLE_TYPES` maps a loaded float64 column to Core's `Double`, which both Firebird dialects render
@@ -3479,6 +3524,11 @@ key that is deliberately not an engine's name.
 **Index key ceiling, for the record.** On the default 8,192-byte page: `VARCHAR(8100)` indexes,
 `VARCHAR(8191)` does not (`unsuccessful metadata update`). `VARCHAR(32765)` is the widest column the
 container accepts; `VARCHAR(32766)` is refused.
+
+> **Amended 2026-11-02 — bisected, and by character set.** These figures are for a column with no
+> character set, which is not what a loaded text column is any more (§20.3, amendment of the same
+> date). Charset `NONE`: widest indexable **8,188** bytes, 8,189 refused. `CHARACTER SET UTF8`:
+> widest indexable **2,047** characters, 2,048 refused. Both on the 8,192-byte page.
 
 **The healthcheck repeats a known gotcha in a new disguise.** `isql` against a bare path opens the
 database **in embedded mode**, inside the healthcheck's own process — which succeeds while the TCP
