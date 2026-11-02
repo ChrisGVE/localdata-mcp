@@ -3,12 +3,12 @@
   "name": "io.github.chrisgve/localdata-mcp",
   "title": "LocalData MCP",
   "description": "SQL over local data files and databases, for LLM agents: every datasource becomes a database.",
-  "version": "2.1.0",
+  "version": "3.0.0.dev0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "localdata-mcp",
-      "version": "2.1.0",
+      "version": "3.0.0.dev0",
       "transport": {
         "type": "stdio"
       }

@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And ten found in this release's own code before it shipped:
+And sixteen found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -483,6 +483,12 @@ And ten found in this release's own code before it shipped:
   digits too, but `attach` and `create` now warn, naming each column it cut. A
   column whose only fraction was below the microsecond is written to the whole
   second, as the same instants from a file holding them to the second are.
+- **The MCP registry manifest named a release that never existed**
+  ([#78](https://github.com/ChrisGVE/localdata-mcp/issues/78)). `server.json`
+  gave `2.1.0` as the PyPI version a registry client should install, and PyPI has
+  no such release. It now carries the version `pyproject.toml` declares, and a
+  test holds the two together and validates the manifest against the registry
+  schema it names, which caps the description at 100 characters.
 
 ### Known limitations
 
