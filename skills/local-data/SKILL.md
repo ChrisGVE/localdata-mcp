@@ -211,7 +211,7 @@ Firebird, openGauss, YDB and Exasol. Three things differ from a file:
   because it came from a file, and `save` works on it. `create` is for adding
   further tables to that new slot, not for making it. §6 has the rule in full.
 
-Two smaller refusals live here too: `create(type="index")` on the four engines
+Two smaller refusals live here too: `create(type="index")` on the five engines
 listed in §2, and `update(type="table")` on **Firebird**, which has no
 rename-table statement. Both name the reason.
 
