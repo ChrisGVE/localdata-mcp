@@ -620,7 +620,7 @@ def test_a_function_called_without_its_name_cannot_move_a_sequence(server):
     was the residual #125 recorded; since the gate refuses a type converted
     by a refused function, it is refused there too. What the read-only
     session alone still stops is pinned by
-    ``test_a_domain_check_cannot_move_a_sequence``.
+    ``test_a_cast_between_the_servers_own_types_is_stopped_by_the_session``.
     """
     t = server.t
     if not (
@@ -769,26 +769,17 @@ def test_a_read_reaching_a_refused_cast_is_refused_by_the_gate(server, shape):
 
 
 @pytest.mark.endpoint
-def test_a_domain_check_cannot_move_a_sequence(server, request):
-    """What the read-only session is for, now that casts are named: a domain check.
+def test_a_domain_check_cannot_move_a_sequence(server):
+    """A domain's ``CHECK`` runs its function without the statement naming it.
 
-    ``SELECT 1::<domain>`` runs the domain's ``CHECK``, whose function calls
-    ``nextval``; neither the function nor anything the gate refuses is named.
-    On PostgreSQL and YugabyteDB the read-only session refuses ``nextval``
-    wherever it is called from, which is all that stands between this read
-    and a moved sequence — revert the posture and this goes red.
-
-    **Not on openGauss**, whose read-only session runs ``nextval``: the
-    residual #126 records, pinned strict so that closing it turns this red.
+    ``SELECT 1::<domain>`` names only the domain; its ``CHECK`` calls a
+    function that calls ``nextval``, whose effect a rollback does not undo.
+    On openGauss, whose read-only session runs ``nextval`` (measured, the
+    sequence moved), this was the residual #126 recorded; since the gate
+    refuses a domain whose check reaches a refused function, it is refused
+    there too. What the read-only session alone still stops is pinned by
+    ``test_a_cast_between_the_servers_own_types_is_stopped_by_the_session``.
     """
-    if server.engine == "opengauss":
-        request.applymarker(
-            pytest.mark.xfail(
-                strict=True,
-                reason="#126: openGauss's read-only session runs nextval, and a "
-                "domain check calls a function the statement does not name",
-            )
-        )
     t = server.t
     try:
         if not (
