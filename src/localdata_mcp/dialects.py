@@ -2940,6 +2940,25 @@ def _monetdb_single_statement(sql: str) -> bool:
     return _one_statement(sql)
 
 
+#: What the MonetDB reader says when :func:`_monetdb_single_statement` refuses.
+#:
+#: It must be true in every case it fires, and it fires on ``SELECT 'a;b'`` —
+#: one statement — as surely as on ``SELECT 1; SELECT 2``. So it names the
+#: ``;``, not a second statement, and says why a quoted one costs the read.
+#:
+#: The rephrase was measured on ``monetdb/monetdb:latest`` (11.55.7): MonetDB
+#: has no ``chr``, and ``char(59)`` is a syntax error there because ``CHAR`` is
+#: a type keyword, but ``code(59)`` answers ``;``. It is a system function
+#: recorded free of side effects, so the plan check lets it through, and
+#: ``tests/test_monetdb_read_gate.py`` runs the example through ``query``.
+_MONETDB_SEMICOLON = (
+    "put a ';' before its end (refused even inside a quoted string or a "
+    "comment: this server does not parse SQL to tell that ';' from one ending "
+    "a statement, after which MonetDB would run the rest unchecked; for a ';' "
+    "in the data write code(59), as in SELECT 'a' || code(59) || 'b')"
+)
+
+
 def _monetdb_plan_operators(plan: Iterable[str]) -> list[tuple[str | None, bool]]:
     """Each operator in an ``EXPLAIN`` plan, and whether it is a read's.
 
@@ -3034,7 +3053,7 @@ def _refuse_monetdb_write(
     if parameters:
         return
     if not _monetdb_single_statement(statement):
-        refused = "run more than one statement"
+        refused = _MONETDB_SEMICOLON
     else:
         cursor.execute(f"EXPLAIN {statement}")
         plan = [line for (line,) in cursor.fetchall()]

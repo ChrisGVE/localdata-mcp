@@ -346,3 +346,73 @@ def test_monetdb_directory_and_stats_still_work_through_the_gate(monetdb):
     stats = _call("stats", nickname="endpoint", table=monetdb)
     assert listed["ok"] is True, listed
     assert stats["ok"] is True, stats
+
+
+# ---------------------------------------------------------------------------
+# What the ';' refusal says, and the rephrase it offers
+# ---------------------------------------------------------------------------
+
+#: The rephrase measured on monetdb/monetdb:latest (11.55.7): MonetDB has no
+#: ``chr``, and ``char(59)`` is a syntax error there (``CHAR`` is a type
+#: keyword), but ``code(59)`` answers ``;`` and is a system function recorded
+#: free of side effects, so it passes the gate's catalog check.
+_SEMICOLON_REPHRASE = "SELECT 'a' || code(59) || 'b'"
+
+
+class _NoCursor:
+    """A cursor the ';' half must never reach: refusing it needs no EXPLAIN."""
+
+    def execute(self, *args, **kwargs):
+        raise AssertionError(f"the ';' refusal sent SQL to MonetDB: {args}")
+
+
+def _refused_text(sql: str) -> str:
+    from pymonetdb.exceptions import ProgrammingError
+
+    from localdata_mcp.dialects import Refusal, _refuse_monetdb_write
+
+    refusal = Refusal()
+    with pytest.raises(ProgrammingError) as raised:
+        _refuse_monetdb_write(refusal, _NoCursor(), sql, None)
+    assert refusal.what and refusal.what in str(raised.value), raised.value
+    return refusal.what
+
+
+@pytest.mark.parametrize(
+    "sql",
+    ["SELECT 'a;b'", "SELECT 1 /* ; */", "SELECT 1; SELECT 2", "SELECT 1;;"],
+)
+def test_the_semicolon_refusal_is_true_wherever_the_semicolon_sits(sql):
+    """It names the ';' and says a quoted one is refused too — never "two statements".
+
+    ``SELECT 'a;b'`` is one statement, so a refusal saying "more than one
+    statement" is false for it; the gate cannot tell, by design, so the words
+    must hold for a ';' in a literal, a comment, or between two statements.
+    """
+    what = _refused_text(sql)
+    assert "more than one statement" not in what, what
+    assert "';'" in what, what
+    assert "quoted string" in what and "comment" in what, what
+    assert "MonetDB" in what, what  # says why: what MonetDB would do after it
+
+
+def test_the_semicolon_refusal_offers_the_measured_rephrase():
+    assert _SEMICOLON_REPHRASE in _refused_text("SELECT 'a;b'")
+
+
+@pytest.mark.endpoint
+def test_monetdb_refuses_a_semicolon_in_a_literal_and_says_how_to_write_one(monetdb):
+    refused = _call("query", nickname="endpoint", sql="SELECT 'a;b'")
+
+    assert refused["ok"] is False, refused
+    assert "more than one statement" not in refused["error"], refused
+    assert "quoted string" in refused["error"], refused
+    assert _SEMICOLON_REPHRASE in refused["error"], refused
+
+
+@pytest.mark.endpoint
+def test_the_offered_rephrase_passes_the_gate_and_returns_a_semicolon(monetdb):
+    read = _call("query", nickname="endpoint", sql=_SEMICOLON_REPHRASE)
+
+    assert read["ok"] is True, read
+    assert read["rows"] == [["a;b"]], read
