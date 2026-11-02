@@ -6317,3 +6317,52 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > `query`, answering `a;b`. Restoring the old wording turned six red; the seventh was green before,
 > since the gate already admitted `code(59)`. `tests/test_endpoints.py -k monetdb`: 32 passed,
 > 5 skipped (SQL Server shapes).
+
+> **Amendment 2026-11-02 — domain checks are named now
+> ([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)).** The residual above held a
+> domain's `CHECK` unseen. Measured through `query` on openGauss 7.0.0-RC3, as the administrator,
+> before the change: `SELECT 1::d` with `CHECK (chk(VALUE))` where `chk` calls `nextval`, the same
+> with `CHECK (nextval(…) > VALUE - 1000000)`, a domain over `d`, a composite type with an attribute
+> of `d` (`(ROW(1)::c).a`) and a table with a column of `d` (`(ROW(1)::t).c`) each answered `ok`,
+> having run the check. openGauss makes no array type for a domain; PostgreSQL and YugabyteDB do.
+> `pg_constraint.contypid` and `pg_get_constraintdef` answer on all four engines; CockroachDB 26.3
+> refuses a function or a sequence in a domain's check ("unimplemented"), so nothing it returns
+> reaches one.
+>
+> The gate now reads every `CHECK` on a domain that is not the server's own and follows it as it
+> follows a view's definition, under the domain's word: a domain whose check mentions a refused
+> function or schema, a type a refused cast converts, or another such domain is refused by name,
+> and with it every type built from it and every table or view with a column of one — the #125
+> closure — and the names of those feed reachability again, to a fixed point. The types are read
+> only when a cast or a check needs them. Cost of the new question, per statement: 1.4 ms on
+> PostgreSQL, 5.3 on YugabyteDB, 2.9 on openGauss, 7.8 on CockroachDB (14.8 when it was asked from
+> `pg_constraint` outwards; CockroachDB builds its catalog per question). Gate and `attach`, before
+> and after, interleaved: within run-to-run spread on PostgreSQL and YugabyteDB. On CockroachDB the
+> gate went from 103 ms to 113–120 and `attach` from 393–406 ms to 423–437. On openGauss, which held
+> 17 domains a test had left (below), each a refused one, the gate went from 127 ms to 142: the
+> type questions those domains call for; with their checks hidden, the same gate takes 121 ms.
+>
+> **Found on the way.** openGauss refuses `DROP DOMAIN` ("DOMAIN is not yet supported") and takes
+> `DROP TYPE`, so `test_a_domain_check_cannot_move_a_sequence` leaves its domain and function behind
+> on every openGauss run; the new tests drop a domain with `DROP TYPE` where `DROP DOMAIN` fails.
+> YugabyteDB answers the first statement after a DDL on a session opened before it with "Catalog
+> Version Mismatch … Try again", having run nothing; the witness below asks again once.
+>
+> **Still residual:** a function with no name in the statement and no cast or check of the
+> caller's types — a cast between two of the server's own types through the administrator's
+> function, type input or output. `CREATE CAST (INT AS BYTEA) WITH FUNCTION f(INT)` is accepted on
+> PostgreSQL, YugabyteDB and openGauss (CockroachDB has no `CREATE CAST`); `SELECT 1::bytea` names
+> only the server's types, which no word gate can refuse without refusing every read of them. On
+> openGauss it moves the sequence through `query`
+> ([#129](https://github.com/ChrisGVE/localdata-mcp/issues/129), a strict xfail); on PostgreSQL and
+> YugabyteDB the read-only session refuses the `nextval`, and that test is now the posture's
+> witness.
+>
+> **After the change:** `tests/test_postgresql_read_gate.py`, one engine up at a time — PostgreSQL
+> 110 passed, 135 skipped; YugabyteDB 107 passed, 138 skipped; openGauss 104 passed, 139 skipped,
+> 1 strict xfail (#129), 1 failed (the frozen #126 test's strict xfail, now an XPASS, whose removal
+> awaits its sign-off); CockroachDB 88 passed, 157 skipped. Combined: 214 passed, 29 skipped (each
+> an engine without the feature), 1 xfailed, 1 failed as just said. Revert drills, each red: the domain checks unread (13: two offline,
+> six on PostgreSQL, five on openGauss), the closure over a checked domain (9: two offline, four on
+> PostgreSQL, three on openGauss), the outer fixed point (1, offline), the type questions asked
+> eagerly (1, offline), the read-only posture (2: the witness on PostgreSQL and YugabyteDB).

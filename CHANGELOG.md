@@ -517,9 +517,16 @@ And twenty-two found in this release's own code before it shipped:
   a column of the type — and openGauss's read-only session runs `nextval`, which
   PostgreSQL's refuses. The reader now also refuses a type that a cast converts
   through such a function, every type built from it (its arrays, domains and
-  composites), and every table or view with a column of one, by name. What
-  remains is a domain `CHECK` calling one, which on openGauss still moves a
-  sequence ([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)).
+  composites), and every table or view with a column of one, by name.
+- **On openGauss, a read reaching a domain's `CHECK` moved a sequence**
+  ([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)). `SELECT 1::d`
+  runs the domain's check, and a check calling a function that calls `nextval`
+  moved the sequence with neither name in the statement. The reader now also
+  reads each domain's checks and refuses, by name, a domain whose check reaches
+  something it refuses, with every type built from it and every table or view
+  with a column of one. What remains is a cast between two of the server's own
+  types through an administrator's function, which on openGauss still moves a
+  sequence ([#129](https://github.com/ChrisGVE/localdata-mcp/issues/129)).
 - **On SQL Server, a write sent to `query` after a `COMMIT` was kept**
   ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)).
   `COMMIT; INSERT …` was refused, but the row stayed: pyodbc sends the string as

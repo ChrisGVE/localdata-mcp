@@ -236,9 +236,10 @@ openGauss** it refuses one statement in one string only, a name spelled
 `U&"…"`, and a statement naming a function that can act past the read
 (`lo_export`, `setval`, `pg_advisory_lock`, `set_config`, any user-defined
 function) or a view, policy or operator calling one, or a type whose cast calls
-one and any table with a column of that type, even inside a quoted string; the
-refusal names it. On **MySQL and MariaDB** it also refuses a statement
-containing the words `OUTFILE` or `DUMPFILE`, or the name of a stored function
+one, or a domain whose `CHECK` calls one, and any table with a column of such a
+type, even inside a quoted string; the refusal names it. On **MySQL and
+MariaDB** it also refuses a statement containing the words `OUTFILE` or
+`DUMPFILE`, or the name of a stored function
 or of a view calling one, even inside a quoted string. If a read is refused for
 a word in a literal, rephrase the literal (`CONCAT('out', 'file')`). A view
 `directory` lists with `rows: null` is one of those, and cannot be queried.

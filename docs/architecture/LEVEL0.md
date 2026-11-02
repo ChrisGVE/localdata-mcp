@@ -365,11 +365,15 @@ which is not equally far:
   One statement only, and no `U&"…"` identifier. A cast runs its function unnamed, even
   implicitly over a column, so a type a cast converts through a refused function is refused
   by name, with every type built from it and every table or view holding a column of one
-  ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)). A function reached with no
-  name at all, such as a domain's `CHECK`, is not seen; on PostgreSQL the session still
-  refuses a `nextval` there, on openGauss it does not
+  ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)). A domain's `CHECK` runs
+  whenever a value becomes one of the domain, so a domain whose check reaches a refused name
+  is refused the same way, with everything built from it
+  ([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)). A function reached with no
+  name at all, such as a cast between two of the server's own types through an
+  administrator's function, is not seen; on PostgreSQL the session still refuses a `nextval`
+  there, on openGauss it does not
   ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124),
-  [#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)).
+  [#129](https://github.com/ChrisGVE/localdata-mcp/issues/129)).
 - **SQL Server** keeps the same floor, and on its own the floor does not hold: pyodbc sends a
   string as one batch, SQL Server runs every statement in it, and a `COMMIT` in the batch ends
   the transaction the reader never commits, so a write after it commits itself. T-SQL needs no
