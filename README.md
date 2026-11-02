@@ -384,7 +384,11 @@ has no read-only transaction either, and its grammar nests a write inside a
 read, so there every statement is first put to MonetDB's own `EXPLAIN` and runs
 only if its plan is a read and every function it calls is a system function
 free of side effects. A `;` anywhere but at the end is refused there too
-([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)). On MySQL and
+([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)). SQL Server has
+no read-only session, and T-SQL needs no `;` between two statements, so there
+each statement is first compiled with `SHOWPLAN_XML` on and runs only if the
+server plans it as exactly one `SELECT` with no remote operator
+([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)). On MySQL and
 MariaDB the read-only session does not cover file writes, server settings or
 stored functions, and `EXPLAIN` cannot see them. So each statement must be a
 single one, begin with a read's keyword, contain no executable comment and

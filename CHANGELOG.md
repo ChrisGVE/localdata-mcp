@@ -329,7 +329,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And seventeen found in this release's own code before it shipped:
+And nineteen found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -489,6 +489,16 @@ And seventeen found in this release's own code before it shipped:
   no such release. It now carries the version `pyproject.toml` declares, and a
   test holds the two together and validates the manifest against the registry
   schema it names, which caps the description at 100 characters.
+- **On SQL Server, a write sent to `query` after a `COMMIT` was kept**
+  ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)).
+  `COMMIT; INSERT …` was refused, but the row stayed: pyodbc sends the string as
+  one batch, SQL Server runs every statement in it, and the `COMMIT` ends the
+  transaction the reader never commits, so the `INSERT` committed on its own.
+  T-SQL needs no `;` between statements either, so `SELECT 1 SELECT 2` answered
+  `ok`. SQL Server has no read-only session, so the reader now compiles each
+  statement with `SHOWPLAN_XML` on, which plans without running anything, and
+  runs it only if the plan holds exactly one `SELECT` and no remote operator. The
+  cost is a read through a linked server, which is refused.
 - **On MonetDB, `query` answered `ok` with rows from a write it then rolled
   back** ([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)).
   `INSERT … RETURNING`, the same under `WITH`, and `SELECT 1; INSERT …` all came

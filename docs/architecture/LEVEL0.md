@@ -349,9 +349,15 @@ which is not equally far:
   no read begins with, or names a stored or loadable function or a view calling one. A view
   refused that way is listed with `rows: null`
   ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)).
-- **PostgreSQL and SQL Server** keep the transactional floor — the read connection never
-  commits, so a write is rolled back — which is sufficient because their DDL is
-  transactional too.
+- **PostgreSQL** keeps the transactional floor — the read connection never commits, so a
+  write is rolled back — which is sufficient because its DDL is transactional too.
+- **SQL Server** keeps the same floor, and on its own the floor does not hold: pyodbc sends a
+  string as one batch, SQL Server runs every statement in it, and a `COMMIT` in the batch ends
+  the transaction the reader never commits, so a write after it commits itself. T-SQL needs no
+  `;` between statements, and there is no read-only session to open. So the reader compiles
+  each statement with `SHOWPLAN_XML` on, which plans without running, and runs it only if the
+  plan holds exactly one `SELECT` and no remote operator
+  ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)).
 - **Oracle** keeps the same floor, and it holds for DML. It does *not* hold for DDL:
   Oracle commits DDL as it runs it, before anything can object, and it has no session-level
   read-only posture to reach for. So a `CREATE` sent to `query` there really does take
@@ -514,7 +520,7 @@ this server built is a database it holds.
 | PostgreSQL | URL | nothing |
 | MySQL / MariaDB | URL | a read-only session, since DDL commits itself; an index over a *prefix*, since `TEXT` cannot be a key |
 | Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |
-| SQL Server | URL | `sp_rename`; `VARCHAR` sized from the data, since `TEXT` is deprecated and unindexable |
+| SQL Server | URL | `sp_rename`; `VARCHAR` sized from the data, since `TEXT` is deprecated and unindexable; a reader that runs only what `SHOWPLAN_XML` plans as one local `SELECT` ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)) |
 | ClickHouse | URL | `readonly=1`, since there is no transaction to withhold; `Nullable` columns, since a non-nullable one takes a missing value and stores `''`; `RENAME TABLE`; an engine clause on every `CREATE TABLE`; and the refusal of `create(type='index')`, since its indexes cannot be reflected |
 | CockroachDB | URL | nothing — and on a different engine speaking PostgreSQL's wire, that is the result rather than an absence |
 | YugabyteDB | URL | nothing — reached on PostgreSQL's dialect, which is why the seam had to learn to ask the *engine* what it is rather than trust the dialect's name |
