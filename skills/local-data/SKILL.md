@@ -222,7 +222,11 @@ have happened, and you should say so rather than reassure: a refused `CREATE`
 or `DROP` stands, because Oracle commits DDL as it runs it, while DML still
 rolls back. The refusal says so. On **MonetDB**, `query` refuses a statement
 with a `;` anywhere but at its end, and one that calls a user-defined function;
-the refusal names which.
+the refusal names which. On **MySQL and MariaDB** it also refuses a statement
+containing the words `OUTFILE` or `DUMPFILE`, or the name of a stored function
+or of a view calling one, even inside a quoted string. If a read is refused for
+a word in a literal, rephrase the literal (`CONCAT('out', 'file')`). A view
+`directory` lists with `rows: null` is one of those, and cannot be queried.
 
 ### 5. "Send me the result"
 

@@ -262,7 +262,10 @@ class ColumnInfo:
 @dataclass(frozen=True)
 class TableInfo:
     name: str
-    row_count: int
+    #: ``None`` when counting was refused by the reader's posture: a view whose
+    #: count would call a function that can change the server (#123). The
+    #: reason is in :attr:`notes`.
+    row_count: int | None
     columns: list[ColumnInfo]
     source: str
     #: The tag whose database holds this table.
@@ -282,6 +285,13 @@ class TableInfo:
         bookkeeping.
         """
         return f"{self.tag}.{self.name}"
+
+    @property
+    def rows_text(self) -> str:
+        """The row count in words, for a sentence that cites it."""
+        if self.row_count is None:
+            return "rows that could not be counted"
+        return f"{self.row_count} rows"
 
     @property
     def mixed_columns(self) -> list[str]:
@@ -2229,13 +2239,40 @@ class Workspace:
 
         columns = [column["name"] for column in described]
         declared = [str(column["type"]) for column in described]
+        row_count, notes = self._count_unless_refused(entry, table)
         return TableInfo(
             name=table,
-            row_count=self._count(entry, table),
+            row_count=row_count,
             columns=self._describe_columns(entry, table, columns, declared),
             source=source,
             tag=tag,
+            notes=notes,
         )
+
+    def _count_unless_refused(
+        self, entry: Tagged, table: str
+    ) -> tuple[int | None, tuple[str, ...]]:
+        """Count the table, or say why the reader would not.
+
+        A table this server did not load may be a view, and counting a view
+        runs its definition. On MySQL a view can call a stored function that
+        changes the server, so the reader refuses the count (#123). One such
+        view must not take the rest of a listing down with it, so the refusal
+        becomes ``None`` and a note; any other failure is raised as before.
+        """
+        entry.engines.refusal.take()
+        try:
+            return self._count(entry, table), ()
+        except SQLAlchemyError:
+            refused = entry.engines.refusal.take()
+            if refused is None:
+                raise
+            note = (
+                f"{table} was not counted: counting it would {refused}. Its "
+                f"columns are listed; query it the same way and it is refused "
+                f"for the same reason."
+            )
+            return None, (note,)
 
     def _describe_columns(
         self, entry: Tagged, table: str, columns: list[str], declared: list[str]

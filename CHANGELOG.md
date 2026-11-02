@@ -500,6 +500,21 @@ And seventeen found in this release's own code before it shipped:
   MonetDB records a SQL function whose body is an `INSERT` as having no side
   effects. The cost is a read with a `;` inside it, or one calling a
   user-defined function: both are refused.
+- **On MySQL and MariaDB, a read-only `query` could write a file and change
+  server settings, then report the statement as refused**
+  ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). A read-only
+  transaction refuses row changes and DDL, nothing else: `SELECT … INTO OUTFILE`
+  and `INTO DUMPFILE`, `SET GLOBAL`, `SET PERSIST`, an executable comment
+  (`/*! … */`, MariaDB's `/*M! … */`), and a stored function called from a
+  `SELECT` all ran first. MySQL's `EXPLAIN` cannot say what such a statement does,
+  so every statement on the reader is now checked before it is sent. It must be
+  one statement, hold no executable comment and neither word `OUTFILE` nor
+  `DUMPFILE`, and begin with `SELECT`, `WITH`, `TABLE`, `VALUES`, `SHOW`,
+  `DESCRIBE` or `EXPLAIN`. It must also name no stored or loadable function, and
+  no view that calls one. The cost is a read whose text contains one of those
+  words or names, even inside a quoted string; the refusal says which. Such a
+  view is still listed by `directory`, with `rows: null` and a warning, because
+  counting it would run the function.
 
 ### Known limitations
 

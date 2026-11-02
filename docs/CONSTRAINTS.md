@@ -6081,3 +6081,37 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > catalog check turned the two writing-function shapes red. The MonetDB endpoint suite, with the
 > #119 strict xfail removed under Codex sign-off, passes 53 with 0 failed. The residual in the
 > amendment above no longer holds.
+
+> **Amended 2026-11-02 — MySQL and MariaDB: the read-only session is not a read-only posture
+> ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)).** Measured on `mysql:8.0`
+> (8.0.46) and `mariadb:11`, PyMySQL, as `root`, in `SET SESSION TRANSACTION READ ONLY`:
+>
+> - **Ran:** `SELECT 1 INTO OUTFILE` and `INTO DUMPFILE` (file written, MySQL), `SET GLOBAL` and
+>   `SET PERSIST` (MySQL; also `mysqld-auto.cnf`), `/*!80000 SET GLOBAL … */` (both servers),
+>   `/*M!100000 SET GLOBAL … */` (MariaDB), and `SELECT f()` where `f` runs
+>   `SET GLOBAL max_connections = 555` (both; the value stayed 555) or writes a file (MySQL).
+> - **Refused by the session:** `INSERT` inside a function (1792), `CREATE`, `CREATE USER`.
+> - **Refused by the driver:** `SELECT 1; SELECT 2` is 1064 on both, as PyMySQL does not ask for
+>   multiple statements; a URL's `client_flag` can, so a `;` rule is kept anyway.
+> - **Not available:** `EXPLAIN` answers an ordinary plan for `INTO OUTFILE` in every format and
+>   is a syntax error for `SET`, so no plan gate like #119's or #122's. `SELECT @@global.x := 1`
+>   is a syntax error on both.
+>
+> The gate (`_refuse_mysql_write`) is a statement rule failing closed: one statement, no
+> executable comment, neither `OUTFILE` nor `DUMPFILE` anywhere, a first keyword after leading
+> comments in `SELECT WITH TABLE VALUES SHOW DESCRIBE DESC EXPLAIN (`. Then every function in
+> `information_schema.ROUTINES` outside `sys`, every loadable function the session can list, and
+> every view whose definition reaches one of them (a hidden definition counts as reaching one)
+> must not appear in the statement as a word. A word in a literal costs that read.
+>
+> **Residual.** Loadable functions (UDFs) are listed in `performance_schema.user_defined_functions`
+> (MySQL) and `mysql.func` (MariaDB), and an unprivileged user may read neither (1142, measured).
+> Such a user can still call one this gate cannot name. Installing one takes an administrator and
+> a library in `plugin_dir`; the sixteen MySQL 8.0 ships (`innodb_redo_log_archive_*`,
+> `asynchronous_connection_failover_*`, …) check their own privileges. `LOAD_FILE()` is a read
+> of a server file and is out of this gate's scope.
+>
+> After the change: `tests/test_mysql_read_gate.py` passes 84 with 3 skipped (MariaDB has no
+> `SET PERSIST`, and its `secure_file_priv` is NULL, so no file can appear there). Revert drills:
+> removing the gate turned 15 live tests red, the shape half alone 9, the name half alone 6.
+> Full suite, MySQL and MariaDB live: 1274 passed, 0 failed.

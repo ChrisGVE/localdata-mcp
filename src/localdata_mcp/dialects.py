@@ -1460,6 +1460,178 @@ _INNODB_KEY_BYTES = 3072
 #: single column; several columns divide the limit between them instead.
 _TEXT_PREFIX_CHARS = 255
 
+#: The first keywords a read begins with on MySQL and MariaDB. ``(`` opens a
+#: parenthesised ``SELECT``. ``EXPLAIN ANALYZE`` runs its statement, but only a
+#: ``SELECT`` or ``TABLE`` (a write is refused by the read-only transaction),
+#: and the names that statement uses are checked like any other. Everything
+#: else is refused, ``SET``, ``DO``, ``CALL`` and ``HANDLER`` included.
+_MYSQL_READS = frozenset(
+    {"SELECT", "WITH", "TABLE", "VALUES", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "("}
+)
+
+#: What may stand before a statement's first keyword: whitespace and the three
+#: comment forms. ``--`` opens a comment only when whitespace or a control
+#: character follows it, so ``--x`` is not skipped. A ``/*!`` or ``/*M!``
+#: comment is not a comment, it is SQL the server runs, and is never skipped.
+_MYSQL_LEADING = re.compile(
+    r"(?:\s+|--[\s\x00-\x1f][^\n]*(?:\n|$)|#[^\n]*(?:\n|$)|/\*(?!M?!)[\s\S]*?\*/)*",
+    re.IGNORECASE,
+)
+
+#: An executable comment, MySQL's ``/*! … */`` and MariaDB's ``/*M! … */``.
+_MYSQL_EXECUTABLE_COMMENT = re.compile(r"/\*M?!", re.IGNORECASE)
+
+#: The two words that make a ``SELECT`` or a ``TABLE`` write a file.
+_MYSQL_FILE_WRITE = re.compile(r"outfile|dumpfile", re.IGNORECASE)
+
+#: Every stored function a read could call, outside ``sys`` (MySQL's own
+#: helpers, which only an administrator can add to), and every view with its
+#: definition. Both readable by an unprivileged user, measured on MySQL 8.0 and
+#: MariaDB 11; a view's definition comes back empty without ``SHOW VIEW``.
+_MYSQL_FUNCTIONS = (
+    "SELECT ROUTINE_NAME FROM information_schema.ROUTINES "
+    "WHERE ROUTINE_TYPE = 'FUNCTION' AND ROUTINE_SCHEMA <> 'sys'"
+)
+_MYSQL_VIEWS = (
+    "SELECT TABLE_NAME, VIEW_DEFINITION FROM information_schema.VIEWS "
+    "WHERE TABLE_SCHEMA <> 'sys'"
+)
+
+#: Where each server lists its loadable functions (UDFs, native code). Neither
+#: is readable without privileges, measured: an unprivileged user is refused
+#: both (1142), and MariaDB has no ``user_defined_functions`` (1146). What is
+#: readable is used; what is not leaves the residual CONSTRAINTS §34 records.
+_MYSQL_LOADABLE_FUNCTIONS = (
+    "SELECT UDF_NAME FROM performance_schema.user_defined_functions",
+    "SELECT name FROM mysql.func",
+)
+
+
+def _mysql_shape_refusal(sql: str) -> str | None:
+    """What ``sql``'s shape alone refuses it for, or ``None`` if it may be a read.
+
+    Decided without lexing, each rule failing closed, for the reason
+    :func:`_monetdb_single_statement` gives: a server that parses another
+    server's grammar will one day parse it differently from that server.
+
+    * **One statement.** PyMySQL sends one unless the URL's ``client_flag``
+      asks for more, so any ``;`` but a trailing one is refused.
+    * **No executable comment.** ``/*!80000 SET GLOBAL … */`` is a ``SET``.
+    * **Neither OUTFILE nor DUMPFILE, anywhere.** Not even inside a quoted
+      string, which costs that read and says so, so the caller can rephrase.
+    * **A first keyword in** :data:`_MYSQL_READS`.
+    """
+    if ";" in sql.rstrip().removesuffix(";"):
+        return (
+            "run more than one statement (any ';' but a trailing one is "
+            "refused, even inside a quoted string)"
+        )
+    if _MYSQL_EXECUTABLE_COMMENT.search(sql):
+        return "run an executable comment (/*! … */), which the server runs as SQL"
+    if _MYSQL_FILE_WRITE.search(sql):
+        return (
+            "write a file with INTO OUTFILE or INTO DUMPFILE (the two words are "
+            "refused anywhere in the statement, even inside a quoted string)"
+        )
+    rest = sql[_MYSQL_LEADING.match(sql).end() :]
+    first = re.match(r"\(|[A-Za-z_]+|\S+", rest)
+    if first is None:
+        return "run a statement that does not begin with a keyword"
+    keyword = first.group(0).upper()
+    if keyword in _MYSQL_READS:
+        return None
+    return f"run a {keyword} statement"
+
+
+def _mysql_named(sql: str, names: set[str]) -> str | None:
+    """The first of ``names`` that ``sql`` mentions as a whole word, if any.
+
+    A word, because ``fset`` is not in ``fset_total``; ``$`` counts as part of
+    a word because MySQL identifiers may contain it. Case-insensitive, because
+    function names are, and a view's may be. Anywhere in the statement, a
+    quoted string included: that costs a read naming one in a literal, and
+    never admits a call spelled in a way this did not anticipate.
+    """
+    for name in sorted(names, key=str.lower):
+        if re.search(rf"(?<![\w$]){re.escape(name)}(?![\w$])", sql, re.IGNORECASE):
+            return name
+    return None
+
+
+def _mysql_reachable_names(functions: set[str], views: Mapping[str, str]) -> set[str]:
+    """Every name through which a read could reach one of ``functions``.
+
+    The functions, and each view whose definition mentions one of them or
+    another such view, followed to a fixed point. A view whose definition is
+    hidden (empty) counts as reaching one whenever there is any to reach.
+    """
+    unsafe = set(functions)
+    changed = True
+    while changed:
+        changed = False
+        for view, definition in views.items():
+            if view in unsafe or not unsafe:
+                continue
+            if not definition or _mysql_named(definition, unsafe):
+                unsafe.add(view)
+                changed = True
+    return unsafe
+
+
+def _mysql_unsafe_names(cursor: Any) -> set[str]:
+    """Ask the catalog, on ``cursor``, for every name a read may not use."""
+    import pymysql
+
+    cursor.execute(_MYSQL_FUNCTIONS)
+    functions = {name for (name,) in cursor.fetchall()}
+    for listing in _MYSQL_LOADABLE_FUNCTIONS:
+        try:
+            cursor.execute(listing)
+        except pymysql.err.MySQLError:
+            continue
+        functions |= {name for (name,) in cursor.fetchall()}
+    cursor.execute(_MYSQL_VIEWS)
+    views = {name: definition or "" for name, definition in cursor.fetchall()}
+    return _mysql_reachable_names(functions, views)
+
+
+def _refuse_mysql_write(
+    refusal: Refusal, cursor: Any, statement: str, parameters: Any
+) -> None:
+    """Refuse ``statement`` unless nothing in it can reach past a read (#123).
+
+    The read-only transaction refuses a row change and DDL. What it does not
+    refuse is checked here, before the statement runs: its shape
+    (:func:`_mysql_shape_refusal`), then every name in it against the
+    catalog's functions and the views that reach them
+    (:func:`_mysql_unsafe_names`). Measured on MySQL 8.0 and MariaDB 11, a
+    stored function called from a ``SELECT`` ran ``SET GLOBAL`` and wrote a
+    file inside a read-only transaction; its ``INSERT`` was refused.
+
+    **A statement with bound parameters is not checked, and is this server's
+    own**, for the reason :func:`_refuse_mssql_write` gives: ``query`` sends
+    the caller's SQL with no values (``tests/test_query_sends_no_parameters.py``).
+
+    Raises PyMySQL's own ``ProgrammingError``, a DBAPI ``Error``, so
+    SQLAlchemy wraps it and ``query`` explains it as a refused write.
+    """
+    if parameters:
+        return
+    refused = _mysql_shape_refusal(statement)
+    if refused is None:
+        name = _mysql_named(statement, _mysql_unsafe_names(cursor))
+        if name is None:
+            return
+        refused = (
+            f"use {name}, a stored or loadable function, or a view calling one, "
+            f"which can change the server even inside a read-only transaction "
+            f"(refused wherever the name appears as a word)"
+        )
+    import pymysql
+
+    refusal.what = refused
+    raise pymysql.err.ProgrammingError(f"query may not {refusal.what}.")
+
 
 @dataclass(frozen=True)
 class MySQLBackend(Backend):
@@ -1475,6 +1647,10 @@ class MySQLBackend(Backend):
 
     Set once, at connect time, for the same reason SQLite's ``query_only`` is:
     a posture toggled around a call has a window in which it is something else.
+
+    **A read-only transaction is not the whole posture** (#123): it leaves
+    files, server-wide settings and stored functions within reach, so every
+    statement on the reader also passes :func:`_refuse_mysql_write` first.
     """
 
     name: str = "mysql"
@@ -1484,6 +1660,16 @@ class MySQLBackend(Backend):
         def _posture(dbapi_conn, _record):  # noqa: ANN001 - SQLAlchemy's signature
             with dbapi_conn.cursor() as cursor:
                 cursor.execute("SET SESSION TRANSACTION READ ONLY")
+
+        @event.listens_for(engine, "do_execute")
+        def _with_parameters(cursor, statement, parameters, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_mysql_write(refusal, cursor, statement, parameters)
+            return False
+
+        @event.listens_for(engine, "do_execute_no_params")
+        def _without_parameters(cursor, statement, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_mysql_write(refusal, cursor, statement, None)
+            return False
 
     def denies_write(self, exc: Exception) -> bool:
         origin = getattr(exc, "orig", exc)

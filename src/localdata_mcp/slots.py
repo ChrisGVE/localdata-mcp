@@ -700,7 +700,7 @@ class Registry:
         if existing is not None:
             raise SlotError(
                 f"{nickname}.{existing} already exists, holding "
-                f"{self._workspace.describe(nickname, existing).row_count} rows. "
+                f"{self._workspace.describe(nickname, existing).rows_text}. "
                 f"Drop it first if you meant to replace it."
             )
         return self._read_into(slot, name, source, delimiter=delimiter)
@@ -877,7 +877,7 @@ class Registry:
             # gone with nothing said.
             raise SlotError(
                 f"{nickname}.{clash} already exists, holding "
-                f"{self._workspace.describe(nickname, clash).row_count} rows. "
+                f"{self._workspace.describe(nickname, clash).rows_text}. "
                 f"Drop it first, or rename to a name that is free."
             )
 

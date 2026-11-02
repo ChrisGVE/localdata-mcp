@@ -342,7 +342,13 @@ which is not equally far:
   It is revisited only if DuckDB stops exempting that path.
 - **MySQL and MariaDB** open a read-only session, and they have to: DDL commits itself
   there, so a `CREATE TABLE` on a connection that never commits would otherwise be
-  permanent.
+  permanent. The session is not enough on its own: it still runs `INTO OUTFILE`, `SET GLOBAL`,
+  `SET PERSIST`, executable comments and stored functions called from a `SELECT`, and
+  MySQL's `EXPLAIN` cannot describe them. So the reader also refuses, before sending, any
+  statement that is more than one, holds `/*!` or `OUTFILE`/`DUMPFILE`, begins with a keyword
+  no read begins with, or names a stored or loadable function or a view calling one. A view
+  refused that way is listed with `rows: null`
+  ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)).
 - **PostgreSQL and SQL Server** keep the transactional floor — the read connection never
   commits, so a write is rolled back — which is sufficient because their DDL is
   transactional too.

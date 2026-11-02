@@ -384,7 +384,13 @@ has no read-only transaction either, and its grammar nests a write inside a
 read, so there every statement is first put to MonetDB's own `EXPLAIN` and runs
 only if its plan is a read and every function it calls is a system function
 free of side effects. A `;` anywhere but at the end is refused there too
-([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)). **One exception
+([#119](https://github.com/ChrisGVE/localdata-mcp/issues/119)). On MySQL and
+MariaDB the read-only session does not cover file writes, server settings or
+stored functions, and `EXPLAIN` cannot see them. So each statement must be a
+single one, begin with a read's keyword, contain no executable comment and
+neither `OUTFILE` nor `DUMPFILE`, and name no stored or loadable function, or
+view calling one. That holds even inside a quoted string, and the refusal says
+which rule it met ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). **One exception
 remains.** Oracle commits DDL before anything can object and has no
 session-level read-only posture, so a `CREATE` sent to `query` there really does
 take effect; its DML still rolls back, and the refusal says the `CREATE` stands
