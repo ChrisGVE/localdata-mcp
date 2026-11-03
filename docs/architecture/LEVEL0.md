@@ -339,7 +339,10 @@ which is not equally far:
   This is accepted, not pending: the write cannot reach any file the database does not
   already own, and closing it would mean inspecting SQL text, which this server does not do
   outside CrateDB's first-keyword gate (below), where the grammar makes it exact.
-  It is revisited only if DuckDB stops exempting that path.
+  It is revisited only if DuckDB stops exempting that path. DuckDB 2.0.0 still exempts it.
+  Within the database's own files it can still lose data: if a writer stopped without a
+  checkpoint and left committed rows in the WAL, `COPY … (USE_TMP_FILE false)` replaces
+  that WAL and the rows are gone the next time the file opens (`CONSTRAINTS.md` §36).
 - **MySQL and MariaDB** open a read-only session, and they have to: DDL commits itself
   there, so a `CREATE TABLE` on a connection that never commits would otherwise be
   permanent. The session is not enough on its own: it still runs `INTO OUTFILE`, `SET GLOBAL`,

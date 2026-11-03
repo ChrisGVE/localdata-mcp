@@ -252,6 +252,13 @@ rebuild it.
   `tomli` backport on Python 3.10. 2.x carried scipy, scikit-learn, statsmodels,
   numpy, networkx, pydot, rdflib and SPARQLWrapper as core requirements. Every
   format library and every database driver is now an extra.
+- **DuckDB 2.0.0 is the version the suite runs against** on Python 3.11 and later
+  (it requires 3.11); Python 3.10 resolves to 1.5.6. The `duckdb` extra still
+  accepts `duckdb>=1.0`, so a fresh install already got 2.0.0. 2.0.0 opens and
+  writes files made by 1.5.5 and leaves them readable by 1.5.5, but a file
+  *created* by 2.0.0 carries storage version 999, and 1.5.5 refuses to open it.
+  This server never creates a DuckDB file, but a user's other tools may
+  (`docs/CONSTRAINTS.md` §36).
 - The licence is Apache 2.0, unchanged from 2.1.0.
 
 ### Removed
@@ -665,7 +672,11 @@ And twenty-two found in this release's own code before it shipped:
   DuckDB exempts that path from the switched-off file access, and no setting
   closes it ([#106](https://github.com/ChrisGVE/localdata-mcp/issues/106),
   `docs/CONSTRAINTS.md` §29.4). Accepted rather than worked around: the write stays
-  inside the database's own files, and the only other remedy is matching SQL text. A DuckDB file with a `?` in its name opens and
+  inside the database's own files, and the only other remedy is matching SQL text.
+  Unchanged on DuckDB 2.0.0. It can lose data even so: when a writer stopped without a
+  checkpoint and left committed rows in that WAL, `COPY … TO '<file>.wal'
+  (USE_TMP_FILE false)` on a read-only attach replaces the WAL, and the next open of the
+  file no longer has those rows (§36, measured on 1.5.5 and 2.0.0). A DuckDB file with a `?` in its name opens and
   reads, but attached writable it cannot commit, because DuckDB names its WAL
   differently (§29.3).
 

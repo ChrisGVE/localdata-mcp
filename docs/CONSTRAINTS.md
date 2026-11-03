@@ -5536,6 +5536,21 @@ terminating due to uncaught exception … PermissionException`). Closing it woul
 SQL itself, which this server avoids by design. Filed as
 [#106](https://github.com/ChrisGVE/localdata-mcp/issues/106).
 
+> **Amended 2026-11-03 — unchanged on DuckDB 2.0.0, and the unmeasured case is now measured.**
+> On 2.0.0 (duckdb-engine 0.17.0) the same `COPY` through `query` on a read-only attach answers
+> `ok: true` and leaves a 4-byte `w.db.wal` holding `g\ng\n`, exactly as on 1.5.5; the database
+> file keeps its size, mtime and hash. So the exemption still stands. The case left open above —
+> a WAL already holding writes — was measured on both versions, and it is worse than "could be
+> overwritten": a child process inserted a row and exited without a checkpoint, so the row lived
+> only in the WAL. The plain `COPY` is then refused, because DuckDB writes over an existing file
+> through `tmp_w.db.wal`, which is not exempt. `COPY … TO '<file>.wal' (USE_TMP_FILE false)` is
+> not: it answers `ok: true`, replaces the WAL (178 bytes on 2.0.0, 134 on 1.5.5) with the 4-byte CSV, and the next open of
+> the file, read-only or writable, returns two rows instead of three, with no error. The slot that
+> ran the `COPY` still shows three, because it replayed the WAL when it opened. A WAL holding writes
+> exists only after a writer stopped without checkpointing (DuckDB checkpoints on a clean close),
+> so this needs a crash before it — but then a read-only `query` loses committed rows. Details in
+> §36.
+
 **Server-side equivalents on the container backends** — `pg_read_file`, `COPY … TO PROGRAM`,
 `INTO OUTFILE`, `load_file` — are not covered here. They run as the database server's user, not as
 this process, and are a different mechanism.
@@ -6611,3 +6626,95 @@ timing out at login; it did not time out here. The offline suite, `-m "not endpo
 Not measured: a database whose default collation is a Windows one (`Latin1_General_…` without
 `SQL_`) or a binary one, where `NVARCHAR` ordering differs again. The width is collation-independent,
 and the order belongs to the database's collation.
+
+---
+
+## §36 — DuckDB 2.0.0 under the lock, and the WAL re-measured (2026-11-03)
+
+Refs [#106](https://github.com/ChrisGVE/localdata-mcp/issues/106). Measured on `new-v3` from
+`6d8a382d`, Python 3.12.9, macOS, duckdb-engine 0.17.0 throughout (still the latest release; it
+asks for `duckdb>=0.5.0` with no upper bound). `uv lock --upgrade-package duckdb` moved the lock
+from 1.5.5 to **2.0.0 on Python 3.11 and later and 1.5.6 on 3.10**, because 2.0.0 requires
+Python 3.11 and the project still allows 3.10. Nothing else in the lock moved. The extra still
+says `duckdb>=1.0`, so a fresh install on 3.11+ was already getting 2.0.0 before this.
+
+### 35.1 The offline suite
+
+`pytest -q -m "not endpoint" -p no:randomly`: **1220 passed, 1135 deselected** on 1.5.5, and
+**1220 passed, 1135 deselected** on 2.0.0, with no failures and no skips on either. No DuckDB
+test sits behind the `endpoint` marker (none of the endpoint ids name DuckDB; 67 of the offline
+ids do), so deselecting the endpoints drops nothing on DuckDB. 1.5.6, which Python 3.10 now
+resolves to, was not run.
+
+On 2.0.0 the full run ends with a report printed by nanobind, the binding library 2.0.0 is built
+on, at interpreter exit: *"nanobind: leaked 128 instances! … leaked 6 types! … leaked 84
+functions!"*, naming `_duckdb.DuckDBPyConnection` and `_duckdb._sqltypes.DuckDBPyType` among the
+types. pytest still exits 0. It came up in both full runs and in **none** of the 32 test files
+run one per process, and not at all from a process that attaches a DuckDB file through the
+server and exits with the slot still attached, detached, or with a raw connection never closed.
+So it is a property of one long process that has made many DuckDB objects, not of a single code
+path found here. 1.5.5 prints nothing like it. Its cause is not established.
+
+### 35.2 The `.wal` write is unchanged
+
+The #106 repro, through the tool surface, on a file built and checkpointed by the version under
+test and attached with the default `writable=false`:
+
+| Step | 1.5.5 | 2.0.0 |
+|---|---|---|
+| `attach`, then `SELECT * FROM sales` | no new file; `w.db` unchanged | same |
+| `COPY (SELECT 'g' AS g) TO '<root>/w.db.wal'` | `ok: true`, rows `[[1]]` | `ok: true`, rows `[[1]]` |
+| files afterwards | `w.db.wal` new, 4 bytes, `g\ng\n` | same, same bytes |
+| `w.db` size, mtime, hash | unchanged (536,576 bytes) | unchanged (536,576 bytes) |
+| raw reopen, read-only and writable | both open, both return the 2 rows | same |
+
+Attached `writable=true`, the result is identical on both. Reading alone leaves no sidecar on
+either version. DuckDB still exempts `<file>.wal` from `enable_external_access = false`, and the
+WAL is still named `<file>.wal`: a raw writable connection holding an uncheckpointed write had
+`p.db.wal` beside `p.db` on both versions.
+
+### 35.3 A WAL that already holds rows
+
+§29.4 left this unmeasured. A child process opened `w.db` writable, set `checkpoint_threshold`
+to 1 GB, inserted `('west', 7)` and exited with `os._exit`, so the row was committed and lived
+only in `w.db.wal` (134 bytes on 1.5.5, 171 to 178 on 2.0.0). The server then attached the file
+read-only and saw three rows.
+
+- **Plain `COPY … TO '<root>/w.db.wal'` is refused** on both versions: *"Permission Error: Cannot
+  access file "…/tmp_w.db.wal" - file system operations are disabled by configuration"*. When
+  the target exists, DuckDB writes to `tmp_<name>` and renames, and that path is not exempt.
+  The WAL is untouched, and the next open shows three rows.
+- **`COPY … TO '<root>/w.db.wal' (USE_TMP_FILE false)` succeeds** on both: `ok: true`, and the WAL
+  is replaced by the 4-byte CSV. The slot that ran it still answers three rows, because it
+  replayed the WAL when it opened. A raw reopen afterwards, read-only and then writable, answers
+  **two rows**, with no error and no warning, and the 4-byte file is still there.
+
+So the write #106 accepted can destroy committed data, but only data that a writer left in
+the WAL by stopping without a checkpoint. A clean close checkpoints (the raw writable
+connection's `p.db.wal` was gone after `close()` on both versions), and a second process cannot
+open a file another holds writable: read-only, it is refused on both versions with *"IO Error:
+Could not set lock on file "…/l.db": Conflicting lock is held in …"*. So the condition is a
+crash, a kill, or a disabled checkpoint-on-shutdown.
+
+### 35.4 Files across the two versions
+
+Each step ran in its own process, with `uv run --no-project --with duckdb==<version>`:
+
+| File | Opened by | Result |
+|---|---|---|
+| created by 1.5.5 (header storage version 64) | 2.0.0, read-only and writable | opens, rows intact; header still 64 |
+| created by 1.5.5, then written and checkpointed by 2.0.0 | 1.5.5 | opens, all rows including 2.0.0's; header still 64 |
+| created by 1.5.5 with rows pending in its WAL | 2.0.0 | replays the WAL, all rows present |
+| created by 2.0.0 (header storage version 999) | 1.5.5 | refused: *"Trying to read a database file with version number 999, but we can only read versions between 64 and 68."* |
+| created by 2.0.0 with rows pending in its WAL | 1.5.5 | refused, same message |
+
+So moving to 2.0.0 does not lock an existing file to 2.0.0: writing into a 1.5.5 file keeps its
+format. This server never creates a DuckDB file. It attaches existing ones, and `save` is
+refused on DuckDB. A file the user creates with 2.0.0 elsewhere cannot be opened by a 1.5.x
+reader. `slots.py` still recognises it, because the `DUCK` magic at offset 8 is unchanged.
+
+### 35.5 What this did not measure
+
+1.5.6 on Python 3.10; any platform but macOS; and the cause of the nanobind report. The wall-clock times of the two suite runs (652 s and
+798 s) come from one run each, on a machine shared with other work, and are not a performance
+comparison.
