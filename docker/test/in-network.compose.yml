@@ -1,0 +1,26 @@
+# Applied on top of docker-compose.test.yml by scripts/endpoint-run.sh, which
+# runs the tests in a container on the compose network instead of on the host
+# (task 35, #139). It holds only the facts that differ between the two, so the
+# main file stays the one place for every service's environment, ports and
+# healthcheck, and `docker compose -f docker-compose.test.yml up` from the host
+# behaves exactly as before.
+
+networks:
+  default:
+    # A network per compose project, so a run never joins, and never collides
+    # with, a network another stack on this machine is using. The main file
+    # names its network `localdata-test-net` for host-mode use; that fixed name
+    # would be shared by every project brought up from it. The script gives each
+    # service its own project, and so its own network.
+    name: ${COMPOSE_PROJECT_NAME}-net
+
+services:
+  # YDB's client connects to the address the node *advertises*, not to the one
+  # it was given (see the main file). From the host that has to be `localhost`,
+  # with 2136 published to 2136. From inside the network, `localhost` is the
+  # test container's own loopback and nothing listens there, so the node
+  # advertises its service name instead, which Docker's DNS resolves on this
+  # network. The advertised address stays true in both cases rather than being
+  # worked around.
+  localdata-test-ydb:
+    hostname: localdata-test-ydb

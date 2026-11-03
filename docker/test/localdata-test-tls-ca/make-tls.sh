@@ -18,15 +18,25 @@ openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr \
 	-subj "/CN=localhost"
 # `IP:127.0.0.1` in the SAN is the part that matters and the part most
 # easily left out: `sslmode=verify-full` checks the name the client *asked
-# for* against the certificate, and every URL in this harness asks for
+# for* against the certificate, and every URL from the host asks for
 # 127.0.0.1. A certificate naming only `localhost` verifies under
 # `verify-ca` and fails under `verify-full`, which would leave the stricter
 # of the two modes — the one worth testing — quietly untested.
+#
+# The names come from TLS_SERVER_NAMES in the compose entry, because inside the
+# compose network the client asks for the service's own name instead
+# (task 35, #139). An IPv4 address becomes an `IP:` entry, anything else `DNS:`.
+san=""
+for name in $TLS_SERVER_NAMES; do
+	case "$name" in
+	*[!0-9.]*) entry="DNS:$name" ;;
+	*) entry="IP:$name" ;;
+	esac
+	san="${san:+$san, }$entry"
+done
+echo "subjectAltName = $san" >server.ext
 openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-	-out server.crt -days 3650 \
-	-extfile /dev/stdin <<'EXT'
-subjectAltName = DNS:localhost, IP:127.0.0.1
-EXT
+	-out server.crt -days 3650 -extfile server.ext
 # The client certificate's CN *is* the database user it authenticates
 # as. That is what `cert` authentication means: no password is sent and
 # the name in the certificate is the name PostgreSQL logs in.

@@ -39,9 +39,15 @@ rm -rf /var/lib/krb5kdc /krb/.made
 mkdir -p /var/lib/krb5kdc
 kdb5_util create -s -P "$KRB5_PASSWORD" -r "$KRB5_REALM"
 kadmin.local -q "addprinc -pw $KRB5_PASSWORD $KRB5_PRINCIPAL@$KRB5_REALM"
-kadmin.local -q "addprinc -randkey postgres/127.0.0.1@$KRB5_REALM"
+# One service principal per host a client may name, all in the one keytab
+# PostgreSQL reads: `postgres/127.0.0.1` for a client on the host, and
+# `postgres/<service name>` for one inside the compose network. PostgreSQL
+# accepts a ticket for any principal its keytab holds.
 rm -f /krb/postgres.keytab
-kadmin.local -q "ktadd -k /krb/postgres.keytab postgres/127.0.0.1@$KRB5_REALM"
+for host in $KRB5_SERVICE_HOSTS; do
+	kadmin.local -q "addprinc -randkey postgres/$host@$KRB5_REALM"
+	kadmin.local -q "ktadd -k /krb/postgres.keytab postgres/$host@$KRB5_REALM"
+done
 cat >/krb/pg_hba.conf <<'HBA'
 local   all all             trust
 # `include_realm=0` is what makes the database user `krbuser` rather than

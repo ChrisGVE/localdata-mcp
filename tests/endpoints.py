@@ -46,6 +46,38 @@ COMPOSE = Path(__file__).resolve().parent.parent / "docker-compose.test.yml"
 #: inlined because a remote harness would change this one value.
 HOST = "127.0.0.1"
 
+#: The environment variable that moves the whole harness **inside the compose
+#: network** (task 35, #139). Set to ``1``, every endpoint is addressed by its
+#: compose service name and the port the container listens on inside itself,
+#: which is what a test process in a container on that network has to do:
+#: there, 127.0.0.1 is the test container's own loopback and nothing listens on
+#: it. Unset or ``0`` is host mode, unchanged — the loopback and the published
+#: port. ``scripts/endpoint-run.sh`` sets it for the runner container it starts.
+#:
+#: One variable, read in one place (:func:`in_network`), and every address this
+#: module produces goes through :func:`_address`, so the two modes cannot
+#: disagree about which one is in force.
+IN_NETWORK = "LOCALDATA_TEST_IN_NETWORK"
+
+
+def in_network() -> bool:
+    """Whether :data:`IN_NETWORK` selects in-network addressing.
+
+    Anything but ``1``, ``0`` or unset is refused rather than read as host mode.
+    In the runner, host mode addresses 127.0.0.1, finds nothing listening, and
+    *skips* every endpoint, so a typo such as ``true`` would turn the whole run
+    into a green one that tested nothing.
+    """
+    value = os.environ.get(IN_NETWORK, "")
+    if value in ("", "0"):
+        return False
+    if value == "1":
+        return True
+    raise RuntimeError(
+        f"{IN_NETWORK}={value!r} is neither 1 (in-network addressing) nor "
+        f"0 or unset (host addressing)."
+    )
+
 
 class Unavailable(Exception):
     """Why an endpoint cannot be exercised here. A skip, never a failure."""
@@ -80,8 +112,11 @@ class Endpoint:
     #: The Python module the URL's driver needs, and the extra that installs it.
     driver: str
     extra: str
-    #: Builds the URL from the service's own environment and published port.
-    url: Callable[[dict[str, str], int], str]
+    #: Builds the URL from the service's own environment and port, called as
+    #: ``url(environment, port, host=...)``. ``host`` defaults to :data:`HOST`,
+    #: so host mode needs only the first two; in-network mode passes the
+    #: service name (see :func:`_address`).
+    url: Callable[..., str]
     #: What :class:`localdata_mcp.dialects.Backend` should end up *called* for
     #: this endpoint — the engine actually answering, which is only sometimes
     #: what the dialect is named. ``None`` means the two agree, the ordinary
@@ -175,9 +210,11 @@ class AuthMode:
     #: number it was.
     mode: str
     #: Everything needed to reach the endpoint this way, built from the compose
-    #: service's own environment, its published port, and a scratch directory
-    #: for the credential files some modes keep outside the URL.
-    reach: Callable[[dict[str, str], int, Path], Reached]
+    #: service's own environment, its port, and a scratch directory for the
+    #: credential files some modes keep outside the URL. Called as
+    #: ``reach(environment, port, scratch, host=...)``, ``host`` defaulting to
+    #: :data:`HOST` as :attr:`Endpoint.url`'s does.
+    reach: Callable[..., Reached]
     #: The compose service configured for this mode, when the mode and the
     #: credentialed one cannot both hold on one server — an authentication
     #: method is a property of the server, not of the connection. ``None`` means
@@ -244,17 +281,28 @@ class Target:
             return self.auth.warmup
         return self.endpoint.warmup
 
-    def build(self, environment: dict[str, str], port: int, scratch: Path) -> Reached:
+    def build(
+        self,
+        environment: dict[str, str],
+        port: int,
+        scratch: Path,
+        *,
+        host: str = HOST,
+    ) -> Reached:
         """How this target is reached, whichever half of the axis answers.
 
         The endpoint's own builder returns a bare URL and needs no scratch
         directory, so it is lifted into a :class:`Reached` here rather than every
         one of the fifteen builders being rewritten to return one. A mode that
         needed nothing but a URL would look identical from outside.
+
+        ``host`` and ``port`` are whatever :func:`_address` resolved for the
+        mode in force, and are passed through unchanged to whichever builder
+        answers.
         """
         if self.auth is None:
-            return Reached(url=self.endpoint.url(environment, port))
-        return self.auth.reach(environment, port, scratch)
+            return Reached(url=self.endpoint.url(environment, port, host=host))
+        return self.auth.reach(environment, port, scratch, host=host)
 
 
 #: Driver libraries to fall back on when the driver manager has nothing
@@ -347,27 +395,29 @@ def _url(
     ).render_as_string(hide_password=False)
 
 
-def _postgres(env: dict[str, str], port: int) -> str:
+def _postgres(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     return _url(
         "postgresql+psycopg",
         username=env["POSTGRES_USER"],
         password=env["POSTGRES_PASSWORD"],
         port=port,
+        host=host,
         database=env["POSTGRES_DB"],
     )
 
 
-def _mysql(env: dict[str, str], port: int) -> str:
+def _mysql(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     return _url(
         "mysql+pymysql",
         username=env["MYSQL_USER"],
         password=env["MYSQL_PASSWORD"],
         port=port,
+        host=host,
         database=env["MYSQL_DATABASE"],
     )
 
 
-def _mariadb(env: dict[str, str], port: int) -> str:
+def _mariadb(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """MariaDB is addressed as MariaDB, not as MySQL.
 
     PyMySQL speaks to both, but the URL's scheme is what decides which dialect
@@ -380,11 +430,12 @@ def _mariadb(env: dict[str, str], port: int) -> str:
         username=env["MARIADB_USER"],
         password=env["MARIADB_PASSWORD"],
         port=port,
+        host=host,
         database=env["MARIADB_DATABASE"],
     )
 
 
-def _mssql(env: dict[str, str], port: int) -> str:
+def _mssql(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """SQL Server, through whichever ODBC driver is installed.
 
     ``master`` because the image creates no other database and there is no
@@ -402,12 +453,13 @@ def _mssql(env: dict[str, str], port: int) -> str:
         username="sa",
         password=env["MSSQL_SA_PASSWORD"],
         port=port,
+        host=host,
         database="master",
         query={"driver": _odbc_driver(), "TrustServerCertificate": "yes"},
     )
 
 
-def _oracle(env: dict[str, str], port: int) -> str:
+def _oracle(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """Oracle Free, reached through python-oracledb in its thin mode.
 
     ``FREEPDB1`` is the pluggable database the image creates and the one
@@ -421,11 +473,12 @@ def _oracle(env: dict[str, str], port: int) -> str:
         username=env["APP_USER"],
         password=env["APP_USER_PASSWORD"],
         port=port,
+        host=host,
         query={"service_name": "FREEPDB1"},
     )
 
 
-def _clickhouse(env: dict[str, str], port: int) -> str:
+def _clickhouse(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """ClickHouse over HTTP, through the dialect inside ``clickhouse-connect``.
 
     ``clickhousedb`` is the dialect's registered name and the key
@@ -439,11 +492,12 @@ def _clickhouse(env: dict[str, str], port: int) -> str:
         username=env["CLICKHOUSE_USER"],
         password=env["CLICKHOUSE_PASSWORD"],
         port=port,
+        host=host,
         database=env["CLICKHOUSE_DB"],
     )
 
 
-def _cockroachdb(env: dict[str, str], port: int) -> str:
+def _cockroachdb(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """CockroachDB, on the PostgreSQL wire but as its own dialect.
 
     ``cockroachdb+psycopg`` rather than ``postgresql+psycopg``: psycopg speaks to
@@ -461,11 +515,12 @@ def _cockroachdb(env: dict[str, str], port: int) -> str:
         username="root",
         password=None,
         port=port,
+        host=host,
         database="defaultdb",
     )
 
 
-def _yugabytedb(env: dict[str, str], port: int) -> str:
+def _yugabytedb(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """YugabyteDB's YSQL layer, addressed as PostgreSQL — and that is a choice.
 
     The other two PostgreSQL-wire endpoints are addressed as themselves, so this
@@ -507,11 +562,12 @@ def _yugabytedb(env: dict[str, str], port: int) -> str:
         username="yugabyte",
         password=None,
         port=port,
+        host=host,
         database="yugabyte",
     )
 
 
-def _trino(env: dict[str, str], port: int) -> str:
+def _trino(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """Trino, which is a query engine and therefore names a *catalog*, not a database.
 
     Trino stores nothing of its own. Every table it can see belongs to a
@@ -535,11 +591,12 @@ def _trino(env: dict[str, str], port: int) -> str:
         username="test",
         password=None,
         port=port,
+        host=host,
         database="memory/default",
     )
 
 
-def _monetdb(env: dict[str, str], port: int) -> str:
+def _monetdb(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """MonetDB, a column store, through the dialect its own vendor publishes.
 
     ``monetdb`` three times over, and they are three different things: the
@@ -557,11 +614,12 @@ def _monetdb(env: dict[str, str], port: int) -> str:
         username="monetdb",
         password=env["MDB_DB_ADMIN_PASS"],
         port=port,
+        host=host,
         database="monetdb",
     )
 
 
-def _cratedb(env: dict[str, str], port: int) -> str:
+def _cratedb(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """CrateDB over its own HTTP endpoint, not over the PostgreSQL wire it also speaks.
 
     The server publishes both: 4200 carries the HTTP protocol Crate.io's own
@@ -584,10 +642,11 @@ def _cratedb(env: dict[str, str], port: int) -> str:
         username="crate",
         password=None,
         port=port,
+        host=host,
     )
 
 
-def _firebird(env: dict[str, str], port: int) -> str:
+def _firebird(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """Firebird, whose database component is a **path on the server's filesystem**.
 
     Every other endpoint here names a database the server looks up in a catalogue.
@@ -617,11 +676,12 @@ def _firebird(env: dict[str, str], port: int) -> str:
         username=env["FIREBIRD_USER"],
         password=env["FIREBIRD_PASSWORD"],
         port=port,
+        host=host,
         database=f"/var/lib/firebird/data/{env['FIREBIRD_DATABASE']}",
     )
 
 
-def _opengauss(env: dict[str, str], port: int) -> str:
+def _opengauss(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """openGauss, on PostgreSQL's wire and reached through its **own** dialect.
 
     The third engine here speaking that wire, and the first that cannot be
@@ -662,11 +722,12 @@ def _opengauss(env: dict[str, str], port: int) -> str:
         username=env["GS_USERNAME"],
         password=env["GS_PASSWORD"],
         port=port,
+        host=host,
         database=env["GS_DB"],
     )
 
 
-def _ydb(env: dict[str, str], port: int) -> str:
+def _ydb(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """YDB, anonymous, on the database the image creates at ``/local``.
 
     Two things here are not what the other builders do, and both were measured.
@@ -703,11 +764,12 @@ def _ydb(env: dict[str, str], port: int) -> str:
         username=None,
         password=None,
         port=port,
+        host=host,
         database="local",
     )
 
 
-def _exasol(env: dict[str, str], port: int) -> str:
+def _exasol(env: dict[str, str], port: int, *, host: str = HOST) -> str:
     """Exasol over its WebSocket protocol, as a user its healthcheck made.
 
     Three things here are unlike the builders above, and each was measured.
@@ -740,6 +802,7 @@ def _exasol(env: dict[str, str], port: int) -> str:
         username=env["EXASOL_APP_USER"],
         password=env["EXASOL_APP_PASSWORD"],
         port=port,
+        host=host,
         database="localdata",
         query={"SSLCertificate": "SSL_VERIFY_NONE"},
     )
@@ -750,7 +813,9 @@ def _exasol(env: dict[str, str], port: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _postgres_trust(env: dict[str, str], port: int, scratch: Path) -> Reached:
+def _postgres_trust(
+    env: dict[str, str], port: int, scratch: Path, *, host: str = HOST
+) -> Reached:
     """A server that authenticates nobody, reached with a username and nothing else.
 
     Five endpoints here already pass ``password=None``, and none of them is this
@@ -771,12 +836,15 @@ def _postgres_trust(env: dict[str, str], port: int, scratch: Path) -> Reached:
             username=env["POSTGRES_USER"],
             password=None,
             port=port,
+            host=host,
             database=env["POSTGRES_DB"],
         )
     )
 
 
-def _postgres_pgpassword(env: dict[str, str], port: int, scratch: Path) -> Reached:
+def _postgres_pgpassword(
+    env: dict[str, str], port: int, scratch: Path, *, host: str = HOST
+) -> Reached:
     """The password in the environment, and the URL carrying none.
 
     An everyday case rather than an exotic one: a caller who has exported
@@ -796,6 +864,7 @@ def _postgres_pgpassword(env: dict[str, str], port: int, scratch: Path) -> Reach
             username=env["POSTGRES_USER"],
             password=None,
             port=port,
+            host=host,
             database=env["POSTGRES_DB"],
         ),
         environ={"PGPASSWORD": env["POSTGRES_PASSWORD"]},
@@ -813,7 +882,9 @@ def _pgpass_field(value: str) -> str:
     return value.replace("\\", "\\\\").replace(":", "\\:")
 
 
-def _postgres_pgpassfile(env: dict[str, str], port: int, scratch: Path) -> Reached:
+def _postgres_pgpassfile(
+    env: dict[str, str], port: int, scratch: Path, *, host: str = HOST
+) -> Reached:
     """The password in a file libpq reads, which this endpoint's password breaks.
 
     ``.pgpass`` is five colon-separated fields — host, port, database, user,
@@ -840,13 +911,17 @@ def _postgres_pgpassfile(env: dict[str, str], port: int, scratch: Path) -> Reach
     world-readable, warns on stderr, and then reports ``fe_sendauth: no password
     supplied`` to the client. Hence the explicit ``chmod`` — measured, at 0644
     this mode does not connect.
+
+    The host field is the host the URL connects to, because libpq matches the
+    two. In-network that is the service name, and a file still naming
+    127.0.0.1 would match nothing and fail as ``no password supplied``.
     """
     passfile = scratch / "pgpass"
     passfile.write_text(
         ":".join(
             _pgpass_field(field)
             for field in (
-                HOST,
+                host,
                 str(port),
                 env["POSTGRES_DB"],
                 env["POSTGRES_USER"],
@@ -862,6 +937,7 @@ def _postgres_pgpassfile(env: dict[str, str], port: int, scratch: Path) -> Reach
             username=env["POSTGRES_USER"],
             password=None,
             port=port,
+            host=host,
             database=env["POSTGRES_DB"],
         ),
         environ={"PGPASSFILE": str(passfile)},
@@ -890,7 +966,9 @@ def _tls_material(*names: str) -> None:
         )
 
 
-def _postgres_tls_verify_full(env: dict[str, str], port: int, scratch: Path) -> Reached:
+def _postgres_tls_verify_full(
+    env: dict[str, str], port: int, scratch: Path, *, host: str = HOST
+) -> Reached:
     """TLS actually verified, which no other endpoint here does.
 
     ``sslmode=verify-full`` is the only mode that checks both halves: that the
@@ -921,13 +999,16 @@ def _postgres_tls_verify_full(env: dict[str, str], port: int, scratch: Path) -> 
             username=env["POSTGRES_USER"],
             password=env["POSTGRES_PASSWORD"],
             port=port,
+            host=host,
             database=env["POSTGRES_DB"],
             query={"sslmode": "verify-full", "sslrootcert": str(TLS / "ca.crt")},
         )
     )
 
 
-def _postgres_client_cert(env: dict[str, str], port: int, scratch: Path) -> Reached:
+def _postgres_client_cert(
+    env: dict[str, str], port: int, scratch: Path, *, host: str = HOST
+) -> Reached:
     """A certificate instead of a password, and the username it may claim.
 
     The first mode here that sends **no** credential at all: PostgreSQL's
@@ -950,6 +1031,7 @@ def _postgres_client_cert(env: dict[str, str], port: int, scratch: Path) -> Reac
             username="certuser",
             password=None,
             port=port,
+            host=host,
             database=env["POSTGRES_DB"],
             query={
                 "sslmode": "verify-full",
@@ -968,11 +1050,15 @@ def _postgres_client_cert(env: dict[str, str], port: int, scratch: Path) -> Reac
 KDC = "localdata-test-kdc"
 
 
-def _other_service(name: str, container_port: int) -> tuple[dict[str, str], int]:
-    """Another service's environment and published port, by name.
+def _other_service(name: str, container_port: int) -> tuple[dict[str, str], str, int]:
+    """Another service's environment and address, by name.
 
     The same reading every builder gets for its own service, reached through the
-    same helpers so a restated port cannot creep in here either.
+    same helpers so a restated port cannot creep in here either. The address
+    follows :func:`in_network` as :func:`_address` does: the loopback and the
+    published port from the host, the service name and ``container_port`` from
+    inside the network. The mapping is checked in both modes, so a compose file
+    that stopped publishing the port is caught in either.
     """
     services = _services()
     try:
@@ -986,14 +1072,37 @@ def _other_service(name: str, container_port: int) -> tuple[dict[str, str], int]
         # A published port may carry a protocol suffix — `1088:88/udp` — which
         # is part of the mapping and not of the number.
         if inside.partition("/")[0] == str(container_port):
-            return _environment(service), int(published)
+            if in_network():
+                return _environment(service), name, container_port
+            return _environment(service), HOST, int(published)
     raise Unavailable(
         f"{name} publishes {service.get('ports')}, none of which maps to "
         f"{container_port} inside the container"
     )
 
 
-def _postgres_kerberos(env: dict[str, str], port: int, scratch: Path) -> Reached:
+def _krb5_conf(realm: str, kdc_host: str, kdc_port: int) -> str:
+    """The client's Kerberos configuration: one realm, one KDC, no DNS.
+
+    Every DNS lookup is turned off so that the realm and the KDC are exactly
+    what this file says, whatever domain the machine is in.
+    """
+    return (
+        "[libdefaults]\n"
+        f"  default_realm = {realm}\n"
+        "  dns_lookup_realm = false\n"
+        "  dns_lookup_kdc = false\n"
+        "  rdns = false\n"
+        "[realms]\n"
+        f"  {realm} = {{\n"
+        f"    kdc = {kdc_host}:{kdc_port}\n"
+        "  }\n"
+    )
+
+
+def _postgres_kerberos(
+    env: dict[str, str], port: int, scratch: Path, *, host: str = HOST
+) -> Reached:
     """A ticket from a third party, and no credential in the connection at all.
 
     The last of the six modes and the only one where the client authenticates
@@ -1013,6 +1122,12 @@ def _postgres_kerberos(env: dict[str, str], port: int, scratch: Path) -> Reached
     canonicalised — the principal requested is exactly ``postgres/127.0.0.1`` —
     so that is what the KDC issues and the keytab holds.
 
+    In-network the URL names the service instead, so the client asks for
+    ``postgres/localdata-test-postgres-krb``. That is the second principal the
+    KDC adds to the keytab, from its ``KRB5_SERVICE_HOSTS``. On a compose
+    network the name is the service's own DNS name, so there is no
+    machine-specific suffix for canonicalisation to pick up.
+
     **``include_realm=0`` in the server's rules is load-bearing.** Without it the
     database user is ``krbuser@LOCALDATA.TEST``, which is not a role, so the
     authentication succeeds and the login is refused immediately afterwards —
@@ -1028,22 +1143,12 @@ def _postgres_kerberos(env: dict[str, str], port: int, scratch: Path) -> Reached
             "Kerberos needs a `kinit` on PATH to obtain a ticket. macOS ships "
             "one at /usr/bin/kinit; on Debian it is in krb5-user."
         )
-    realm_env, kdc_port = _other_service(KDC, 88)
+    realm_env, kdc_host, kdc_port = _other_service(KDC, 88)
     realm = realm_env["KRB5_REALM"]
     principal = f"{realm_env['KRB5_PRINCIPAL']}@{realm}"
 
     config = scratch / "krb5.conf"
-    config.write_text(
-        "[libdefaults]\n"
-        f"  default_realm = {realm}\n"
-        "  dns_lookup_realm = false\n"
-        "  dns_lookup_kdc = false\n"
-        "  rdns = false\n"
-        "[realms]\n"
-        f"  {realm} = {{\n"
-        f"    kdc = {HOST}:{kdc_port}\n"
-        "  }\n"
-    )
+    config.write_text(_krb5_conf(realm, kdc_host, kdc_port))
     # Nothing in this file is a secret, and it is still 0600: everything written
     # into the scratch directory is private to this process, so that no file
     # there has to be judged individually — which is the judgement that gets a
@@ -1058,6 +1163,7 @@ def _postgres_kerberos(env: dict[str, str], port: int, scratch: Path) -> Reached
             username=realm_env["KRB5_PRINCIPAL"],
             password=None,
             port=port,
+            host=host,
             database=env["POSTGRES_DB"],
             query={"krbsrvname": "postgres", "gssencmode": "prefer"},
         ),
@@ -1109,7 +1215,9 @@ def _kinit(
     )
 
 
-def _mssql_dsn(env: dict[str, str], port: int, scratch: Path) -> Reached:
+def _mssql_dsn(
+    env: dict[str, str], port: int, scratch: Path, *, host: str = HOST
+) -> Reached:
     """SQL Server named by a **DSN** rather than by an address.
 
     The oldest way to address an ODBC database and still the common one in
@@ -1141,11 +1249,13 @@ def _mssql_dsn(env: dict[str, str], port: int, scratch: Path) -> Reached:
     # The two drivers disagree about where the port goes. FreeTDS reads a
     # `Port` key; Microsoft's driver ignores it and reaches 1433, which timed
     # out at login (HYT00) — measured with msodbcsql18 18.7.1.1. It takes the
-    # port in `Server` as `host,port`.
+    # port in `Server` as `host,port`. The host is whichever the mode in force
+    # resolved — the loopback from the host, the service name in-network —
+    # because this file, not the URL, is where this mode's address lives.
     if Path(driver).name == "libtdsodbc.so":
-        address = f"Server = {HOST}\nPort = {port}\n"
+        address = f"Server = {host}\nPort = {port}\n"
     else:
-        address = f"Server = {HOST},{port}\n"
+        address = f"Server = {host},{port}\n"
     odbcini.write_text(
         f"[{dsn}]\n"
         f"Driver = {driver}\n"
@@ -1169,7 +1279,7 @@ def _mssql_dsn(env: dict[str, str], port: int, scratch: Path) -> Reached:
 
 
 def _clickhouse_empty_password(
-    env: dict[str, str], port: int, scratch: Path
+    env: dict[str, str], port: int, scratch: Path, *, host: str = HOST
 ) -> Reached:
     """A user whose password is the **empty string**, which is not the same as none.
 
@@ -1206,12 +1316,15 @@ def _clickhouse_empty_password(
             username=env["CLICKHOUSE_USER"],
             password=env["CLICKHOUSE_PASSWORD"],
             port=port,
+            host=host,
             database=env["CLICKHOUSE_DB"],
         )
     )
 
 
-def _mysql_option_file(env: dict[str, str], port: int, scratch: Path) -> Reached:
+def _mysql_option_file(
+    env: dict[str, str], port: int, scratch: Path, *, host: str = HOST
+) -> Reached:
     """Both credentials in an option file, and a URL with neither.
 
     MySQL's ``~/.my.cnf`` is the oldest of these conventions and the one a
@@ -1240,6 +1353,7 @@ def _mysql_option_file(env: dict[str, str], port: int, scratch: Path) -> Reached
             username=None,
             password=None,
             port=port,
+            host=host,
             database=env["MYSQL_DATABASE"],
             query={"read_default_file": str(optionfile)},
         )
@@ -1528,6 +1642,24 @@ def _published_port(target: Target, service: dict) -> int:
     )
 
 
+def _address(target: Target, service: dict) -> tuple[str, int]:
+    """Where this target is reached, in whichever mode :func:`in_network` says.
+
+    Host mode: :data:`HOST` and the published port. In-network: the compose
+    service name, which Docker's DNS resolves on the compose network, and the
+    port the container listens on inside itself.
+
+    The published port is looked up in **both** modes, even though in-network
+    mode does not use it. That lookup is what notices this module and the
+    compose file disagreeing about a service's port, and dropping it would let
+    that drift through in the mode the standard run now uses.
+    """
+    published = _published_port(target, service)
+    if in_network():
+        return target.service, target.container_port
+    return HOST, published
+
+
 def _environment(service: dict) -> dict[str, str]:
     """A service's environment as a mapping, whichever form compose uses.
 
@@ -1546,10 +1678,21 @@ def _environment(service: dict) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _listening(port: int) -> bool:
+def _listening(host: str, port: int) -> bool:
+    """Whether anything accepts a TCP connection at ``host:port``.
+
+    A name that does not resolve counts as nothing listening. In-network, that
+    is what an absent service looks like: Docker's DNS knows only the
+    containers that are running, so the lookup fails with ``socket.gaierror``
+    where host mode would get a refused connection. Both mean "not running
+    here", which is a skip.
+    """
     with socket.socket() as probe:
         probe.settimeout(0.5)
-        return probe.connect_ex((HOST, port)) == 0
+        try:
+            return probe.connect_ex((host, port)) == 0
+        except socket.gaierror:
+            return False
 
 
 def _handshake(url: str, warmup: float) -> None:
@@ -1700,14 +1843,14 @@ def _probe(target: Target) -> Reached:
         target.auth.precondition()
 
     service = _service(target)
-    port = _published_port(target, service)
-    if not _listening(port):
+    host, port = _address(target, service)
+    if not _listening(host, port):
         raise Unavailable(
-            f"Nothing is listening on {HOST}:{port}. Start it with: "
+            f"Nothing is listening on {host}:{port}. Start it with: "
             f"docker compose -f {COMPOSE.name} up -d {target.service}"
         )
 
-    reached = target.build(_environment(service), port, _scratch_dir())
+    reached = target.build(_environment(service), port, _scratch_dir(), host=host)
     # The handshake runs under the mode's own environment for the same reason
     # the tests do: for half these modes the credential is *only* there, so a
     # probe that connected without it would be proving the server was not
@@ -1715,3 +1858,51 @@ def _probe(target: Target) -> Reached:
     with applied(reached.environ):
         _handshake(reached.url, target.warmup)
     return reached
+
+
+# ---------------------------------------------------------------------------
+# Which tests one service's run selects
+# ---------------------------------------------------------------------------
+#
+# scripts/endpoint-run.sh brings up one service at a time and asks these two
+# functions what to run against it, so the mapping from a service to its tests
+# is derived from TARGETS rather than restated in the shell script.
+
+
+def selection(service: str) -> str:
+    """The ``pytest -k`` expression for the tests that need ``service``.
+
+    For a database service: its endpoint's **name**, the selection the host runs
+    used (docs/CONSTRAINTS.md §25.7), so the counts compare directly. It also
+    matches every mode whose test id carries that name. A mode served by another
+    container skips when this one is the only one up, as it did on the host.
+
+    For an authentication service: exactly the targets it serves, by test id,
+    because their ids carry the endpoint's name too and the endpoint's own
+    container is not the one up. ``postgres[tls-verify-full] or
+    postgres[client-cert]`` and not ``postgres``.
+
+    For a helper (the CA, the KDC): the empty string. It has no tests of its own
+    and comes up as a dependency of the database that needs it.
+
+    A service the compose file does not define is refused, as :func:`_service`
+    refuses one.
+    """
+    if service not in _services():
+        raise RuntimeError(f"{COMPOSE.name} has no service {service!r}.")
+    for endpoint in ENDPOINTS:
+        if endpoint.service == service:
+            return endpoint.name
+    served = [target.name for target in TARGETS if target.service == service]
+    return " or ".join(served)
+
+
+def runnable_services() -> list[str]:
+    """Every service with tests of its own, in the compose file's order.
+
+    The compose file's order rather than this table's, so that
+    ``scripts/endpoint-run.sh all`` runs the services in the order a reader of
+    that file sees them.
+    """
+    served = {target.service for target in TARGETS}
+    return [name for name in _services() if name in served]

@@ -621,6 +621,15 @@ services:
   localdata-test-tls-ca:
     build: docker/test/localdata-test-tls-ca
     image: localdata-test/tls-ca:local
+    environment:
+      # Every name the server certificate vouches for, one per word: an IPv4
+      # address becomes an `IP:` entry and anything else a `DNS:` entry.
+      # `verify-full` compares the name the client asked for with these, and
+      # the client asks for 127.0.0.1 from the host but for the service's own
+      # name from inside the compose network, where scripts/endpoint-run.sh
+      # runs the tests. So both are here, and an offline test holds this list
+      # to every service that depends on this one.
+      TLS_SERVER_NAMES: "localhost 127.0.0.1 localdata-test-postgres-tls"
     volumes:
       - localdata-test-tls:/tls
       - ./tests/tls:/public
@@ -703,6 +712,13 @@ services:
       KRB5_REALM: LOCALDATA.TEST
       KRB5_PRINCIPAL: krbuser
       KRB5_PASSWORD: "kerb:p@ss/word?x#y"
+      # The hosts a client may name when it asks for the database's service
+      # principal, one `postgres/<host>` per word, all in the one keytab. From
+      # the host the client connects to 127.0.0.1; from inside the compose
+      # network it connects to the service by name, and asks for that name's
+      # principal instead. An offline test holds this list to every service
+      # that depends on this one.
+      KRB5_SERVICE_HOSTS: "127.0.0.1 localdata-test-postgres-krb"
     volumes:
       - localdata-test-krb:/krb
     ports:

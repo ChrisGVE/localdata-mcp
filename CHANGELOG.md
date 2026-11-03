@@ -292,6 +292,17 @@ rebuild it.
   virtualenv outside the repository. The source is mounted at run time and never
   copied, so the image cannot test stale code, and the host's OpenSSL and ODBC
   no longer decide whether SQL Server can be tested.
+- **`tests/endpoints.py` can address an endpoint from inside its compose
+  network** ([#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)).
+  `LOCALDATA_TEST_IN_NETWORK=1` switches every address from the loopback and
+  the published port to the service name and the container's own port: the
+  URLs, the `.pgpass` host field, the ODBC DSN's `Server` line and the KDC the
+  Kerberos mode asks. Any other value than `1`, `0` or unset is refused. Host
+  mode is the default and unchanged. For the TLS and Kerberos modes to verify
+  under a service name, the server certificate now also names
+  `localdata-test-postgres-tls` and the keytab also holds
+  `postgres/localdata-test-postgres-krb`. `docker/test/in-network.compose.yml`
+  gives each run its own network and makes YDB advertise its service name.
 
 ### Removed
 
