@@ -5550,6 +5550,10 @@ SQL itself, which this server avoids by design. Filed as
 > exists only after a writer stopped without checkpointing (DuckDB checkpoints on a clean close),
 > so this needs a crash before it — but then a read-only `query` loses committed rows. Details in
 > §36.
+>
+> **Amended again 2026-11-03:** this hole is closed by the DuckDB reader gate of
+> [#137](https://github.com/ChrisGVE/localdata-mcp/issues/137), described in the amendment
+> further down this section.
 
 **Server-side equivalents on the container backends** — `pg_read_file`, `COPY … TO PROGRAM`,
 `INTO OUTFILE`, `load_file` — are not covered here. They run as the database server's user, not as
@@ -6819,3 +6823,11 @@ reader. `slots.py` still recognises it, because the `DUCK` magic at offset 8 is 
 1.5.6 on Python 3.10; any platform but macOS; and the cause of the nanobind report. The wall-clock times of the two suite runs (652 s and
 798 s) come from one run each, on a machine shared with other work, and are not a performance
 comparison.
+
+> **Amended 2026-11-03 — the data loss in 36.3 is closed
+> ([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137)).** The DuckDB reader now asks
+> DuckDB's own parser what a statement is and refuses the `COPY … TO '<file>.wal'
+> (USE_TMP_FILE false)` before it runs, so a read-only `query` can no longer replace a WAL that
+> holds committed rows. What was measured above stands as a record of the behaviour before that
+> gate. The measurements behind the gate, and the decision for each statement kind, are in the
+> §29.4 amendment of the same date.
