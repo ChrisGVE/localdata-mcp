@@ -246,7 +246,12 @@ it with the `DROP CAST` the refusal gives. On **MySQL and
 MariaDB** it also refuses a statement containing the words `OUTFILE` or
 `DUMPFILE`, or the name of a stored function
 or of a view calling one, even inside a quoted string. If a read is refused for
-a word in a literal, rephrase the literal (`CONCAT('out', 'file')`). A view
+a word in a literal, rephrase the literal (`CONCAT('out', 'file')`). On all six,
+as on MonetDB, a `;` anywhere but at the end is refused, even inside a quoted
+string. For a `;` in the data write `chr(59)` on the PostgreSQL four
+(`SELECT 'a' || chr(59) || 'b'`), and `CHAR(59 USING utf8mb4)` on MySQL and
+MariaDB (`SELECT CONCAT('a', CHAR(59 USING utf8mb4), 'b')`); there `CHAR(59)`
+alone comes back as `0x3b`, and `||` means `OR`. A view
 `directory` lists with `rows: null` is one of those, and cannot be queried.
 
 ### 5. "Send me the result"

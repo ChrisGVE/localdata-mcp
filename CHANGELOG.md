@@ -580,6 +580,18 @@ And twenty-two found in this release's own code before it shipped:
   a quoted string too, and offers `code(59)` for a `;` in the data:
   `SELECT 'a' || code(59) || 'b'` returns `a;b` (MonetDB has no `chr`, and
   `char(59)` does not parse there).
+- **On PostgreSQL, CockroachDB, YugabyteDB, openGauss, MySQL and MariaDB, a `;`
+  in a literal was refused as "more than one statement"**
+  ([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)). These readers
+  refuse any `;` but a trailing one without parsing SQL, so `SELECT 'a;b'`, one
+  statement, was refused with words that were false for it and left no way
+  forward. The rule is unchanged. The refusal now names the `;`, says one inside
+  a quoted string or a comment is refused too and why, and offers a rephrase run
+  through `query` on every engine it is offered on: `chr(59)` on the
+  PostgreSQL family (`SELECT 'a' || chr(59) || 'b'` returns `a;b`), and
+  `CHAR(59 USING utf8mb4)` on MySQL and MariaDB
+  (`SELECT CONCAT('a', CHAR(59 USING utf8mb4), 'b')`). Without `USING`,
+  `CHAR(59)` is a binary string there and comes back as `0x3b`.
 - **On MySQL and MariaDB, a read-only `query` could write a file and change
   server settings, then report the statement as refused**
   ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). A read-only

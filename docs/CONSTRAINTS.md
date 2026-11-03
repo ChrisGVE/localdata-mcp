@@ -6481,6 +6481,40 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > - the "both types are the server's own" condition removed from the question: 3 red, the
 >   frozen #125 cast tests on openGauss, which would otherwise fail closed on a user type's cast.
 
+> **Amended 2026-11-03 — the PostgreSQL- and MySQL-family `;` refusal: what it says, and a
+> rephrase that works ([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)).** The
+> PostgreSQL-family gate (#124: PostgreSQL, CockroachDB, YugabyteDB, openGauss) and the MySQL gate
+> (#123: MySQL, MariaDB) decide "one statement" as MonetDB's does, without lexing, so they refuse
+> any `;` but a trailing one, and `SELECT 'a;b'` — one statement — with it. Both said "run more
+> than one statement", which is false for that caller, and offered no way forward. The gates are
+> unchanged; the words now name the `;`, say a quoted one or one in a comment is refused too and
+> why, and offer a rephrase, as the MonetDB amendment above does.
+>
+> Measured through `query` on a read-only attach, one container at a time:
+>
+> | Engine | Statement | Answer |
+> |---|---|---|
+> | PostgreSQL 16.15, CockroachDB 26.3.4, YugabyteDB 2.25.2.0 (PG 15.12), openGauss 7.0.0-RC3 | `SELECT chr(59)` | `;` |
+> | the same four | `SELECT 'a' \|\| chr(59) \|\| 'b'` | `a;b` |
+> | MySQL 8.0.46, MariaDB 11.8.9 | `SELECT CHAR(59)` | `0x3b` (`CHARSET` and `COLLATION` both `binary`) |
+> | the same two | `SELECT CONCAT('a', CHAR(59), 'b')` | `0x613b62` (`binary`) |
+> | the same two | `SELECT CHAR(59 USING utf8mb4)` | `;` (`utf8mb4`; collation `utf8mb4_0900_ai_ci` on MySQL, `utf8mb4_uca1400_ai_ci` on MariaDB) |
+> | the same two | `SELECT CONCAT('a', CHAR(59 USING utf8mb4), 'b')` | `a;b` |
+> | the same two | `SELECT 'a' \|\| CHAR(59 USING utf8mb4) \|\| 'b'` | `0` (`\|\|` is `OR`) |
+>
+> So the PostgreSQL-family refusal offers `chr(59)`, and the MySQL one `CHAR(59 USING utf8mb4)`
+> inside `CONCAT`. Each rephrase passed its gate on every engine that offers it; no engine is
+> offered a rephrase that was not run there. The three refusals (MonetDB's included) are now built
+> by one function, `_semicolon_refusal`; MonetDB's text is byte-for-byte what it was.
+>
+> **After the change**, with the six edited rows of the frozen tests applied (the `"more than one
+> statement"` the shape tests expected, now `"put a ';' before its end"`; awaiting sign-off), endpoint
+> tests only, `tests/test_semicolon_refusal.py` with `tests/test_postgresql_read_gate.py` or
+> `tests/test_mysql_read_gate.py`: PostgreSQL 47 passed; CockroachDB 25 passed; YugabyteDB 44
+> passed; openGauss 42 passed and 1 strict xfail (#129); MySQL 20 passed; MariaDB 17 passed;
+> every other engine's tests skipped, none failed. Offline, the three files: 132 passed. Restoring the old wording turned
+> 19 red: the 13 new offline tests that pin the words and the rephrase, and the 6 edited frozen rows.
+
 ## §35 — SQL Server text lands as `NVARCHAR`, sized in UTF-16 code units (2026-11-03)
 
 Refs [#128](https://github.com/ChrisGVE/localdata-mcp/issues/128). Measured on `new-v3` from

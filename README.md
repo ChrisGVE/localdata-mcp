@@ -403,8 +403,11 @@ functions acting past the transaction (a file written, the configuration
 reloaded, a lock held, a sequence moved). So the reader asks the server's catalog
 which functions those are, and refuses a statement naming one, a view,
 row-security policy or operator calling one, any function not installed by the
-server or an extension, more than one statement, or a `U&"…"` identifier
-([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)). A type whose
+server or an extension, a `;` anywhere but at the end, or a `U&"…"` identifier
+([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)). As on MonetDB,
+the `;` is refused even inside a quoted string; for a `;` in the data there,
+write `chr(59)`, as in `SELECT 'a' || chr(59) || 'b'`
+([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)). A type whose
 cast calls one is refused too, with every table or view holding a column of it,
 because a cast runs even when nothing names it
 ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)), and so is a
@@ -421,7 +424,11 @@ stored functions, and `EXPLAIN` cannot see them. So each statement must be a
 single one, begin with a read's keyword, contain no executable comment and
 neither `OUTFILE` nor `DUMPFILE`, and name no stored or loadable function, or
 view calling one. That holds even inside a quoted string, and the refusal says
-which rule it met ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). **One exception
+which rule it met ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)).
+For a `;` in the data there, write `CHAR(59 USING utf8mb4)`, as in
+`SELECT CONCAT('a', CHAR(59 USING utf8mb4), 'b')`; `CHAR(59)` alone is a binary
+string and comes back as `0x3b`
+([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)). **One exception
 remains.** Oracle commits DDL before anything can object and has no
 session-level read-only posture, so a `CREATE` sent to `query` there really does
 take effect; its DML still rolls back, and the refusal says the `CREATE` stands

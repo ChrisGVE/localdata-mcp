@@ -348,7 +348,10 @@ which is not equally far:
   statement that is more than one, holds `/*!` or `OUTFILE`/`DUMPFILE`, begins with a keyword
   no read begins with, or names a stored or loadable function or a view calling one. A view
   refused that way is listed with `rows: null`
-  ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). `LOAD_FILE()` is left
+  ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). "More than one" is decided
+  without lexing, so a `;` anywhere but at the end is refused, inside a quoted string too, and
+  the refusal offers `CHAR(59 USING utf8mb4)` for a `;` in the data
+  ([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)). `LOAD_FILE()` is left
   alone: it reads a file on the database server, and whether it may is the account's `FILE`
   privilege and the server's `secure_file_priv` — the database's grant, not this server's.
 - **PostgreSQL**, and CockroachDB, YugabyteDB and openGauss, keep the transactional floor —
@@ -362,7 +365,9 @@ which is not equally far:
   installed as an extension, and every view, row-security policy or operator reaching one.
   That takes in reading the server's own files: `pg_read_file`, `pg_ls_dir` and
   `pg_stat_file` are volatile, so they are refused too.
-  One statement only, and no `U&"…"` identifier. A cast runs its function unnamed, even
+  One statement only (a `;` anywhere but at the end is refused, inside a quoted string too,
+  and the refusal offers `chr(59)` for a `;` in the data,
+  [#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)), and no `U&"…"` identifier. A cast runs its function unnamed, even
   implicitly over a column, so a type a cast converts through a refused function is refused
   by name, with every type built from it and every table or view holding a column of one
   ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)). A domain's `CHECK` runs

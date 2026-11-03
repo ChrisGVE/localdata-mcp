@@ -1448,11 +1448,23 @@ class DuckDBBackend(Backend):
 # ---------------------------------------------------------------------------
 
 
-#: What a reader gate says when a statement carries a second one.
-_MORE_THAN_ONE_STATEMENT = (
-    "run more than one statement (any ';' but a trailing one is refused, even "
-    "inside a quoted string)"
-)
+def _semicolon_refusal(why: str, rephrase: str) -> str:
+    """What a reader gate says when :func:`_one_statement` refuses.
+
+    It must be true in every case it fires, and it fires on ``SELECT 'a;b'`` —
+    one statement — as surely as on ``SELECT 1; SELECT 2``. So it names the
+    ``;``, not a second statement, says why a quoted one is refused as well,
+    and offers a way to put a ``;`` in the data.
+
+    ``why`` is what a second statement would do on that server; ``rephrase``
+    is an expression answering ``;``, with an example. A rephrase is offered
+    only by a gate whose every engine ran it through ``query``, measured.
+    """
+    return (
+        "put a ';' before its end (refused even inside a quoted string or a "
+        "comment: this server does not parse SQL to tell that ';' from one "
+        f"ending a statement, {why}; for a ';' in the data write {rephrase})"
+    )
 
 
 def _one_statement(sql: str) -> bool:
@@ -1877,6 +1889,20 @@ def _pg_typed_and_reaching(
             return typed, reaching - set(typed)
 
 
+#: What the PostgreSQL-family reader says when :func:`_one_statement` refuses
+#: (#127), on every engine :class:`PostgreSQLBackend` serves.
+#:
+#: The rephrase was measured through ``query`` on each of them — PostgreSQL
+#: 16.15, CockroachDB 26.3.4, YugabyteDB 2.25.2.0 and openGauss 7.0.0-RC3 —
+#: and ``tests/test_semicolon_refusal.py`` runs the example on all four.
+#: ``chr`` is the server's own function, and the catalog half of the gate let
+#: it through on all four.
+_PG_SEMICOLON = _semicolon_refusal(
+    "and the checks here are made for a single statement",
+    "chr(59), as in SELECT 'a' || chr(59) || 'b'",
+)
+
+
 def _pg_shape_refusal(sql: str) -> str | None:
     """What ``sql``'s shape alone refuses it for, or ``None``.
 
@@ -1886,7 +1912,7 @@ def _pg_shape_refusal(sql: str) -> str | None:
     identifier, whose escapes spell a name no word match can see.
     """
     if not _one_statement(sql):
-        return _MORE_THAN_ONE_STATEMENT
+        return _PG_SEMICOLON
     if _PG_UNICODE_IDENTIFIER.search(sql):
         return (
             'spell a name with Unicode escapes (U&"…"), which hides what it '
@@ -2261,6 +2287,22 @@ _MYSQL_LOADABLE_FUNCTIONS = (
 )
 
 
+#: What the MySQL and MariaDB reader says when :func:`_one_statement` refuses
+#: (#127).
+#:
+#: The rephrase was measured through ``query`` on MySQL 8.0.46 and MariaDB
+#: 11.8.9, and ``tests/test_semicolon_refusal.py`` runs the example on both.
+#: ``USING utf8mb4`` is not optional: ``CHAR(59)`` alone has the charset
+#: ``binary`` on both servers, and ``query`` answers it with the text
+#: ``0x3b``, not ``;`` (``CONCAT('a', CHAR(59), 'b')`` with ``0x613b62``).
+#: ``CONCAT`` rather than ``||``, which both read as ``OR``: ``'a' || … || 'b'``
+#: answered ``0``.
+_MYSQL_SEMICOLON = _semicolon_refusal(
+    "and the checks here are made for a single statement",
+    "CHAR(59 USING utf8mb4), as in SELECT CONCAT('a', CHAR(59 USING utf8mb4), 'b')",
+)
+
+
 def _mysql_shape_refusal(sql: str) -> str | None:
     """What ``sql``'s shape alone refuses it for, or ``None`` if it may be a read.
 
@@ -2276,7 +2318,7 @@ def _mysql_shape_refusal(sql: str) -> str | None:
     * **A first keyword in** :data:`_MYSQL_READS`.
     """
     if not _one_statement(sql):
-        return _MORE_THAN_ONE_STATEMENT
+        return _MYSQL_SEMICOLON
     if _MYSQL_EXECUTABLE_COMMENT.search(sql):
         return "run an executable comment (/*! … */), which the server runs as SQL"
     if _MYSQL_FILE_WRITE.search(sql):
@@ -3225,22 +3267,17 @@ def _monetdb_single_statement(sql: str) -> bool:
     return _one_statement(sql)
 
 
-#: What the MonetDB reader says when :func:`_monetdb_single_statement` refuses.
-#:
-#: It must be true in every case it fires, and it fires on ``SELECT 'a;b'`` —
-#: one statement — as surely as on ``SELECT 1; SELECT 2``. So it names the
-#: ``;``, not a second statement, and says why a quoted one costs the read.
+#: What the MonetDB reader says when :func:`_monetdb_single_statement` refuses,
+#: in the words :func:`_semicolon_refusal` gives every such gate.
 #:
 #: The rephrase was measured on ``monetdb/monetdb:latest`` (11.55.7): MonetDB
 #: has no ``chr``, and ``char(59)`` is a syntax error there because ``CHAR`` is
 #: a type keyword, but ``code(59)`` answers ``;``. It is a system function
 #: recorded free of side effects, so the plan check lets it through, and
 #: ``tests/test_monetdb_read_gate.py`` runs the example through ``query``.
-_MONETDB_SEMICOLON = (
-    "put a ';' before its end (refused even inside a quoted string or a "
-    "comment: this server does not parse SQL to tell that ';' from one ending "
-    "a statement, after which MonetDB would run the rest unchecked; for a ';' "
-    "in the data write code(59), as in SELECT 'a' || code(59) || 'b')"
+_MONETDB_SEMICOLON = _semicolon_refusal(
+    "after which MonetDB would run the rest unchecked",
+    "code(59), as in SELECT 'a' || code(59) || 'b'",
 )
 
 
