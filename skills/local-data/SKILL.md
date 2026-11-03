@@ -261,6 +261,15 @@ MariaDB (`SELECT CONCAT('a', CHAR(59 USING utf8mb4), 'b')`); there `CHAR(59)`
 alone comes back as `0x3b`, and `||` means `OR`. A view
 `directory` lists with `rows: null` is one of those, and cannot be queried.
 
+On **SQL Server**, text a file brought in is stored as `NVARCHAR`, so any
+character survives. Under the server's default collation `ORDER BY` on such a
+column passes over a hyphen and an apostrophe: `a-b` sorts between `ab` and
+`ac`, not before them. If the user expects punctuation first, say
+`ORDER BY col COLLATE Latin1_General_BIN2` (nothing is lost, but it is
+code-point order, so `Ab` and `ab` are no longer tied), or
+`ORDER BY CAST(col AS VARCHAR(n))` (the old order exactly, but a character the
+code page lacks comes back as `?`, so use it only on plain Western text).
+
 ### 5. "Send me the result"
 
 A result they want as a *file* — to open in Excel, to mail on, to feed something

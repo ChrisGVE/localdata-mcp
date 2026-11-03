@@ -504,7 +504,11 @@ And twenty-eight found in this release's own code before it shipped:
   and SQL Server refuses an index over a longer value with that limit in the
   error; and under a `SQL_` collation `ORDER BY` follows the Unicode rules,
   which pass over a hyphen or an apostrophe, where the code-page rules sorted
-  punctuation first.
+  punctuation first. A statement puts punctuation first again with
+  `ORDER BY v COLLATE Latin1_General_BIN2`, which loses nothing but is
+  code-point order and so tells `Ab` from `ab`, or with
+  `ORDER BY CAST(v AS VARCHAR(n))`, which is the old order exactly and turns any
+  character the code page lacks into `?`.
 - **An instant cut to the microsecond was cut silently**
   ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)). A date column
   is stored with six fractional digits, so two instants a nanosecond apart — from

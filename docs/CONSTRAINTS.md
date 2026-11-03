@@ -6790,6 +6790,45 @@ Not measured: a database whose default collation is a Windows one (`Latin1_Gener
 `SQL_`) or a binary one, where `NVARCHAR` ordering differs again. The width is collation-independent,
 and the order belongs to the database's collation.
 
+### 35.5 Amendment (2026-11-03): putting punctuation first again, measured
+
+Refs [#128](https://github.com/ChrisGVE/localdata-mcp/issues/128). Added after §35.3, which stands
+unchanged. Measured on `ac856079` against the same `mssql/server:2022-latest` (database and column
+collation `SQL_Latin1_General_CP1_CI_AS`), through `query` on a table landed with `create`, on both
+`mssql` and `mssql[odbc-dsn]`, which answered identically. The column was `nvarchar`.
+
+`a-b`, `ab`, `a'c`, `ac`, `ORDER BY` each expression:
+
+| Expression | Order |
+|---|---|
+| `v` (the default) | `ab`, `a-b`, `ac`, `a'c` |
+| `v COLLATE SQL_Latin1_General_CP1_CI_AS` | `ab`, `a-b`, `ac`, `a'c` (no change: the column already has it) |
+| `v COLLATE Latin1_General_BIN2` | `a'c`, `a-b`, `ab`, `ac` |
+| `v COLLATE Latin1_General_100_BIN2` | `a'c`, `a-b`, `ab`, `ac` |
+| `CAST(v AS VARCHAR(10))` | `a'c`, `a-b`, `ab`, `ac` |
+
+The twelve values of §35.3:
+
+| Expression | Order |
+|---|---|
+| `v` (the default) | `_x`, `Ab`, `aB`, `ab`, `a-b`, `co op`, `coo`, `coop`, `co-op`, `q`, `'q`, `x` |
+| `v COLLATE Latin1_General_BIN2` | `'q`, `Ab`, `_x`, `a-b`, `aB`, `ab`, `co op`, `co-op`, `coo`, `coop`, `q`, `x` |
+| `CAST(v AS VARCHAR(10))` | `'q`, `_x`, `a-b`, `Ab`, `aB`, `ab`, `co op`, `co-op`, `coo`, `coop`, `q`, `x` |
+
+The cast is §35.3's `VARCHAR` order, value for value. The binary collation puts punctuation before
+letters but is code-point order: `Ab` sorts before `_x`, and `Ab`, `aB`, `ab` are no longer tied.
+Neither rephrase needs anything of the server beyond the statement, and `query` runs both.
+
+What each costs: the binary collation loses nothing, and `日本`, `😀` and `été` come back whole under
+it. The cast stores in the code page, so a character the page lacks becomes `?` (§35.1: `日本`
+read back `??`); it is the exact old order only for text the code page holds.
+
+`tests/test_mssql_text_order.py`, 12 live (6 on each SQL Server target), all passed. Two drills,
+each restored: `Latin1_General_CI_AS` in place of `Latin1_General_BIN2` turned the
+punctuation-first test red on both targets (`['ab', 'a-b', 'ac', "a'c"]`), and `CAST … AS
+NVARCHAR(10)` in place of `VARCHAR(10)` turned the exact-order test red on both. The rephrases are
+in `skills/local-data/SKILL.md` and the #128 entry of `CHANGELOG.md`.
+
 ---
 
 ## §36 — DuckDB 2.0.0 under the lock, and the WAL re-measured (2026-11-03)
