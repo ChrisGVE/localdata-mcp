@@ -724,6 +724,32 @@ def _longest_value(values: pd.Series, declared: str) -> int | None:
     return int(present.astype(str).str.len().max())
 
 
+#: A character outside the Basic Multilingual Plane — every emoji, and the rarer
+#: CJK ideographs. UTF-16 spells each one as two code units, a surrogate pair.
+#: Not a raw string: the class holds the two code points themselves, because a
+#: pyarrow-backed column matches with RE2, which refuses the ``\U`` escape.
+_ASTRAL = "[\U00010000-\U0010ffff]"
+
+
+def _utf16_units(present: pd.Series) -> pd.Series:
+    """How many UTF-16 code units each string takes: one a character, two an astral one."""
+    return present.str.len() + present.str.count(_ASTRAL)
+
+
+def _longest_utf16_value(values: pd.Series, declared: str) -> int | None:
+    """:func:`_longest_value` in UTF-16 code units, which SQL Server sizes by (#128).
+
+    The two agree unless a value holds a character outside the Basic
+    Multilingual Plane, which is one character and two code units.
+    """
+    if declared != "TEXT":
+        return None
+    present = values.dropna()
+    if present.empty:
+        return 0
+    return int(_utf16_units(present.astype(str)).max())
+
+
 def _declared_type(values: pd.Series) -> str:
     """Map a column to the type it is declared as.
 
@@ -944,7 +970,13 @@ class ColumnMeasurement:
     #: ``"int"``, ``"float"``, ``"bool"`` or ``"text"``. ``None`` where the frame
     #: was already typed and there is nothing to turn back.
     family: str | None = None
+    #: The widest value's width in characters, and in UTF-16 code units, or
+    #: ``None`` for a column holding no text. Two because engines disagree about
+    #: what a text width counts, and the backend picks the one its own does
+    #: (:meth:`~localdata_mcp.dialects.Backend.text_width`). They differ only
+    #: when a value holds a character outside the Basic Multilingual Plane.
     longest: int | None = None
+    longest_utf16: int | None = None
     #: The spelling to rewrite this column's dates in, or ``None`` to leave its
     #: text alone — which covers a column that is not temporal *and* one already
     #: canonical throughout, since :func:`temporal.standardize` rewrites neither.
@@ -1025,6 +1057,7 @@ def measure_frame(frame: pd.DataFrame) -> tuple[ColumnMeasurement, ...]:
                 name=name,
                 declared_type=declared,
                 longest=_longest_value(series, declared),
+                longest_utf16=_longest_utf16_value(series, declared),
                 temporal_kind=binding.column_temporal_kind(series),
                 temporal_standard=standard,
                 numeric_values=numeric,
@@ -1077,6 +1110,7 @@ class _ColumnScan:
         self._had_values = False
         self._rows = 0
         self._longest = 0
+        self._longest_utf16 = 0
         # Four all-or-nothing temporal questions. Each stops being asked as
         # soon as a chunk answers no, because no later chunk can answer yes.
         self._canonical_throughout = True
@@ -1114,6 +1148,7 @@ class _ColumnScan:
             return
         self._had_values = True
         self._longest = max(self._longest, int(present.str.len().max()))
+        self._longest_utf16 = max(self._longest_utf16, int(_utf16_units(present).max()))
         self._observe_family(present)
         self._observe_temporal(present, raw)
 
@@ -1261,18 +1296,21 @@ class _ColumnScan:
         )
         described = standard or time_of_day
 
+        # A canonical spelling is ASCII, so it is as many code units as
+        # characters.
         if declared != "TEXT":
-            longest = None
+            longest = longest_utf16 = None
         elif spelling is not None:
-            longest = temporal.canonical_width(spelling)
+            longest = longest_utf16 = temporal.canonical_width(spelling)
         else:
-            longest = self._longest
+            longest, longest_utf16 = self._longest, self._longest_utf16
 
         return ColumnMeasurement(
             name=self.name,
             declared_type=declared,
             family=family,
             longest=longest,
+            longest_utf16=longest_utf16,
             spelling=spelling,
             temporal_standard=(
                 temporal.ISO8601_UTC
@@ -2016,6 +2054,14 @@ class Workspace:
         # who later runs `SELECT *`.
         keyed = entry.backend.requires_primary_key()
 
+        def width(column: ColumnMeasurement) -> int | None:
+            # In the unit this backend's text width counts — characters, or
+            # SQL Server's UTF-16 code units (#128). One answer per column,
+            # handed to both `column_note` and `column_type` below.
+            return entry.backend.text_width(
+                characters=column.longest, utf16_units=column.longest_utf16
+            )
+
         notes = (
             *notes,
             *(
@@ -2033,7 +2079,7 @@ class Workspace:
                 for column in measured
                 if (
                     note := entry.backend.column_note(
-                        column.name, column.declared_type, longest=column.longest
+                        column.name, column.declared_type, longest=width(column)
                     )
                 )
                 is not None
@@ -2063,7 +2109,7 @@ class Workspace:
                 Column(
                     column.name,
                     entry.backend.column_type(
-                        column.declared_type, longest=column.longest
+                        column.declared_type, longest=width(column)
                     ),
                 )
                 for column in measured

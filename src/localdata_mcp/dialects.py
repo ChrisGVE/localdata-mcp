@@ -78,6 +78,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    Unicode,
     create_engine,
     event,
     func,
@@ -604,9 +605,10 @@ class Backend:
     def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:
         """The Core type a loaded column is created as, for this backend.
 
-        ``longest`` is how many characters the widest value in the column
-        actually has, measured rather than assumed, and ``None`` when the column
-        holds no text. It is ignored generically — an unbounded text type needs
+        ``longest`` is how wide the widest value in the column actually is,
+        measured rather than assumed, in the unit :meth:`text_width` chose for
+        this backend — characters everywhere but SQL Server — and ``None`` when
+        the column holds no text. It is ignored generically — an unbounded text type needs
         no size — and used by the one dialect that has no unbounded text type
         worth having.
 
@@ -624,6 +626,24 @@ class Backend:
         its three declared types decide column affinity.
         """
         return _PORTABLE_TYPES[declared]()
+
+    def text_width(
+        self, *, characters: int | None, utf16_units: int | None
+    ) -> int | None:
+        """The width a loaded text column is sized to here, in this engine's unit.
+
+        The loader measures the widest value two ways, because the engines that
+        size text do not agree on what a width counts. Characters, generically,
+        which is what Firebird's ``CHARACTER SET UTF8`` column counts (#56).
+        SQL Server's ``NVARCHAR`` counts UTF-16 code units instead, and a
+        character outside the Basic Multilingual Plane — every emoji — is two of
+        them (:meth:`MSSQLBackend.text_width`).
+
+        Whatever this answers is what :meth:`column_type` and
+        :meth:`column_note` receive as ``longest``, asked once per column, so
+        the declaration and the note are always about the same width.
+        """
+        return characters
 
     def column_note(
         self, name: str, declared: str, *, longest: int | None = None
@@ -2609,9 +2629,12 @@ class OracleBackend(Backend):
 # ---------------------------------------------------------------------------
 
 
-#: The widest ``VARCHAR`` SQL Server will take before ``VARCHAR(max)``, which is
-#: a large object and cannot be part of an index key.
-_VARCHAR_MAX = 8000
+#: The widest ``NVARCHAR`` SQL Server will take before ``NVARCHAR(max)``, in
+#: UTF-16 code units. Measured on SQL Server 2022: ``NVARCHAR(4000)`` is created
+#: and ``NVARCHAR(4001)`` refused with "The size (4001) given to the parameter
+#: 'v' exceeds the maximum allowed (4000)". ``NVARCHAR(max)`` past it is a large
+#: object, which groups, sorts and compares correctly and cannot be an index key.
+_NVARCHAR_MAX = 4000
 
 
 #: The statement kinds SQL Server's own plan reports for a read, and the only
@@ -2730,20 +2753,56 @@ class MSSQLBackend(Backend):
     name: str = "mssql"
 
     def column_type(self, declared: str, *, longest: int | None = None) -> TypeEngine:
-        """``VARCHAR`` sized from the data, because ``TEXT`` is a dead end here.
+        """``NVARCHAR`` sized from the data, because nothing narrower holds text.
 
         SQLAlchemy's portable ``Text`` renders ``TEXT``, which SQL Server has
-        deprecated and will not let into an index key at all — so a loaded file's
-        text columns could be neither indexed nor, on the way out, relied on. A
-        sized ``VARCHAR`` is the modern spelling and is indexable while it stays
-        inside the 900-byte key limit, which is the caller's to stay inside.
+        deprecated and will not let into an index key at all — so a loaded
+        file's text columns could be neither indexed nor, on the way out, relied
+        on. A sized column is the modern spelling.
+
+        **Unicode, not ``VARCHAR``** (#128). A ``VARCHAR`` holds the column
+        collation's code page and nothing else. Measured on SQL Server 2022
+        under the default ``SQL_Latin1_General_CP1_CI_AS``: a CSV holding
+        ``日本`` and ``😀`` loaded without an error and read back as ``??`` and
+        ``??``, while ``été``, which code page 1252 has, survived. Under a UTF-8
+        collation the same column refused ``été`` instead, because there a
+        ``VARCHAR`` width counts bytes and the width measured here counted
+        characters. ``NVARCHAR`` stores any string a Python ``str`` can hold,
+        under every collation, and its width counts UTF-16 code units whatever
+        the collation — which is what ``longest`` is in here
+        (:meth:`text_width`).
+
+        Comparison and ordering follow the database's collation, as they did for
+        ``VARCHAR``, but under a ``SQL_`` collation the Unicode rules are not
+        the code-page ones: measured, ``ORDER BY`` on ``NVARCHAR`` puts
+        ``coop`` before ``co-op`` and ``'q`` beside ``q``, where ``VARCHAR`` put
+        punctuation first.
+
+        A nonclustered index key holds 1,700 bytes, which is 850 code units of
+        ``NVARCHAR``. SQL Server refuses an index over a column holding a wider
+        value, naming the limit, and creates one over a column only declared
+        wider. SQL Server's warning for the latter is about later inserts, and
+        no verb here writes into a table once it is made.
         """
         if declared != "TEXT":
             return super().column_type(declared, longest=longest)
         width = max(1, longest or 1)
-        # Past 8000 the only spelling is VARCHAR(max), which is a large object
+        # Past 4000 the only spelling is NVARCHAR(max), which is a large object
         # again — the same trade Oracle makes at 4000, and for the same reason.
-        return String(width) if width <= _VARCHAR_MAX else String()
+        # `Unicode()` rather than `UnicodeText()`: offline, the latter compiles
+        # to the deprecated NTEXT.
+        return Unicode(width) if width <= _NVARCHAR_MAX else Unicode()
+
+    def text_width(
+        self, *, characters: int | None, utf16_units: int | None
+    ) -> int | None:
+        """UTF-16 code units, because that is what ``NVARCHAR(n)`` counts.
+
+        An emoji is one character and two code units, and a width counted in
+        characters is one short for each one a value holds: ``NVARCHAR(1)``
+        refuses ``😀``, measured, and ``NVARCHAR(2)`` holds it.
+        """
+        return utf16_units
 
     def rename_table(self, conn: Connection, table: str, to: str) -> None:
         """``sp_rename``, because SQL Server has no ``ALTER TABLE … RENAME``.

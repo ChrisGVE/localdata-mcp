@@ -483,6 +483,21 @@ And twenty-two found in this release's own code before it shipped:
   8,191 characters stays a BLOB, keeping every value whole, and `create` now
   warns for that column that `GROUP BY`, `DISTINCT` and `ORDER BY` on it answer
   wrongly and that it cannot be indexed.
+- **On SQL Server a CJK character or an emoji was stored as `?`, and the load said
+  nothing** ([#128](https://github.com/ChrisGVE/localdata-mcp/issues/128)). A text
+  column landed as `VARCHAR(n)`, which holds only the collation's code page:
+  under the default `SQL_Latin1_General_CP1_CI_AS`, a CSV holding `été`, `日本`
+  and `😀` loaded without an error and read back `été`, `??` and `??`. Under a
+  UTF-8 collation the same column refused `été` instead, because there the width
+  counts bytes. A text column is now `NVARCHAR(n)`, which holds any character
+  under any collation, with `n` counted in UTF-16 code units, so an emoji counts
+  two; past 4,000 it is `NVARCHAR(max)`, where it had been `VARCHAR(max)` past
+  8,000. What it costs: a nonclustered index key holds 1,700 bytes, which is 850
+  code units of `NVARCHAR` where it was 1,700 code-page characters of `VARCHAR`,
+  and SQL Server refuses an index over a longer value with that limit in the
+  error; and under a `SQL_` collation `ORDER BY` follows the Unicode rules,
+  which pass over a hyphen or an apostrophe, where the code-page rules sorted
+  punctuation first.
 - **An instant cut to the microsecond was cut silently**
   ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)). A date column
   is stored with six fractional digits, so two instants a nanosecond apart — from

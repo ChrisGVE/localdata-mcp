@@ -6480,3 +6480,100 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > - the "refused by name" filter removed: 2 red, offline;
 > - the "both types are the server's own" condition removed from the question: 3 red, the
 >   frozen #125 cast tests on openGauss, which would otherwise fail closed on a user type's cast.
+
+## §35 — SQL Server text lands as `NVARCHAR`, sized in UTF-16 code units (2026-11-03)
+
+Refs [#128](https://github.com/ChrisGVE/localdata-mcp/issues/128). Measured on `new-v3` from
+`6d8a382d`, against `mcr.microsoft.com/mssql/server:2022-latest` (16.0.4305.5, server and `master`
+collation `SQL_Latin1_General_CP1_CI_AS`) through Microsoft's `msodbcsql18` 18.7 with
+`DYLD_LIBRARY_PATH` at openssl@3. Both SQL Server targets, `mssql` and `mssql[odbc-dsn]`, answered
+the same.
+
+### 35.1 Before
+
+`MSSQLBackend.column_type` declared a loaded text column `String(width)`, which SQL Server renders
+`VARCHAR(width)`, with `width` the widest value in characters. A `VARCHAR` holds the column
+collation's code page and nothing else. A CSV of `plain`, `été`, `日本` and `😀`, landed with `create`
+and read back with `query`, answered `['plain', 'été', '??', '??']`, and the load reported `ok` with
+no warning. `été` survived because code page 1252 has `é`; the two ideographs became one `?` each,
+and the emoji, a surrogate pair, became two.
+
+The same declarations through the driver, on `master`:
+
+| Declaration | value | result |
+|---|---|---|
+| `VARCHAR(2)` | `日本` | stored as `??`, `DATALENGTH` 2 |
+| `VARCHAR(1)` | `😀` | refused: `String or binary data would be truncated … Truncated value: '?'` |
+| `NVARCHAR(2)` | `日本` | stored; `DATALENGTH` 4 |
+| `NVARCHAR(1)` | `😀` | refused (pyodbc: `returned a result with an exception set`) |
+| `NVARCHAR(2)` | `😀` | stored; `DATALENGTH` 4, `LEN` 2 |
+
+Under a UTF-8 collation the failure is the other one the issue predicted. In a scratch database
+created `COLLATE Latin1_General_100_CI_AS_SC_UTF8`, `VARCHAR(3)` refused `été` and `VARCHAR(2)`
+refused `日本`, each with `String or binary data would be truncated`, because there a `VARCHAR` width
+counts UTF-8 bytes. `NVARCHAR(3)`, `NVARCHAR(2)` and `NVARCHAR(2)` stored `été`, `日本` and `😀`
+there too. `LEN('😀')` was 1 under that `_SC` collation and 2 under `master`'s. The declared
+`NVARCHAR` width counted code units in both.
+
+### 35.2 The change
+
+A loaded text column is `Unicode(width)`, which is `NVARCHAR(width)`, with `width` counted in
+UTF-16 code units: a character outside the Basic Multilingual Plane counts two. The loader now
+measures every text column both ways, characters and code units, in the whole-frame path and in
+the chunked scan. `Backend.text_width` picks the unit: characters generically, code units on SQL
+Server. That one number reaches both `column_type` and `column_note`. `NVARCHAR(4000)` is created
+and `NVARCHAR(4001)` refused with `The size (4001) given to the parameter 'v' exceeds the maximum
+allowed (4000)`, so past 4,000 code units the column is `NVARCHAR(max)`. Spelled `Unicode()`
+because SQLAlchemy compiles `UnicodeText()` to the deprecated `NTEXT` when it has no connection.
+The old threshold was the measured `VARCHAR(8000)` / `VARCHAR(8001)` boundary.
+
+`NVARCHAR(max)` needs no warning, unlike Firebird's BLOB (§20.3). Seven copies each of three
+values (5,000 `a`, 5,000 `b`, 2,500 emoji) in an `NVARCHAR(max)` column gave `GROUP BY` three groups
+of 7, `count(DISTINCT …)` 3, and `=` against a 5,000-character literal 7. The one thing it cannot
+do is be an index key, and SQL Server refuses that out loud (below).
+
+### 35.3 What it costs
+
+**Index keys hold half as many characters.** A nonclustered key is 1,700 bytes, which is what
+`create(type='index')` builds. That fits 850 code units of `NVARCHAR` where it fit 1,700 characters
+of `VARCHAR`:
+
+| Column | widest value | `CREATE INDEX` |
+|---|---|---|
+| `NVARCHAR(850)` | 850 | created |
+| `NVARCHAR(851)` | 10 | created (declared wider; SQL Server warns about later inserts) |
+| `NVARCHAR(851)`, `NVARCHAR(1000)` | 851 | refused: `The index entry of length 1702 bytes … exceeds the maximum length of 1700 bytes for nonclustered indexes. (1946)` |
+| `VARCHAR(1700)` | 1,700 | created |
+| `VARCHAR(1701)` | 1,701 | refused, 1701 bytes, the same error |
+| `NVARCHAR(max)` | — | refused: `Column 'v' … is of a type that is invalid for use as a key column in an index. (1919)` |
+
+Through `create` the refusal arrives as `ok: false` with that message whole. So this server adds
+no refusal of its own, which would only restate the engine's exact one. The warning for a column
+declared wider than its values is about later inserts, and no verb writes into a table once it is
+made.
+
+**Under a `SQL_` collation, ordering follows the Unicode rules.** The same twelve ASCII values,
+`ORDER BY v`, `VARCHAR(10)`: `'q`, `_x`, `a-b`, `Ab`, `aB`, `ab`, `co op`, `co-op`, `coo`, `coop`, `q`,
+`x`. `NVARCHAR(10)`: `_x`, `Ab`, `aB`, `ab`, `a-b`, `co op`, `coo`, `coop`, `co-op`, `q`, `'q`, `x`.
+The Unicode rules pass over a hyphen and an apostrophe, and the code-page rules sorted punctuation
+first. Through `query` on a landed table: `ab`, `a-b`, `coop`, `co-op`, `q`, `'q`. Neither order is
+code-point order. Both are the database collation's, and this server still does not choose one.
+
+### 35.4 After
+
+`tests/test_mssql_text.py`: 25 passed, 11 offline and 7 live on each SQL Server target. Revert
+drills, each restored and then green again. `String` in place of `Unicode` turned 14 red, both
+declaration tests offline and six live tests on each target: the round trip back to `??`, and the
+emoji, boundary and index tests on their declared types. Characters in place of code units in
+`MSSQLBackend.text_width` turned 7 red: the unit test, and three live tests on each target. With
+that drill one emoji, in `NVARCHAR(1)`, failed the load with
+`SystemError: <class 'pyodbc.Error'> returned a result with an exception set`, and the 2,000-emoji
+boundary failed with `Could not insert rows`.
+
+Every SQL Server endpoint test, `pytest -m endpoint -k mssql`: 88 passed, 0 skipped, 0 failed, 44
+on `mssql` and 44 on `mssql[odbc-dsn]`. §34's amendment of 2026-11-01 recorded the DSN mode
+timing out at login; it did not time out here. The offline suite, `-m "not endpoint"`: 1,220 passed.
+
+Not measured: a database whose default collation is a Windows one (`Latin1_General_…` without
+`SQL_`) or a binary one, where `NVARCHAR` ordering differs again. The width is collation-independent,
+and the order belongs to the database's collation.
