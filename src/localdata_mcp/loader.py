@@ -2565,12 +2565,15 @@ class Workspace:
         Enforced by the connection's posture rather than by reading the SQL: this
         engine's connections are read-only from the moment they are opened, so
         there is no text to parse and mis-parse and no window in which the
-        posture is briefly something else. Two backends have no posture to
+        posture is briefly something else. Three backends have no posture to
         open, and there the backend classifies the statement before it runs.
         CrateDB reads its first keyword, because its grammar makes that keyword
         the statement's kind (:func:`dialects._cratedb_first_keyword`, #118).
         SQL Server asks its own ``SHOWPLAN_XML`` what each statement in the
-        batch is (:func:`dialects._refuse_mssql_write`, #122). DuckDB has a
+        batch is (:func:`dialects._refuse_mssql_write`, #122). MonetDB asks
+        its own ``EXPLAIN`` (:func:`dialects._refuse_monetdb_write`, #119).
+        Oracle has no posture either and classifies nothing: it keeps only the
+        transactional floor, which does not hold for DDL. DuckDB has a
         posture, but it leaves the database's own WAL writable to a ``COPY``, so
         its reader also asks DuckDB's own parser what the statement is
         (:func:`dialects._refuse_duckdb_non_read`, #137). All of these are kept
