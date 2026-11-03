@@ -16,10 +16,18 @@
 # Oracle is ~2 GB and takes ~90 s to become healthy; SQL Server ~30 s. Both are
 # free official images and neither needs credentials to pull. Wait on the
 # healthcheck rather than on a timer.
+#
+# Every service is BUILT, from docker/test/<service>/Dockerfile, and tagged
+# localdata-test/<name>:local (task 35, #139). Each Dockerfile is FROM the
+# upstream image the service used to name here, and adds nothing to it: this
+# file stays the one place that says what a service's environment, ports,
+# command and healthcheck are, because tests/endpoints.py reads them from here.
+# `up` builds a missing image on its own; `down --rmi local` removes it again.
 
 services:
   localdata-test-postgres:
-    image: postgres:16-alpine
+    build: docker/test/localdata-test-postgres
+    image: localdata-test/postgres:local
     environment:
       POSTGRES_USER: testuser
       # Deliberately hostile, and it is the point rather than a joke. Every
@@ -40,7 +48,8 @@ services:
       retries: 5
 
   localdata-test-mysql:
-    image: mysql:8.0
+    build: docker/test/localdata-test-mysql
+    image: localdata-test/mysql:local
     environment:
       MYSQL_ROOT_PASSWORD: testpass
       MYSQL_USER: testuser
@@ -55,7 +64,8 @@ services:
       retries: 10
 
   localdata-test-mssql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    build: docker/test/localdata-test-mssql
+    image: localdata-test/mssql:local
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "TestPass123!"
@@ -69,7 +79,8 @@ services:
       start_period: 30s
 
   localdata-test-oracle:
-    image: gvenzl/oracle-free:slim
+    build: docker/test/localdata-test-oracle
+    image: localdata-test/oracle:local
     environment:
       ORACLE_PASSWORD: testpass
       APP_USER: testuser
@@ -84,7 +95,8 @@ services:
       start_period: 90s
 
   localdata-test-mariadb:
-    image: mariadb:11
+    build: docker/test/localdata-test-mariadb
+    image: localdata-test/mariadb:local
     environment:
       MARIADB_ROOT_PASSWORD: testpass
       MARIADB_USER: testuser
@@ -102,7 +114,8 @@ services:
   # dialect that ships with clickhouse-connect is an HTTP one, and only the
   # port it speaks on is published.
   localdata-test-clickhouse:
-    image: clickhouse/clickhouse-server:25.3
+    build: docker/test/localdata-test-clickhouse
+    image: localdata-test/clickhouse:local
     environment:
       CLICKHOUSE_USER: testuser
       CLICKHOUSE_PASSWORD: testpass
@@ -120,7 +133,8 @@ services:
   # harness otherwise never exercises. `start-single-node` skips the cluster
   # initialisation a real deployment needs.
   localdata-test-cockroachdb:
-    image: cockroachdb/cockroach:latest
+    build: docker/test/localdata-test-cockroachdb
+    image: localdata-test/cockroachdb:local
     command: start-single-node --insecure
     ports:
       - "16257:26257"
@@ -138,7 +152,8 @@ services:
   # sizes itself for a dedicated node by default and this machine already runs
   # out at seven containers (issue #46).
   localdata-test-yugabytedb:
-    image: yugabytedb/yugabyte:2.25.2.0-b359
+    build: docker/test/localdata-test-yugabytedb
+    image: localdata-test/yugabytedb:local
     command: >
       bin/yugabyted start --background=false
       --tserver_flags=memory_limit_hard_bytes=1073741824,use_memory_defaults_optimized_for_ysql=false
@@ -167,7 +182,8 @@ services:
   # accepts whatever username is offered and asks for no password, which makes
   # this the fourth no-auth endpoint here after CockroachDB and YugabyteDB.
   localdata-test-trino:
-    image: trinodb/trino:476
+    build: docker/test/localdata-test-trino
+    image: localdata-test/trino:local
     ports:
       - "18080:8080"
     healthcheck:
@@ -191,7 +207,8 @@ services:
   # `monetdb` user — so the user, the database and the image all carry the same
   # name here and only their positions tell them apart.
   localdata-test-monetdb:
-    image: monetdb/monetdb:latest
+    build: docker/test/localdata-test-monetdb
+    image: localdata-test/monetdb:local
     environment:
       MDB_DB_ADMIN_PASS: testpass
     ports:
@@ -225,7 +242,8 @@ services:
   # by default and this machine runs out of containers before it runs out of
   # dialects (issue #46).
   localdata-test-cratedb:
-    image: crate:latest
+    build: docker/test/localdata-test-cratedb
+    image: localdata-test/cratedb:local
     command: >
       crate -Cdiscovery.type=single-node
       -Cnetwork.host=_site_
@@ -274,7 +292,8 @@ services:
   # endpoint is exercised against the server's own defaults and this file makes no
   # security concession to reach it.
   localdata-test-firebird:
-    image: firebirdsql/firebird:5
+    build: docker/test/localdata-test-firebird
+    image: localdata-test/firebird:local
     environment:
       FIREBIRD_ROOT_PASSWORD: testpass
       FIREBIRD_USER: testuser
@@ -325,7 +344,8 @@ services:
   # outright — `FATAL: Forbid remote connection with initial user` — so a normal
   # user has to be created for anything to connect.
   localdata-test-opengauss:
-    image: opengauss/opengauss-server:7.0.0-RC3.B025
+    build: docker/test/localdata-test-opengauss
+    image: localdata-test/opengauss:local
     environment:
       GS_PASSWORD: "Testpass1@"
       GS_USERNAME: testuser
@@ -377,7 +397,8 @@ services:
   # pass `disable_discovery` from the client, and that would put a fact about
   # this compose file into the code path every YDB user runs.
   localdata-test-ydb:
-    image: ydbplatform/local-ydb:26.1.1.22
+    build: docker/test/localdata-test-ydb
+    image: localdata-test/ydb:local
     hostname: localhost
     # No `YDB_USE_IN_MEMORY_PDISKS`, and that is deliberate rather than an
     # omission. It works, and it works exactly once: the cluster configuration is
@@ -439,7 +460,8 @@ services:
   # itself healthy. The option that enables initial SQL is the option that
   # prevents the database from starting.
   localdata-test-exasol:
-    image: exasol/docker-db:2026.1.0
+    build: docker/test/localdata-test-exasol
+    image: localdata-test/exasol:local
     privileged: true
     # The cluster shuts its database down cleanly and needs to be let: the vendor
     # documents 120s, and a container killed mid-shutdown comes back replaying its
@@ -525,7 +547,8 @@ services:
   # -------------------------------------------------------------------------
 
   localdata-test-postgres-trust:
-    image: postgres:16-alpine
+    build: docker/test/localdata-test-postgres-trust
+    image: localdata-test/postgres-trust:local
     environment:
       POSTGRES_USER: trustuser
       POSTGRES_DB: trustdb
@@ -544,7 +567,8 @@ services:
       retries: 5
 
   localdata-test-clickhouse-noauth:
-    image: clickhouse/clickhouse-server:25.3
+    build: docker/test/localdata-test-clickhouse-noauth
+    image: localdata-test/clickhouse-noauth:local
     environment:
       # An **empty** password, which is a third thing: not the credentialed
       # service above, and not the five endpoints reached with no password at
@@ -595,68 +619,13 @@ services:
   # key go to a bind mount, because the thing that needs them is the test
   # process on the host.
   localdata-test-tls-ca:
-    image: alpine:3
+    build: docker/test/localdata-test-tls-ca
+    image: localdata-test/tls-ca:local
     volumes:
       - localdata-test-tls:/tls
       - ./tests/tls:/public
-    # `IP:127.0.0.1` in the SAN is the part that matters and the part most
-    # easily left out: `sslmode=verify-full` checks the name the client *asked
-    # for* against the certificate, and every URL in this harness asks for
-    # 127.0.0.1. A certificate naming only `localhost` verifies under
-    # `verify-ca` and fails under `verify-full`, which would leave the stricter
-    # of the two modes — the one worth testing — quietly untested.
-    command:
-      - sh
-      - -c
-      - |
-        set -e
-        apk add --no-cache openssl >/dev/null 2>&1
-        cd /tls
-        openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-          -keyout ca.key -out ca.crt -subj "/CN=localdata-test-ca"
-        openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr \
-          -subj "/CN=localhost"
-        openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-          -out server.crt -days 3650 \
-          -extfile /dev/stdin <<'EXT'
-        subjectAltName = DNS:localhost, IP:127.0.0.1
-        EXT
-        # The client certificate's CN *is* the database user it authenticates
-        # as. That is what `cert` authentication means: no password is sent and
-        # the name in the certificate is the name PostgreSQL logs in.
-        openssl req -newkey rsa:2048 -nodes -keyout client.key -out client.csr \
-          -subj "/CN=certuser"
-        openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-          -out client.crt -days 3650
-        cat > pg_hba.conf <<'HBA'
-        # The local socket stays trusting so that `initdb` and the healthcheck
-        # can work while every TCP connection is held to TLS.
-        local   all all                 trust
-        # Ordered, and the order is the point: `certuser` is matched first and
-        # must present a certificate, everyone else may send a password — over
-        # TLS either way, since there is no plain `host` line at all.
-        hostssl all certuser 0.0.0.0/0  cert
-        hostssl all certuser ::/0       cert
-        hostssl all all      0.0.0.0/0  scram-sha-256
-        hostssl all all      ::/0       scram-sha-256
-        HBA
-        # Authenticating is not the same as being allowed to do anything, and
-        # this is where the difference shows: a certificate says who the
-        # connection is, and PostgreSQL 15 and later give a fresh role no rights
-        # in `public` at all. Without the grant the mode connects perfectly and
-        # then cannot create a table, which reads like a broken endpoint rather
-        # than an unprivileged one. The entrypoint runs this against
-        # `POSTGRES_DB`, so the grant lands where the tests work.
-        cat > /tls/certuser.sql <<'SQL'
-        CREATE ROLE certuser LOGIN;
-        GRANT ALL ON SCHEMA public TO certuser;
-        SQL
-        chown 70:70 server.key server.crt ca.crt pg_hba.conf certuser.sql
-        chmod 600 server.key
-        chmod 644 server.crt ca.crt pg_hba.conf certuser.sql
-        cp ca.crt client.crt client.key /public/
-        chmod 600 /public/client.key
-        chmod 644 /public/ca.crt /public/client.crt
+    # What it runs is docker/test/localdata-test-tls-ca/make-tls.sh, baked into
+    # the image; it used to be inline here as a `command:` (task 35, #139).
 
   # PostgreSQL that will not accept a connection over anything but TLS, and that
   # accepts two different proofs of identity over it — a password from one user
@@ -664,7 +633,8 @@ services:
   # exercises, and one of them (`verify-full`) is the *opposite* of what the SQL
   # Server endpoint does with `TrustServerCertificate=yes`.
   localdata-test-postgres-tls:
-    image: postgres:16-alpine
+    build: docker/test/localdata-test-postgres-tls
+    image: localdata-test/postgres-tls:local
     depends_on:
       localdata-test-tls-ca:
         condition: service_completed_successfully
@@ -727,7 +697,8 @@ services:
   # exactly what the URL asked for, and the harness stops depending on the DNS
   # suffix of the machine it runs on.
   localdata-test-kdc:
-    image: alpine:3
+    build: docker/test/localdata-test-kdc
+    image: localdata-test/kdc:local
     environment:
       KRB5_REALM: LOCALDATA.TEST
       KRB5_PRINCIPAL: krbuser
@@ -739,61 +710,8 @@ services:
       # both are published. 88 is offset like every other port here.
       - "1088:88/tcp"
       - "1088:88/udp"
-    command:
-      - sh
-      - -c
-      - |
-        set -e
-        apk add --no-cache krb5-server krb5 >/dev/null 2>&1
-        cat > /etc/krb5.conf <<EOF
-        [libdefaults]
-          default_realm = $$KRB5_REALM
-          dns_lookup_realm = false
-          dns_lookup_kdc = false
-          rdns = false
-        [realms]
-          $$KRB5_REALM = {
-            kdc = 127.0.0.1:88
-          }
-        EOF
-        # Built on every start, not once behind a marker in the volume. The
-        # marker used to live in /krb while the KDC database it stood for lived
-        # in the container's own filesystem, so the two had different lifetimes:
-        # `docker compose down` destroyed the database and kept the marker, and
-        # the next `up` skipped the build and died with `cannot initialize realm
-        # LOCALDATA.TEST`. A `stop`/`up` cycle never showed it, because that
-        # restarts the container rather than recreating it (#63).
-        #
-        # Rebuilding unconditionally also keeps the keytab and the database in
-        # step, which the marker could not: a half-restored state where the
-        # keytab is the old realm's and the database is new authenticates
-        # nobody, and says so in a message about neither.
-        # The directory has to survive: `kdb5_util create` writes into it and
-        # will not make it, answering `No such file or directory while creating
-        # database` if it is gone.
-        rm -rf /var/lib/krb5kdc /krb/.made
-        mkdir -p /var/lib/krb5kdc
-        kdb5_util create -s -P "$$KRB5_PASSWORD" -r "$$KRB5_REALM"
-        kadmin.local -q "addprinc -pw $$KRB5_PASSWORD $$KRB5_PRINCIPAL@$$KRB5_REALM"
-        kadmin.local -q "addprinc -randkey postgres/127.0.0.1@$$KRB5_REALM"
-        rm -f /krb/postgres.keytab
-        kadmin.local -q "ktadd -k /krb/postgres.keytab postgres/127.0.0.1@$$KRB5_REALM"
-        cat > /krb/pg_hba.conf <<'HBA'
-        local   all all             trust
-        # `include_realm=0` is what makes the database user `krbuser` rather than
-        # `krbuser@LOCALDATA.TEST`, which is not a role and would be refused
-        # after a successful authentication — the confusing kind of failure.
-        host    all all 0.0.0.0/0   gss include_realm=0
-        host    all all ::/0        gss include_realm=0
-        HBA
-        cat > /krb/krbuser.sql <<'SQL'
-        CREATE ROLE krbuser LOGIN;
-        GRANT ALL ON SCHEMA public TO krbuser;
-        SQL
-        chown 70:70 /krb/postgres.keytab /krb/pg_hba.conf /krb/krbuser.sql
-        chmod 640 /krb/postgres.keytab
-        chmod 644 /krb/pg_hba.conf /krb/krbuser.sql
-        exec krb5kdc -n
+    # What it runs is docker/test/localdata-test-kdc/kdc.sh, baked into the
+    # image; it used to be inline here as a `command:` (task 35, #139).
     healthcheck:
       # Asks the KDC for a real ticket using the keytab it just wrote, over the
       # port it actually serves — a process check would report healthy while the
@@ -810,7 +728,8 @@ services:
 
   # PostgreSQL that accepts a Kerberos ticket and nothing else over TCP.
   localdata-test-postgres-krb:
-    image: postgres:16-alpine
+    build: docker/test/localdata-test-postgres-krb
+    image: localdata-test/postgres-krb:local
     depends_on:
       localdata-test-kdc:
         condition: service_healthy

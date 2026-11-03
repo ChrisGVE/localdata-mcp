@@ -274,6 +274,17 @@ rebuild it.
   This server never creates a DuckDB file, but a user's other tools may
   (`docs/CONSTRAINTS.md` §36).
 - The licence is Apache 2.0, unchanged from 2.1.0.
+- **Every endpoint test container is built from a Dockerfile in this
+  repository** ([#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)).
+  `docker/test/<service>/Dockerfile` exists for each of the twenty-one services
+  in `docker-compose.test.yml`, FROM the upstream image the service used to
+  name, and adds nothing to it; the compose file still holds every service's
+  environment, ports and healthcheck. The three services that tracked `latest`
+  are pinned to the version last measured live, each tag resolving to the same
+  digest the machine already held: CockroachDB `v26.3.4`, CrateDB `6.5.0`,
+  MonetDB `Dec2025-SP3` (11.55.7). The CA and KDC helpers' inline scripts moved
+  into files beside their Dockerfiles, and their packages are installed when the
+  image is built rather than on every start.
 
 ### Removed
 
