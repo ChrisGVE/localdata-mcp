@@ -618,9 +618,9 @@ def test_a_function_called_without_its_name_cannot_move_a_sequence(server):
     ``nextval``, whose effect a rollback does not undo. On openGauss, whose
     read-only session runs ``nextval`` (measured, the sequence moved), this
     was the residual #125 recorded; since the gate refuses a type converted
-    by a refused function, it is refused there too. What the read-only
-    session alone still stops is pinned by
-    ``test_a_cast_between_the_servers_own_types_is_stopped_by_the_session``.
+    by a refused function, it is refused there too. A cast between two of the
+    server's own types, which no word names, is
+    ``test_a_cast_between_the_servers_own_types_is_refused_by_the_gate``.
     """
     t = server.t
     if not (
@@ -777,8 +777,10 @@ def test_a_domain_check_cannot_move_a_sequence(server):
     On openGauss, whose read-only session runs ``nextval`` (measured, the
     sequence moved), this was the residual #126 recorded; since the gate
     refuses a domain whose check reaches a refused function, it is refused
-    there too. What the read-only session alone still stops is pinned by
-    ``test_a_cast_between_the_servers_own_types_is_stopped_by_the_session``.
+    there too. A cast between two of the server's own types, which no word
+    names, is ``test_a_cast_between_the_servers_own_types_is_refused_by_the_gate``.
+    The cleanup drops the domain with ``DROP TYPE`` where openGauss refuses
+    ``DROP DOMAIN`` (#130).
     """
     t = server.t
     try:
@@ -796,7 +798,7 @@ def test_a_domain_check_cannot_move_a_sequence(server):
         assert answer["ok"] is False, answer
         assert _scalar(server.admin, f"SELECT last_value FROM {t}_seq") == before
     finally:
-        _try(server.admin, f"DROP DOMAIN IF EXISTS {t}_d")
+        _drop_domain(server.admin, f"{t}_d")
         _try(server.admin, f"DROP FUNCTION IF EXISTS {t}_chk(INT)")
 
 
@@ -1026,33 +1028,17 @@ def test_a_domain_whose_check_reaches_nothing_still_reads(server):
 
 
 @pytest.mark.endpoint
-def test_a_cast_between_the_servers_own_types_is_stopped_by_the_session(
-    server, request
-):
-    """What the read-only session is for, now that domains are named: this cast.
+def test_a_cast_between_the_servers_own_types_is_refused_by_the_gate(server):
+    """A cast no word names fails the gate closed (#129).
 
     ``CREATE CAST (INT AS BYTEA)`` through a function of the administrator's
     that calls ``nextval``: ``SELECT 1::bytea`` then names only the server's
-    own types, which the gate cannot refuse without refusing every read of
-    them, so the statement is sent. On PostgreSQL and YugabyteDB the
-    read-only session refuses ``nextval``, which is all that stands between
-    this read and a moved sequence — revert the posture and this goes red.
-    The refusal must be the server's read-only one, not the gate's and not
-    any other error, or this would witness nothing.
-
-    **Not on openGauss**, whose read-only session runs ``nextval``: the
-    residual #129 records, pinned strict so that closing it
-    turns this red.
+    own types, which no word check can refuse without refusing every read of
+    them. On openGauss, whose read-only session runs ``nextval``, it moved
+    the sequence. So the gate refuses every statement on a server holding
+    such a cast, naming it, before the read-only session is asked — on
+    PostgreSQL and YugabyteDB too, where the session alone used to stop it.
     """
-    if server.engine == "opengauss":
-        request.applymarker(
-            pytest.mark.xfail(
-                strict=True,
-                reason="#129: openGauss's read-only session runs "
-                "nextval, and a cast between the server's own types calls a function "
-                "the statement does not name",
-            )
-        )
     t = server.t
     if _scalar(
         server.admin,
@@ -1081,10 +1067,8 @@ def test_a_cast_between_the_servers_own_types_is_stopped_by_the_session(
             # Version Mismatch … Try again", having run nothing. Asked again,
             # it sees the cast.
             answer = _call("query", nickname="endpoint", sql="SELECT 1::bytea AS b")
-        assert answer["ok"] is False, answer
-        # The server's refusal, which query explains as "query only reads";
-        # the gate's would say "query reads; it does not write" instead.
-        assert "query only reads" in answer["error"], answer
+        _refused(answer)
+        assert "DROP CAST (integer AS bytea)" in answer["error"], answer
         assert _scalar(server.admin, f"SELECT last_value FROM {t}_seq") == before
     finally:
         _try(server.admin, "DROP CAST IF EXISTS (INT AS BYTEA)")

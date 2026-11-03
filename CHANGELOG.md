@@ -538,6 +538,9 @@ And twenty-two found in this release's own code before it shipped:
   this, so a fresh server reads as before. The whole family is covered, not
   openGauss alone, because PostgreSQL's read-only session stops `nextval` but
   not `lo_export` or `pg_advisory_lock`.
+- **The openGauss run of the domain-`CHECK` read-gate test left its domain and
+  function behind** ([#130](https://github.com/ChrisGVE/localdata-mcp/issues/130)).
+  openGauss refuses `DROP DOMAIN`, so the cleanup now falls back to `DROP TYPE`.
 - **On SQL Server, a write sent to `query` after a `COMMIT` was kept**
   ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)).
   `COMMIT; INSERT …` was refused, but the row stayed: pyodbc sends the string as
