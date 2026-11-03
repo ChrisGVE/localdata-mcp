@@ -368,12 +368,16 @@ which is not equally far:
   ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)). A domain's `CHECK` runs
   whenever a value becomes one of the domain, so a domain whose check reaches a refused name
   is refused the same way, with everything built from it
-  ([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)). A function reached with no
-  name at all, such as a cast between two of the server's own types through an
-  administrator's function, is not seen; on PostgreSQL the session still refuses a `nextval`
-  there, on openGauss it does not
-  ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124),
-  [#129](https://github.com/ChrisGVE/localdata-mcp/issues/129)).
+  ([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)). A cast between two of the
+  server's own types through such a function has no word at all: `SELECT 1::bytea` names only
+  `bytea`, and an implicit one names nothing. On openGauss it moved a sequence. So the gate
+  fails closed. While the server holds such a cast, every statement on that datasource is
+  refused, `attach` included, and the refusal names each cast and the `DROP CAST` an
+  administrator must run. The decision, the alternatives rejected and the measured cost are in
+  `docs/CONSTRAINTS.md` §34, amendment of 2026-11-03
+  ([#129](https://github.com/ChrisGVE/localdata-mcp/issues/129)). Type input and output
+  functions are still not seen
+  ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)).
 - **SQL Server** keeps the same floor, and on its own the floor does not hold: pyodbc sends a
   string as one batch, SQL Server runs every statement in it, and a `COMMIT` in the batch ends
   the transaction the reader never commits, so a write after it commits itself. T-SQL needs no

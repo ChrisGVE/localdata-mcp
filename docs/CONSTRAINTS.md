@@ -6366,3 +6366,117 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > six on PostgreSQL, five on openGauss), the closure over a checked domain (9: two offline, four on
 > PostgreSQL, three on openGauss), the outer fixed point (1, offline), the type questions asked
 > eagerly (1, offline), the read-only posture (2: the witness on PostgreSQL and YugabyteDB).
+
+> **Amendment 2026-11-03 — a cast between two of the server's own types fails the gate closed
+> ([#129](https://github.com/ChrisGVE/localdata-mcp/issues/129)).** The residual the amendment
+> above left: an administrator's `CREATE CAST (INT AS BYTEA) WITH FUNCTION f(INT)`, where `f`
+> calls `nextval`, after which `SELECT 1::bytea` names only `bytea`.
+>
+> **Decision.** On a server holding a cast whose source and target are both the server's own
+> types (`pg_catalog` or `information_schema`) and whose function the gate refuses by name (the
+> rule `_pg_refused_word` applies to every other function: anyone's but the server's or an
+> extension's, or a server or extension function that declares itself volatile), the reader
+> refuses **every** statement on that datasource. The refusal names each such cast by source
+> type, target type and function, says every statement is refused while it exists and why, and
+> says an administrator must drop it, with the `DROP CAST` to run.
+>
+> **Evidence.** Measured for #129 on 2026-11-02, through `query` on a read-only attach, as the
+> container's administrator: on openGauss 7.0.0-RC3 `SELECT 1::bytea` answered `ok` and the
+> sequence `f` calls stayed moved, because openGauss's read-only session runs `nextval` (#125).
+> PostgreSQL 16 and YugabyteDB 2.25 accept the same `CREATE CAST` (no `int4 → bytea` row exists
+> on any of the three beforehand) and their read-only sessions refuse the `nextval` with 25006,
+> so nothing moved there. CockroachDB 26.3 has no `CREATE CAST`.
+>
+> **Why no word gate can be sound here.** Every other refusal in this gate is a word the
+> statement contains: a function, a view, a type, a domain. A cast between two server types has
+> no word of its own. Its trigger is `bytea` or `integer`, which every read may name, and one
+> created `AS IMPLICIT` fires on an ordinary comparison or assignment with no type named at all.
+> So whether a statement calls the cast cannot be decided from its text.
+>
+> **Alternatives rejected.**
+>
+> - *Refuse a read that names either type.* Incomplete: the implicit form names neither, so it
+>   still runs. Over-broad: it refuses every read of `bytea` or `integer` on that server, and
+>   would still claim a soundness it does not have.
+> - *Accept it as an openGauss residual.* That leaves a write through a verb documented as
+>   read-only, with `ok: true` and nothing in the answer to show it. A refusal can be read and
+>   acted on; a silent write cannot.
+>
+> **Precedent.** CrateDB's reader gate (`_cratedb_first_keyword`, the 2026-11-01 amendment
+> above) states the same invariant: *"Fail-closed is the invariant: stricter than CrateDB costs a
+> read, never a write."* There, a statement whose first keyword cannot be read is refused rather
+> than sent. Here, a server whose casts cannot be read off the statement is refused whole.
+>
+> **Scope: the whole PostgreSQL family, per datasource.** The check runs in
+> `_refuse_postgresql_write`, so PostgreSQL, YugabyteDB, openGauss and CockroachDB all get it,
+> not openGauss alone. The read-only session that stops `nextval` on PostgreSQL and YugabyteDB
+> does not stop the rest of what #124 refuses: as measured above, under `READ ONLY` PostgreSQL 16
+> still ran `lo_export`, `pg_reload_conf`, `pg_terminate_backend`, `pg_switch_wal` and
+> `pg_advisory_lock`, and YugabyteDB ran `pg_reload_conf`. A cast whose function calls one of
+> those would act on PostgreSQL exactly as `nextval` does on openGauss. The refusal is per
+> datasource. It is decided from the catalog the datasource's own connection reads.
+>
+> **What it costs.** One administrator-created cast makes every `query` on that datasource
+> refused until the cast is dropped. Measured on openGauss 7.0.0-RC3 with such a cast present:
+>
+> - `query` answers `SELECT 1`, `SELECT 1::bytea` and `SELECT count(*) FROM <table>` with
+>   *"query reads; it does not write. This statement asks to run on this server while it holds a
+>   cast between two of its own types (from integer to bytea through public.<f>), through a
+>   function that can change what a rollback does not undo. Every statement on this datasource
+>   is refused while it exists, because such a cast can run implicitly, with no word in a
+>   statement to catch it. An administrator of the server must drop it (DROP CAST (integer AS
+>   bytea)), …"*;
+> - `directory` answers `ok`, every table `rows: null`, each with a warning giving the same
+>   reason;
+> - `stats` refuses too, but in the driver's raw words, SQL and SQLAlchemy link included
+>   ([#133](https://github.com/ChrisGVE/localdata-mcp/issues/133), not specific to this check);
+> - `attach` of that server is refused, naming the cast: the reader's first connection runs the
+>   dialect's own setup statements through the gate.
+>
+> The remedy is the administrator's: `DROP CAST (<source> AS <target>)`, then the function if
+> nothing else uses it. Dropping it restores reads at once (measured: `SELECT 1` answered `ok`
+> straight after, on the same slot).
+>
+> **The server's own casts.** On openGauss 7.0.0-RC3 none of the 671 `pg_cast` rows matches, so a
+> fresh server reads as before. On PostgreSQL, YugabyteDB and CockroachDB this was not measured
+> here. If one of their built-in casts between server types had a volatile function, every
+> read there would be refused, and `test_query_still_answers_a_read` would fail on it.
+> CockroachDB cannot create a cast; the question uses the catalog tables `_PG_CASTS` already
+> uses, which answer there (the #125 amendment), but its rows and its cost on CockroachDB are
+> unmeasured.
+>
+> **Per-statement cost** (openGauss 7.0.0-RC3, 30 interleaved rounds, twice, on a loaded machine).
+> The new question alone: median 16.1 ms (min 14.3), then 17.1 ms (min 14.8). The whole gate on
+> `SELECT 1`, without the question and with it: medians 464.5 / 506.6 ms, then 514.3 / 513.3 ms,
+> each with a spread of 300–740 ms. The difference is within run-to-run noise. Absolute figures
+> are about four times the #126 amendment's 121–142 ms, which was measured on a quieter machine.
+> When a cast is found, the gate stops there and reads nothing else.
+>
+> **The leaking frozen test ([#130](https://github.com/ChrisGVE/localdata-mcp/issues/130)).**
+> Before this session's runs, the openGauss test database held 18 `t*_d` domains and 18 `t*_chk`
+> functions left by `test_a_domain_check_cannot_move_a_sequence`, whose cleanup used
+> `DROP DOMAIN`. All 36 were dropped with `DROP TYPE` and `DROP FUNCTION`. The listing afterwards
+> was empty. With the test's cleanup changed to the file's `_drop_domain` helper, which falls
+> back to `DROP TYPE` (a frozen-test edit that awaits its sign-off), the listing was still empty
+> after two more runs. Put back to `DROP DOMAIN` as a drill, the test still passes, and leaves
+> one domain and one function behind.
+>
+> **The posture loses its live witness.** `test_a_cast_between_the_servers_own_types_is_stopped_by_the_session`
+> was the one test that went red on PostgreSQL and YugabyteDB with the read-only session
+> removed. The gate now refuses that read before the session is asked. Until its edit is signed
+> off, the test fails on PostgreSQL and YugabyteDB, where it expects the session's refusal, and
+> stays a strict xfail on openGauss (read from the code, not run). The edit, which awaits its sign-off, renames it
+> `…_is_refused_by_the_gate` and expects the gate's refusal. After that, nothing in
+> `tests/test_postgresql_read_gate.py` exercises the session alone. The session is still opened;
+> its witness is the open item.
+>
+> **After the change:** `tests/test_postgresql_read_gate.py` and the new
+> `tests/test_postgresql_server_casts.py`, openGauss up alone, both frozen-test edits applied:
+> 116 passed, 142 skipped, 0 failed, 0 xfailed. 4 of the skips are openGauss lacking a feature
+> (large objects not measured, no `CREATE OPERATOR`, no `gen_random_uuid`, no array type for a
+> domain). The rest are the three engines that were down. Revert drills, each red:
+>
+> - the check removed: 7 red, 5 offline and 2 live on openGauss;
+> - the "refused by name" filter removed: 2 red, offline;
+> - the "both types are the server's own" condition removed from the question: 3 red, the
+>   frozen #125 cast tests on openGauss, which would otherwise fail closed on a user type's cast.

@@ -410,7 +410,12 @@ because a cast runs even when nothing names it
 ([#125](https://github.com/ChrisGVE/localdata-mcp/issues/125)), and so is a
 domain whose `CHECK` reaches one, because the check runs whenever a value
 becomes one of the domain
-([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)). On MySQL and
+([#126](https://github.com/ChrisGVE/localdata-mcp/issues/126)). A cast between
+two of the server's own types through such a function runs with no word to catch
+it, even implicitly, so while the server holds one, **every** statement on that
+datasource is refused, `attach` included. The refusal names the cast and the
+`DROP CAST` an administrator must run
+([#129](https://github.com/ChrisGVE/localdata-mcp/issues/129)). On MySQL and
 MariaDB the read-only session does not cover file writes, server settings or
 stored functions, and `EXPLAIN` cannot see them. So each statement must be a
 single one, begin with a read's keyword, contain no executable comment and

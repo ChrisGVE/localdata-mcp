@@ -524,9 +524,20 @@ And twenty-two found in this release's own code before it shipped:
   moved the sequence with neither name in the statement. The reader now also
   reads each domain's checks and refuses, by name, a domain whose check reaches
   something it refuses, with every type built from it and every table or view
-  with a column of one. What remains is a cast between two of the server's own
-  types through an administrator's function, which on openGauss still moves a
-  sequence ([#129](https://github.com/ChrisGVE/localdata-mcp/issues/129)).
+  with a column of one.
+- **On openGauss, a cast between two of the server's own types moved a
+  sequence** ([#129](https://github.com/ChrisGVE/localdata-mcp/issues/129)).
+  After an administrator's `CREATE CAST (INT AS BYTEA) WITH FUNCTION f(INT)`,
+  `SELECT 1::bytea` names only `bytea`, and an implicit cast like it names
+  nothing, so no word in a statement can be refused for it. The reader now fails
+  closed: on a PostgreSQL, YugabyteDB, openGauss or CockroachDB datasource whose
+  server holds such a cast through a function the gate refuses, **every**
+  statement is refused (`attach` included), and the refusal names each cast and
+  the function, and gives the `DROP CAST` an administrator must run. Dropping it
+  restores reads. On openGauss 7.0.0-RC3 none of the server's own casts is like
+  this, so a fresh server reads as before. The whole family is covered, not
+  openGauss alone, because PostgreSQL's read-only session stops `nextval` but
+  not `lo_export` or `pg_advisory_lock`.
 - **On SQL Server, a write sent to `query` after a `COMMIT` was kept**
   ([#122](https://github.com/ChrisGVE/localdata-mcp/issues/122)).
   `COMMIT; INSERT …` was refused, but the row stayed: pyodbc sends the string as

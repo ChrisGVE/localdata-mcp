@@ -237,7 +237,12 @@ openGauss** it refuses one statement in one string only, a name spelled
 (`lo_export`, `setval`, `pg_advisory_lock`, `set_config`, any user-defined
 function) or a view, policy or operator calling one, or a type whose cast calls
 one, or a domain whose `CHECK` calls one, and any table with a column of such a
-type, even inside a quoted string; the refusal names it. On **MySQL and
+type, even inside a quoted string; the refusal names it. One refusal there is
+not about your statement: if it says the server *holds a cast between two of its
+own types*, every statement on that datasource is refused, `attach` included,
+until the cast is gone. No rephrase gets past it, so stop retrying. Tell the
+user which cast it names and that an administrator of that database must drop
+it with the `DROP CAST` the refusal gives. On **MySQL and
 MariaDB** it also refuses a statement containing the words `OUTFILE` or
 `DUMPFILE`, or the name of a stored function
 or of a view calling one, even inside a quoted string. If a read is refused for

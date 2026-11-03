@@ -1529,6 +1529,33 @@ _PG_CASTS = (
     "OR p.provolatile = 'v')"
 )
 
+#: Each cast between two of the server's own types whose function is not a
+#: plain read of the server's own: the source and target types as the server
+#: prints them, then the function as :data:`_PG_FUNCTIONS` describes one. The
+#: rows :data:`_PG_CASTS` leaves out, because no word can refuse them: a read
+#: naming ``bytea`` or ``integer`` is every read of them, and an implicit cast
+#: runs with neither named (#129, :func:`_pg_server_cast_refusal`).
+_PG_SERVER_CASTS = (
+    "SELECT pg_catalog.format_type(c.castsource, NULL), "
+    "pg_catalog.format_type(c.casttarget, NULL), "
+    "n.nspname, p.proname, p.provolatile = 'v', "
+    "EXISTS (SELECT 1 FROM pg_catalog.pg_depend d "
+    "WHERE d.classid = 'pg_catalog.pg_proc'::regclass "
+    "AND d.objid = p.oid AND d.deptype = 'e'), "
+    "n.nspname = ANY (current_schemas(false)) "
+    "FROM pg_catalog.pg_cast c "
+    "JOIN pg_catalog.pg_proc p ON p.oid = c.castfunc "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
+    "JOIN pg_catalog.pg_type s ON s.oid = c.castsource "
+    "JOIN pg_catalog.pg_namespace sn ON sn.oid = s.typnamespace "
+    "JOIN pg_catalog.pg_type g ON g.oid = c.casttarget "
+    "JOIN pg_catalog.pg_namespace gn ON gn.oid = g.typnamespace "
+    "WHERE sn.nspname IN ('pg_catalog', 'information_schema') "
+    "AND gn.nspname IN ('pg_catalog', 'information_schema') "
+    "AND (n.nspname NOT IN ('pg_catalog', 'information_schema') "
+    "OR p.provolatile = 'v')"
+)
+
 #: Where type ``t`` (in namespace ``tn``) is, and whether the server has a
 #: type of the same name: what :class:`_PGType` needs to choose its word.
 _PG_TYPE_PLACE = (
@@ -1928,6 +1955,73 @@ def _pg_refusal(sql: str, unsafe: _PGUnsafe) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class _PGServerCast:
+    """One row of :data:`_PG_SERVER_CASTS`: a cast no word in a statement names."""
+
+    source: str
+    target: str
+    function: _PGFunction
+
+
+def _pg_refuses(function: _PGFunction) -> bool:
+    """Whether the gate refuses a read reaching ``function``, by whatever word.
+
+    :func:`_pg_refused_word` needs the server's own function names only to
+    choose *which* word refuses an off-path function; whether there is one does
+    not depend on them, so none are asked for.
+    """
+    return _pg_refused_word(function, system_names=set()) is not None
+
+
+def _pg_server_casts(cursor: Any) -> list[_PGServerCast]:
+    """Each cast between two of the server's own types whose function the gate refuses."""
+    cursor.execute(_PG_SERVER_CASTS)
+    casts = [
+        _PGServerCast(source, target, _PGFunction(*described))
+        for source, target, *described in cursor.fetchall()
+    ]
+    return [cast for cast in casts if _pg_refuses(cast.function)]
+
+
+def _pg_server_cast_refusal(casts: Sequence[_PGServerCast]) -> str | None:
+    """Why every statement is refused on a server holding ``casts``, or ``None``.
+
+    **Fail-closed, on purpose** (#129). A cast between two of the server's own
+    types runs its function whenever a value is converted: ``SELECT 1::bytea``
+    names only ``bytea``, and one created ``AS IMPLICIT`` runs with no type
+    named at all. Refusing the types by name would refuse every read of them
+    and still miss the implicit form, so no per-statement word check can be
+    sound while such a cast exists. Measured on openGauss 7.0.0-RC3, whose
+    read-only session runs ``nextval``: ``SELECT 1::bytea`` through ``query``
+    moved a sequence. The gate therefore refuses everything on that server,
+    and says which casts an administrator must drop — the invariant CrateDB's
+    reader gate already states (:func:`_cratedb_first_keyword`): being stricter
+    than the server can cost a read, never a write.
+
+    Only an administrator can create such a cast; the ``query`` caller cannot.
+    """
+    if not casts:
+        return None
+    ordered = sorted(casts, key=lambda cast: (cast.source, cast.target))
+    named = "; ".join(
+        f"from {cast.source} to {cast.target} through "
+        f"{cast.function.schema}.{cast.function.name}"
+        for cast in ordered
+    )
+    drops = ", ".join(f"DROP CAST ({cast.source} AS {cast.target})" for cast in ordered)
+    one = len(ordered) == 1
+    return (
+        f"run on this server while it holds {'a cast' if one else 'casts'} between "
+        f"two of its own types ({named}), through "
+        f"{'a function' if one else 'functions'} that can change what a rollback "
+        f"does not undo. Every statement on this datasource is refused while "
+        f"{'it exists' if one else 'they exist'}, because such a cast can run "
+        f"implicitly, with no word in a statement to catch it. An administrator "
+        f"of the server must drop {'it' if one else 'them'} ({drops})"
+    )
+
+
 def _refuse_postgresql_write(
     refusal: Refusal,
     cursor: Any,
@@ -1945,9 +2039,11 @@ def _refuse_postgresql_write(
     (held on the pooled connection after the rollback); YugabyteDB ran
     ``pg_reload_conf``, and CockroachDB ran ``setval``, whose sequence stayed
     moved. So every statement on the reader passes its shape
-    (:func:`_pg_shape_refusal`) and then what it mentions
-    (:func:`_pg_unsafe`, asked of the catalog on a cursor of its own, since
-    ``cursor`` may be the named cursor about to be declared).
+    (:func:`_pg_shape_refusal`), then the server itself
+    (:func:`_pg_server_cast_refusal`: a cast between two of its own types
+    through a refused function refuses everything, #129), and then what it
+    mentions (:func:`_pg_unsafe`). Both are asked of the catalog on a cursor of
+    its own, since ``cursor`` may be the named cursor about to be declared.
 
     **A statement with bound parameters is not checked, and is this server's
     own**, for the reason :func:`_refuse_mssql_write` gives.
@@ -1963,7 +2059,13 @@ def _refuse_postgresql_write(
     if refused is None:
         catalog = cursor.connection.cursor()
         try:
-            refused = _pg_refusal(statement, _pg_unsafe(catalog, relations_query))
+            # Fail-closed on the whole datasource first: a cast between two of
+            # the server's own types through a refused function can run with no
+            # word to catch it (#129, docs/CONSTRAINTS.md §34, 2026-11-03).
+            refused = _pg_server_cast_refusal(_pg_server_casts(catalog))
+            if refused is None:
+                unsafe = _pg_unsafe(catalog, relations_query)
+                refused = _pg_refusal(statement, unsafe)
         finally:
             catalog.close()
         if refused is None:
