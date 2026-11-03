@@ -1190,16 +1190,31 @@ def _begin_read_only(dbapi_conn, _record) -> None:  # noqa: ANN001 - SQLAlchemy'
 
 
 #: The statement kinds the DuckDB reader runs as they stand. Measured on
-#: 1.5.5, DuckDB's parser calls every spelling of a query a ``SELECT``:
-#: ``WITH``, ``FROM t``, ``TABLE t``, ``VALUES``, ``SUMMARIZE``, ``DESCRIBE``,
-#: ``SHOW``, ``PIVOT … IN (…)``, ``UNPIVOT``, and every ``PRAGMA`` that only
-#: reads (``table_info``, ``show_tables``, ``database_size``, ``version``).
+#: 1.5.5 and 2.0.0, DuckDB's parser calls every spelling of a query a
+#: ``SELECT``: ``WITH``, ``FROM t``, ``TABLE t``, ``VALUES``, ``SUMMARIZE``,
+#: ``DESCRIBE``, ``SHOW``, ``PIVOT … IN (…)`` and ``UNPIVOT``. A ``PRAGMA``
+#: that only reads (``table_info``, ``show_tables``, ``database_size``,
+#: ``version``) was a ``SELECT`` on 1.5.5 and is a ``PRAGMA`` on 2.0.0, so it
+#: is refused there, with its query spellings named (:data:`_PRAGMA_AS_QUERY`).
 #: ``CALL f()`` is its spelling of ``SELECT * FROM f()``, so it reaches no
 #: function a ``SELECT`` cannot; ``CHECKPOINT`` is one, and does what closing
 #: the datasource does (``docs/CONSTRAINTS.md`` §29.4). ``EXPLAIN`` is not
 #: here, because ``EXPLAIN ANALYZE`` runs what it explains: see
 #: :func:`_duckdb_explained`.
 _DUCKDB_RUNS = frozenset({"SELECT", "CALL"})
+
+#: How a refused ``PRAGMA`` points at the same reads asked as a query. DuckDB
+#: 2.0.0 parses every ``PRAGMA`` as kind ``PRAGMA``, even one that only reads,
+#: and the reader keeps to the parser's word rather than a list of PRAGMA
+#: names. Every spelling named here was run through ``query`` on 2.0.0 and
+#: parses as a ``SELECT`` on 1.5.5 too (``tests/test_duckdb_pragma_rephrase.py``).
+_PRAGMA_AS_QUERY = (
+    "a PRAGMA that only reads is answered when asked as a query: SHOW TABLES "
+    "or SHOW ALL TABLES for the tables, DESCRIBE <table> for a table's "
+    "columns, SELECT * FROM pragma_table_info('<table>') for them as "
+    "table_info gives them, and SELECT * FROM pragma_version() or "
+    "pragma_database_size()"
+)
 
 #: How a refusal names each DuckDB statement kind whose name alone does not say
 #: what it asks for, worded to follow "This statement asks to". Every other
@@ -1210,7 +1225,7 @@ _DUCKDB_KIND_WORDS = {
     "COPY_DATABASE": "COPY FROM DATABASE",
     "EXPORT": "EXPORT DATABASE",
     "LOAD": "INSTALL or LOAD an extension",
-    "PRAGMA": "run a PRAGMA that is not a query",
+    "PRAGMA": f"run a PRAGMA that is not a query ({_PRAGMA_AS_QUERY})",
     "SET": "change a setting (SET, RESET, USE or SET VARIABLE)",
     "VACUUM": "VACUUM or ANALYZE",
 }
