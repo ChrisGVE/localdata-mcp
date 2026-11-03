@@ -336,7 +336,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And twenty-two found in this release's own code before it shipped:
+And twenty-eight found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
