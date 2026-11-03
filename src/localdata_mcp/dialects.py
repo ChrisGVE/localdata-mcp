@@ -1228,8 +1228,13 @@ def _duckdb_explained(connection: Any, explain: str) -> str | None:
     ``EXPLAIN ANALYZE COPY (SELECT 'g') TO '<file>.wal' (USE_TMP_FILE false)``
     wrote the WAL, and DuckDB's parser calls it ``EXPLAIN`` whatever it
     explains. The Python API does not hand back the explained statement, so
-    this finds where it begins with DuckDB's own tokenizer, which skips
-    whitespace and comments, and gives the rest back to DuckDB's parser. The
+    this finds where it begins with DuckDB's own tokenizer, skipping
+    whitespace and comments, and gives the rest back to DuckDB's parser.
+    Comments are skipped here rather than by the tokenizer: measured, 1.5.5
+    gave a comment no token, while 2.0.0 gives it one of its own
+    (``token_type.comment``), and read as the word ``/`` that comment made
+    ``EXPLAIN /* b */ ANALYZE SELECT 1`` an ``EXPLAIN`` of ``ANALYZE …``,
+    refusing a read. The
     grammar has three prefixes, all measured: ``EXPLAIN``, ``EXPLAIN
     ANALYZE``, and ``EXPLAIN (options)`` such as ``(FORMAT json, ANALYZE)``.
     A parenthesised query, ``EXPLAIN (SELECT 1)``, looks like the third, so
@@ -1244,7 +1249,8 @@ def _duckdb_explained(connection: Any, explain: str) -> str | None:
     """
     import duckdb
 
-    offsets = [offset for offset, _kind in duckdb.tokenize(explain)]
+    comment = duckdb.token_type.comment
+    offsets = [offset for offset, kind in duckdb.tokenize(explain) if kind != comment]
 
     def word(index: int) -> str:
         found = re.match(r"\w+|\S", explain[offsets[index] :])
