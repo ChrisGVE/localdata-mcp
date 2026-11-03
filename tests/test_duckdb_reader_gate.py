@@ -169,8 +169,10 @@ _READS = [
     ("DESCRIBE sales", "region"),
     ("SHOW sales", "region"),
     ("SHOW TABLES", "sales"),
-    ("PRAGMA show_tables", "sales"),
-    ("PRAGMA table_info('sales')", 0),
+    # The PRAGMA spellings of these two reads parse as PRAGMA on DuckDB 2.0
+    # and are refused there (tests/test_duckdb_pragma_rephrase.py).
+    ("SHOW ALL TABLES", "warehouse"),
+    ("SELECT * FROM pragma_table_info('sales')", 0),
     ("CALL pragma_table_info('sales')", 0),
     ("EXPLAIN SELECT * FROM sales", "physical_plan"),
     ("EXPLAIN ANALYZE SELECT * FROM sales", "analyzed_plan"),
