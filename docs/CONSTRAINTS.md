@@ -2304,6 +2304,16 @@ code. The catalogue is approaching what this machine holds concurrently, and a c
 entries will not fit at all — containers will need bringing up per-dialect rather than all at once.
 Recorded because a killed container looks exactly like a broken commit until the logs are read.
 
+> **Amended 2026-11-03 — the six-container ceiling no longer sets how the suite runs.** The
+> ceiling was a measurement of how many test databases this machine carried at once, and the
+> batches were sized to stay under it. Since task 35 (#139, §13.7) the suite does not run several
+> at once at all. `scripts/endpoint-run.sh` brings up **one database at a time**, with at most one
+> helper (the CA for TLS, the KDC for Kerberos), plus the runner container, under the machine-wide
+> lock `/tmp/localdata-docker.lock`. That lock is Chris's rule for this machine (2026-11-02):
+> *"one container after the other, not all at the same time."* So the six above is now a record of
+> where the VM starved, not a budget anything is sized to. It was not re-measured, and nothing here
+> claims it still holds.
+
 ### 13.5 The batches, and why they are a script rather than a paragraph
 
 The ceiling settled at **six containers**, so the sixteen dialects and the four-service
@@ -2337,6 +2347,13 @@ that list cannot drift from the services either.
 > table above is the record of the batches as they stood, and `scripts/endpoint-batch.sh` is still
 > the source of truth.
 
+> **Amended 2026-11-03 — the batches are gone, and so is the script that held them.**
+> `scripts/endpoint-batch.sh` was deleted with task 35 (#139) and replaced by
+> `scripts/endpoint-run.sh <service|all>`, which runs one service at a time (§13.7). The lesson
+> above still applies, one level down: what a run covers is derived, not written in prose.
+> `endpoints.runnable_services()` and `endpoints.selection()` compute it from `TARGETS`, and the
+> table above stands as the record of the batches as they were.
+
 ### 13.6 The images are removed after every batch, deliberately
 
 The sixteen images are **33 GB**, of which `exasol/docker-db` alone is **12.3 GB**. They are all
@@ -2362,6 +2379,148 @@ always matches the lines beneath it.
 > `datafuselabs/databend:v1.2.925-patch-4`, measured **1.04 GB** (`docker image inspect`, pulled
 > and removed again on 2026-10-29), so the fifteen come to about **32 GB**. The 33 GB above is the
 > sixteen as they were measured, and stands as that.
+
+> **Amended 2026-11-03 — what is removed is now what the run added.** `scripts/endpoint-run.sh`
+> removes, after each service, its containers, volumes, network, the image it built, and any base
+> image it had to pull. At the end it removes the runner image and the build cache the run created
+> (§13.7). It does **not** remove an upstream image that was already on the machine when the run
+> began. That image is not this run's to remove, and other sessions on the machine use the same
+> images. So on a machine that starts with none, a run still downloads everything and leaves
+> nothing. On one that already holds them, as this one did on 2026-11-03 with all fifteen upstream
+> images present from earlier sessions, it leaves them where it found them. The `alpine:*` glob
+> above went with the old script: `alpine:3` is now only a base, removed or kept by the same rule
+> as every other.
+
+### 13.7 One database at a time, built here, tested from inside its network (2026-11-03)
+
+Task 35 ([#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)) replaced the batches with
+one script, `scripts/endpoint-run.sh`, and moved the test process into a container. The
+direction was Chris's: one Dockerfile per database, *"when we do testing we create the image from
+the Dockerfile and we run it, when we no longer need it, we dispose the instance(s) and the image.
+But it is ready when we need to create a new one."* What follows is what doing that took on this
+machine (Intel x86_64, Docker Desktop 29.9.2 with the containerd image store, Compose 5.6.1,
+BuildKit 0.34.0, a 12.5 GB VM), measured on 2026-11-03.
+
+**Every service is built from `docker/test/<service>/Dockerfile`**, FROM the image the compose
+file used to name, adding only labels. All 21 were built and their runtime configuration was
+compared with the base's: entrypoint, command, environment, user, working directory, exposed
+ports, healthcheck, volumes and stop signal. 19 are identical. The CA and the KDC differ in their
+command alone, which now runs the script that used to be inline in the compose file. The three
+`latest` tags were pinned to the version last measured live, and each pinned tag resolves to the
+digest this machine already held as `latest`: `cockroachdb/cockroach:v26.3.4`, `crate:6.5.0`,
+`monetdb/monetdb:Dec2025-SP3`. `mcr.microsoft.com/mssql/server:2022-latest` and
+`gvenzl/oracle-free:slim` still float. No CU tag tried (CU21 to CU25) matched the local SQL Server
+digest, so that one was left alone rather than pinned to a guess.
+
+**Disposing of an image takes three things, and only the first is `--rmi`.**
+
+| What | Measured | So the script |
+|---|---|---|
+| A built image tagged with `image:` | `down --rmi local` removes it anyway, contrary to the flag's documented meaning, but only under the project that built it. The image carries `com.docker.compose.project`, and a `down` under another `-p` removed nothing. | builds and tears down under one `-p ldrun-<name>` |
+| A base the build pulls | BuildKit puts it in the **build cache** as a `pulled from …` record, not in the image store: `busybox:1.37`, pulled by a build, did not appear in `docker image ls`, so `docker rmi` cannot reach it. Pulled first with `docker pull`, it is a tagged image, the build creates no record for it, and `docker rmi` removes it. | pre-pulls an absent base, removes it after the service; never touches a base that was already there |
+| The layers of a removed image | After `docker rmi` of the runner, **800 MB** of its layers stayed as private build cache. Pruning those records by id in one pass removed five of eleven, because BuildKit keeps a parent until its children go; the fourth pass removed the last. | reclaims, in passes, the cache records that are new since the run started and no longer shared with an image |
+
+The DB images' own cache is negligible: building all 21 created 0.3 MB of private records. The
+8.9 GB of shared records that appear with them are the bases' layers, already in the image store,
+and they cost no extra disk. A kept run (`--keep`) saves its pre-run cache list and the bases it
+pulled, so that `--dispose` later removes exactly what that run added.
+
+**The tests run in `docker/test/runner`**: `python:3.11-slim-bookworm` with unixODBC,
+`msodbcsql18` 18.7.1.1 from Microsoft's Debian 12 repository, MIT `krb5-user` 1.20.1, and every
+extra's locked dependencies (`uv sync --frozen --all-extras --no-install-project`, uv 0.13.6)
+in `/opt/localdata-venv`. 994 MB, 565 MB of it the venv, built in 75 s. The source is never in
+the image: the repository is mounted read-only at `/repo` and `PYTHONPATH=/repo/src` makes it the
+only `localdata_mcp` on the path, so an old image cannot test stale code. Inside it Python's `ssl`
+reports OpenSSL 3.0.22 and pyodbc lists `ODBC Driver 18 for SQL Server`. That is the same driver
+version the host has, now loading the OpenSSL it was built against, and it is why SQL Server has a
+result below and had none in §25.7.
+
+Mounted read-only, the offline suite (`-m 'not slow and not endpoint'`) gave 1410 passed and 1
+failed in the runner. The failure is `test_no_shipped_document_offers_a_tool_that_is_gone`, which
+shells out to `git`. The image has no `git`, and in a worktree mount `git` could not work anyway,
+because `.git` points at a host path outside the mount. The read-only mount is also the evidence
+that the suite writes nothing into the tree.
+
+**Inside the network, every address changes, not only the URL.** `LOCALDATA_TEST_IN_NETWORK=1`
+makes `tests/endpoints.py` address a service by name and container port. The `.pgpass` host field
+follows, because libpq matches it, and so do the ODBC DSN's `Server` line and the KDC the Kerberos
+client asks. Three things on the server side had to vouch for the new names:
+
+- the TLS certificate now carries `DNS:localdata-test-postgres-tls`;
+- the keytab holds `postgres/localdata-test-postgres-krb`;
+- YDB advertises `localdata-test-ydb`. From inside the network `localhost`, its host-mode
+  address, is the runner itself.
+
+Each run gets its own network, `${COMPOSE_PROJECT_NAME}-net`, from
+`docker/test/in-network.compose.yml`. The main file's fixed `localdata-test-net` would have been
+shared by every project brought up from it, including the host-mode stacks other sessions were
+running on this machine at the same time.
+
+**Selection.** The standard run of a database is `-m endpoint -k <endpoint name>`, the selection
+§25.7's counts were taken with, so the two compare directly. An authentication service selects
+exactly the targets it serves (`postgres[tls-verify-full] or postgres[client-cert]`). The CA and the
+KDC have no tests of their own and come up as dependencies. Both rules are derived from `TARGETS` by
+`tests/endpoints.py` rather than written into the script.
+
+**Live results, 2026-11-03**, every service through `scripts/endpoint-run.sh`, one at a time,
+in-network, on SQLAlchemy 2.1.6 in the runner (Python 3.11.18). Compared with §25.7's
+session-94 host run, which used the same `-k` selections on Python 3.12.9:
+
+| Engine | Passed | Skipped | Failed | §25.7 (P / S / F) |
+|---|---|---|---|---|
+| PostgreSQL | 143 | 303 | 0 | 142 / 303 / 0 |
+| MySQL | 84 | 29 | 0 | 83 / 29 / 0 |
+| SQL Server | 101 | 0 | 0 | not run: `OpenSSL library could not be loaded` |
+| Oracle | 33 | 5 | 0 | 32 / 5 / 0 |
+| MariaDB | 50 | 8 | 0 | 49 / 8 / 0 |
+| ClickHouse | 33 | 42 | 0 | 32 / 42 / 0 |
+| CockroachDB | 57 | 29 | 0 | 56 / 29 / 0 |
+| YugabyteDB | 77 | 9 | 0 | 76 / 9 / 0 |
+| Trino | 32 | 6 | 0 | 31 / 6 / 0 |
+| MonetDB | 56 | 5 | 0 | 55 / 5 / 0 |
+| CrateDB | 32 | 6 | 0 | 31 / 6 / 0 |
+| Firebird | 39 | 5 | 0 | 38 / 5 / 0 |
+| openGauss | 73 | 9 | **4** | 76 / 9 / 0 |
+| YDB | 32 | 6 | 0 | 31 / 6 / 0 |
+| Exasol | 35 | 5 | 0 | 34 / 5 / 0 |
+| postgres-trust | 31 | 6 | 0 | not started |
+| clickhouse-noauth | 32 | 5 | 0 | not started |
+| postgres-tls (with the CA) | 63 | 11 | 0 | not started |
+| postgres-krb (with the KDC) | 31 | 6 | 0 | not started |
+
+**Every engine's selection is one test larger than in §25.7, and the one test passed
+everywhere.** It is
+`test_stats_aggregates.py::test_the_engine_reports_exactly_the_measured_statistics_and_they_are_right`,
+parametrised once per endpoint and added in `4fb626bc`. §25.7's counts predate it. Collected from
+`4fb626bc~1`, the same selections give 39, 445 and 74 for Exasol, PostgreSQL and ClickHouse,
+exactly §25.7's totals, against 40, 446 and 75 now. No skip count changed.
+
+**SQL Server ran for the first time on this machine**: 101 passed and 0 skipped, which includes
+`mssql[odbc-dsn]`, the mode whose login timed out from the host. No `DYLD_LIBRARY_PATH` or other
+host setting was involved: the runner's msodbcsql18 loads Debian's OpenSSL 3.
+
+**The four authentication services ran as their own services for the first time** (§25.7: "not
+started"), each with its helper where it has one. TLS `verify-full` and client-certificate login
+passed under the service's DNS name, and Kerberos passed under the
+`postgres/localdata-test-postgres-krb` principal.
+
+**Exasol needed one fix to the runner, and the first full run's figure is not its result.** The
+runner runs as the host user's uid, which has no entry in the image's `/etc/passwd`. pyexasol asks
+`getpass.getuser()` for its client's name, and every handshake died with `KeyError: 'getpwuid():
+uid not found: 501'`, so all 40 tests errored at setup. The script now sets `USER` and `LOGNAME`,
+which `getuser()` reads first. The re-run is the row above.
+
+**openGauss's four failures are a product defect the runner exposed, not a harness one**
+([#141](https://github.com/ChrisGVE/localdata-mcp/issues/141)). The write is still refused. What
+fails is the explanation. `loader._objected_to_the_leading_verb` recognises a refused write only
+when the server's message contains both `declare` and `cursor`. openGauss quotes the statement in a
+`LINE 1:` excerpt that is cut from the left, and psycopg2 names its cursor after `id()`. On macOS
+that is 9 hex digits, so `DECLARE` is in the excerpt. On Linux x86_64 it is 12, and the excerpt
+begins `...ECLARE "c_7f2a04694ad0_1" CURSOR WITHOUT HOLD FOR INSERT INT...`. Measured on one
+container, same commit, same selection (`opengauss and (refuses or ddl_through)`): 14 passed from
+the macOS host and 4 failed from the runner. §25.7's 76 passed is the host's figure. The runner is
+the first Linux environment this suite has run in, and Linux x86_64 is where a server like this one
+is ordinarily deployed.
 
 ## §14 — The MCP 2026-07-28 specification, measured against this server (2026-07-29)
 
@@ -4834,6 +4993,16 @@ that cannot represent the input can no longer be asserted at all.
 > `attach` now refuses, on any SQLAlchemy older than 2.1, a URL whose database name holds `?` or `@`. The name is judged as 2.1 reads it: decoded on 2.0, already decoded on 2.1. The check lives in `urls.refuse_uncarried_database`, called from the two places `slots` parses a URL a caller typed: a server or `duckdb:` URL, and a `sqlite:` URL. It runs before the network gate, so the refusal names the name rather than the closed network. A host-less URL's refusal also offers the path. The version is compared as numbers, so `10.0.0` passes, where a string comparison with `2.1` would refuse it. Re-run on the real 2.0.55 install, every URL above with `?` or `@` in its decoded name was refused. The bare paths still attached, and `postgresql://…/plain` still reached the network gate. On 2.1.6 the same calls answered exactly as before the change.
 >
 > **Two edges this leaves, stated so they are not mistaken for coverage.** It is fail-closed and wider than the divergence: a raw `@` after a password (`u:pw@h/a@b`) reads the same on both versions and is refused on 2.0 anyway, so the rule can be predicted from the name alone. It is also narrower than the divergence: on 2.0 a percent-escape of any other character (`%20`, `%2F`) still reaches the driver undecoded, as 2.0 always did. Only `?` and `@` were in #140's scope. The check is retired with the override once `sqlalchemy-cockroachdb` supports 2.1.
+
+> **Amended 2026-11-03 — SQL Server has a result, and the four authentication services ran.**
+> The table above stands as session 94's host run. The same selections, run through
+> `scripts/endpoint-run.sh` in the containerised runner (§13.7), gave SQL Server 101 passed,
+> 0 skipped and 0 failed. msodbcsql18 there loads Debian's OpenSSL 3, so the environment failure
+> recorded above does not arise. `postgres-trust`, `postgres-tls`, `postgres-krb` and
+> `clickhouse-noauth` each ran as their own service, with the CA or KDC where needed. Every other
+> engine's selection is one test larger than above because of a stats test added in `4fb626bc`,
+> and that test passed on every engine. openGauss failed four write-refusal tests, from the runner
+> only (#141). The full table and the reasons are in §13.7.
 
 ### 25.8 What this did not test
 

@@ -795,6 +795,12 @@ And twenty-eight found in this release's own code before it shipped:
   engine's line in its summary says nothing about the others
   ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46),
   [#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)).
+- **On openGauss under Linux x86_64, a write refused through `query` is reported as
+  the server's syntax error**, not as the refused-write explanation that names
+  `create`, `update` and `drop`. The write is still refused. The explanation depends
+  on the length of psycopg2's cursor name, which follows `id()`, and on macOS it is
+  short enough for the check to see `DECLARE`
+  ([#141](https://github.com/ChrisGVE/localdata-mcp/issues/141)).
 - **Db2 and OceanBase are eligible and unreachable** from a macOS host —
   measured, in `docs/CONSTRAINTS.md` §24 and §26.
 - **A DuckDB file with a `?` in its name opens and reads, but attached writable it
