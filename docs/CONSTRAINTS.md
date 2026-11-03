@@ -6653,7 +6653,8 @@ types. pytest still exits 0. It came up in both full runs and in **none** of the
 run one per process, and not at all from a process that attaches a DuckDB file through the
 server and exits with the slot still attached, detached, or with a raw connection never closed.
 So it is a property of one long process that has made many DuckDB objects, not of a single code
-path found here. 1.5.5 prints nothing like it. Its cause is not established.
+path found here. 1.5.5 prints nothing like it. Its cause is not established
+([#136](https://github.com/ChrisGVE/localdata-mcp/issues/136)).
 
 ### 35.2 The `.wal` write is unchanged
 
