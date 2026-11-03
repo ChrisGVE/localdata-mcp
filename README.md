@@ -246,6 +246,14 @@ SQLite needs no extra and MariaDB and YugabyteDB share another backend's.
 `formats` installs the seven format extras (the six for reading, plus `markdown`
 for `.md` output), and `all` installs both.
 
+**The `cockroachdb` extra holds SQLAlchemy below 2.1.** `sqlalchemy-cockroachdb`
+2.0.4 declares `SQLAlchemy<2.1`, so with that extra installed the resolver picks
+2.0.55. SQLAlchemy 2.0 cannot carry a `?` or an `@` in the database name of a
+URL, so on 2.0 `attach` refuses such a URL and says why, rather than open a
+different database. A file attached by its path is not affected. Installing
+SQLAlchemy 2.1 or later lifts the refusal
+([#140](https://github.com/ChrisGVE/localdata-mcp/issues/140)).
+
 ### What stats will and will not tell you
 
 `stats(nickname, table)` is the only call that reports **missing values**, which

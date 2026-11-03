@@ -676,6 +676,18 @@ And twenty-eight found in this release's own code before it shipped:
   `FLOAT` and `DOUBLE PRECISION` columns lost their `min`, `max` and `avg`
   silently. The classifier now lists `Float` beside `Numeric` and `Integer`
   ([#70](https://github.com/ChrisGVE/localdata-mcp/issues/70)).
+- **On SQLAlchemy 2.0, a URL whose database name holds `?` or `@` is refused
+  instead of opening a different database.** The 2.1 pin lives in
+  `[tool.uv] override-dependencies`, which never reaches the published package,
+  so `pip install localdata-mcp[cockroachdb]` resolves to SQLAlchemy 2.0.55.
+  There `postgresql://…/a%3Fb` reached the driver as the database `a%3Fb`, and
+  `sqlite:///…/a%3Fb.db` opened a file literally called `a%3Fb.db` rather than
+  `a?b.db`, with nothing said. `attach` now refuses such a URL on any
+  SQLAlchemy older than 2.1, before the network gate, naming the database, the
+  installed version and the remedy: SQLAlchemy 2.1 or later, which the
+  `cockroachdb` extra holds back. A file reached by its path rather than a URL
+  is unaffected and still attaches on 2.0. On 2.1 nothing changes
+  ([#140](https://github.com/ChrisGVE/localdata-mcp/issues/140)).
 
 ### Known limitations
 
@@ -686,6 +698,13 @@ And twenty-eight found in this release's own code before it shipped:
   live on 2.1, but a combination its maintainer has not declared is not one
   this project can promise. The override is removed when `sqlalchemy-cockroachdb`
   ships 2.1 support.
+- **The override reaches only this repository's lock, not an installed
+  package.** Installed from PyPI with the `cockroachdb` extra, SQLAlchemy
+  resolves to 2.0.55. On that version a database URL whose database name holds
+  `?` or `@` is refused
+  ([#140](https://github.com/ChrisGVE/localdata-mcp/issues/140)), and a
+  percent-escape of any other character in the database name (`%20`, `%2F`) is
+  passed to the driver undecoded, as 2.0 always did.
 - **`save` is refused on every backend but SQLite** — sixteen of the seventeen,
   a local DuckDB file included. `save` writes out a database this server is
   holding, and a slot reached over its own connection has none: the rows live in

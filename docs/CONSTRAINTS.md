@@ -4813,6 +4813,28 @@ that cannot represent the input can no longer be asserted at all.
 >
 > Not started as their own compose services this session: `postgres-trust`, `postgres-tls`, `postgres-krb`, `clickhouse-noauth`, `tls-ca`, `tls` and `krb`. The PostgreSQL and ClickHouse selections were made by dialect name, so a target whose id carries that name ran with them; the others were not reached.
 
+> **Amended 2026-11-03 — the pin does not ship, so on an installed 2.0 the name is refused (#140).**
+> `[tool.uv] override-dependencies` applies to this repository's lock and to `uv pip` run from inside it, and to nothing published. Installed from PyPI with the `cockroachdb` extra, SQLAlchemy resolves to 2.0.55 (measured in #140). A side note from the measurement: `uv pip install` run with the repository as working directory applied the override even to an explicit `sqlalchemy==2.0.55` and installed 2.1.6; `--no-config` was needed to get 2.0.55.
+>
+> What the earlier table measured was `URL.create` then `make_url`. This server builds no URL string from a name: a file attached by its path becomes a `URL` object and is never rendered. What it parses is the URL string a caller hands to `attach`. Measured by `make_url` on that string:
+>
+> | URL string | 2.0.55 database | 2.1.6 database |
+> |---|---|---|
+> | `postgresql://u:pw@h:5432/a%3Fb`, with or without the password | `a%3Fb` | `a?b` |
+> | `postgresql://u:pw@h:5432/a%40b`, with or without the password | `a%40b` | `a@b` |
+> | `postgresql://u:pw@h:5432/a?b` | `a`, and the `?b` dropped (query `{}`) | the same |
+> | `postgresql://u:pw@h:5432/a@b` | `a@b` | the same |
+> | `postgresql://u@h:5432/a@b` | `None`, username `u@h`, host `b` | the same |
+> | `postgresql://u:pw@h:5432/a%20b` | `a%20b` | `a b` |
+> | `firebird+firebird://u:pw@h:3050//tmp/x%3Fy.fdb` | `/tmp/x%3Fy.fdb` | `/tmp/x?y.fdb` |
+> | `sqlite:///why%3F%20not.db` | `why%3F%20not.db` | `why? not.db` |
+>
+> So the versions differ in one thing: 2.1 decodes the component and 2.0 does not. A raw `?` starts the query and a raw `@` before a port ends the userinfo on both. The defect that follows on 2.0 was measured through the server's own `attach`, on a real 2.0.55 install, before the fix. With `a?b.db` and a decoy `a%3Fb.db` side by side, `sqlite:///<root>/a%3Fb.db` answered `ok` with the **decoy's** table. On 2.1.6 it answered with `a?b.db`'s. `duckdb:///<root>/why%3F.duckdb` answered `No such file: …/why%3F.duckdb`. Every bare path, `a?b.db`, `a@b.db` and `why?.duckdb`, attached correctly on 2.0.55.
+>
+> `attach` now refuses, on any SQLAlchemy older than 2.1, a URL whose database name holds `?` or `@`. The name is judged as 2.1 reads it: decoded on 2.0, already decoded on 2.1. The check lives in `urls.refuse_uncarried_database`, called from the two places `slots` parses a URL a caller typed: a server or `duckdb:` URL, and a `sqlite:` URL. It runs before the network gate, so the refusal names the name rather than the closed network. A host-less URL's refusal also offers the path. The version is compared as numbers, so `10.0.0` passes, where a string comparison with `2.1` would refuse it. Re-run on the real 2.0.55 install, every URL above with `?` or `@` in its decoded name was refused. The bare paths still attached, and `postgresql://…/plain` still reached the network gate. On 2.1.6 the same calls answered exactly as before the change.
+>
+> **Two edges this leaves, stated so they are not mistaken for coverage.** It is fail-closed and wider than the divergence: a raw `@` after a password (`u:pw@h/a@b`) reads the same on both versions and is refused on 2.0 anyway, so the rule can be predicted from the name alone. It is also narrower than the divergence: on 2.0 a percent-escape of any other character (`%20`, `%2F`) still reaches the driver undecoded, as 2.0 always did. Only `?` and `@` were in #140's scope. The check is retired with the override once `sqlalchemy-cockroachdb` supports 2.1.
+
 ### 25.8 What this did not test
 
 Authentication *rotation* and expiry: a Kerberos ticket that runs out mid-session, a certificate that

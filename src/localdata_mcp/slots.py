@@ -77,6 +77,7 @@ from .names import clashes
 # too (#108), and `paths` cannot import this module. Re-exported here, where
 # callers have always found it.
 from .paths import PathNotAllowed, resolve_read_path, resolve_write_path, url_scheme
+from .urls import DatabaseNameNotCarried, refuse_uncarried_database
 
 __all__ = [
     "AttachRefused",
@@ -426,11 +427,19 @@ class Registry:
 
         A ``sqlite:`` URL is another way of spelling a local file, so it is
         resolved and contained exactly as a bare path is — naming it as a URL
-        must not route around the trust boundary.
+        must not route around the trust boundary. Its file name is checked
+        against the installed SQLAlchemy first, as a server URL's database is:
+        on 2.0 ``sqlite:///a%3Fb.db`` would open a file called ``a%3Fb.db``,
+        not ``a?b.db`` (#140).
         """
         raw = database
         if scheme is not None:
-            raw = make_url(database).database or ""
+            url = make_url(database)
+            try:
+                refuse_uncarried_database(url)
+            except DatabaseNameNotCarried as exc:
+                raise AttachRefused(str(exc)) from exc
+            raw = url.database or ""
             if not raw:
                 raise AttachRefused(
                     f"{mask_credentials(database)} names no database file."
@@ -567,6 +576,13 @@ class Registry:
             raise AttachRefused(
                 f"Not a usable datasource URL: {mask_credentials(str(exc))}"
             ) from exc
+
+        # Before the network gate, so a name this SQLAlchemy would misread is
+        # refused as that, whether or not the network is open (#140).
+        try:
+            refuse_uncarried_database(url)
+        except DatabaseNameNotCarried as exc:
+            raise AttachRefused(str(exc)) from exc
 
         safe = redacted_url(url)
 
