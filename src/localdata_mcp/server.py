@@ -764,9 +764,13 @@ def stats(
     as canonical ISO 8601 text reports ``min`` and ``max``. ``median`` and ``stddev`` appear only where
     this server declares them for that backend, which defaults to none — nothing
     here approximates a statistic it was not told about, so their absence is a
-    fact about the datasource rather than about the column. Measured so far:
-    SQLite has neither, DuckDB has both, and the other fifteen backends are
-    unmeasured rather than known to lack them.
+    fact about the datasource rather than about the column. Every backend has
+    been measured: SQLite has neither; a sample ``stddev`` is reported
+    everywhere else; a ``median`` on DuckDB, PostgreSQL, YugabyteDB,
+    openGauss, CockroachDB, MonetDB, ClickHouse, Oracle and Exasol, and on no
+    other backend, because each of the others either has none, has one only
+    as a window function, or has one that estimates or returns a single
+    middle value.
 
     Two kinds of column are deliberately reported with their null count and
     nothing else, and each says why in ``withheld``: a **mixed** column, where an

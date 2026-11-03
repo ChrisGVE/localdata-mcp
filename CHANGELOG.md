@@ -100,9 +100,17 @@ rebuild it.
   numeric one adds `min`, `max` and `avg`, and a date column normalised to ISO
   8601 adds `min` and `max`. `median` and `stddev` are reported only where this
   server declares them for that backend — never emulated, never approximated,
-  never a second pass in Python. That declaration defaults to none, so they
-  appear on DuckDB, not on SQLite, and not yet on the fifteen backends nobody
-  has measured. A **mixed**
+  never a second pass in Python. That declaration defaults to none, and every
+  backend has been driven against known values to fill it in (#95): a `median`
+  on DuckDB, PostgreSQL, YugabyteDB, openGauss, CockroachDB, MonetDB,
+  ClickHouse, Oracle and Exasol, and a sample `stddev` on every backend but
+  SQLite. Where an engine had more than one median, the one that
+  averages the two middle values and is exact was chosen — ClickHouse's
+  `median` estimates, MonetDB's returns the lower middle value — and where
+  its function refused a decimal or integer column the column is read as a
+  double, the conversion PostgreSQL makes for itself. MySQL, MariaDB,
+  Firebird, CrateDB, Trino, SQL Server and YDB report no median, each for a
+  reason in `docs/CONSTRAINTS.md` §37. A **mixed**
   column and a column of **dates in no recognised standard** are profiled to
   their null count alone, each saying why in `withheld`, because an aggregate
   over either returns a real number that is not the number asked for. It is a

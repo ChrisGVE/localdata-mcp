@@ -402,9 +402,10 @@ stats(nickname="sales", table="sales")
 Every column comes back with `nulls` and `non_nulls`. A numeric one adds `min`,
 `max` and `avg`; a date column normalised to ISO 8601 adds `min` and `max`.
 `median` and `stddev` appear only where this server declares them for that
-backend, which defaults to none — measured, SQLite has neither and DuckDB has
-both, and the other fifteen are unmeasured rather than known to lack them — so
-their absence says something about the datasource, not about the column. Narrow a wide table with `columns=["amount"]`.
+backend, which defaults to none — measured on every backend: a sample `stddev`
+everywhere but SQLite, a `median` on DuckDB, PostgreSQL, YugabyteDB,
+openGauss, CockroachDB, MonetDB, ClickHouse, Oracle and Exasol — so their
+absence says something about the datasource, not about the column. Narrow a wide table with `columns=["amount"]`.
 
 **Read `nulls` before you report an average.** `avg()` skips nulls silently, so
 an average over a column that is a tenth empty is an average of the other nine

@@ -256,10 +256,12 @@ and a date column normalised to ISO 8601 adds `min` and `max`.
 It is governed by one rule — **free we take, expensive we leave.** A statistic a
 dialect has not declared is **not reported**, never emulated and never
 approximated in a second pass. Which statistics a dialect offers defaults to
-none and is declared per backend: measured so far, SQLite has neither `median`
-nor `stddev` and DuckDB has both, and the other fifteen are unmeasured rather
-than incapable. Their absence is a fact about the datasource, not about the
-column.
+none and is declared per backend, each one measured against known values: a
+sample `stddev` everywhere but SQLite, and a `median` on DuckDB,
+PostgreSQL, YugabyteDB, openGauss, CockroachDB, MonetDB, ClickHouse,
+Oracle and Exasol. The others have no exact median that fits in one
+aggregate query, so none is reported. Their absence is a fact about the
+datasource, not about the column.
 Strings get the null count and nothing more. Every aggregate goes into one
 `SELECT`, so a profile costs one scan of the table whatever its width.
 

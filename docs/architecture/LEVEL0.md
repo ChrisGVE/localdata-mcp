@@ -300,10 +300,34 @@ whose whole promise is that the numbers are true — the same judgement `snapsho
 `builds_indexes` make about an answer that would be a lie the caller then builds on.
 
 Which statistics a backend offers is declared per-dialect and **defaults to none**, so a
-dialect nobody has measured under-reports rather than failing a statement mid-profile.
-Measured so far: SQLite has neither `median` nor `stddev`; DuckDB has both. The other
-fifteen are a declared coverage gap and are left at the floor until a container run measures
-them.
+dialect nobody has measured under-reports rather than failing a statement mid-profile. Every
+one of the seventeen has now been measured (#95), each against values worked out by hand: an
+even count, so a median has to average the two middle values; 20001 rows whose exact median is
+known, so an estimate shows; and a decimal column as well as a float and an integer one, so a
+function that refuses a type cannot fail a profile. An entry exists only where all three held.
+
+| Backend | `median` | `stddev` (sample) |
+|---|---|---|
+| SQLite | — | — |
+| DuckDB | `median(col)` | `stddev_samp` |
+| PostgreSQL, YugabyteDB, openGauss | `percentile_cont(0.5) WITHIN GROUP (ORDER BY col)` | `stddev_samp` |
+| CockroachDB | the same, over `CAST(col AS DOUBLE PRECISION)` | `stddev_samp` |
+| MonetDB | `median_avg(CAST(col AS DOUBLE))` | `stddev_samp` |
+| ClickHouse | `quantileExactInclusive(toFloat64(col))` | `stddevSamp` |
+| MySQL, MariaDB | — | `stddev_samp(CAST(col AS DOUBLE))` |
+| Firebird, CrateDB, Trino | — | `stddev_samp` |
+| SQL Server | — | `STDEV` |
+| Oracle, Exasol | `median(col)` | `stddev_samp` |
+| YDB | — | `stddev_samp(CAST(col AS DOUBLE))` |
+
+A dash is an engine that had no median fit to report: none that parses in an aggregate
+`SELECT` (MySQL, MariaDB, Firebird), one only as a window function (SQL Server), one that
+returns a single middle value instead of averaging two (CrateDB, Trino), or an estimate
+(CrateDB, YDB). Engines with a median often had a wrong one beside it — ClickHouse's `median`
+estimates and its `medianExact` returns one middle value, MonetDB's `median` returns the lower
+one — and the declaration names the one that was right. Where a cast appears, the engine's
+own function refused, mis-scaled or rounded a decimal or integer column, and reading it as a
+double is the conversion PostgreSQL makes for itself. The measurements are `docs/CONSTRAINTS.md` §37.
 
 ### Write is not the default
 

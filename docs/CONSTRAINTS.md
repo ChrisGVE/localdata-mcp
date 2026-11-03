@@ -6929,3 +6929,71 @@ comparison.
 > holds committed rows. What was measured above stands as a record of the behaviour before that
 > gate. The measurements behind the gate, and the decision for each statement kind, are in the
 > §29.4 amendment of the same date.
+
+## §37 — `stats`: which engines have a median and a sample standard deviation (2026-11-03)
+
+Refs [#95](https://github.com/ChrisGVE/localdata-mcp/issues/95). Measured on `new-v3` from
+`cb63ed34`, Python 3.12, macOS x86_64, SQLAlchemy 2.0.51, against the images
+`docker-compose.test.yml` names. Until this, `Backend.optional_aggregates()` was declared on
+SQLite (empty) and DuckDB (`median`, `stddev_samp`) only, and the other fifteen backends reported
+the floor. Each engine was driven twice: every candidate spelling through `query`, then `stats`
+itself with the chosen declaration, by `tests/test_stats_aggregates.py`.
+
+### 37.1 The tables, and why each one is there
+
+- `small`, landed through `create`: `n` = 1, 2, 4, 7, 10, 12 and one gap, `x` = `n` + 0.5.
+  An **even** count, so the median is (4 + 7) / 2 = **5.5** (6.0 for `x`) and an engine that
+  returns one middle value answers 4 or 7. The **sample** standard deviation is
+  sqrt(98 / 5) = **4.4271887…**, the population one sqrt(98 / 6) = 4.0414518…
+- `big`, landed through `create`: `v` = i² for i in 0..20000. 20001 rows, so the exact median is
+  **100000000** and a reservoir sample or a t-digest lands near it, not on it. ClickHouse's
+  reservoir holds 8192 values, so a smaller table would not show it.
+- `typed`, built through SQLAlchemy's generic types as somebody else's table would be: `k`
+  `Integer` 1..6 and `d` `Numeric(12, 4)` holding `x`'s six values. A loaded file only ever
+  makes `INTEGER`, `REAL` and `TEXT`, so without it a function that refuses a decimal would
+  pass every test and then fail a whole profile on a real table.
+
+An entry was added only where the engine answered all three correctly.
+
+### 37.2 Result
+
+| Engine (image) | `median` | `stddev` | What decided it |
+|---|---|---|---|
+| PostgreSQL (`postgres:16-alpine`) | `percentile_cont(0.5) WITHIN GROUP (ORDER BY col)` | `stddev_samp` | 5.5 / 6.0 / exactly 1e8. No `median()`. |
+| YugabyteDB (`2.25.2.0-b359`) | same as PostgreSQL | `stddev_samp` | Same answers; inherits PostgreSQL's entry. |
+| openGauss (`7.0.0-RC3.B025`) | same as PostgreSQL | `stddev_samp` | Same answers. It also has a correct `median()`; the inherited spelling is kept. |
+| CockroachDB (`latest`) | `percentile_cont(0.5) WITHIN GROUP (ORDER BY CAST(col AS DOUBLE PRECISION))` | `stddev_samp` | Without the cast, an `INT` or `DECIMAL` column is refused: `unknown signature: percentile_cont_impl(decimal, int)`. Inheriting PostgreSQL's entry failed `stats` on the squares table outright. |
+| MonetDB (`latest`) | `median_avg(CAST(col AS DOUBLE))` | `stddev_samp` | `median` answered **4.0** (the lower middle value). `median_avg` answered 5.5 and exactly 1e8, but **60000.0** over the `DECIMAL(12, 4)` column whose median is 6.0. Cast to a double it answers 6.0. |
+| ClickHouse (`25.3`) | `quantileExactInclusive(toFloat64(col))` | `stddevSamp` | `median` answered **101072862.5** over the squares (reservoir sample). `medianExact` answered **7.0**. `quantileExactInclusive` answered 5.5 and exactly 1e8 but refused `Decimal(12, 4)`: *"Illegal type Decimal(12, 4) of argument"*. `CAST(col AS DOUBLE)` then refused the nullable column holding a null (*"Cannot convert NULL value to non-Nullable type"*); `toFloat64` keeps the null. |
+| Oracle (`gvenzl/oracle-free:slim`) | `median` | `stddev_samp` | 5.5 / 3.5 / 6 / exactly 1e8. |
+| Exasol (`docker-db:2026.1.0`) | `median` | `stddev_samp` | 5.5 / 3.5 / 6.0 / exactly 1e8. |
+| MySQL (`8.0`) | — | `stddev_samp(CAST(col AS DOUBLE))` | No `median`, no `percentile_cont`. `stddev` is the **population** deviation here (4.0414…). The cast is MariaDB's, below; MySQL answered in full either way. |
+| MariaDB (`11`) | — | `stddev_samp(CAST(col AS DOUBLE))` | `median(col)` and `percentile_cont … WITHIN GROUP` without `OVER` are syntax errors. `stddev` is the population deviation. Over the integer column `stddev_samp` answered **1.8708** (deviation 1.87082869…), and 119266275.712 over the squares: an exact-value answer, rounded at four decimal places and at three. Over a double it is a double. |
+| Firebird (`5`) | — | `stddev_samp` | `median`, `percentile_cont` and `stddev` are refused (`Dynamic SQL Error`). |
+| CrateDB (`latest`) | — | `stddev_samp` | `percentile(col, 0.5)` answered **7.0**, **99494117.3** over the squares, and refused the numeric column: ``Cannot cast value `7.5000` to type `byte` ``. |
+| Trino (`476`) | — | `stddev_samp` | Only `approx_percentile`, which answered **7.0**. |
+| SQL Server (`2022-latest`) | — | `STDEV` | `PERCENTILE_CONT` is exact (5.5, 1e8) but only with `OVER`: *"The function 'percentile_cont' must have an OVER clause"*. `STDEV` is the sample deviation; `stddev_samp` does not exist. |
+| YDB (`local-ydb:26.1.1.22`) | — | `stddev_samp(CAST(col AS DOUBLE))` | `median` answered 5.5 but **100007405** over the squares. `stddev_samp` refused `Decimal(12, 4)` (`Type annotation`, `issue_code: 1030`); cast to `Double` it answers. |
+
+Every sample deviation above, through `stats`, matched sqrt(98 / 5) on the float, integer and
+decimal columns, and `statistics.stdev` over the squares (119266275.712…) to within
+`pytest.approx`'s default relative 1e-6.
+
+### 37.3 Measured on the way
+
+- **PostgreSQL's `stddev_samp` over an integer column rounds to its own scale.** Over the
+  squares it returned `numeric` **119266276**, where the exact value is 119266275.712 (relative
+  difference 2·10⁻⁹); over `float8` it returned 119266275.71204568. YugabyteDB and openGauss do
+  the same. It is the engine's rounding of its own answer, not an estimate, so it is reported.
+- **Where a cast is declared, the median is a double-precision median.** That is what
+  PostgreSQL computes anyway: its `percentile_cont` is defined over `double precision`, and an
+  integer or numeric column is converted implicitly. Integers beyond 2⁵³ and decimals with more
+  significant digits than a double holds are rounded, on every engine in the table with a
+  median except DuckDB, Oracle and Exasol.
+- **The SQL Server harness cannot connect on this machine without help**
+  ([#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)). Homebrew's `openssl` now
+  points at 4.x and `msodbcsql18` dlopens `libssl.3` from `/usr/local/opt/openssl/lib/`. The
+  runs above set `DYLD_LIBRARY_PATH=/usr/local/opt/openssl@3/lib` for that one process.
+- **Trino had still not taken in the 20001-row table after twenty minutes**, measured, through
+  `create` against the memory catalog. Since `big` exists to catch an estimated median, the
+  test lands it only where a median is declared.

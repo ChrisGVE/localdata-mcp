@@ -79,9 +79,11 @@ from sqlalchemy import (
     Table,
     Text,
     Unicode,
+    cast,
     create_engine,
     event,
     func,
+    literal_column,
     text,
 )
 from sqlalchemy.engine import URL, make_url
@@ -92,6 +94,7 @@ __all__ = [
     "BACKENDS",
     "Backend",
     "ClickHouseBackend",
+    "CockroachDBBackend",
     "CrateDBBackend",
     "DuckDBBackend",
     "Engines",
@@ -804,8 +807,9 @@ class Backend:
         the other way would have an unsubclassed dialect fail a statement mid
         profile, turning "we do not report this" into "the verb does not work
         here". So an entry appears only where it has been driven against the
-        engine, and the backends still to be measured are recorded as a coverage
-        gap rather than assumed.
+        engine and answered correctly. Every registered backend has been
+        (#95); ``tests/test_stats_aggregates.py`` holds the record and drives
+        each one, and a backend added later starts here, at nothing.
 
         A mapping rather than a set of flags because each name is also *how* the
         aggregate is spelled, and the two are not separable: a median is
@@ -814,6 +818,35 @@ class Backend:
         is what stops a second dispatch on dialect name growing somewhere else.
         """
         return {}
+
+
+def _percentile_cont_median(column: Any) -> Any:
+    """The median as the SQL standard spells it, for an engine with no ``median()``.
+
+    ``percentile_cont(0.5) WITHIN GROUP (ORDER BY col)`` is the *continuous*
+    percentile: with an even count it interpolates between the two middle
+    values, which is what a median is. ``percentile_disc`` would return one of
+    them instead, and is not used anywhere here.
+
+    The fraction is written into the statement as a literal rather than bound
+    as a parameter: it is a constant of the statistic, not a value from the
+    caller, and some engines want the fraction of a ``WITHIN GROUP`` aggregate
+    to be one.
+    """
+    return func.percentile_cont(literal_column("0.5")).within_group(column)
+
+
+def _percentile_cont_median_of_doubles(column: Any) -> Any:
+    """:func:`_percentile_cont_median` over the column read as ``DOUBLE PRECISION``.
+
+    For an engine whose ``percentile_cont`` is defined over floating point
+    alone and refuses an integer or a decimal column outright, rather than
+    converting it as PostgreSQL does. The cast is the conversion PostgreSQL
+    makes implicitly, written out, so the answer is the same one: exact for
+    every integer up to 2**53 and every decimal a double can hold, and rounded
+    to a double beyond that, as PostgreSQL's own median is.
+    """
+    return _percentile_cont_median(cast(column, Double))
 
 
 # ---------------------------------------------------------------------------
@@ -2345,6 +2378,24 @@ class PostgreSQLBackend(Backend):
             )
             return False
 
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """The median and the sample standard deviation, both measured (#95).
+
+        PostgreSQL has no ``median()``; ``percentile_cont`` is how it spells
+        one. Measured on 16 through ``stats``: 5.5 over 1, 2, 4, 7, 10, 12 —
+        the two middle values averaged — and exactly 100000000 as the median
+        of the 20001 squares 0..20000², so it is exact rather than estimated.
+        ``stddev_samp`` answered sqrt(98 / 5) over the same six values, the
+        sample deviation; ``stddev_pop`` answered sqrt(98 / 6).
+
+        Over an integer column ``stddev_samp`` returns ``numeric`` at a scale
+        PostgreSQL chooses for itself: over the squares it answered 119266276
+        where the exact value is 119266275.712 — nine significant figures, a
+        relative difference of 2e-9. That is the engine's own rounding of its
+        own answer, not an estimate, so it is reported as it stands.
+        """
+        return {"median": _percentile_cont_median, "stddev": func.stddev_samp}
+
     def denies_write(self, exc: Exception) -> bool:
         """``read_only_sql_transaction``, under either psycopg's name for the code."""
         origin = getattr(exc, "orig", exc)
@@ -2352,6 +2403,34 @@ class PostgreSQLBackend(Backend):
             getattr(origin, attribute, None) == _PG_READ_ONLY
             for attribute in ("sqlstate", "pgcode")
         )
+
+
+@dataclass(frozen=True)
+class CockroachDBBackend(PostgreSQLBackend):
+    """CockroachDB: PostgreSQL's gate and catalog answers, and its own median.
+
+    Everything is inherited except the one answer CockroachDB gives
+    differently, measured on 2026-11-03 (#95). Its ``percentile_cont`` is
+    defined over floating point only: over a ``FLOAT8`` column it answered
+    5.5, but over an ``INT`` or a ``DECIMAL`` column it refused the statement —
+    ``unknown signature: percentile_cont_impl(decimal, int)`` — and with it the
+    whole one-``SELECT`` profile. PostgreSQL converts such a column for itself;
+    CockroachDB has to be asked to, which is
+    :func:`_percentile_cont_median_of_doubles`.
+    """
+
+    name: str = "cockroachdb"
+
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """The median over the column cast to a double, and ``stddev_samp``.
+
+        ``stddev_samp`` needs no cast: it answered sqrt(98 / 5) over the
+        float, the integer and the ``DECIMAL(12, 4)`` column alike.
+        """
+        return {
+            "median": _percentile_cont_median_of_doubles,
+            "stddev": func.stddev_samp,
+        }
 
 
 @dataclass(frozen=True)
@@ -2687,6 +2766,35 @@ class MySQLBackend(Backend):
         arguments = getattr(origin, "args", ())
         return bool(arguments) and arguments[0] == _MYSQL_READ_ONLY
 
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """The sample standard deviation, and no median, on both engines (#95).
+
+        ``stddev_samp`` answered sqrt(98 / 5) over 1, 2, 4, 7, 10, 12 in a float
+        column on MySQL 8.0 and MariaDB 11. **Not** ``stddev``: on both it is
+        the *population* deviation, sqrt(98 / 6), so the name that reads as the
+        obvious one is the wrong statistic here.
+
+        **The column is read as a double first, because MariaDB rounds.** Over
+        an integer column MariaDB's ``stddev_samp`` answered **1.8708** where
+        the deviation is 1.87082869…, and 119266275.712 over the 20001 squares:
+        an exact-value argument gets an exact-value answer at MariaDB's own
+        scale, four decimal places over the integer column, so a small
+        deviation keeps few of its digits. Over a double the answer is a
+        double. MySQL gave the full value
+        either way. SQLAlchemy writes the cast as ``CAST(… AS DOUBLE)`` only
+        for a server that has one (MySQL 8.0.17, MariaDB 10.4.5) and leaves it
+        out, with a warning, for an older one — which is the rounded answer
+        again, not a failure.
+
+        Neither has a median that can sit in one aggregate ``SELECT``. MySQL
+        has no ``median`` and no ``percentile_cont`` at all (``FUNCTION
+        testdb.median does not exist``, and a syntax error at ``WITHIN
+        GROUP``). On MariaDB both ``median(col)`` and ``percentile_cont(0.5)
+        WITHIN GROUP (ORDER BY col)`` were syntax errors in an aggregate
+        ``SELECT``.
+        """
+        return {"stddev": lambda column: func.stddev_samp(cast(column, Double))}
+
     def build_index(
         self, name: str, table: Table, columns: Sequence[str]
     ) -> tuple[Index, tuple[str, ...]]:
@@ -2799,6 +2907,19 @@ class OracleBackend(Backend):
         there is nothing a value could be put into and come back out of.
         """
         return frozenset({"Time"})
+
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """``MEDIAN`` and ``STDDEV_SAMP``, both measured (#95).
+
+        On Oracle Database Free (``gvenzl/oracle-free:slim``), ``MEDIAN``
+        answered 5.5 over 1, 2, 4, 7, 10, 12 — the two middle values averaged —
+        3.5 and 6 over an integer and a ``NUMBER`` column, and exactly 100000000
+        over the 20001 squares, so it is exact. ``STDDEV_SAMP`` answered
+        sqrt(98 / 5) over the float, integer and ``NUMBER`` columns alike.
+        Oracle's own ``STDDEV`` is the sample deviation too; ``STDDEV_SAMP``
+        is used because its name says which one it is.
+        """
+        return {"median": func.median, "stddev": func.stddev_samp}
 
     def ddl_survives_refusal(self) -> bool:
         """Oracle commits DDL as it runs it, and nothing here can get in first.
@@ -3015,6 +3136,23 @@ class MSSQLBackend(Backend):
             text("EXEC sp_rename :existing, :wanted"), {"existing": table, "wanted": to}
         )
 
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """The sample standard deviation as SQL Server spells it, and no median (#95).
+
+        ``STDEV`` is the sample deviation (``STDEVP`` the population one): it
+        answered sqrt(98 / 5) over 1, 2, 4, 7, 10, 12 on SQL Server 2022, on
+        the float, integer and ``NUMERIC(12, 4)`` columns alike, and exactly
+        over the 20001 squares. ``stddev_samp`` and ``stddev`` are not
+        functions here.
+
+        ``PERCENTILE_CONT`` is exact — 5.5 over the six, exactly 100000000 over
+        the squares — but only as a window function: without ``OVER`` it is
+        refused (*"The function 'percentile_cont' must have an OVER clause"*),
+        and with ``OVER ()`` it answers once per row, which cannot sit in the
+        one-row ``SELECT`` a profile is. There is no ``MEDIAN``.
+        """
+        return {"stddev": func.stdev}
+
     def read_posture(self, engine: Engine, refusal: Refusal) -> None:
         """Refuse, before it runs, anything SQL Server does not plan as one read.
 
@@ -3191,6 +3329,38 @@ class ClickHouseBackend(Backend):
         prepare = conn.dialect.identifier_preparer.quote
         conn.execute(text(f"RENAME TABLE {prepare(table)} TO {prepare(to)}"))
 
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """The exact median over the column as ``Float64``, and ``stddevSamp`` (#95).
+
+        ClickHouse has several medians and only one is a median, measured on
+        25.3 over 1, 2, 4, 7, 10, 12 and over the 20001 squares 0..20000²:
+
+        * ``median`` is ``quantile``, a reservoir sample: 5.5 over six values,
+          but 101072862.5 over the squares, where the median is exactly
+          100000000 — an estimate, which this server does not report;
+        * ``medianExact`` answered **7.0** over the six, the upper of the two
+          middle values rather than their average;
+        * ``quantileExactInclusive`` (level 0.5 by default) answered 5.5 and
+          exactly 100000000, but refused a ``Decimal(12, 4)`` column outright
+          (``Illegal type Decimal(12, 4) of argument``).
+
+        So the column is converted first, and with ``toFloat64`` rather than
+        ``CAST(… AS DOUBLE)``: the cast refused a nullable column holding a null
+        (``Cannot convert NULL value to non-Nullable type``), where
+        ``toFloat64`` keeps the null and the aggregate skips it. That way the
+        median answered 5.5 and 6.0 over the two float columns, 3.5 over the
+        integer one, 6.0 over the decimal one and exactly 100000000 over the
+        squares. ``stddevSamp`` answered
+        sqrt(98 / 5) over all of them with no conversion; ``stddev`` is not a
+        function here.
+        """
+        return {
+            "median": lambda column: func.quantileExactInclusive(
+                func.toFloat64(column)
+            ),
+            "stddev": func.stddevSamp,
+        }
+
     def builds_indexes(self) -> bool:
         return False
 
@@ -3331,6 +3501,20 @@ class TrinoBackend(Backend):
         Stated as the driver's gap so that nobody later "fixes" Trino for it.
         """
         return frozenset({"LargeBinary"})
+
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """The sample standard deviation, and no median (#95).
+
+        Measured on Trino 476 against the memory catalog: ``stddev_samp``
+        answered sqrt(98 / 5) over 1, 2, 4, 7, 10, 12, on the float, integer
+        and ``DECIMAL(12, 4)`` columns alike.
+
+        Trino's only median is ``approx_percentile(col, 0.5)``, an estimate by
+        its own name, and it answered 7.0 over those six values where the
+        median is 5.5. ``median`` is not a function here and ``percentile_cont
+        … WITHIN GROUP`` is a syntax error.
+        """
+        return {"stddev": func.stddev_samp}
 
     def builds_indexes(self) -> bool:
         return False
@@ -3595,6 +3779,32 @@ class MonetDBBackend(Backend):
             _refuse_monetdb_write(refusal, cursor, statement, None)
             return False
 
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """``median_avg`` over the column read as a double, and ``stddev_samp`` (#95).
+
+        MonetDB has two medians and neither is right as it stands, measured on
+        2026-11-03 over 1, 2, 4, 7, 10, 12:
+
+        * ``median`` answered **4.0** — the lower of the two middle values, not
+          their average, so over an even count it is a different statistic;
+        * ``median_avg`` averages them and answered 5.5 over a float column,
+          4 over an integer one and exactly 100000000 over the 20001 squares
+          (so it is exact, not estimated), but over a ``DECIMAL(12, 4)`` column
+          holding 1.5 … 12.5 it answered **60000.0** where the median is 6.0 —
+          the decimal's scale is lost, by a factor of 10**4.
+
+        Read as a double, the decimal column answers 6.0, which is the cast
+        PostgreSQL makes for its own median
+        (:func:`_percentile_cont_median_of_doubles`). ``percentile_cont`` does
+        not exist here (``no such operator``). ``stddev_samp`` answered
+        sqrt(98 / 5) over the float, integer and decimal columns alike, and
+        ``stddev`` does not exist.
+        """
+        return {
+            "median": lambda column: func.median_avg(cast(column, Double)),
+            "stddev": func.stddev_samp,
+        }
+
 
 # ---------------------------------------------------------------------------
 # CrateDB
@@ -3840,6 +4050,23 @@ class CrateDBBackend(Backend):
         """
         return frozenset({"LargeBinary", "Time"})
 
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """The sample standard deviation, and no median (#95).
+
+        ``stddev_samp`` answered sqrt(98 / 5) over 1, 2, 4, 7, 10, 12 on the
+        float, integer and numeric columns alike (``stddev`` is the same
+        statistic here, measured, but ``stddev_samp`` says which one it is).
+
+        CrateDB's one median is ``percentile(col, 0.5)``, and it fails all
+        three tests, measured on 2026-11-03: it answered 7.0 over the six
+        values where the median is 5.5, 99494117.3 over the 20001 squares where
+        it is exactly 100000000 — an estimate, not a median — and over a
+        ``NUMERIC`` column it refused the statement (``Cannot cast value
+        `7.5000` to type `byte```). There is no ``median`` and no
+        ``percentile_cont``.
+        """
+        return {"stddev": func.stddev_samp}
+
     def builds_indexes(self) -> bool:
         return False
 
@@ -3957,6 +4184,17 @@ class FirebirdBackend(Backend):
         """
         origin = getattr(exc, "orig", exc)
         return _FIREBIRD_READ_ONLY in (getattr(origin, "gds_codes", None) or ())
+
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """The sample standard deviation, and no median (#95).
+
+        Measured on Firebird 5: ``stddev_samp`` answered sqrt(98 / 5) over 1, 2,
+        4, 7, 10, 12, on the floating-point column a loaded file makes, on an
+        integer one and on a ``NUMERIC(12, 4)`` one alike. ``median``, ``percentile_cont … WITHIN
+        GROUP`` and ``stddev`` were each refused as a ``Dynamic SQL Error``:
+        Firebird has no median aggregate to report.
+        """
+        return {"stddev": func.stddev_samp}
 
     def sees_new_tables_in_transaction(self) -> bool:
         """``False`` — and the transactional floor is *why*, not a casualty of it.
@@ -4290,6 +4528,23 @@ class YDBBackend(Backend):
         """
         return True
 
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """``stddev_samp`` over the column read as a double, and no median (#95).
+
+        Measured on local-ydb 26.1: ``stddev_samp`` answered sqrt(98 / 5) over
+        1, 2, 4, 7, 10, 12 in a float column and exactly over the 20001 squares,
+        but over a ``Decimal(12, 4)`` column it refused the whole statement
+        (``Type annotation``, ``issue_code: 1030``). Read as a ``Double`` the
+        same column answered sqrt(98 / 5), so the cast goes in, as it does for
+        the median on CockroachDB (:func:`_percentile_cont_median_of_doubles`).
+
+        YQL's ``median`` answered 5.5 over the six values, but 100007405 over
+        the squares, where the median is exactly 100000000: an estimate, which
+        is not reported. ``percentile(col, 0.5)`` is the same function and gave
+        the same answers. ``percentile_cont … WITHIN GROUP`` does not parse.
+        """
+        return {"stddev": lambda column: func.stddev_samp(cast(column, Double))}
+
     def unstorable_column_types(self) -> frozenset[str]:
         """YDB has no time-of-day type.
 
@@ -4451,6 +4706,18 @@ class ExasolBackend(Backend):
         """
         return frozenset({"LargeBinary"})
 
+    def optional_aggregates(self) -> Mapping[str, Any]:
+        """``MEDIAN`` and ``STDDEV_SAMP``, both measured (#95).
+
+        On Exasol 2026.1, ``MEDIAN`` answered 5.5 over 1, 2, 4, 7, 10, 12 —
+        the two middle values averaged — 3.5 and 6.0 over an integer and a
+        ``DECIMAL(12, 4)`` column, and exactly 100000000 over the 20001
+        squares, so it is exact. ``STDDEV_SAMP`` answered sqrt(98 / 5) over
+        the float, integer and decimal columns alike. ``STDDEV`` is the sample
+        deviation here too; ``STDDEV_SAMP`` says so by its name.
+        """
+        return {"median": func.median, "stddev": func.stddev_samp}
+
 
 _SQLITE = SQLiteBackend()
 
@@ -4468,9 +4735,10 @@ BACKENDS: dict[str, Backend] = {
     # `impostors` is where that is written down.
     "postgresql": PostgreSQLBackend(),
     # Both had #124's hole and both answer the gate's catalog questions,
-    # measured. CockroachDB has a dialect of its own; YugabyteDB arrives
-    # through PostgreSQL's `-YB-` impostor, which resolves to this entry.
-    "cockroachdb": PostgreSQLBackend(name="cockroachdb"),
+    # measured. CockroachDB has a dialect of its own, and a subclass of its own
+    # for the one answer it gives differently, its median (#95); YugabyteDB
+    # arrives through PostgreSQL's `-YB-` impostor, which resolves to this entry.
+    "cockroachdb": CockroachDBBackend(),
     "yugabytedb": PostgreSQLBackend(name="yugabytedb"),
     # The same hole and the same gate, through a dialect of its own, with row
     # security asked of its own catalog.
