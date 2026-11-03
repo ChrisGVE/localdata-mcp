@@ -285,6 +285,13 @@ rebuild it.
   MonetDB `Dec2025-SP3` (11.55.7). The CA and KDC helpers' inline scripts moved
   into files beside their Dockerfiles, and their packages are installed when the
   image is built rather than on every start.
+- **The endpoint tests run in a container too** (`docker/test/runner/Dockerfile`,
+  [#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)): Python 3.11 on
+  Debian bookworm, unixODBC with Microsoft's `msodbcsql18` from Microsoft's own
+  repository, MIT Kerberos, and every extra's locked dependencies in a
+  virtualenv outside the repository. The source is mounted at run time and never
+  copied, so the image cannot test stale code, and the host's OpenSSL and ODBC
+  no longer decide whether SQL Server can be tested.
 
 ### Removed
 

@@ -1,0 +1,9 @@
+# The runner is built with the repository root as its context, because the two
+# files it needs live there, and BuildKit reads this file — named after the
+# Dockerfile beside it — instead of the root .dockerignore, which is the
+# release image's. Everything else is excluded: the source is mounted at run
+# time, never copied, and sending the host .venv to the builder would cost
+# gigabytes for nothing.
+*
+!pyproject.toml
+!uv.lock
