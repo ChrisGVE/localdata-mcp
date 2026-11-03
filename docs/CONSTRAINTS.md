@@ -5659,9 +5659,10 @@ this process, and are a different mechanism.
 > now, against about 1.1 ms to run it. Between the two runs the same number moves by up to 30%, so
 > the added cost of a plain query is a few microseconds and not resolved more finely than that.
 
-> **Amended again 2026-11-03 — on DuckDB 2.0.0 a `PRAGMA` that reads is a `PRAGMA`, and a comment
-> is a token.** The kinds in the amendment above were measured on 1.5.5. Two of them moved on
-> 2.0.0, the version `uv.lock` resolves on Python 3.11 and later (3.10 still resolves 1.5.6).
+> **Amended again 2026-11-03 — on DuckDB 2.0.0 a `PRAGMA` that reads is a `PRAGMA`, a comment is
+> a token, and a `PIVOT` without `IN` is `MULTI`.** The kinds in the amendment above were measured
+> on 1.5.5. Three things moved on 2.0.0, the version `uv.lock` resolves on Python 3.11 and later
+> (3.10 still resolves 1.5.6).
 >
 > *A reading `PRAGMA`.* `extract_statements` on a bare connection gives `SELECT` on 1.5.5 for
 > `PRAGMA show_tables`, `PRAGMA table_info('x')`, `PRAGMA version` and `PRAGMA database_size`, and
@@ -5689,10 +5690,30 @@ this process, and are a different mechanism.
 > refused and nothing ran. The reader now drops comment tokens itself, which gives 2.0.0 the
 > offsets 1.5.5 gave. `EXPLAIN /* b */ ANALYZE COPY (SELECT 1) TO 'x.wal'` is still refused.
 >
-> Both are pinned on either version: `tests/test_duckdb_pragma_rephrase.py` asks the running parser
-> which way a reading `PRAGMA` goes and asserts that outcome, and
-> `tests/test_duckdb_explain_comments.py` holds the comment cases. Measured passing on 2.0.0
-> (Python 3.12) and 1.5.6 (Python 3.10).
+> *A `PIVOT` without `IN`.* The amendment above has `PIVOT t ON s USING count(*)` parse as a
+> `CREATE` and a `SELECT`. That is 1.5.5, and 1.5.6 gives the same, the `CREATE` with no source
+> text of its own. On 2.0.0 `extract_statements` gives one statement of kind `MULTI`, and so it
+> does for the lower-case spelling, after a leading comment, for `PIVOT_WIDER`, inside a
+> subquery (`SELECT * FROM (PIVOT t ON k USING sum(v))`) and after a `WITH`; the same five give
+> `CREATE, SELECT` on 1.5.6. With `IN ('a', 'b')` it is one `SELECT` on both. It stays refused,
+> because `MULTI` is not a kind the reader can vouch for, but on 2.0.0 the refusal named it
+> *"MULTI"* and nothing else. It now reads *"PIVOT without naming its values in an IN list, which
+> DuckDB does not parse as one query (name them, as in PIVOT t ON k IN ('a', 'b') USING sum(v);
+> SELECT DISTINCT k FROM t lists them)"*, on 1.5.6 followed by *"(DuckDB reads this as 2
+> statements: CREATE, SELECT)"*. The case is recognised from DuckDB's output, not a pattern over
+> the SQL: a statement the parser made (`MULTI`, or no source text) together with a `PIVOT`
+> keyword from the tokenizer, so `SELECT 1 AS pivot; CREATE TABLE x (a INTEGER)` is still named
+> `CREATE`. Through `query`, on both grants and both versions, `PIVOT sales ON region USING
+> sum(amount)` is refused in those words and leaves every file under the root byte-identical, and
+> `SELECT DISTINCT region FROM sales ORDER BY region` (`north`, `south`) and
+> `PIVOT sales ON region IN ('north', 'south') USING sum(amount)` (`[100, 250]`) answer
+> (`tests/test_duckdb_pivot_rephrase.py`).
+>
+> All three are pinned on either version: `tests/test_duckdb_pragma_rephrase.py` asks the running
+> parser which way a reading `PRAGMA` goes and asserts that outcome,
+> `tests/test_duckdb_explain_comments.py` holds the comment cases, and
+> `tests/test_duckdb_pivot_rephrase.py` the `PIVOT` ones. Measured passing on 2.0.0 (Python 3.12)
+> and 1.5.6 (Python 3.10).
 
 ---
 

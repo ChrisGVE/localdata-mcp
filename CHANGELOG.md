@@ -697,8 +697,10 @@ And twenty-eight found in this release's own code before it shipped:
 - **On DuckDB, `query` runs one statement per call, and an `EXPLAIN` only over a
   query** ([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137)). So
   `SELECT 1; SELECT 2` is refused, and so is `PIVOT … USING …` without an `IN`
-  list, which DuckDB reads as a `CREATE` and a `SELECT`; with
-  `IN ('a', 'b')` it is one query and answers. On DuckDB 2.0 a `PRAGMA` is
+  list, which DuckDB 1.5 reads as a `CREATE` and a `SELECT` and 2.0 as one
+  statement of kind `MULTI`; with `IN ('a', 'b')` it is one query and answers,
+  and the refusal says so, adding that `SELECT DISTINCT k FROM t` lists the
+  values to name. On DuckDB 2.0 a `PRAGMA` is
   refused even when it only reads; its refusal names the query that reads the
   same.
 

@@ -348,7 +348,10 @@ which is not equally far:
   `table_info`) a `SELECT`, and 2.0.0's calls it a `PRAGMA`, so on 2.0.0 it is refused, and the
   refusal names the same read asked as a query — `SHOW TABLES`, `SHOW ALL TABLES`,
   `DESCRIBE <table>`, `SELECT * FROM pragma_table_info('<table>')`, `pragma_version()`,
-  `pragma_database_size()`.
+  `pragma_database_size()`. A `PIVOT` without an `IN` list is refused on both versions, since
+  the parser expands it to find the values first (a `CREATE` and a `SELECT` on 1.5, one `MULTI`
+  statement on 2.0); its refusal gives the one-query form, `PIVOT t ON k IN ('a', 'b') USING
+  sum(v)`, and `SELECT DISTINCT k FROM t` to list the values.
 - **MySQL and MariaDB** open a read-only session, and they have to: DDL commits itself
   there, so a `CREATE TABLE` on a connection that never commits would otherwise be
   permanent. The session is not enough on its own: it still runs `INTO OUTFILE`, `SET GLOBAL`,
