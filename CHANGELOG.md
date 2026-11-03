@@ -390,7 +390,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And twenty-eight found in this release's own code before it shipped:
+And thirty-five found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -728,6 +728,26 @@ And twenty-eight found in this release's own code before it shipped:
   `cockroachdb` extra holds back. A file reached by its path rather than a URL
   is unaffected and still attaches on 2.0. On 2.1 nothing changes
   ([#140](https://github.com/ChrisGVE/localdata-mcp/issues/140)).
+- **On openGauss under Linux x86_64, a write refused through `query` is explained
+  as a refused write again**, naming `create`, `update` and `drop`, instead of
+  arriving as the server's `syntax error at or near "INSERT"`. The write was
+  always refused; what depended on the machine was the explanation. The check
+  looked for `DECLARE` in the server's error excerpt, which openGauss cuts from
+  the left, and psycopg2's cursor name carries `id()`: 12 hex digits on Linux
+  x86_64 against 9 on macOS, enough to push `DECLARE` out of the window. It now
+  reads the end of the declaration, `CURSOR … FOR <verb>`, which sits next to
+  the error and so stays in the excerpt wherever it is cut. A malformed `SELECT`
+  is still reported in the server's own words
+  ([#141](https://github.com/ChrisGVE/localdata-mcp/issues/141)).
+- **On PostgreSQL, CockroachDB and YugabyteDB, `SELECT SELECT 1` is reported as
+  the syntax error it is**, not as a refused write. The server objects to the
+  second `SELECT`, but its message names `"SELECT"`, the statement's first word,
+  beside the cursor's `FOR SELECT`, which is how a refused write looks. A
+  statement that opens with `SELECT`, `VALUES`, `TABLE` or `WITH` is now never
+  explained as a write, since a cursor is declared over exactly those. A
+  misspelled first word such as `SELEC 1` is still explained as a refused write
+  on all four PostgreSQL-family backends
+  ([#143](https://github.com/ChrisGVE/localdata-mcp/issues/143)).
 
 ### Known limitations
 
@@ -795,12 +815,6 @@ And twenty-eight found in this release's own code before it shipped:
   engine's line in its summary says nothing about the others
   ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46),
   [#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)).
-- **On openGauss under Linux x86_64, a write refused through `query` is reported as
-  the server's syntax error**, not as the refused-write explanation that names
-  `create`, `update` and `drop`. The write is still refused. The explanation depends
-  on the length of psycopg2's cursor name, which follows `id()`, and on macOS it is
-  short enough for the check to see `DECLARE`
-  ([#141](https://github.com/ChrisGVE/localdata-mcp/issues/141)).
 - **Db2 and OceanBase are eligible and unreachable** from a macOS host —
   measured, in `docs/CONSTRAINTS.md` §24 and §26.
 - **A DuckDB file with a `?` in its name opens and reads, but attached writable it

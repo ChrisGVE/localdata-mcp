@@ -2522,6 +2522,16 @@ the macOS host and 4 failed from the runner. §25.7's 76 passed is the host's fi
 the first Linux environment this suite has run in, and Linux x86_64 is where a server like this one
 is ordinarily deployed.
 
+> **Amended 2026-11-03 — fixed.** The helper now reads the declaration's tail, `CURSOR … FOR
+> <verb>`, which is in the excerpt wherever the server cuts it (§21.3's amendment has the mechanism
+> and the four engines' messages). `scripts/endpoint-run.sh localdata-test-opengauss` from the
+> runner after the fix: **77 passed, 9 skipped, 0 failed**, against 73 passed, 9 skipped and 4 failed
+> before it. The other engines that reach the helper, each in its own standard selection with the
+> fix (a temporary probe test ran alongside and is subtracted here): PostgreSQL 143 passed, 303
+> skipped; CockroachDB 57 passed, 29 skipped; YugabyteDB 77 passed, 9 skipped; 0 failed on each.
+> 286 of PostgreSQL's 303 skips are "Nothing is listening": its authentication modes, whose
+> services were not up in that run.
+
 ## §14 — The MCP 2026-07-28 specification, measured against this server (2026-07-29)
 
 The fifth MCP spec release landed on 2026-07-28: a **stateless protocol core**, Multi Round-Trip
@@ -3842,6 +3852,48 @@ is the real guard, is unchanged.
 
 Only openGauss exercises this path today: CockroachDB and YugabyteDB are reached through psycopg 3,
 which streams without declaring a server-side cursor at all.
+
+> **Amended 2026-11-03 — `declare` and `cursor` pinned the excerpt's head, and the last paragraph was
+> wrong ([#141](https://github.com/ChrisGVE/localdata-mcp/issues/141)).** The pair this section chose
+> did not pin one engine's words, but it pinned *where the server's excerpt starts*. openGauss quotes
+> the statement in a `LINE 1:` window cut from the left around the error, and psycopg2 names its
+> cursor after `id()`, 12 hex digits on Linux x86_64 against 9 on macOS. From the Linux runner every
+> openGauss refusal arrived as `...CLARE "c_7fe9e5ef3310_4c" CURSOR WITHOUT HOLD FOR INSERT INT...`,
+> with no `DECLARE`, so the four refusal tests failed there and passed on the macOS host (§13.7).
+>
+> The helper now reads the declaration's **tail**: `CURSOR`, optionally `WITH HOLD` or `WITHOUT
+> HOLD` (the only modifiers [PostgreSQL's `DECLARE`](https://www.postgresql.org/docs/current/sql-declare.html)
+> allows there; the others come before `CURSOR`), `FOR`, then the statement's first
+> word, which must also be the token the server quoted. The tail sits next to the error, so it is in
+> the window wherever the window starts. The leading-word check is unchanged.
+>
+> **A statement opening with `SELECT`, `VALUES`, `TABLE` or `WITH` is never recognised**, because a
+> cursor is declared over exactly those: `DECLARE` takes "a `SELECT` or `VALUES` command", `TABLE`
+> is `SELECT`'s shorthand and `WITH` opens one. `SELECT SELECT 1` is refused at its second `SELECT`, and its
+> message names `"SELECT"` beside `FOR SELECT`. Before this change PostgreSQL, CockroachDB and
+> YugabyteDB, whose messages keep `DECLARE`, explained that typo as a refused write. Their
+> `SELECT SELECT 1` messages, captured by the probe below and replayed through the old helper and
+> the new one, give `True` and `False` on each.
+>
+> **Every PostgreSQL-family backend reaches this helper, not openGauss alone.** Measured from
+> `docker/test/runner` with a probe wrapped around the helper, capturing the raw message per
+> statement:
+>
+> | Engine (driver) | `INSERT` through `query` arrives as | `DECLARE` in it |
+> |---|---|---|
+> | PostgreSQL 16 (psycopg 3) | `syntax error at or near "INSERT"` / `LINE 1: DECLARE "c_7f83167fc750_8e" CURSOR FOR INSERT INTO t429be0bc...` | yes, cut on the right |
+> | CockroachDB 26.3 (psycopg 3) | `at or near "insert": syntax error` / `DETAIL:  source SQL:` / `DECLARE "c_7f21760e1850_36" CURSOR FOR INSERT INTO …` | yes, uncut |
+> | YugabyteDB 2.25 (psycopg 3) | `syntax error at or near "INSERT"` / `LINE 1: DECLARE "c_7fd10c35a810_4d" CURSOR FOR INSERT INTO tf1f22dfc...` | yes, cut on the right |
+> | openGauss 7.0.0-RC3 (psycopg2) | `syntax error at or near "INSERT"` / `LINE 1: ...CLARE "c_7fe9e5ef3310_4c" CURSOR WITHOUT HOLD FOR INSERT INT...` | **no** |
+>
+> So psycopg 3 does declare a server-side cursor for a streamed read, on all three engines it serves
+> here. `CREATE` and `UPDATE` arrive the same way on all four. Two malformed reads, `SELECT , FROM t`
+> and `SELECT name FROM t WHERE`, were left as the server's message on all four.
+>
+> **Still misread, on all four: a misspelled first word.** `SELEC 1` arrives as `syntax error at or
+> near "SELEC"` beside `CURSOR FOR SELEC 1`, which is the shape of a refused write, and is explained
+> as one. This predates #141, since the excerpt for so short a statement keeps `DECLARE`. Tracked in
+> [#143](https://github.com/ChrisGVE/localdata-mcp/issues/143).
 
 ### 21.4 Everything else, and it really was everything
 

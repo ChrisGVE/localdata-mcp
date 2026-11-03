@@ -640,6 +640,22 @@ def _not_a_read(entry: Tagged) -> str:
     return f"{_NOT_A_READ} {_ARRIVED_TOO_LATE.format(name=backend.name)}"
 
 
+#: The end of a cursor declaration, as PostgreSQL's grammar lets it be written:
+#: ``CURSOR``, optionally ``WITH HOLD`` or ``WITHOUT HOLD``, then ``FOR`` and the
+#: statement. ``{verb}`` is the statement's own first word. This is the part of
+#: the declaration a server's error excerpt keeps wherever it cuts (see
+#: :func:`_objected_to_the_leading_verb`), because it sits right before the
+#: token the server objected to.
+_CURSOR_FOR_VERB = r"\bcursor\s+(?:with(?:out)?\s+hold\s+)?for\s+{verb}(?!\w)"
+
+#: The words a query opens with, which is what a cursor is declared over:
+#: PostgreSQL's ``DECLARE`` takes "a SELECT or VALUES command", ``TABLE name``
+#: is its documented shorthand for ``SELECT * FROM name``, and ``WITH`` opens a
+#: ``SELECT`` that has a common table expression. A statement that opens with
+#: one of them is the kind of statement the declaration accepts.
+_OPENS_A_QUERY = frozenset({"select", "values", "table", "with"})
+
+
 def _objected_to_the_leading_verb(message: str, sql: str) -> bool:
     """Whether the database refused the *kind* of statement, not its wording.
 
@@ -655,21 +671,48 @@ def _objected_to_the_leading_verb(message: str, sql: str) -> bool:
     wrong — never at its leading ``SELECT`` — so it falls through to the
     driver's message, exactly as an unrecognised phrasing does.
 
-    **The cursor marker is two words that must both appear, not one phrase**
-    (issue #58). This used to look for the literal ``cursor for``, which is
-    PostgreSQL's exact wording and nobody else's: openGauss declares the same
-    cursor as ``DECLARE "c_1" CURSOR WITHOUT HOLD FOR INSERT INTO …``, where the
-    two words are separated by modifiers, so the test missed it and a refused
-    write was reported as a syntax error the caller could not act on. Requiring
-    ``declare`` *and* ``cursor`` keeps the context this needs — it is still only
-    ever a cursor declaration being described — without pinning one engine's
-    phrasing of the words in between.
+    **What is read is the declaration's tail, ``CURSOR … FOR <verb>``, and never
+    its head.** The server quotes the statement in a ``LINE 1:`` excerpt, a
+    window it cuts from the left around the error position, and how much it
+    cuts depends on the length of what comes first. psycopg2 names its cursor
+    after ``id()``, which is 9 hex digits on macOS and 12 on Linux x86_64, and
+    those three characters push ``DECLARE`` out of openGauss's window: the
+    excerpt begins ``...ECLARE "c_7f2a04694ad0_1" CURSOR WITHOUT HOLD FOR
+    INSERT INT...`` (issue #141). The tail sits right before the objected-to
+    token, so it is in the window wherever the window starts, and matching it
+    still means a cursor declaration is what the server is describing.
+
+    Every PostgreSQL-family backend here reaches this: PostgreSQL, CockroachDB
+    and YugabyteDB through psycopg 3, openGauss through psycopg2. Two phrasings
+    of the tail have been seen, and the pattern takes both without pinning
+    either (issue #58, which first required the literal ``cursor for``):
+    ``CURSOR FOR INSERT`` from the three psycopg 3 engines and ``CURSOR WITHOUT
+    HOLD FOR INSERT`` from openGauss. ``WITH HOLD``, the one other modifier
+    PostgreSQL's grammar allows in that place, is accepted too.
+
+    Apart from the cut excerpt it exists to read, this is narrower than the
+    ``declare`` and ``cursor`` test it replaces: the leading word has to be the
+    one ``FOR`` hands the statement to, rather than appear anywhere in the
+    message.
+
+    **A statement that opens as a query is never a refused write**, whatever
+    the message says. ``SELECT SELECT 1`` is refused at its second ``SELECT``,
+    and its message names ``"SELECT"`` beside ``FOR SELECT`` — both halves of
+    the test above. But a cursor is declared over exactly that kind of
+    statement, so its kind cannot be what the server objected to, and the
+    caller has a typo to fix rather than a verb to change.
     """
     words = sql.strip().split(None, 1)
-    folded = message.lower()
-    if not words or "declare" not in folded or "cursor" not in folded:
+    if not words:
         return False
-    return f'"{words[0].lower()}"' in folded
+    verb = words[0].lower()
+    if verb in _OPENS_A_QUERY:
+        return False
+    folded = message.lower()
+    if f'"{verb}"' not in folded:
+        return False
+    tail = _CURSOR_FOR_VERB.format(verb=re.escape(verb))
+    return re.search(tail, folded) is not None
 
 
 def _missing_table(message: str) -> str | None:

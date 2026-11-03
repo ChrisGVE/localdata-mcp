@@ -1510,6 +1510,178 @@ def test_an_error_that_is_not_about_a_cursor_declaration_is_left_alone():
     )
 
 
+#: Refusals as a Linux x86_64 server receives them (#141), copied from endpoint
+#: runs in ``docker/test/runner``. The ``LINE 1:`` excerpt is a window the server
+#: cuts around the error, and the cursor is named after ``id()``, which is 12 hex
+#: digits there against 9 on macOS. openGauss cuts from the left, and the extra
+#: characters push ``DECLARE`` out of its window; PostgreSQL's excerpt for the
+#: same statements kept ``DECLARE`` and was cut on the right.
+_OPENGAUSS_LINUX_INSERT = (
+    'syntax error at or near "INSERT"\n'
+    'LINE 1: ...ECLARE "c_7f2a04694ad0_1" CURSOR WITHOUT HOLD FOR INSERT INT...\n'
+    "                                                             ^\n"
+)
+_OPENGAUSS_LINUX_CREATE = (
+    'syntax error at or near "CREATE"\n'
+    'LINE 1: ...ECLARE "c_7f2a04651790_5" CURSOR WITHOUT HOLD FOR CREATE TAB...\n'
+    "                                                             ^\n"
+)
+_OPENGAUSS_LINUX_UPDATE = (
+    'syntax error at or near "UPDATE"\n'
+    'LINE 1: ...CLARE "c_7fe9e5ea3a10_4e" CURSOR WITHOUT HOLD FOR UPDATE t03...\n'
+    "                                                             ^\n"
+)
+_POSTGRES_LINUX_INSERT = (
+    'syntax error at or near "INSERT"\n'
+    'LINE 1: DECLARE "c_7f83167fc750_8e" CURSOR FOR INSERT INTO t429be0bc...\n'
+    "                                               ^"
+)
+#: CockroachDB words the same refusal its own way — the objected-to word comes
+#: first and in lower case, and the whole declaration follows uncut.
+_COCKROACHDB_LINUX_INSERT = (
+    'at or near "insert": syntax error\n'
+    "DETAIL:  source SQL:\n"
+    'DECLARE "c_7f21760e1850_36" CURSOR FOR INSERT INTO t7d955f62_people '
+    "(name, department, salary) VALUES ('x', 'y', 1)\n"
+    "                                       ^\n"
+    "HINT:  try \\h DECLARE"
+)
+
+
+@pytest.mark.parametrize(
+    ("message", "sql"),
+    [
+        (_OPENGAUSS_REFUSAL, "INSERT INTO people VALUES (1)"),
+        (_OPENGAUSS_LINUX_INSERT, "INSERT INTO people VALUES (1)"),
+        (_OPENGAUSS_LINUX_CREATE, "CREATE TABLE t (a int)"),
+        (_OPENGAUSS_LINUX_UPDATE, "UPDATE t SET salary = 2"),
+        (_POSTGRES_LINUX_INSERT, "INSERT INTO t VALUES (1)"),
+        (_COCKROACHDB_LINUX_INSERT, "INSERT INTO t VALUES (1)"),
+    ],
+    ids=[
+        "opengauss-macos",
+        "opengauss-linux-insert",
+        "opengauss-linux-create",
+        "opengauss-linux-update",
+        "postgresql-linux-insert",
+        "cockroachdb-linux-insert",
+    ],
+)
+def test_a_refused_write_is_recognised_whatever_the_cursor_name_is(message, sql):
+    """The diagnosis must not depend on the machine the server runs on (#141).
+
+    The same openGauss refusal reaches a macOS server with ``DECLARE`` in the
+    excerpt and a Linux one without it, because the cursor name carries
+    ``id()``. What both excerpts keep is the part of the declaration next to
+    the error — ``CURSOR … FOR <verb>`` — and that is what has to be read.
+    """
+    assert loader_module._objected_to_the_leading_verb(message, sql) is True
+
+
+@pytest.mark.parametrize("hex_digits", range(1, 17))
+@pytest.mark.parametrize(
+    "between",
+    ["", "WITH HOLD ", "WITHOUT HOLD "],
+    ids=["cursor-for", "with-hold", "without-hold"],
+)
+def test_the_excerpt_may_be_cut_anywhere_before_the_cursor_keyword(hex_digits, between):
+    """Every left cut that still shows ``CURSOR`` is recognised.
+
+    The server decides where its window starts, from the error position and
+    the length of everything before it, so where the excerpt begins is not
+    ours to predict. Every cut is generated here — through the middle of
+    ``DECLARE``, through the cursor name, and exactly at ``CURSOR`` — for every
+    cursor-name length up to the sixteen hex digits a 64-bit ``id()`` can
+    reach, and for each modifier PostgreSQL's grammar allows between
+    ``CURSOR`` and ``FOR``.
+    """
+    name = f"c_{'a' * hex_digits}_1"
+    statement = f'DECLARE "{name}" CURSOR {between}FOR INSERT INTO people VALUES (1)'
+    sql = "INSERT INTO people VALUES (1)"
+    for cut in range(statement.index("CURSOR") + 1):
+        excerpt = statement if cut == 0 else f"...{statement[cut:]}"
+        message = f'syntax error at or near "INSERT"\nLINE 1: {excerpt}\n'
+        assert (
+            loader_module._objected_to_the_leading_verb(message, sql) is True
+        ), excerpt
+
+
+_POSTGRES_LINUX_MALFORMED_SELECT = (
+    'syntax error at or near ","\n'
+    'LINE 1: DECLARE "c_7f831519b590_91" CURSOR FOR SELECT , FROM t429be0...\n'
+    "                                                      ^"
+)
+_OPENGAUSS_LINUX_MALFORMED_SELECT = (
+    'syntax error at or near ","\n'
+    'LINE 1: ...c_7fe9e5b64550_4f" CURSOR WITHOUT HOLD FOR SELECT , FROM t03...\n'
+    "                                                             ^\n"
+)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [_POSTGRES_LINUX_MALFORMED_SELECT, _OPENGAUSS_LINUX_MALFORMED_SELECT],
+    ids=["postgresql-linux", "opengauss-linux-cut-at-the-name"],
+)
+def test_a_malformed_select_in_a_cut_excerpt_is_not_a_refused_write(message):
+    """Reading the excerpt more loosely must not make the helper wider.
+
+    A broken ``SELECT`` objects at its broken token, which is never its leading
+    word, so it stays the driver's message however much of the declaration the
+    server left in the window. Both messages were captured from live servers;
+    openGauss's is cut through the cursor name, with no ``DECLARE`` left.
+    """
+    assert (
+        loader_module._objected_to_the_leading_verb(message, "SELECT , FROM people")
+        is False
+    )
+
+
+#: A ``SELECT`` whose second word is ``SELECT``, as openGauss and PostgreSQL
+#: answered it in ``docker/test/runner`` (#141). The server objects to the
+#: *second* ``SELECT``, but the objected-to word is also the statement's first
+#: word, and the excerpt has the ``CURSOR … FOR SELECT`` tail any refused write
+#: has. PostgreSQL's kept ``DECLARE``, so the check this replaced misread it too.
+_OPENGAUSS_LINUX_SELECT_SELECT = (
+    'syntax error at or near "SELECT"\n'
+    'LINE 1: ... "c_7fe9df71cdd0_50" CURSOR WITHOUT HOLD FOR SELECT SELECT 1\n'
+    "                                                               ^\n"
+)
+_POSTGRES_LINUX_SELECT_SELECT = (
+    'syntax error at or near "SELECT"\n'
+    'LINE 1: DECLARE "c_7f83167e4850_92" CURSOR FOR SELECT SELECT 1\n'
+    "                                                      ^"
+)
+_COCKROACHDB_LINUX_SELECT_SELECT = (
+    'at or near "select": syntax error\n'
+    "DETAIL:  source SQL:\n"
+    'DECLARE "c_7f21740c1950_3a" CURSOR FOR SELECT SELECT 1\n'
+    "                                              ^"
+)
+
+
+@pytest.mark.parametrize(
+    ("message", "sql"),
+    [
+        (_OPENGAUSS_LINUX_SELECT_SELECT, "SELECT SELECT 1"),
+        (_POSTGRES_LINUX_SELECT_SELECT, "SELECT SELECT 1"),
+        (_COCKROACHDB_LINUX_SELECT_SELECT, "SELECT SELECT 1"),
+    ],
+    ids=["opengauss-linux", "postgresql-linux", "cockroachdb-linux"],
+)
+def test_a_query_whose_own_keyword_is_repeated_is_not_a_refused_write(message, sql):
+    """A cursor takes a query, so it never objects to a query's *kind*.
+
+    ``SELECT SELECT 1`` is refused at its second ``SELECT``, and the message
+    names ``"SELECT"`` — the statement's first word — beside the declaration's
+    ``FOR SELECT``. Read for those two alone, that is a refused write, and a
+    caller with a typo would be told to use ``create``. A statement that opens
+    as a query is one the declaration accepts in kind, so whatever the server
+    objected to in it was its wording.
+    """
+    assert loader_module._objected_to_the_leading_verb(message, sql) is False
+
+
 # ---------------------------------------------------------------------------
 # A backend that will not make a table without a primary key
 # ---------------------------------------------------------------------------
