@@ -1443,7 +1443,7 @@ requires-dist = [
     { name = "sqlalchemy-cockroachdb", marker = "extra == 'cockroachdb'", specifier = ">=2.0.4" },
     { name = "sqlalchemy-cratedb", marker = "extra == 'cratedb'", specifier = ">=0.44" },
     { name = "sqlalchemy-exasol", marker = "extra == 'exasol'", specifier = ">=7.1" },
-    { name = "sqlalchemy-firebirdsql", marker = "extra == 'firebird'", specifier = ">=0.1" },
+    { name = "sqlalchemy-firebirdsql", marker = "extra == 'firebird'", specifier = ">=0.3" },
     { name = "sqlalchemy-monetdb", marker = "extra == 'monetdb'", specifier = ">=2.1" },
     { name = "tabulate", marker = "extra == 'markdown'", specifier = ">=0.9" },
     { name = "trino", extras = ["sqlalchemy"], marker = "extra == 'trino'", specifier = ">=0.330" },

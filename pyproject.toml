@@ -142,7 +142,7 @@ cratedb = ["sqlalchemy-cratedb>=0.44"]
 #
 # The driver is not named here: the dialect requires it, and naming it again
 # would let the two drift.
-firebird = ["sqlalchemy-firebirdsql>=0.1"]
+firebird = ["sqlalchemy-firebirdsql>=0.3"]
 # The **second PostgreSQL driver family** in this project, and the only extra that
 # adds one. YugabyteDB's entry in tests/endpoints.py declined exactly this cost
 # and was addressed as plain PostgreSQL instead; openGauss cannot be, and the
