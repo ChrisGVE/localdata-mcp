@@ -303,6 +303,17 @@ rebuild it.
   `localdata-test-postgres-tls` and the keytab also holds
   `postgres/localdata-test-postgres-krb`. `docker/test/in-network.compose.yml`
   gives each run its own network and makes YDB advertise its service name.
+- **`scripts/endpoint-run.sh` replaces `scripts/endpoint-batch.sh`**
+  ([#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)). It runs one
+  database at a time under the machine-wide lock `/tmp/localdata-docker.lock`.
+  Each database is built, brought up in a compose project and network of its
+  own, tested by the runner on that network, and then removed together with its
+  image, any base image the run pulled, and, at the end, the runner and the build
+  cache the run created. The five batches and the macOS `DYLD_LIBRARY_PATH`
+  workaround for SQL Server are gone with the old script. `--keep` leaves one
+  database up and `--dispose` removes it; `--seed` loads the standard assets
+  into it through the new `scripts/seed_endpoint.py`, which uses the URL
+  `tests/endpoints.py` builds and the server's own `attach` and `create`.
 
 ### Removed
 
@@ -779,10 +790,11 @@ And twenty-eight found in this release's own code before it shipped:
   microsecond, so two instants a nanosecond apart become one value; the load
   warns when it cut one
   ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
-- **No single test run covers the backend catalogue.** This machine runs six
-  containers and starves them at around seven, so it takes five batches, and each
-  reports a green suite while the dialects it never reached stay silent
-  ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
+- **The backend catalogue is tested one database at a time.**
+  `scripts/endpoint-run.sh all` covers it in one invocation, but serially, and each
+  engine's line in its summary says nothing about the others
+  ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46),
+  [#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)).
 - **Db2 and OceanBase are eligible and unreachable** from a macOS host —
   measured, in `docs/CONSTRAINTS.md` §24 and §26.
 - **A DuckDB file with a `?` in its name opens and reads, but attached writable it

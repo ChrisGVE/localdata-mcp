@@ -3,9 +3,14 @@
 # One container per endpoint dialect, so no dialect is tested blind.
 # Ports are offset so nothing collides with a local instance of the same engine.
 #
-#   docker compose -f docker-compose.test.yml up -d            # all of them
+#   scripts/endpoint-run.sh postgres      # the usual way: build, up, test, remove
+#   scripts/endpoint-run.sh all           # every service, one at a time
+#
 #   docker compose -f docker-compose.test.yml up -d localdata-test-postgres
-#   docker compose -f docker-compose.test.yml down -v
+#   docker compose -f docker-compose.test.yml down -v --rmi local
+#
+# One database at a time on this machine, under /tmp/localdata-docker.lock;
+# CONTRIBUTING.md ("Endpoint tests") says why and how.
 #
 # Each service is READ-WRITE and seeded by the tests, not by this file: the
 # server's own verbs are what should create the tables, because a fixture that
@@ -396,6 +401,11 @@ services:
   # it does against a real cluster, which is the point — the alternative was to
   # pass `disable_discovery` from the client, and that would put a fact about
   # this compose file into the code path every YDB user runs.
+  #
+  # That holds from the host. From inside the compose network, where
+  # scripts/endpoint-run.sh runs the tests, `localhost` is the test container
+  # itself, so docker/test/in-network.compose.yml makes the node advertise its
+  # service name instead.
   localdata-test-ydb:
     build: docker/test/localdata-test-ydb
     image: localdata-test/ydb:local
@@ -409,9 +419,11 @@ services:
     # forever. Measured: healthy on first boot, permanently unhealthy after
     # `docker compose stop` and `up`.
     #
-    # This harness runs its containers in batches and rotates between them by
-    # stopping and starting, so a service that only survives being created is a
-    # trap laid for the next session rather than a saving. The default
+    # This harness used to rotate its containers in batches by stopping and
+    # starting them. scripts/endpoint-run.sh now creates and removes a container
+    # per run, but a stack brought up by hand from the host is still stopped and
+    # started, so a service that only survives being created is a trap laid for
+    # the next session rather than a saving. The default
     # disk-backed pdisk lives inside the container, is deleted with it, and comes
     # back after a restart — and it costs almost nothing: the container's
     # writable layer measures **6.17 MB** with the pdisk in it (`docker ps

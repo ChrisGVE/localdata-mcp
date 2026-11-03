@@ -90,9 +90,9 @@ uv sync --all-extras
 
 Every endpoint test skips itself when its container is not answering, so that run
 is green with several hundred skips and says nothing about any dialect. The
-endpoint batches are in `scripts/endpoint-batch.sh`; CONTRIBUTING.md has the
-detail, including why the catalogue cannot be run in one go
-([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
+endpoint suite runs through `scripts/endpoint-run.sh`, one database at a time,
+with the tests in a container; CONTRIBUTING.md has the detail, including why it
+is one at a time ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
 
 ## Issue and PR templates
 
@@ -177,7 +177,7 @@ Nothing walks a release for you, so this is the whole of it:
 
 1. Bring the version numbers into step — six values across five files, listed in
    `CONTRIBUTING.md` under *Versioning* — then re-run `uv lock`.
-2. Run the tests locally, including the endpoint batches, since nothing gates
+2. Run the tests locally, including `scripts/endpoint-run.sh all`, since nothing gates
    this branch.
 3. Push a `vX.Y.Z` tag. That is the only *push* that fires `publish-to-pypi.yml`'s
    PyPI job or `docker-publish.yml`, but it is not the only path to either: both
@@ -212,7 +212,8 @@ These are the known gaps, stated so a release does not walk into them:
    misleading file rather than a working gate. A release off this branch is
    therefore gated by whatever was run locally and written into the pull request,
    and by nothing else. Writing one is a matter of `uv sync --all-extras` and the
-   endpoint batches — not of restoring what was here.
+   endpoint suite, which `scripts/endpoint-run.sh` already runs in containers —
+   not of restoring what was here.
 2. ~~The `Dockerfile` is 2.x's and `latest` moves on any dispatch.~~ Fixed
    2026-11-02 ([#76](https://github.com/ChrisGVE/localdata-mcp/issues/76)); see
    [The Docker image](#the-docker-image).

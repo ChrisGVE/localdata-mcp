@@ -39,11 +39,11 @@ nothing, and a `Time` column rendered as `DATETIME`, so a time of day is stored 
 timestamp. The measurements stand in `CONSTRAINTS.md` §23, with the amendment that records
 the suspension, and the backend can return from git history once the dialect is fixed.
 
-Fifteen of the seventeen backends are reached through containers, and this machine will run
-six at a time before the Docker
-VM starves them, so **no single test run covers the catalogue** — it takes five batches once
-the authentication variants are counted, and each one reports a green suite while the
-dialects it never reached stay silent (issue #46).
+Fifteen of the seventeen backends are reached through containers, and this machine runs
+them **one at a time**: `scripts/endpoint-run.sh all` brings each database up in turn, with
+its tests running in a container, and removes it before the next. A green line for one
+engine says nothing about another, so a run's coverage is the list of services it names
+(issues #46, #139).
 
 ## The premise
 

@@ -223,50 +223,89 @@ green.
 every entry in `tests/endpoints.py`'s `TARGETS` — **twenty-four**, not fifteen:
 the fifteen containers plus the nine authentication-mode variants that four of
 them carry. That is where the 480 skips above come from, 20 × 24.
-`docker-compose.test.yml` defines the containers:
+`docker-compose.test.yml` defines the containers, one service per database and
+per authentication variant, plus two helpers (a certificate authority and a
+Kerberos KDC). Each service is built from `docker/test/<service>/Dockerfile`:
+the image is made when a run needs it and removed when the run is done, and the
+Dockerfile is what stays.
+
+**`scripts/endpoint-run.sh` runs them, one database at a time:**
+
+```bash
+scripts/endpoint-run.sh postgres               # one engine, the standard selection
+scripts/endpoint-run.sh all                    # every engine, one after another
+scripts/endpoint-run.sh mssql -- -x -k stats   # ad hoc: these pytest args instead
+scripts/endpoint-run.sh --seed --keep postgres # a seeded database left up to work against
+scripts/endpoint-run.sh --dispose postgres     # and gone again
+```
+
+For each service it:
+
+1. takes the machine-wide lock;
+2. builds the image;
+3. brings it up under a compose project of its own, so it has its own network
+   and never meets another stack running on the machine;
+4. waits for its healthcheck;
+5. runs pytest **in a container** on that network;
+6. then removes the containers, volumes, network and image, and any base image
+   the run had to pull, even when the tests fail or the run is interrupted.
+
+When the last service is done, the runner image goes too, with the build cache
+the run created. A service that needs a helper brings it up with it: the TLS
+PostgreSQL brings the CA, and the Kerberos one brings the KDC. The standard
+selection is `-m endpoint -k <name>`, which `tests/endpoints.py`'s `selection()`
+derives from `TARGETS`. Exit status is the worst pytest exit status across the
+services run.
+
+**One database at a time, machine-wide.** This machine is constrained, and a
+starved container fails the suite in ways that look exactly like broken code
+([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)). So every process
+that starts a test database takes the same lock, a directory made atomically
+with `mkdir`, and holds it only while its container is up. The script does this
+for you. Do the same by hand if you start a container yourself:
+
+```bash
+until mkdir /tmp/localdata-docker.lock 2>/dev/null; do sleep 20; done
+# ... one container up, its tests, then down ...
+rm -rf /tmp/localdata-docker.lock
+```
+
+`--keep` leaves its database up with the lock still held, so `--dispose` is
+what ends the session and releases it.
+
+**The tests run in a container, so the host's libraries do not matter.**
+`docker/test/runner/Dockerfile` is Python 3.11 on Debian bookworm. It has
+unixODBC, Microsoft's `msodbcsql18` from Microsoft's own repository, and MIT
+Kerberos, plus every extra's locked dependencies in a virtualenv outside the
+repository. The repository is mounted read-only at run time and never copied
+into the image, so the image cannot test stale code, and the host's `.venv` is
+never touched. This is what makes SQL Server testable from macOS. There,
+msodbcsql18 18.7 loads Homebrew's unversioned OpenSSL, which now points at
+OpenSSL 4, and refuses it with "OpenSSL library could not be loaded".
+
+Inside the runner, `tests/endpoints.py` addresses a database by its compose
+service name and container port, not by 127.0.0.1 and the published port.
+`LOCALDATA_TEST_IN_NETWORK=1` selects that, and the script sets it.
+`docker/test/in-network.compose.yml` is applied on top of the compose file and
+holds the two facts that differ in-network: a network per run, and the address
+YDB advertises.
+
+**Running pytest on the host still works** for every engine but SQL Server on
+macOS, and is the default mode of `tests/endpoints.py`:
 
 ```bash
 docker compose -f docker-compose.test.yml up -d localdata-test-postgres
 .venv/bin/python -m pytest -m endpoint -k postgres
-docker compose -f docker-compose.test.yml down
+docker compose -f docker-compose.test.yml down -v --rmi local
 ```
 
-**This machine will not run the whole catalogue at once.** Six containers run;
-at around seven the Docker VM starves them and the suite reports code failures
-that are not. That one measurement is what every "six at a time" and "five
-batches" in the other documents refers to. So the catalogue takes five batches
-once the authentication variants are counted, and each batch reports a green
-suite while the dialects it never reached stay silent
-([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
-`scripts/endpoint-batch.sh` holds the five batches — `a` through `e` — so they
-live in a script rather than in prose that has already gone stale twice:
+Take the lock first, as above.
 
-```bash
-./scripts/endpoint-batch.sh a          # one batch, then remove its images
-./scripts/endpoint-batch.sh all        # all five in sequence
-./scripts/endpoint-batch.sh a --keep   # leave the containers and images up
-```
-
-**SQL Server needs Microsoft's ODBC driver**, `msodbcsql18`
-(`brew tap microsoft/mssql-release && brew install msodbcsql18` on macOS). Version
-18.7 loads OpenSSL from Homebrew's unversioned `openssl`, which now points at
-OpenSSL 4. The driver refuses that, so every SQL Server target fails to connect
-with "OpenSSL library could not be loaded". The batch script handles this: on
-macOS it points `DYLD_LIBRARY_PATH` at `openssl@3` for the pytest run when that is
-installed and the variable is unset. Running pytest by hand, set it yourself:
-
-```bash
-DYLD_LIBRARY_PATH=/usr/local/opt/openssl@3/lib .venv/bin/python -m pytest -m endpoint -k mssql
-```
-
-Use `/opt/homebrew/opt/openssl@3/lib` on Apple silicon. Don't `brew link`
-openssl@3 to fix it: that changes the OpenSSL every other program on the machine
-uses.
-
-The fifteen images are about 32 GB, Exasol alone 12 GB, so the script removes them
-afterwards by default: re-download every time, and leave nothing behind. **Say in
-your PR which batches you actually ran** — a green run says nothing about a
-dialect it never reached.
+The upstream images come to about 32 GB, and Exasol alone is 12 GB. They are
+pulled when a run needs one that is not on the machine and removed when that run
+ends: re-download every time, and leave nothing behind. **Say in your PR which
+services you actually ran.** A green run says nothing about a database it never
+reached.
 
 ## Code standards
 
@@ -342,8 +381,8 @@ more that are not obvious from the code:
   git rebase upstream/new-v3
   ```
 - **Say which tests you ran.** For anything touching `dialects.py` or a reader,
-  name the endpoint batches — a Docker-free run reports green against every
-  dialect it never reached.
+  name the services you ran through `scripts/endpoint-run.sh` — a Docker-free
+  run reports green against every dialect it never reached.
 
 ### PR guidelines
 

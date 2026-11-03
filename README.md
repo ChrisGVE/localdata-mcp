@@ -825,9 +825,10 @@ uv sync --all-extras
 `-m 'not slow'` skips the volume suite. The endpoint tests skip themselves — with
 the command to start the container — when nothing is listening, so a Docker-free
 run is green with several hundred skips. `docker-compose.test.yml` has the
-containers; this machine runs six at a time and starves them at around seven, so
-the catalogue takes five batches
-([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
+containers and `scripts/endpoint-run.sh all` runs them, one database at a time,
+with the tests themselves in a container
+([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46),
+[#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)).
 
 **No workflow gates this branch**, so that local run is the only evidence there
 is. `.github/WORKFLOWS.md` says which workflows exist, which of them work, and
