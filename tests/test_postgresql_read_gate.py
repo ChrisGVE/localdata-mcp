@@ -79,10 +79,10 @@ def test_a_read_has_an_acceptable_shape(sql):
 @pytest.mark.parametrize(
     ("sql", "words"),
     [
-        ("SELECT 1; SELECT 2", "more than one statement"),
-        ("SELECT 1; COMMIT; SELECT 2", "more than one statement"),
-        ("SELECT 1;;", "more than one statement"),
-        ("SELECT ';'", "more than one statement"),  # the read this costs, said
+        ("SELECT 1; SELECT 2", "put a ';' before its end"),
+        ("SELECT 1; COMMIT; SELECT 2", "put a ';' before its end"),
+        ("SELECT 1;;", "put a ';' before its end"),
+        ("SELECT ';'", "put a ';' before its end"),  # the read this costs, said
         ("SELECT U&\"lo\\005fexport\"(1, '/tmp/x')", "Unicode escapes"),
         ('select u&"x"', "Unicode escapes"),
     ],

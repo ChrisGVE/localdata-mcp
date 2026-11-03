@@ -80,8 +80,8 @@ def test_a_read_has_an_acceptable_shape(sql):
 @pytest.mark.parametrize(
     ("sql", "words"),
     [
-        ("SELECT 1; SELECT 2", "more than one statement"),
-        ("SELECT 1;;", "more than one statement"),
+        ("SELECT 1; SELECT 2", "put a ';' before its end"),
+        ("SELECT 1;;", "put a ';' before its end"),
         ("SELECT 1 INTO OUTFILE '/tmp/x'", "OUTFILE"),
         ("select 1 into dumpfile '/tmp/x'", "OUTFILE"),
         ("TABLE t INTO OUTFILE '/tmp/x'", "OUTFILE"),
