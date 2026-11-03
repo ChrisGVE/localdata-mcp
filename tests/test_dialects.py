@@ -308,10 +308,11 @@ HOSTILE_PASSWORD = "p@ss:w/rd?x#y"
 #: and never the database. The database was silently arriving truncated. Two
 #: values rather than one is what lets the database be asserted at all.
 #:
-#: **Both characters are fixed upstream in SQLAlchemy 2.1** (issue #11234), which
-#: has not reached a stable release — this project pins 2.0.51. When it moves,
-#: this constant can go back to being the hostile password; see
-#: :func:`test_a_url_carries_a_database_name_that_two_characters_can_still_break`.
+#: **Both characters are fixed upstream in SQLAlchemy 2.1** (issue #11234), and
+#: this project now pins 2.1.6 (#70). The fix is measured by
+#: :func:`test_a_url_carries_a_database_name_with_a_question_mark_or_an_at_sign`.
+#: This constant still avoids the two characters; it may go back to being the
+#: hostile password, a change this file has not made.
 HOSTILE_NAME = "n#me:with/parts"
 
 
@@ -635,50 +636,22 @@ def _unescaped_fields(line: str) -> list[str]:
     return fields
 
 
-def test_a_url_carries_a_database_name_that_two_characters_can_still_break():
-    """The limit :data:`HOSTILE_NAME` exists for, pinned so it cannot widen quietly.
+def test_a_url_carries_a_database_name_with_a_question_mark_or_an_at_sign():
+    """The database component of a URL string round-trips ``?`` and ``@`` (#70).
 
-    ``URL.create`` quotes the username, the password and the query values and
-    renders the database **raw**; ``make_url`` unquotes the first two and leaves
-    the database alone in turn. The pair is self-consistent and it means two
-    characters cannot appear in a database name in any SQLAlchemy URL string,
-    however carefully it is built:
+    Measured on SQLAlchemy 2.1.6, 2026-11-03: ``URL.create`` then ``make_url`` on
+    ``render_as_string``, for each database below, with a password and without,
+    returned the database and the host unchanged. The same measurement on 2.0.51
+    and 2.0.55 truncated ``a?b`` to ``a``, and gave database ``None`` and host
+    ``b`` for ``a@b`` without a password. Upstream quotes the component on the way
+    out and unquotes it on the way back, symmetrically (sqlalchemy/sqlalchemy#11234).
 
-    * a ``?`` ends the database and begins the query — the name arrives
-      **truncated**, with no error anywhere;
-    * an ``@`` is read as the userinfo separator, so with no password before it
-      the host becomes whatever followed the ``@``.
-
-    Percent-encoding is not a way round it, because nothing decodes the database
-    on the way back — an encoded name reaches the driver encoded.
-
-    It bounds the URL strings a caller may hand to ``attach`` — the only place a
-    URL is parsed rather than built — and **not** the local-file path:
-    ``Backend.open_file`` passes a ``URL`` *object* to ``create_engine`` and never
-    renders it, which is why
-    :func:`test_a_question_mark_in_a_filename_survives_the_generic_file_open`
-    passes on this same version. Where it reaches for real is Firebird, whose
-    database component is a **filesystem path**.
-
-    **It is a fact about the version, and the version is the one that ships.**
-    Upstream reported it as sqlalchemy/sqlalchemy#11234 — whose reproducer is
-    this exact case, on a SQLite *filename* — and fixed it in commit
-    ``feb17832f``, milestone **2.1**: the database is quoted on the way out and
-    unquoted on the way back, symmetrically. That has not reached a stable
-    release. The newest stable is **2.0.51**, which is what this project pins and
-    what these assertions describe; 2.1 exists as betas only, and **2.1.0b3 was
-    measured in a throwaway virtualenv to round-trip every case below**,
-    including the two that fail here.
-
-    So this test is expected to **fail on the day this project moves to 2.1**,
-    and that failure is the signal rather than a regression: delete the two
-    assertions at the bottom, move their cases up into the surviving list, and
-    drop the Firebird caveat from ``CONSTRAINTS.md`` §25 and from
-    :data:`HOSTILE_NAME`.
+    This is the assertion the earlier pin was waiting for: it was written to fail
+    on the day the project moved to 2.1, and that day is the one it records.
     """
     from sqlalchemy.engine import URL
 
-    def round_trip(database: str, password: str | None = "pw"):
+    def round_trip(database: str, password: str | None):
         url = URL.create(
             "postgresql+psycopg",
             username="u",
@@ -689,16 +662,21 @@ def test_a_url_carries_a_database_name_that_two_characters_can_still_break():
         )
         return make_url(url.render_as_string(hide_password=False))
 
-    # Survive: a fragment marker, the field separator, a path separator, a space
-    # and a literal percent. This is what makes HOSTILE_NAME usable.
-    for benign in ("plain", "a#b", "a:b", "a/b", "a b", "a%2Fb", HOSTILE_NAME):
-        assert round_trip(benign).database == benign, benign
-
-    # Do not, and silently. Both are fixed in 2.1 and neither is fixed in any
-    # release this project can pin — see the docstring before changing them.
-    assert round_trip("a?b").database == "a"
-    assert round_trip("a@b", password=None).database is None
-    assert round_trip("a@b", password=None).host == "b"
+    for database in (
+        "plain",
+        "a#b",
+        "a:b",
+        "a/b",
+        "a b",
+        "a%2Fb",
+        "a?b",
+        "a@b",
+        HOSTILE_NAME,
+    ):
+        for password in ("pw", None):
+            parsed = round_trip(database, password)
+            assert parsed.database == database, (database, password)
+            assert parsed.host == "127.0.0.1", (database, password)
 
 
 def test_applying_a_mode_environment_puts_the_machine_back_as_it_was():
