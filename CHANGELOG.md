@@ -614,6 +614,24 @@ And twenty-two found in this release's own code before it shipped:
   words or names, even inside a quoted string; the refusal says which. Such a
   view is still listed by `directory`, with `rows: null` and a warning, because
   counting it would run the function.
+- **On DuckDB, a read-only `query` could overwrite a pending WAL and lose
+  committed rows** ([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137)).
+  DuckDB exempts the database's own `.wal` from the switched-off file access, so
+  `COPY (SELECT 'g') TO '<file>.wal' (USE_TMP_FILE false)` went through, on a file
+  attached read-only too. That was accepted in
+  [#106](https://github.com/ChrisGVE/localdata-mcp/issues/106) because the write
+  stayed inside the database's own files. It is not harmless when a writer died
+  before its checkpoint: the WAL still held a committed row, the `COPY` answered
+  `ok` and replaced it, and the next open of the file had lost the row without an
+  error. `EXPLAIN ANALYZE` of the same `COPY` wrote the WAL as well. The DuckDB
+  reader now asks DuckDB's own parser (`extract_statements`) what a statement is
+  before running it, and runs it only if it is exactly one query, or an `EXPLAIN`
+  of one. Every spelling of a read that answered before still answers: `WITH`,
+  `FROM t`, `SUMMARIZE`, `DESCRIBE`, `SHOW`, a `PRAGMA` that reads, `CALL`,
+  `EXPLAIN [ANALYZE] SELECT`. `LOAD`, `SET VARIABLE`, `PREPARE`, `EXECUTE`,
+  `VACUUM` and `ANALYZE` answered `ok` before and are refused now, as is more than
+  one statement in a call. The refusal names what DuckDB read the statement as
+  (`docs/CONSTRAINTS.md` §29.4, amendment of 2026-11-03).
 
 ### Known limitations
 
@@ -668,17 +686,14 @@ And twenty-two found in this release's own code before it shipped:
   ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
 - **Db2 and OceanBase are eligible and unreachable** from a macOS host —
   measured, in `docs/CONSTRAINTS.md` §24 and §26.
-- **On DuckDB, `query` can still write one file: the database's own `.wal`.**
-  DuckDB exempts that path from the switched-off file access, and no setting
-  closes it ([#106](https://github.com/ChrisGVE/localdata-mcp/issues/106),
-  `docs/CONSTRAINTS.md` §29.4). Accepted rather than worked around: the write stays
-  inside the database's own files, and the only other remedy is matching SQL text.
-  Unchanged on DuckDB 2.0.0. It can lose data even so: when a writer stopped without a
-  checkpoint and left committed rows in that WAL, `COPY … TO '<file>.wal'
-  (USE_TMP_FILE false)` on a read-only attach replaces the WAL, and the next open of the
-  file no longer has those rows (§36, measured on 1.5.5 and 2.0.0). A DuckDB file with a `?` in its name opens and
-  reads, but attached writable it cannot commit, because DuckDB names its WAL
-  differently (§29.3).
+- **A DuckDB file with a `?` in its name opens and reads, but attached writable it
+  cannot commit**, because DuckDB names its WAL differently (`docs/CONSTRAINTS.md`
+  §29.3).
+- **On DuckDB, `query` runs one statement per call, and an `EXPLAIN` only over a
+  query** ([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137)). So
+  `SELECT 1; SELECT 2` is refused, and so is `PIVOT … USING …` without an `IN`
+  list, which DuckDB reads as a `CREATE` and a `SELECT`; with
+  `IN ('a', 'b')` it is one query and answers.
 
 ## [2.1.0] - unreleased
 

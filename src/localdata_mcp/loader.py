@@ -2570,8 +2570,11 @@ class Workspace:
         CrateDB reads its first keyword, because its grammar makes that keyword
         the statement's kind (:func:`dialects._cratedb_first_keyword`, #118).
         SQL Server asks its own ``SHOWPLAN_XML`` what each statement in the
-        batch is (:func:`dialects._refuse_mssql_write`, #122). Both are kept in
-        :mod:`dialects`, and nothing here parses.
+        batch is (:func:`dialects._refuse_mssql_write`, #122). DuckDB has a
+        posture, but it leaves the database's own WAL writable to a ``COPY``, so
+        its reader also asks DuckDB's own parser what the statement is
+        (:func:`dialects._refuse_duckdb_non_read`, #137). All of these are kept
+        in :mod:`dialects`, and nothing here parses.
 
         **The whole result comes back.** Bounding it here was tried and removed:
         a row cap measures the wrong dimension, since a hundred rows of a

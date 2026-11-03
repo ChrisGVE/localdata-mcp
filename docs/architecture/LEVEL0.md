@@ -333,16 +333,17 @@ which is not equally far:
   and `access_mode` covers only its own database. So every DuckDB connection, read and
   write, has `enable_external_access` switched off and `lock_configuration` on, and a
   statement reaches nothing but the database it was attached as
-  ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). One file stays reachable:
-  DuckDB exempts the database's own `.wal`, and a `COPY` can still write there
-  (`CONSTRAINTS.md` §29.4, [#106](https://github.com/ChrisGVE/localdata-mcp/issues/106)).
-  This is accepted, not pending: the write cannot reach any file the database does not
-  already own, and closing it would mean inspecting SQL text, which this server does not do
-  outside CrateDB's first-keyword gate (below), where the grammar makes it exact.
-  It is revisited only if DuckDB stops exempting that path. DuckDB 2.0.0 still exempts it.
-  Within the database's own files it can still lose data: if a writer stopped without a
-  checkpoint and left committed rows in the WAL, `COPY … (USE_TMP_FILE false)` replaces
-  that WAL and the rows are gone the next time the file opens (`CONSTRAINTS.md` §36).
+  ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). DuckDB still exempts the
+  database's own `.wal`, and a `COPY … (USE_TMP_FILE false)` onto it replaced a WAL that
+  held a committed row, which the next open of the file had lost
+  ([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137), superseding the acceptance
+  in [#106](https://github.com/ChrisGVE/localdata-mcp/issues/106)). So the DuckDB reader asks
+  DuckDB's own parser what each statement is before running it, and runs only one statement
+  the parser calls a query (a `SELECT`, which takes in `WITH`, `FROM t`, `SUMMARIZE`,
+  `DESCRIBE`, `SHOW` and a `PRAGMA` that reads), a `CALL`, or an `EXPLAIN` of a query, since
+  `EXPLAIN ANALYZE` runs what it explains. The classification is DuckDB's, not a keyword list,
+  so it cannot disagree with the engine about what the statement is (`CONSTRAINTS.md` §29.4;
+  the data loss measured on DuckDB 1.5.5 and 2.0.0 in §36).
 - **MySQL and MariaDB** open a read-only session, and they have to: DDL commits itself
   there, so a `CREATE TABLE` on a connection that never commits would otherwise be
   permanent. The session is not enough on its own: it still runs `INTO OUTFILE`, `SET GLOBAL`,
@@ -552,7 +553,7 @@ this server built is a database it holds.
 | Backend | Reached as | What it could not be asked portably |
 |---|---|---|
 | SQLite | file, URL | `query_only` and an authorizer; `VACUUM INTO`, which is what makes it the one backend `save` works on; residency from the page count; `typeof()` for mixed columns; the declared type *is* the affinity |
-| DuckDB | file, URL | One DuckDB configuration for both connections of a slot, because DuckDB refuses a second connection to one file under a different one ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)). A read-only datasource carries `access_mode=read_only` on both, refused by DuckDB itself at open time. A writable one carries it on neither, and its read connection opens every transaction `READ ONLY` and refuses a statement that would end it — DuckDB refuses the write rather than this server discarding it, which is stronger than the generic transactional floor. And on both connections, `enable_external_access` off and the configuration locked, because DuckDB's table functions and `COPY` open files without asking `paths.py` ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). And the refusal of `create(type='index')`, since duckdb-engine reflects no index at all, so `directory` could not list one nor `drop` find it — and `directory` lists none, an index the file already held included ([#112](https://github.com/ChrisGVE/localdata-mcp/issues/112)). Everything else is the generic answer |
+| DuckDB | file, URL | One DuckDB configuration for both connections of a slot, because DuckDB refuses a second connection to one file under a different one ([#79](https://github.com/ChrisGVE/localdata-mcp/issues/79)). A read-only datasource carries `access_mode=read_only` on both, refused by DuckDB itself at open time. A writable one carries it on neither, and its read connection opens every transaction `READ ONLY` and refuses a statement that would end it — DuckDB refuses the write rather than this server discarding it, which is stronger than the generic transactional floor. And on both connections, `enable_external_access` off and the configuration locked, because DuckDB's table functions and `COPY` open files without asking `paths.py` ([#105](https://github.com/ChrisGVE/localdata-mcp/issues/105)). And a read connection that runs a statement only if DuckDB's own parser calls it one query, a `CALL`, or an `EXPLAIN` of a query, because the database's own `.wal` stays writable to a `COPY` ([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137)). And the refusal of `create(type='index')`, since duckdb-engine reflects no index at all, so `directory` could not list one nor `drop` find it — and `directory` lists none, an index the file already held included ([#112](https://github.com/ChrisGVE/localdata-mcp/issues/112)). Everything else is the generic answer |
 | PostgreSQL | URL | a read-only session and a catalog-driven reader gate ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)) |
 | MySQL / MariaDB | URL | a read-only session, since DDL commits itself; an index over a *prefix*, since `TEXT` cannot be a key |
 | Oracle | URL | `VARCHAR2` sized from the data, since `CLOB` cannot be a comparison key; and the admission that DDL survives refusal |

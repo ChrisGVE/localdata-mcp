@@ -1110,7 +1110,10 @@ def _seal_duckdb(dbapi_conn, _record) -> None:  # noqa: ANN001 - SQLAlchemy's si
     does **not** stop DuckDB using its own files — the database, its WAL, its
     spill directory — which is all a datasource needs. Measured on DuckDB
     1.5.5: reads, ``CREATE``/``DROP``/``CHECKPOINT`` on a writable file, and a
-    sort spilling past ``memory_limit`` all still work. ``lock_configuration
+    sort spilling past ``memory_limit`` all still work. The exemption also lets
+    a ``COPY`` write the WAL, which is why the reader refuses every statement
+    that is not a query before it runs (:func:`_refuse_duckdb_non_read`,
+    #137). ``lock_configuration
     = true`` then pins every other setting (``temp_directory``,
     ``memory_limit``, extension autoloading), so no statement can move it.
 
@@ -1161,8 +1164,8 @@ def _seal_duckdb(dbapi_conn, _record) -> None:  # noqa: ANN001 - SQLAlchemy's si
 #: "transaction is launched in read-only mode", and nothing reaches the file.
 _DUCKDB_READ_ONLY_BEGIN = "BEGIN TRANSACTION READ ONLY"
 
-#: What a statement refused by :func:`_refuse_transaction_control` was asking
-#: to do, worded to follow "This statement asks to" in ``query``'s refusal.
+#: What a statement refused for ending its transaction was asking to do,
+#: worded to follow "This statement asks to" in ``query``'s refusal.
 _DUCKDB_TRANSACTION_CONTROL = "begin, commit or roll back a transaction of its own"
 
 
@@ -1186,91 +1189,170 @@ def _begin_read_only(dbapi_conn, _record) -> None:  # noqa: ANN001 - SQLAlchemy'
     dbapi_conn.begin = partial(dbapi_conn.execute, _DUCKDB_READ_ONLY_BEGIN)
 
 
-def _refuse_transaction_control(refusal: Refusal, connection: Any, sql: str) -> None:
-    """Refuse a statement that would end the read-only transaction it runs in.
+#: The statement kinds the DuckDB reader runs as they stand. Measured on
+#: 1.5.5, DuckDB's parser calls every spelling of a query a ``SELECT``:
+#: ``WITH``, ``FROM t``, ``TABLE t``, ``VALUES``, ``SUMMARIZE``, ``DESCRIBE``,
+#: ``SHOW``, ``PIVOT … IN (…)``, ``UNPIVOT``, and every ``PRAGMA`` that only
+#: reads (``table_info``, ``show_tables``, ``database_size``, ``version``).
+#: ``CALL f()`` is its spelling of ``SELECT * FROM f()``, so it reaches no
+#: function a ``SELECT`` cannot; ``CHECKPOINT`` is one, and does what closing
+#: the datasource does (``docs/CONSTRAINTS.md`` §29.4). ``EXPLAIN`` is not
+#: here, because ``EXPLAIN ANALYZE`` runs what it explains: see
+#: :func:`_duckdb_explained`.
+_DUCKDB_RUNS = frozenset({"SELECT", "CALL"})
 
-    ``BEGIN TRANSACTION READ ONLY`` holds only until something ends the
-    transaction, and DuckDB runs every statement of a multi-statement string:
-    measured on 1.5.5, ``COMMIT; INSERT … RETURNING …`` committed the empty
-    read-only transaction and then ran the ``INSERT`` in autocommit, so the
-    row was kept. ``ROLLBACK`` does the same.
+#: How a refusal names each DuckDB statement kind whose name alone does not say
+#: what it asks for, worded to follow "This statement asks to". Every other
+#: kind is named by itself, ``MERGE_INTO`` as ``MERGE INTO``.
+_DUCKDB_KIND_WORDS = {
+    "CREATE_FUNC": "CREATE FUNCTION",
+    "COPY": "COPY (a result is written to a file by passing path= to query)",
+    "COPY_DATABASE": "COPY FROM DATABASE",
+    "EXPORT": "EXPORT DATABASE",
+    "LOAD": "INSTALL or LOAD an extension",
+    "PRAGMA": "run a PRAGMA that is not a query",
+    "SET": "change a setting (SET, RESET, USE or SET VARIABLE)",
+    "VACUUM": "VACUUM or ANALYZE",
+}
 
-    Which statements those are is DuckDB's answer, not this server's:
-    ``extract_statements`` is DuckDB's own parser, and every statement it
-    classifies as ``TRANSACTION`` — ``BEGIN``, ``COMMIT``, ``ROLLBACK``,
-    ``ABORT``, ``END`` — is refused before any of the string runs. Nothing
-    else is, because inside the read-only transaction DuckDB refuses every
-    write by itself. Measured escapes that do not get out: a prepared
-    ``COMMIT`` is a syntax error, ``DETACH`` of the default database and
-    ``USE`` of another catalog are refused, and configuration is locked by
-    :func:`_seal_duckdb`.
 
-    A statement DuckDB cannot parse raises its own parser error here, which
-    is the error running it would have raised.
+def _duckdb_kind_words(kind: str) -> str:
+    """A DuckDB statement kind in the words a refusal names it by."""
+    return _DUCKDB_KIND_WORDS.get(kind, kind.replace("_", " "))
+
+
+def _duckdb_explained(connection: Any, explain: str) -> str | None:
+    """The kind of the statement an ``EXPLAIN`` explains, or ``None`` if unclear.
+
+    Asked because ``EXPLAIN ANALYZE`` *runs* the statement: measured on 1.5.5,
+    ``EXPLAIN ANALYZE COPY (SELECT 'g') TO '<file>.wal' (USE_TMP_FILE false)``
+    wrote the WAL, and DuckDB's parser calls it ``EXPLAIN`` whatever it
+    explains. The Python API does not hand back the explained statement, so
+    this finds where it begins with DuckDB's own tokenizer, which skips
+    whitespace and comments, and gives the rest back to DuckDB's parser. The
+    grammar has three prefixes, all measured: ``EXPLAIN``, ``EXPLAIN
+    ANALYZE``, and ``EXPLAIN (options)`` such as ``(FORMAT json, ANALYZE)``.
+    A parenthesised query, ``EXPLAIN (SELECT 1)``, looks like the third, so
+    the text after the group is tried first and the text including it second;
+    the first that parses as one statement decides.
+
+    **Fail-closed is the invariant.** A prefix read wrongly leaves text that
+    does not parse as one statement, or parses as something that is not a
+    query, and either answer refuses. No statement DuckDB explains begins with
+    ``(`` unless it is a query, so the second try cannot turn a write into a
+    read.
     """
     import duckdb
 
-    kinds = [statement.type for statement in connection.extract_statements(sql)]
-    if duckdb.StatementType.TRANSACTION in kinds:
-        refusal.what = _DUCKDB_TRANSACTION_CONTROL
-        raise duckdb.PermissionException(
-            f"query may not {_DUCKDB_TRANSACTION_CONTROL}."
-        )
+    offsets = [offset for offset, _kind in duckdb.tokenize(explain)]
+
+    def word(index: int) -> str:
+        found = re.match(r"\w+|\S", explain[offsets[index] :])
+        return found.group(0).upper() if found else ""
+
+    if not offsets or word(0) != "EXPLAIN":
+        return None
+    candidates = [1]
+    if len(offsets) > 1 and word(1) == "ANALYZE":
+        candidates = [2]
+    elif len(offsets) > 1 and word(1) == "(":
+        depth, index = 0, 1
+        while index < len(offsets):
+            depth += {"(": 1, ")": -1}.get(word(index), 0)
+            index += 1
+            if depth == 0:
+                break
+        candidates = [index, 1]
+    for index in candidates:
+        if index >= len(offsets):
+            continue
+        try:
+            inner = connection.extract_statements(explain[offsets[index] :])
+        except duckdb.ParserException:
+            continue
+        if len(inner) == 1:
+            return inner[0].type.name
+    return None
 
 
-#: Statement kinds that only read, so cannot be the one a read-only transaction
-#: refused. Everything else in a refused string is a candidate.
-_DUCKDB_READS = frozenset({"SELECT", "EXPLAIN", "RELATION", "LOGICAL_PLAN"})
+def _duckdb_read_refusal(connection: Any, sql: str) -> str | None:
+    """What running ``sql`` on the reader would ask to do, or ``None`` for a read.
 
-#: The one DuckDB statement kind whose name is not the SQL that spells it.
-_DUCKDB_KIND_WORDS = {"CREATE_FUNC": "CREATE FUNCTION"}
+    Worded to follow "This statement asks to" in ``query``'s refusal. Every
+    answer comes from DuckDB's own parser, ``extract_statements``, which runs
+    nothing (pinned by ``tests/test_duckdb_reader_gate.py``). One statement is
+    expanded while it is parsed: ``PRAGMA import_database`` reads the
+    directory's ``schema.sql``, a read the seal refuses on this connection, so
+    it raises DuckDB's permission error here. A statement the parser cannot
+    parse raises its own parser error, which is the error running it would
+    have raised. In order:
+
+    1. **A statement that ends the transaction**, anywhere in the string:
+       ``BEGIN``, ``COMMIT``, ``ROLLBACK``, ``ABORT``, ``END``, all of kind
+       ``TRANSACTION``. ``BEGIN TRANSACTION READ ONLY`` holds only until
+       something ends it, and DuckDB runs every statement of a string:
+       measured on 1.5.5, ``COMMIT; INSERT … RETURNING …`` committed the empty
+       transaction, then ran the ``INSERT`` in autocommit, and the row was
+       kept (#79).
+    2. **The first statement that is not a query** (#137). The read-only
+       transaction and ``access_mode=read_only`` refuse a row change and DDL,
+       and the seal (:func:`_seal_duckdb`) refuses another file, but none of
+       them refuses a ``COPY`` onto the database's own ``.wal``. Measured on
+       1.5.5, and on 2.0.0 in #137: with a committed row still in the WAL, ``COPY (SELECT
+       'g') TO '<file>.wal' (USE_TMP_FILE false)`` replaced it, answered
+       ``ok``, and the next open of the file had lost the row. ``LOAD``, ``SET
+       VARIABLE``, ``PREPARE``, ``EXECUTE``, ``VACUUM`` and a ``PRAGMA`` that
+       is not a query answered ``ok`` as well, and none of them reads. So only
+       :data:`_DUCKDB_RUNS` runs; a string of several statements names them
+       all, because one statement can be several to DuckDB (``PIVOT`` without
+       ``IN`` is a ``CREATE`` and a ``SELECT``).
+    3. **More than one statement**, even all of them queries: DuckDB answers
+       with the last one's rows alone, so the others ran for nothing the
+       caller can see.
+    4. **An ``EXPLAIN`` of anything but a query** (:func:`_duckdb_explained`).
+
+    A string that parses to no statement at all, such as a lone comment, is
+    left to DuckDB, which runs nothing and so answers no rows.
+    """
+    statements = connection.extract_statements(sql)
+    kinds = [statement.type.name for statement in statements]
+    if "TRANSACTION" in kinds:
+        return _DUCKDB_TRANSACTION_CONTROL
+    several = f"DuckDB reads this as {len(kinds)} statements: {', '.join(kinds)}"
+    for kind in kinds:
+        if kind not in _DUCKDB_RUNS and kind != "EXPLAIN":
+            named = _duckdb_kind_words(kind)
+            return f"{named} ({several})" if len(kinds) > 1 else named
+    if len(kinds) > 1:
+        return f"run {len(kinds)} statements ({', '.join(kinds)}) in one call"
+    if kinds == ["EXPLAIN"]:
+        explained = _duckdb_explained(connection, statements[0].query)
+        if explained != "SELECT":
+            what = (
+                f"{article_for(explained)} {explained.replace('_', ' ')} statement"
+                if explained
+                else "a statement that is not a query"
+            )
+            return (
+                f"EXPLAIN {what} (EXPLAIN is answered over a query only, "
+                f"because EXPLAIN ANALYZE runs the statement it explains)"
+            )
+    return None
 
 
-def _name_refused_write(refusal: Refusal, context: Any) -> None:
-    """Name the write DuckDB's read-only transaction refused (issue #116).
+def _refuse_duckdb_non_read(refusal: Refusal, connection: Any, sql: str) -> None:
+    """Refuse ``sql`` before it runs unless it is exactly one query.
 
-    DuckDB refuses a write inside ``BEGIN TRANSACTION READ ONLY`` by itself,
-    which is the guard (:func:`_begin_read_only`), but in its own words:
-    "TransactionContext Error: Cannot write to database … - transaction is
-    launched in read-only mode". That speaks of a transaction to an agent that
-    opened none and names no verb to write with. Recording what was attempted
-    on :class:`Refusal` lets ``query`` answer in the same words it uses for
-    the statements :func:`_refuse_transaction_control` refuses.
-
-    Recognised by the exception's **class**, ``duckdb.TransactionException``,
-    never by its prose. DuckDB's Python exceptions carry no error code, so the
-    class is the most structured signal it gives. On a connection whose every
-    transaction is read-only and which may not end one, it has one cause: the
-    write. A write-write conflict needs a write, ``BEGIN``, ``COMMIT`` and
-    ``ROLLBACK`` are refused before they run, and the other one DuckDB raises,
-    "Current transaction is aborted", needs an earlier failure in the same
-    transaction, which ``query`` never has: it runs one string per transaction
-    and DuckDB stops that string at its first error.
-
-    The read-only *slot's* refusal is not this one. ``access_mode=read_only``
-    refuses a write as ``InvalidInputException`` ("attached in read-only
-    mode"), a class far too broad to recognise a write by, so it is left as
-    DuckDB words it.
-
-    Which statement it was is DuckDB's own parser's answer, as in
-    :func:`_refuse_transaction_control`: the first in the string whose kind
-    is not a read, since DuckDB stops at the first statement it refuses.
+    What counts, and why, is :func:`_duckdb_read_refusal`'s to say. Raises
+    DuckDB's own ``PermissionException``, a DBAPI ``Error``, so SQLAlchemy
+    wraps it and ``query`` explains it as a refused write.
     """
     import duckdb
 
-    if not isinstance(context.original_exception, duckdb.TransactionException):
-        return
-    if context.connection is None or context.statement is None:
-        return
-    connection = context.connection.connection.dbapi_connection
-    kinds = [
-        statement.type.name
-        for statement in connection.extract_statements(context.statement)
-    ]
-    written = next((kind for kind in kinds if kind not in _DUCKDB_READS), None)
-    if written is None:
-        return
-    refusal.what = _DUCKDB_KIND_WORDS.get(written, written.replace("_", " "))
+    refused = _duckdb_read_refusal(connection, sql)
+    if refused is not None:
+        refusal.what = refused
+        raise duckdb.PermissionException(f"query may not {refused}.")
 
 
 @dataclass(frozen=True)
@@ -1363,32 +1445,32 @@ class DuckDBBackend(Backend):
         so the answer and the outcome agree.
 
         Two hooks, for the two halves: :func:`_begin_read_only` makes every
-        transaction read-only, and :func:`_refuse_transaction_control` refuses
-        the statements that would end one early. Installed on a read-only
+        transaction read-only, and :func:`_refuse_duckdb_non_read` refuses,
+        before it runs, every statement DuckDB's own parser does not call a
+        query — the ones that would end the transaction early (#79), and the
+        ones neither the transaction nor the seal refuses, such as a ``COPY``
+        onto the database's own ``.wal`` (#137). Installed on a read-only
         slot's reader as well, where ``access_mode=read_only`` already refuses
-        every write — one posture for the reader however the slot was granted.
+        a row change — one posture for the reader however the slot was granted.
 
-        A third names what the read-only transaction refused, so ``query``
-        answers in its own words rather than DuckDB's
-        (:func:`_name_refused_write`, issue #116).
+        The refusal is worded by this server, so ``query`` answers in its own
+        words rather than DuckDB's, which speak of a transaction to an agent
+        that opened none (#116). A query that writes all the same, such as
+        ``SELECT nextval('s')``, is still refused by the read-only transaction,
+        in DuckDB's words.
         """
         event.listen(engine, "connect", _begin_read_only)
-        event.listen(
-            engine,
-            "handle_error",
-            lambda context: _name_refused_write(refusal, context),
-        )
 
         @event.listens_for(engine, "do_execute")
         def _with_parameters(cursor, statement, _parameters, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
             connection = context.root_connection.connection.dbapi_connection
-            _refuse_transaction_control(refusal, connection, statement)
+            _refuse_duckdb_non_read(refusal, connection, statement)
             return False
 
         @event.listens_for(engine, "do_execute_no_params")
         def _without_parameters(cursor, statement, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
             connection = context.root_connection.connection.dbapi_connection
-            _refuse_transaction_control(refusal, connection, statement)
+            _refuse_duckdb_non_read(refusal, connection, statement)
             return False
 
     def optional_aggregates(self) -> Mapping[str, Any]:

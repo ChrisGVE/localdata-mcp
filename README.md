@@ -378,8 +378,11 @@ Changing a slot goes through `create`, `update` and `drop`, which is what
 that could be reached around, and each backend goes as far as it can: SQLite
 refuses at statement preparation through an authorizer, DuckDB opens a
 read-only datasource `access_mode=read_only`, runs `query` on a writable one in a
-`READ ONLY` transaction, and has its own file access (`read_csv`, `COPY … TO`)
-switched off on every connection, MySQL and MariaDB open a read-only session
+`READ ONLY` transaction, has its own file access (`read_csv`, `COPY … TO`)
+switched off on every connection, and runs a statement only if DuckDB's own
+parser calls it one query, a `CALL`, or an `EXPLAIN` of a query, because a `COPY`
+onto the database's own `.wal` got past the rest and could lose committed rows
+([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137)), MySQL and MariaDB open a read-only session
 because their DDL commits itself, ClickHouse carries `readonly=1` because it has
 no transaction to withhold, Firebird reads in a read-only transaction, and
 CrateDB, which has neither transactions nor a read-only session, refuses any

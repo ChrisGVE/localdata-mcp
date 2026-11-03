@@ -5555,6 +5555,106 @@ SQL itself, which this server avoids by design. Filed as
 `INTO OUTFILE`, `load_file` — are not covered here. They run as the database server's user, not as
 this process, and are a different mechanism.
 
+> **Amended 2026-11-03 — the #106 acceptance is superseded for `COPY`, and the DuckDB reader now
+> classifies every statement with DuckDB's own parser before running it
+> ([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137)).** The acceptance rested on the
+> write staying inside the database's own files. That holds while the WAL is empty. It does not
+> when the WAL still holds a committed transaction, which is what a writer killed before its
+> checkpoint leaves behind. Measured on DuckDB 1.5.5 through `query` on a file attached read-only
+> (the same was measured on 2.0.0 in #137): a child process inserts a third row with
+> `checkpoint_threshold = '1GB'` and exits with `os._exit(0)`, so the row lives only in `w.db.wal`.
+> `SELECT` through `query` answers three rows. Plain `COPY (SELECT 'g') TO '<root>/w.db.wal'` is
+> refused, because DuckDB writes through `tmp_w.db.wal`, which is not exempt. With
+> `(USE_TMP_FILE false)` it answers `{"ok": true, "columns": ["Count"], "rows": [[1]]}` and
+> replaces the WAL. The same slot still answers three rows, but after `detach`, DuckDB opens the
+> file with two, read-only or writable, and reports no error. That is committed data lost by a
+> verb that only reads.
+>
+> No setting closes it (above), so the reader asks DuckDB's parser what each statement is
+> (`extract_statements`, giving a `StatementType` per statement) and runs it only if it is exactly
+> one statement of a read kind. That is a check on the SQL, which this section said the server
+> avoids. It is not a keyword list: the classification is DuckDB's, made by the parser that is
+> about to run the statement, so it cannot disagree with DuckDB about what the statement is.
+> `extract_statements` runs nothing. Classifying `CREATE TABLE made …` leaves no table, and
+> classifying a `COPY … TO` leaves no file (pinned in `tests/test_duckdb_reader_gate.py`). It does
+> read a file for one statement. Of the 45 `PRAGMA` functions `duckdb_functions()` lists, each sent with placeholder
+> arguments, 15 parse to a `SELECT` (every one a read), 26 to a `PRAGMA`, `copy_database` to
+> `TRANSACTION, COPY_DATABASE, COPY_DATABASE, TRANSACTION`, two do not parse with placeholders
+> (`show`, `json_execute_serialized_sql`), and `import_database` is expanded while it is parsed,
+> from the directory's `schema.sql`. Unsealed, an export of one table parses to `TRANSACTION, CREATE, COPY, TRANSACTION`. On the reader the
+> seal refuses that read (*"Permission Error: Cannot access file …/schema.sql - file system
+> operations are disabled by configuration"*), on both grants, and the exported table does not
+> land. A statement the parser cannot parse raises DuckDB's parser error, the error running it
+> would give, so `SELEC 1` still answers `Parser Error: syntax error at or near "SELEC"`.
+>
+> **What each kind does, measured through `query` before the change, on both grants.** DuckDB's
+> parser calls every spelling of a query `SELECT`: `WITH … SELECT`, `FROM t`, `TABLE t`,
+> `VALUES (1)`, `SUMMARIZE t`, `DESCRIBE t`, `SHOW t`, `SHOW TABLES`, `PIVOT … IN (…)`, `UNPIVOT`,
+> and every `PRAGMA` that only reads (`table_info`, `show_tables`, `database_size`, `version`,
+> `storage_info`). All of them answered and still answer. The other kinds, and the decision for
+> each:
+>
+> | Kind (DuckDB's name) | Spelled | Before | Now |
+> |---|---|---|---|
+> | `CALL` | `CALL pragma_table_info('t')`, `CHECKPOINT`, `FORCE CHECKPOINT` | answered | **answered** |
+> | `EXPLAIN` | `EXPLAIN [ANALYZE] SELECT …`, `EXPLAIN (FORMAT json) SELECT …` | answered | **answered** |
+> | `EXPLAIN` | `EXPLAIN ANALYZE COPY (SELECT 'g') TO '<file>.wal' (USE_TMP_FILE false)` | answered, **wrote the WAL** | refused |
+> | `EXPLAIN` | `EXPLAIN COPY …`, `EXPLAIN INSERT …` | answered, or refused by DuckDB | refused |
+> | `COPY` | `COPY … TO '<file>.wal' (USE_TMP_FILE false)` | answered, **wrote the WAL** | refused |
+> | `COPY`, `EXPORT`, `ATTACH`, `LOAD` (`INSTALL`) | another file | refused by the seal | refused |
+> | `LOAD` | `LOAD json` | answered | refused |
+> | `SET` | `SET`, `RESET`, `USE`, `SET VARIABLE` | `SET VARIABLE` answered; the rest refused by DuckDB | refused |
+> | `PRAGMA` | `PRAGMA enable_profiling`, `force_checkpoint`, `disable_checkpoint_on_shutdown` | not a query to the parser | refused |
+> | `VACUUM` | `VACUUM`, `ANALYZE` | answered | refused |
+> | `PREPARE`, `EXECUTE` | `PREPARE p AS SELECT 1`, `EXECUTE p` | answered | refused |
+> | `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`, `DETACH` | | refused by DuckDB | refused |
+> | `TRANSACTION` | `BEGIN`, `COMMIT`, … | refused (#79) | refused, same words |
+> | two or more statements | `SELECT 1; SELECT 2` | answered with the last one's rows | refused |
+>
+> Why each decision:
+>
+> - **`CALL` runs.** `CALL f()` is DuckDB's spelling of `SELECT * FROM f()`, so refusing it
+>   would close nothing that `SELECT` does not already reach. `CHECKPOINT` is a `CALL`, and
+>   measured with a WAL holding a committed row: on a read-only slot it changes neither file; on a
+>   writable one it folds the WAL into the database, to the same bytes `detach` writes (the database
+>   file's SHA-256 prefix after the `CHECKPOINT`, `fe739ea94e5a`, is the one a plain `SELECT` then
+>   `detach` leaves), and the row is kept.
+> - **`EXPLAIN` runs over a query only.** `EXPLAIN ANALYZE` runs the statement it explains, and
+>   measured above, it wrote the WAL. The parser calls every `EXPLAIN` `EXPLAIN`, whatever it
+>   explains, and the Python API does not hand back the explained statement. So the reader finds
+>   where it begins with DuckDB's own tokenizer (`EXPLAIN`, `EXPLAIN ANALYZE` and
+>   `EXPLAIN (options)` are the three prefixes the grammar takes) and puts the rest back to the
+>   parser. Anything but one `SELECT` is refused. A prefix read wrongly fails closed: what is left
+>   does not parse as one statement, or does not parse as a `SELECT`.
+> - **`LOAD`, `SET`, a non-query `PRAGMA`, `VACUUM`, `PREPARE` and `EXECUTE` are refused.**
+>   None of them reads. Several answered `ok`: `LOAD`, `SET VARIABLE`, `VACUUM`, `ANALYZE`,
+>   `PREPARE` and `EXECUTE`. A prepared statement also outlived its call: `EXECUTE p`, sent as a
+>   separate `query` after `PREPARE p AS SELECT 1`, answered `[[1]]`, so whatever one call
+>   prepared, a later one could run without its text ever reaching this check.
+> - **More than one statement is refused**, even when every one is a query: DuckDB answers with the
+>   last statement's rows and nothing else, so the others ran for nothing the caller can see. A
+>   single statement can be several to DuckDB: `PIVOT t ON s USING count(*)` is a `CREATE` (of the
+>   value list) and a `SELECT`, and is refused. Its refusal names both. The same `PIVOT` with
+>   `IN ('a', 'b')` is one `SELECT` and answers.
+>
+> The refusal is worded by the server, as the #116 refusals are: *"query reads; it does not write.
+> This statement asks to COPY (a result is written to a file by passing path= to query), which is
+> refused here even on a writable datasource."* On a read-only slot that replaces DuckDB's
+> *"attached in read-only mode"* for a row change or DDL, since the statement no longer reaches
+> DuckDB. A query that writes all the same is still refused by the read-only transaction, in
+> DuckDB's words: `SELECT nextval('s')` answers *"Cannot execute statement of type "SELECT" on
+> database "w" which is attached in read-only mode!"* on a read-only slot and *"TransactionContext
+> Error: … transaction is launched in read-only mode"* on a writable one.
+>
+> **What it costs**, measured on 1.5.5 by timing the check alone on a raw connection: the median of
+> 7 repetitions of 2000 calls, taken twice to show the spread. The reader already asked
+> the parser once per statement for #79, so the cost that matters is the difference. A short
+> `SELECT`: 11.4 and 14.9 µs before, 16.0 and 19.1 µs now, against 347 and 433 µs to run it. A
+> 200-column `SELECT`: 622 and 683 µs before, 635 and 700 µs now, against about 16.6 ms to run it.
+> `EXPLAIN ANALYZE SELECT` pays for a second parse and the tokenizer: 15 µs before, 86 to 93 µs
+> now, against about 1.1 ms to run it. Between the two runs the same number moves by up to 30%, so
+> the added cost of a plain query is a few microseconds and not resolved more finely than that.
+
 ---
 
 ## §30 — A date from a typed format is stored the way a CSV date is (2026-10-30)
