@@ -230,8 +230,11 @@ def test_every_duckdb_engine_is_sealed_off_from_other_files(tmp_path, writable):
             f"COPY (SELECT 1) TO '{copied}'",
         ):
             with engine.connect() as connection:
+                # The DBAPI cursor, past the reader's statement gate, which
+                # refuses a COPY before the seal is reached (#137).
+                cursor = connection.connection.dbapi_connection.cursor()
                 with pytest.raises(Exception, match="disabled by configuration"):
-                    connection.execute(text(statement))
+                    cursor.execute(statement)
         assert not copied.exists()
     finally:
         engines.dispose()
