@@ -36,7 +36,7 @@
 # its own, in the compose file's order; the CA and the KDC are helpers and are
 # never run on their own.
 #
-# The standard selection for a service is `-m endpoint -k <selection>`, where
+# The standard selection for a service is `-q -rs -m endpoint -k <selection>`, where
 # the selection comes from tests/endpoints.py (`selection()`), so the mapping
 # from a service to its tests lives in one place. Everything after `--`
 # replaces it.
@@ -455,7 +455,9 @@ for service in "${SERVICES[@]}"; do
 		if [[ $rc -eq 0 && $ADHOC -eq 1 ]]; then
 			run_tests "$log" "${PYTEST_ARGS[@]}" || rc=$?
 		elif [[ $rc -eq 0 && $SEED -eq 0 ]]; then
-			run_tests "$log" -q -m endpoint -k "$selection" || rc=$?
+			# -rs lists every skip with its reason: a skipped test reads like a
+			# passing one in a summary line, so the reasons are printed with it.
+			run_tests "$log" -q -rs -m endpoint -k "$selection" || rc=$?
 		fi
 	else
 		rc=1
