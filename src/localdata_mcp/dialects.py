@@ -1236,6 +1236,52 @@ def _duckdb_kind_words(kind: str) -> str:
     return _DUCKDB_KIND_WORDS.get(kind, kind.replace("_", " "))
 
 
+#: How a refused PIVOT without an ``IN`` list is named, worded to follow
+#: "This statement asks to". DuckDB cannot know such a PIVOT's columns until it
+#: has read the pivoted column's values, so its parser expands the statement:
+#: measured, into a ``CREATE`` with no text of its own and a ``SELECT`` on
+#: 1.5.5 and 1.5.6, and into one statement of kind ``MULTI`` on 2.0.0, which a
+#: refusal naming the kind alone left unexplained. With its values named the
+#: same PIVOT parses as one ``SELECT`` on both versions and answers
+#: (``tests/test_duckdb_pivot_rephrase.py``).
+_DUCKDB_UNLISTED_PIVOT = (
+    "PIVOT without naming its values in an IN list, which DuckDB does not "
+    "parse as one query (name them, as in PIVOT t ON k IN ('a', 'b') USING "
+    "sum(v); SELECT DISTINCT k FROM t lists them)"
+)
+
+#: The keywords that begin DuckDB's PIVOT statement.
+_DUCKDB_PIVOT_KEYWORDS = frozenset({"PIVOT", "PIVOT_WIDER"})
+
+
+def _duckdb_unlisted_pivot(statement: Any, sql: str) -> bool:
+    """Whether a refused ``statement`` is DuckDB's expansion of a PIVOT with no ``IN``.
+
+    Both halves come from DuckDB. The statement is one the parser made rather
+    than one the caller wrote: kind ``MULTI`` (2.0.0), or a statement with no
+    source text (the ``CREATE`` 1.5.x adds). And DuckDB's tokenizer finds a
+    ``PIVOT`` keyword in its text, so ``'PIVOT'`` inside a string or a comment
+    does not count. Measured on both versions, a PIVOT inside a subquery or
+    after a ``WITH`` expands the same way, which is why the keyword is looked
+    for anywhere rather than as the first word. Wrong either way, this changes
+    only the words of a refusal, never whether the statement is refused.
+    """
+    import duckdb
+
+    if statement.type.name != "MULTI" and statement.query.strip():
+        return False
+    text = statement.query or sql
+    for offset, kind in duckdb.tokenize(text):
+        found = re.match(r"\w+", text[offset:])
+        if (
+            kind == duckdb.token_type.keyword
+            and found is not None
+            and found.group(0).upper() in _DUCKDB_PIVOT_KEYWORDS
+        ):
+            return True
+    return False
+
+
 def _duckdb_explained(connection: Any, explain: str) -> str | None:
     """The kind of the statement an ``EXPLAIN`` explains, or ``None`` if unclear.
 
@@ -1325,8 +1371,10 @@ def _duckdb_read_refusal(connection: Any, sql: str) -> str | None:
        VARIABLE``, ``PREPARE``, ``EXECUTE``, ``VACUUM`` and a ``PRAGMA`` that
        is not a query answered ``ok`` as well, and none of them reads. So only
        :data:`_DUCKDB_RUNS` runs; a string of several statements names them
-       all, because one statement can be several to DuckDB (``PIVOT`` without
-       ``IN`` is a ``CREATE`` and a ``SELECT``).
+       all, because one statement can be several to DuckDB: on 1.5.x a
+       ``PIVOT`` without ``IN`` is a ``CREATE`` and a ``SELECT``, and on 2.0.0
+       it is one statement of kind ``MULTI``. Either way its refusal says so
+       in plain words, with the one-query form (:func:`_duckdb_unlisted_pivot`).
     3. **More than one statement**, even all of them queries: DuckDB answers
        with the last one's rows alone, so the others ran for nothing the
        caller can see.
@@ -1340,9 +1388,13 @@ def _duckdb_read_refusal(connection: Any, sql: str) -> str | None:
     if "TRANSACTION" in kinds:
         return _DUCKDB_TRANSACTION_CONTROL
     several = f"DuckDB reads this as {len(kinds)} statements: {', '.join(kinds)}"
-    for kind in kinds:
+    for statement, kind in zip(statements, kinds):
         if kind not in _DUCKDB_RUNS and kind != "EXPLAIN":
-            named = _duckdb_kind_words(kind)
+            named = (
+                _DUCKDB_UNLISTED_PIVOT
+                if _duckdb_unlisted_pivot(statement, sql)
+                else _duckdb_kind_words(kind)
+            )
             return f"{named} ({several})" if len(kinds) > 1 else named
     if len(kinds) > 1:
         return f"run {len(kinds)} statements ({', '.join(kinds)}) in one call"
