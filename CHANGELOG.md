@@ -627,8 +627,13 @@ And twenty-eight found in this release's own code before it shipped:
   reader now asks DuckDB's own parser (`extract_statements`) what a statement is
   before running it, and runs it only if it is exactly one query, or an `EXPLAIN`
   of one. Every spelling of a read that answered before still answers: `WITH`,
-  `FROM t`, `SUMMARIZE`, `DESCRIBE`, `SHOW`, a `PRAGMA` that reads, `CALL`,
-  `EXPLAIN [ANALYZE] SELECT`. `LOAD`, `SET VARIABLE`, `PREPARE`, `EXECUTE`,
+  `FROM t`, `SUMMARIZE`, `DESCRIBE`, `SHOW`, `CALL`, `EXPLAIN [ANALYZE] SELECT`.
+  A `PRAGMA` that only reads, such as `PRAGMA show_tables` or
+  `PRAGMA table_info('t')`, answers on DuckDB 1.5 and is refused on 2.0, whose
+  parser calls it a `PRAGMA` where 1.5's called it a `SELECT`; the refusal names
+  the same read asked as a query: `SHOW TABLES`, `SHOW ALL TABLES`,
+  `DESCRIBE t`, `SELECT * FROM pragma_table_info('t')`, `pragma_version()`,
+  `pragma_database_size()`. `LOAD`, `SET VARIABLE`, `PREPARE`, `EXECUTE`,
   `VACUUM` and `ANALYZE` answered `ok` before and are refused now, as is more than
   one statement in a call. The refusal names what DuckDB read the statement as
   (`docs/CONSTRAINTS.md` §29.4, amendment of 2026-11-03).
@@ -693,7 +698,9 @@ And twenty-eight found in this release's own code before it shipped:
   query** ([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137)). So
   `SELECT 1; SELECT 2` is refused, and so is `PIVOT … USING …` without an `IN`
   list, which DuckDB reads as a `CREATE` and a `SELECT`; with
-  `IN ('a', 'b')` it is one query and answers.
+  `IN ('a', 'b')` it is one query and answers. On DuckDB 2.0 a `PRAGMA` is
+  refused even when it only reads; its refusal names the query that reads the
+  same.
 
 ## [2.1.0] - unreleased
 

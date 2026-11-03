@@ -32,7 +32,9 @@ on DuckDB too: its own file readers and writers — `read_csv`, `read_parquet`,
 also takes one statement per call, so send `SELECT 1; SELECT 2` as two calls.
 `DESCRIBE`, `SUMMARIZE`, `SHOW` and `EXPLAIN SELECT …` all answer there, and a
 `PIVOT` answers once its values are named with `IN ('a', 'b')`; without them,
-DuckDB reads it as two statements and it is refused.
+DuckDB reads it as two statements and it is refused. DuckDB 2.0 refuses a
+`PRAGMA`, even one that only reads, so ask for the same thing as a query:
+`SHOW TABLES`, `DESCRIBE sales`, `SELECT * FROM pragma_table_info('sales')`.
 
 Users will not talk this way — they say *"the sales file"* — and the translation
 is yours to do silently. Never make someone say "table".

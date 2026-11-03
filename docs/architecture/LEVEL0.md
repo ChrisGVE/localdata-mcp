@@ -340,10 +340,15 @@ which is not equally far:
   in [#106](https://github.com/ChrisGVE/localdata-mcp/issues/106)). So the DuckDB reader asks
   DuckDB's own parser what each statement is before running it, and runs only one statement
   the parser calls a query (a `SELECT`, which takes in `WITH`, `FROM t`, `SUMMARIZE`,
-  `DESCRIBE`, `SHOW` and a `PRAGMA` that reads), a `CALL`, or an `EXPLAIN` of a query, since
+  `DESCRIBE` and `SHOW`), a `CALL`, or an `EXPLAIN` of a query, since
   `EXPLAIN ANALYZE` runs what it explains. The classification is DuckDB's, not a keyword list,
   so it cannot disagree with the engine about what the statement is (`CONSTRAINTS.md` §29.4;
-  the data loss measured on DuckDB 1.5.5 and 2.0.0 in §36).
+  the data loss measured on DuckDB 1.5.5 and 2.0.0 in §36). That includes where the engine
+  changed its mind: DuckDB 1.5.5's parser called a `PRAGMA` that only reads (`show_tables`,
+  `table_info`) a `SELECT`, and 2.0.0's calls it a `PRAGMA`, so on 2.0.0 it is refused, and the
+  refusal names the same read asked as a query — `SHOW TABLES`, `SHOW ALL TABLES`,
+  `DESCRIBE <table>`, `SELECT * FROM pragma_table_info('<table>')`, `pragma_version()`,
+  `pragma_database_size()`.
 - **MySQL and MariaDB** open a read-only session, and they have to: DDL commits itself
   there, so a `CREATE TABLE` on a connection that never commits would otherwise be
   permanent. The session is not enough on its own: it still runs `INTO OUTFILE`, `SET GLOBAL`,

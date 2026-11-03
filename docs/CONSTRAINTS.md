@@ -5659,6 +5659,41 @@ this process, and are a different mechanism.
 > now, against about 1.1 ms to run it. Between the two runs the same number moves by up to 30%, so
 > the added cost of a plain query is a few microseconds and not resolved more finely than that.
 
+> **Amended again 2026-11-03 — on DuckDB 2.0.0 a `PRAGMA` that reads is a `PRAGMA`, and a comment
+> is a token.** The kinds in the amendment above were measured on 1.5.5. Two of them moved on
+> 2.0.0, the version `uv.lock` resolves on Python 3.11 and later (3.10 still resolves 1.5.6).
+>
+> *A reading `PRAGMA`.* `extract_statements` on a bare connection gives `SELECT` on 1.5.5 for
+> `PRAGMA show_tables`, `PRAGMA table_info('x')`, `PRAGMA version` and `PRAGMA database_size`, and
+> `PRAGMA` on 2.0.0 for all four, and for `PRAGMA show_tables_expanded`. `PRAGMA threads=2` is a
+> `SET` on both. So on 2.0.0 the sentence above that every `PRAGMA` that only reads "answered and
+> still answer" no longer holds: through `query` those are refused as *"run a PRAGMA that is not a
+> query"*. The gate keeps the parser's word rather than a list of PRAGMA names, because a list is
+> the keyword check this section avoids, and stays fail-closed. What changed is the refusal, which
+> now names the same read asked as a query. Each spelling it names was run through `query` on
+> 2.0.0, on a read-only and a writable attach, and left every file under the root byte-identical:
+> `SHOW TABLES` and `SHOW ALL TABLES` (column `name`: `sales`), `DESCRIBE sales` (`column_name`:
+> `region`), `SELECT * FROM pragma_table_info('sales')` (`name`: `region`),
+> `SELECT * FROM pragma_version()` (`library_version`: `v2.0.0`) and
+> `SELECT * FROM pragma_database_size()` (`database_name`: `warehouse`). All of them parse as
+> `SELECT` on 1.5.5 as well, and `CALL pragma_table_info('t')` stays a `CALL` and answers on both.
+> There is no table function for `show_tables` on 2.0.0 (*"Table Function with name
+> pragma_show_tables does not exist!"*), which is why `SHOW TABLES` stands in for it.
+>
+> *A comment in an `EXPLAIN` prefix.* `duckdb.tokenize('EXPLAIN /* b */ ANALYZE SELECT 1')` gives
+> keyword tokens at 0, 16, 24 and a number at 31 on 1.5.5: the comment has no token. On 2.0.0 the
+> comment is a token of its own, `token_type.comment`, at offset 8. The prefix reader takes each
+> token's first word, so the comment read as `/`, `ANALYZE` was not recognised, and the text from
+> the comment on, `/* b */ ANALYZE SELECT 1`, was handed to the parser as the explained statement
+> (*"Parser Error: syntax error at or near "SELECT""*). That is the fail-closed path, so a read was
+> refused and nothing ran. The reader now drops comment tokens itself, which gives 2.0.0 the
+> offsets 1.5.5 gave. `EXPLAIN /* b */ ANALYZE COPY (SELECT 1) TO 'x.wal'` is still refused.
+>
+> Both are pinned on either version: `tests/test_duckdb_pragma_rephrase.py` asks the running parser
+> which way a reading `PRAGMA` goes and asserts that outcome, and
+> `tests/test_duckdb_explain_comments.py` holds the comment cases. Measured passing on 2.0.0
+> (Python 3.12) and 1.5.6 (Python 3.10).
+
 ---
 
 ## §30 — A date from a typed format is stored the way a CSV date is (2026-10-30)
@@ -5811,6 +5846,9 @@ read-only transaction on a sealed connection:
 DuckDB's own parser names the statements that end a transaction. `extract_statements` gives
 `BEGIN`, `COMMIT`, `ROLLBACK`, `ABORT` and `END` the type `TRANSACTION`. It types `SUMMARIZE`,
 `DESCRIBE`, `SHOW`, `PRAGMA` and a `WITH` query as `SELECT`, and `EXPLAIN` as `EXPLAIN`.
+
+> **Amended 2026-11-03:** that typing of `PRAGMA` was measured on 1.5.5. On 2.0.0 a `PRAGMA` that
+> only reads parses as `PRAGMA`; see the last amendment of §29.4.
 
 ### 31.3 What was done
 
