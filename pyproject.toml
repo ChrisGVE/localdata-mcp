@@ -220,6 +220,16 @@ localdata-mcp = "localdata_mcp.server:main"
 requires = ["setuptools>=77.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+# Known-unsupported pin, for issue #70. `sqlalchemy-cockroachdb` 2.0.4 declares
+# `SQLAlchemy<2.1`, so the resolver cannot take SQLAlchemy 2.1 with the
+# `cockroachdb` extra. 2.1 is needed because it quotes the database component of
+# a URL and round-trips `?` and `@` in a database name, which 2.0 truncates.
+# This override removes the dialect's own upper bound and nothing else. The
+# CockroachDB dialect is then tested live on 2.1 rather than trusted to it.
+# Remove this override once `sqlalchemy-cockroachdb` ships support for 2.1.
+override-dependencies = ["sqlalchemy>=2.1.6,<2.2"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["localdata_mcp*"]

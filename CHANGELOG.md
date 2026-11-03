@@ -656,8 +656,36 @@ And twenty-eight found in this release's own code before it shipped:
   one statement in a call. The refusal names what DuckDB read the statement as
   (`docs/CONSTRAINTS.md` §29.4, amendment of 2026-11-03).
 
+- **A database name containing `?` or `@` now survives a URL.** SQLAlchemy 2.0
+  rendered the database component of a URL raw, so `a?b` was read back as `a`,
+  and `a@b` without a password lost its database and took `b` as the host. The
+  project now pins SQLAlchemy 2.1.6, which quotes the component on the way out
+  and unquotes it on the way back
+  ([#70](https://github.com/ChrisGVE/localdata-mcp/issues/70)).
+- **DuckDB datasources reflect their columns under SQLAlchemy 2.1.** SQLAlchemy
+  2.1 changed two PostgreSQL internals that `duckdb-engine` 0.17.0 inherits, so
+  `describe` and every column read failed on DuckDB. Those two are adapted on
+  DuckDB's dialect instance (see `dialects.py`); the rest of the reflection is
+  SQLAlchemy's own.
+- **A SQLite file whose name contains `?` opens under SQLAlchemy 2.1.** The
+  file's URI was rebuilt from a string, and 2.1 unquoted it, so `why? not.db`
+  opened as `why`. A file is now handed to the engine as a `URL` object.
+
+- **`stats` reports the range and average of every floating-point column.**
+  SQLAlchemy 2.1 stopped making `Float` a subclass of `Numeric`, so `REAL`,
+  `FLOAT` and `DOUBLE PRECISION` columns lost their `min`, `max` and `avg`
+  silently. The classifier now lists `Float` beside `Numeric` and `Integer`
+  ([#70](https://github.com/ChrisGVE/localdata-mcp/issues/70)).
+
 ### Known limitations
 
+- **Known-unsupported pin: `sqlalchemy-cockroachdb` 2.0.4 is run on SQLAlchemy
+  2.1.6 by an override.** The dialect declares `SQLAlchemy<2.1`, so the resolver
+  cannot combine them. `[tool.uv] override-dependencies` removes that bound and
+  nothing else, because 2.1 is what fixes #70. The CockroachDB dialect is tested
+  live on 2.1, but a combination its maintainer has not declared is not one
+  this project can promise. The override is removed when `sqlalchemy-cockroachdb`
+  ships 2.1 support.
 - **`save` is refused on every backend but SQLite** — sixteen of the seventeen,
   a local DuckDB file included. `save` writes out a database this server is
   holding, and a slot reached over its own connection has none: the rows live in

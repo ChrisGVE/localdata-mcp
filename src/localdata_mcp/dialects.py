@@ -59,7 +59,9 @@ import sqlite3
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
+from inspect import signature
 from pathlib import Path
+from types import MethodType, SimpleNamespace
 from typing import Any, ClassVar
 from xml.etree import ElementTree
 
@@ -84,9 +86,12 @@ from sqlalchemy import (
     event,
     func,
     literal_column,
+    null,
     text,
 )
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.sql.elements import Label
+from sqlalchemy.sql.visitors import replacement_traverse
 from sqlalchemy.types import TypeEngine
 from sqlalchemy.pool import StaticPool
 
@@ -977,13 +982,22 @@ class SQLiteBackend(Backend):
         reaching the intercepted object; a URI opened ``mode=ro`` has nothing to
         reach around, because SQLite itself is what refuses.
         """
+        # A ``URL`` object, not a string to parse. The ``file:`` URI is itself
+        # percent-encoded, and SQLAlchemy 2.1 unquotes a URL string's database on
+        # parse (#70), so a string would turn ``%3F`` back into the ``?`` that
+        # SQLite then reads as the start of its query: ``why? not.db`` opened as
+        # ``why``. An object is handed to the engine exactly as built.
         base = path.resolve().as_uri()
-        write_url = f"sqlite:///{base}?uri=true"
+        write_query = {"uri": "true"}
         if not writable:
-            write_url = f"sqlite:///{base}?mode=ro&uri=true"
-        return self._pair(write_url, f"sqlite:///{base}?mode=ro&uri=true")
+            write_query = {"mode": "ro", "uri": "true"}
+        write_url = URL.create("sqlite", database=base, query=write_query)
+        read_url = URL.create(
+            "sqlite", database=base, query={"mode": "ro", "uri": "true"}
+        )
+        return self._pair(write_url, read_url)
 
-    def _pair(self, write_url: str, read_url: str) -> Engines:
+    def _pair(self, write_url: str | URL, read_url: str | URL) -> Engines:
         refusal = Refusal()
         write = self._engine(write_url)
         read = self._engine(read_url)
@@ -1132,6 +1146,62 @@ class SQLiteBackend(Backend):
 # ---------------------------------------------------------------------------
 # DuckDB
 # ---------------------------------------------------------------------------
+
+
+def _adapt_duckdb_column_reflection(dialect: Any) -> None:
+    """Let ``duckdb-engine`` 0.17 reflect columns under SQLAlchemy 2.1 (#70).
+
+    SQLAlchemy 2.1 changed two PostgreSQL internals that ``duckdb-engine``
+    0.17.0 inherits for its ``get_multi_columns``, and this adapts both on the
+    one dialect instance, leaving SQLAlchemy's own queries and types in charge:
+
+    * **The column query.** It joins ``pg_catalog.pg_collation`` for each
+      column's ``collation``. DuckDB has no such table and binds every table a
+      statement names, so the query fails before any row is read. The
+      ``collation`` column becomes ``NULL``, and the rest of the query, every
+      FROM and WHERE, is left as SQLAlchemy built it. DuckDB has no non-default
+      collations for this server to report.
+    * **The column-info call.** ``duckdb-engine`` passes eagerly built
+      ``domains`` and ``enums`` mappings as separate arguments. SQLAlchemy 2.1
+      takes one lazy ``named_type_loader`` with those two attributes. The
+      mappings are handed over under that shape, so the type reflection they
+      drive is SQLAlchemy's own.
+
+    ``duckdb-engine`` marks the collation path as a TODO for SQLAlchemy 2. The
+    adaptation applies only where the PostgreSQL method has the 2.1 signature,
+    and the upstream fix is to remove it once a ``duckdb-engine`` release
+    supports SQLAlchemy 2.1 itself.
+    """
+    dialect_class = type(dialect)
+
+    def _null_collation(
+        element,
+    ):
+        if isinstance(element, Label) and element.name == "collation":
+            return null().label("collation")
+        return None
+
+    original_query = dialect_class._columns_query
+
+    def _columns_query(
+        self, schema, has_filter_names, scope, kind
+    ):
+        query = original_query(self, schema, has_filter_names, scope, kind)
+        return replacement_traverse(query, {}, _null_collation)
+
+    dialect._columns_query = MethodType(_columns_query, dialect)
+
+    original_info = dialect_class._get_columns_info
+    if "named_type_loader" not in signature(original_info).parameters:
+        return
+
+    def _get_columns_info(
+        self, rows, domains, enums, schema
+    ):
+        loader = SimpleNamespace(domains=domains, enums=enums)
+        return original_info(self, rows, loader, schema)
+
+    dialect._get_columns_info = MethodType(_get_columns_info, dialect)
 
 
 def _seal_duckdb(dbapi_conn, _record) -> None:  # noqa: ANN001 - SQLAlchemy's signature
@@ -1538,6 +1608,7 @@ class DuckDBBackend(Backend):
         self.read_posture(engines.read, refusal)
         for engine in (engines.read, engines.write):
             event.listen(engine, "connect", _seal_duckdb)
+            _adapt_duckdb_column_reflection(engine.dialect)
         return engines
 
     def read_posture(self, engine: Engine, refusal: Refusal) -> None:

@@ -4768,6 +4768,51 @@ that cannot represent the input can no longer be asserted at all.
 > as `why.wal? not.duckdb`. A file with a `?` in its name still opens and reads; attached
 > `writable=true` it cannot commit. Measured in §29.3.
 
+> **Amended 2026-11-03 — the pin moves to SQLAlchemy 2.1.6, and this section's limit is fixed (#70).**
+> Measured on SQLAlchemy 2.1.6 with `URL.create` then `make_url` on `render_as_string`, with a password and without:
+>
+> | Database name | 2.0.51 with password | 2.0.51 without | 2.1.6 with | 2.1.6 without |
+> |---|---|---|---|---|
+> | `a?b` | truncated to `a` | truncated to `a` | survives | survives |
+> | `a@b` | survives | database `None`, host `b` | survives | survives |
+> | `p@ss:w/rd?x#y` | database `p@ss:w/rd` | parse error | survives | survives |
+>
+> The project pins 2.1.6 with `[tool.uv] override-dependencies`, because `sqlalchemy-cockroachdb` 2.0.4 declares `SQLAlchemy<2.1`. That override is a **known-unsupported pin**: it is removed when the dialect ships 2.1 support. The CockroachDB endpoint passes on 2.1.6 under it (see below).
+>
+> Moving to 2.1 changed three things this project depended on, each now adapted or classified:
+>
+> - **Float types are no longer `Numeric`.** On 2.0.55 a `REAL` column reflected on PostgreSQL (`DOUBLE_PRECISION`) and CockroachDB (`FLOAT`) is `numeric=True`; on 2.1.6 it is `numeric=False`. `stats` dropped `min`, `max` and `avg` for those columns. Measured on the gapped-salary table: 2.0.55 PostgreSQL `min 55000.0, max 80000.0, avg 68750.0`; 2.1.6 none. Fixed in `Workspace._aggregates_for` by classifying `Float` beside `Numeric` and `Integer`.
+> - **PostgreSQL column reflection joins `pg_catalog.pg_collation`.** DuckDB has no such table, and `duckdb-engine` 0.17.0 inherits the query. Fixed on DuckDB's dialect instance (`_adapt_duckdb_column_reflection`): the `collation` column becomes `NULL` and the `_get_columns_info` shape is adapted to 2.1's named-type loader.
+> - **A URL string's database is unquoted on parse.** A SQLite file whose name contains `?` was rebuilt as a string and opened as its prefix. The SQLite engine is now built from a `URL` object.
+>
+> Live results on 2.1.6, one engine at a time under the lock (pass / skip / fail):
+>
+> | Engine | Passed | Skipped | Failed |
+> |---|---|---|---|
+> | CockroachDB (the gate) | 56 | 29 | 0 |
+> | PostgreSQL | 142 | 303 | 0 |
+> | YugabyteDB | 76 | 9 | 0 |
+> | Firebird | 38 | 5 | 0 |
+> | MySQL | 83 | 29 | 0 |
+> | MariaDB | 49 | 8 | 0 |
+> | Oracle | 32 | 5 | 0 |
+> | ClickHouse | 32 | 42 | 0 |
+> | Trino | 31 | 6 | 0 |
+> | MonetDB | 55 | 5 | 0 |
+> | CrateDB | 31 | 6 | 0 |
+> | openGauss | 76 | 9 | 0 |
+> | YDB | 31 | 6 | 0 |
+> | Exasol | 34 | 5 | 0 |
+> | SQL Server | not run to completion: 100 errors at fixture setup | | |
+>
+> SQL Server's errors are the client driver failing before SQLAlchemy is reached: `Microsoft ODBC Driver 18 for SQL Server` reports `OpenSSL library could not be loaded`. This host's ODBC install cannot load OpenSSL, so the endpoint has no result on this machine. It is an environment failure, and it is recorded as one rather than counted.
+>
+> The CockroachDB gate failed once on 2.1.6 before the float classification was fixed (`KeyError: 'min'` on the salary column, the same cause as PostgreSQL's three failures and YugabyteDB's one). Those counts are the rerun after the fix.
+>
+> **Firebird's `REAL` respelling is kept.** Measured on the 3.11 floor (`sqlalchemy-firebirdsql` 0.3.0), Core's `Double` renders `DOUBLE PRECISION` with no respelling, and `0.1` and `1/3` read back exactly. The respelling is nonetheless still applied, because the `firebird` extra's floor is `sqlalchemy-firebirdsql>=0.1`, and 0.1.0 (which renders `DOUBLE`, a keyword Firebird rejects) remains installable. Removing it is correct once the extra's floor is `>=0.3`; that is a separate decision, recorded as open.
+>
+> Not started as their own compose services this session: `postgres-trust`, `postgres-tls`, `postgres-krb`, `clickhouse-noauth`, `tls-ca`, `tls` and `krb`. The PostgreSQL and ClickHouse selections were made by dialect name, so a target whose id carries that name ran with them; the others were not reached.
+
 ### 25.8 What this did not test
 
 Authentication *rotation* and expiry: a Kerberos ticket that runs out mid-session, a certificate that

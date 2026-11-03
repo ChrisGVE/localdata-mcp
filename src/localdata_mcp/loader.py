@@ -2433,7 +2433,12 @@ class Workspace:
         if signal is not None and (signal.is_mixed or signal.is_unparsed_temporal):
             return counted
 
-        if isinstance(column.type, (sqltypes.Numeric, sqltypes.Integer)):
+        # ``Float`` is listed beside ``Numeric`` because SQLAlchemy 2.1 no longer
+        # makes it a subclass of ``Numeric``: REAL, FLOAT and DOUBLE_PRECISION
+        # would otherwise lose their range and average (#70).
+        if isinstance(
+            column.type, (sqltypes.Numeric, sqltypes.Float, sqltypes.Integer)
+        ):
             ranged = {
                 **counted,
                 "min": func.min(column),
