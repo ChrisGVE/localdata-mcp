@@ -6738,7 +6738,7 @@ from 1.5.5 to **2.0.0 on Python 3.11 and later and 1.5.6 on 3.10**, because 2.0.
 Python 3.11 and the project still allows 3.10. Nothing else in the lock moved. The extra still
 says `duckdb>=1.0`, so a fresh install on 3.11+ was already getting 2.0.0 before this.
 
-### 35.1 The offline suite
+### 36.1 The offline suite
 
 `pytest -q -m "not endpoint" -p no:randomly`: **1220 passed, 1135 deselected** on 1.5.5, and
 **1220 passed, 1135 deselected** on 2.0.0, with no failures and no skips on either. No DuckDB
@@ -6756,7 +6756,7 @@ So it is a property of one long process that has made many DuckDB objects, not o
 path found here. 1.5.5 prints nothing like it. Its cause is not established
 ([#136](https://github.com/ChrisGVE/localdata-mcp/issues/136)).
 
-### 35.2 The `.wal` write is unchanged
+### 36.2 The `.wal` write is unchanged
 
 The #106 repro, through the tool surface, on a file built and checkpointed by the version under
 test and attached with the default `writable=false`:
@@ -6774,7 +6774,7 @@ either version. DuckDB still exempts `<file>.wal` from `enable_external_access =
 WAL is still named `<file>.wal`: a raw writable connection holding an uncheckpointed write had
 `p.db.wal` beside `p.db` on both versions.
 
-### 35.3 A WAL that already holds rows
+### 36.3 A WAL that already holds rows
 
 §29.4 left this unmeasured. A child process opened `w.db` writable, set `checkpoint_threshold`
 to 1 GB, inserted `('west', 7)` and exited with `os._exit`, so the row was committed and lived
@@ -6797,7 +6797,7 @@ open a file another holds writable: read-only, it is refused on both versions wi
 Could not set lock on file "…/l.db": Conflicting lock is held in …"*. So the condition is a
 crash, a kill, or a disabled checkpoint-on-shutdown.
 
-### 35.4 Files across the two versions
+### 36.4 Files across the two versions
 
 Each step ran in its own process, with `uv run --no-project --with duckdb==<version>`:
 
@@ -6814,7 +6814,7 @@ format. This server never creates a DuckDB file. It attaches existing ones, and 
 refused on DuckDB. A file the user creates with 2.0.0 elsewhere cannot be opened by a 1.5.x
 reader. `slots.py` still recognises it, because the `DUCK` magic at offset 8 is unchanged.
 
-### 35.5 What this did not measure
+### 36.5 What this did not measure
 
 1.5.6 on Python 3.10; any platform but macOS; and the cause of the nanobind report. The wall-clock times of the two suite runs (652 s and
 798 s) come from one run each, on a machine shared with other work, and are not a performance
