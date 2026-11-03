@@ -29,10 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-try:  # Python 3.11+
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - exercised on 3.10 only
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 __all__ = [
     "Config",

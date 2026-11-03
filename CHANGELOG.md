@@ -231,6 +231,12 @@ rebuild it.
 
 ### Changed
 
+- **Breaking: Python 3.10 is no longer supported; the floor is 3.11.** Python
+  3.10 reached end of life in October 2026 (PEP 619), and the project's
+  dependencies are moving past it, so `requires-python` is now `>=3.11` and the
+  3.10 classifier is gone. The `tomli` backport that 3.10 needed is no longer a
+  dependency, because `tomllib` is in the standard library from 3.11. No release
+  of this line had reached users on 3.10: 3.0.0 has not been published.
 - **Every datasource is a database**, whatever it came from, and the same nine
   verbs address all of them. In 2.x a CSV and a PostgreSQL connection were
   different kinds of thing: `connect_database` took both, and which of the

@@ -13,7 +13,7 @@ Security vulnerabilities do not go through an issue — see
 
 ## Prerequisites
 
-- **Python 3.10+**
+- **Python 3.11+**
 - **uv** (recommended) or pip
 - **Git**
 - Basic familiarity with MCP (Model Context Protocol)
@@ -273,7 +273,7 @@ dialect it never reached.
 ### Style
 
 - Follow PEP 8. `pyproject.toml` configures black at line length 88, isort on
-  the black profile, and mypy targeting 3.10 with `no_implicit_optional` and
+  the black profile, and mypy targeting 3.11 with `no_implicit_optional` and
   `strict_optional`. **None of the three is in the `dev` extra**, so install them
   yourself if you want to run them locally — `uv tool install black`, and the
   same for `isort` and `mypy` (one package per invocation).

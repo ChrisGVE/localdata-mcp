@@ -99,11 +99,11 @@ detail, including why the catalogue cannot be run in one go
 `.github/ISSUE_TEMPLATE/` holds `bug_report.yml`, `feature_request.yml`,
 `security_report.md` and a `config.yml`; `.github/pull_request_template.md` is
 alongside them. GitHub serves all of these without a workflow. They predate this
-rewrite, and one field has gone stale with it: the bug report's **required**
-Python dropdown (`bug_report.yml:33-46`) offers 3.8 and 3.9, both below the
-`requires-python = ">=3.10"` this project declares, and omits the 3.13 that
-`pyproject.toml:22` claims support for. A reporter on 3.13 cannot answer it
-truthfully and cannot skip it.
+rewrite. The bug report's **required** Python dropdown (`bug_report.yml`) offers
+3.11, 3.12, 3.13 and "Other", matching the `requires-python = ">=3.11"` this
+project declares. It was once stale: it offered 3.8 and 3.9, below the floor,
+and 3.10, which the project no longer supports. Its options must move with
+`requires-python` in the same change.
 
 The bug report's `database-info` field and the PR template's "Database Support"
 checklist read as 2.x leftovers and are not: each names SQLite, PostgreSQL and

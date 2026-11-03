@@ -7,12 +7,11 @@ authors = [
   { name = "Christian C. Berclaz", email = "christian.berclaz@mac.com" },
 ]
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   # 3.13 is verified by installing the built wheel and importing it, not by a CI
@@ -53,8 +52,6 @@ dependencies = [
   "fastmcp>=3.0.0",
   "pandas>=1.3.0",
   "sqlalchemy>=2.0.0",
-  # tomllib joined the standard library in 3.11; this is the same parser for 3.10.
-  "tomli>=2.0; python_version<'3.11'",
 ]
 
 # Formats and database drivers are extras, not dependencies. A user reading CSVs
@@ -139,8 +136,9 @@ cratedb = ["sqlalchemy-cratedb>=0.44"]
 # it is the same dialect base, ported, co-authored by `sqlalchemy-firebird`'s
 # author and maintained by the driver's. Younger, though — sdist only — and that
 # is the cost this choice carries. See docs/CONSTRAINTS.md §20.1. Its 0.2 and 0.3
-# releases require Python 3.11, so the lock resolves 0.3 on 3.11 and later and
-# keeps 0.1 on 3.10; FirebirdBackend.column_type covers the difference (§20.4).
+# releases require Python 3.11, which is this project's floor, so the lock
+# resolves 0.3 on every supported Python; FirebirdBackend.column_type still
+# carries the respelling that 0.1 needed (§20.4).
 #
 # The driver is not named here: the dialect requires it, and naming it again
 # would let the two drift.
@@ -231,7 +229,7 @@ localdata_mcp = ["py.typed"]
 
 [tool.black]
 line-length = 88
-target-version = ["py310", "py311", "py312"]
+target-version = ["py311", "py312"]
 
 [tool.isort]
 profile = "black"
@@ -249,7 +247,7 @@ markers = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_unused_configs = true
 no_implicit_optional = true
 strict_optional = true
