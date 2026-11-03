@@ -80,7 +80,14 @@ LOCK_POLL=20
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-900}" # Exasol builds a cluster before it serves.
 HEALTH_POLL=5
 PREFIX="localdata-test-"
-USER_IDS="$(id -u):$(id -g)"
+# Who the runner runs as: the invoking user's uid and gid, so that on a Linux
+# host, where a bind mount keeps real ownership, the tests can read what that
+# user can (the TLS client key is 0600). That uid has no entry in the image's
+# /etc/passwd, so it is given a name through USER and LOGNAME, which
+# getpass.getuser() reads before it falls back to the password database.
+# Measured: without them pyexasol's handshake died on every attempt with
+# `KeyError: 'getpwuid(): uid not found: 501'` and all 40 Exasol tests errored.
+RUNNER_AS=(--user "$(id -u):$(id -g)" -e USER=localdata -e LOGNAME=localdata)
 
 # State the cleanup path reads. Set before the trap is, so the trap never sees
 # an unset name.
@@ -171,7 +178,7 @@ dispose_runner() {
 
 # Python inside the runner, against the mounted repository, with no network.
 endpoints_say() {
-	docker run --rm --network none --user "$USER_IDS" -v "$REPO:/repo:ro" \
+	docker run --rm --network none "${RUNNER_AS[@]}" -v "$REPO:/repo:ro" \
 		"$RUNNER_IMAGE" python -c \
 		"import sys; sys.path.insert(0, 'tests'); import endpoints; $1"
 }
@@ -256,7 +263,7 @@ wait_for_health() {
 in_network() {
 	docker run --rm --init \
 		--network "$CURRENT_PROJECT-net" \
-		--user "$USER_IDS" \
+		"${RUNNER_AS[@]}" \
 		-e LOCALDATA_TEST_IN_NETWORK=1 \
 		-v "$REPO:/repo:ro" \
 		"$RUNNER_IMAGE" "$@"
