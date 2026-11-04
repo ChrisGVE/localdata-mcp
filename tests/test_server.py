@@ -97,6 +97,31 @@ def listed_tools():
     return asyncio.run(_run())
 
 
+def input_schema(tool) -> dict:
+    """The tool's parameter schema, on either fastmcp major.
+
+    fastmcp 4 (MCP SDK 2) renamed the Python attribute ``inputSchema`` to
+    ``input_schema`` and warns on the old name (the field on the wire is still
+    ``inputSchema``); fastmcp 3 has only the old attribute. The pin spans both majors,
+    so the tests read whichever this install has.
+    """
+    schema = getattr(tool, "input_schema", None)
+    return schema if schema is not None else tool.inputSchema
+
+
+def what_the_agent_reads(tool) -> str:
+    """Everything a client is told about a tool: its description and its parameters'.
+
+    fastmcp 3 folds a docstring's ``Args:`` section into the description;
+    fastmcp 4 moves each parameter's prose into that property's schema
+    ``description`` instead. Either way the agent reads it, so a test about
+    what the agent is told reads both places.
+    """
+    properties = input_schema(tool).get("properties", {})
+    parameter_prose = [spec.get("description", "") for spec in properties.values()]
+    return "\n".join([tool.description or "", *parameter_prose])
+
+
 def _build_database(path: Path) -> None:
     foreign.build_database(
         path,
@@ -126,7 +151,7 @@ def test_the_surface_is_nine_verbs_each_with_a_description():
 
     by_name = {tool.name: tool for tool in tools}
     for name in TOOLS:
-        assert by_name[name].inputSchema["properties"], name
+        assert input_schema(by_name[name])["properties"], name
 
 
 def test_the_shipped_skill_grants_exactly_the_tools_that_exist():
@@ -152,12 +177,12 @@ def test_the_nickname_is_required_everywhere_it_routes():
     """It names the engine to execute against, so it cannot be optional."""
     by_name = {tool.name: tool for tool in listed_tools()}
     for name in ("detach", "query", "create", "drop", "save"):
-        assert "nickname" in by_name[name].inputSchema["required"], name
+        assert "nickname" in input_schema(by_name[name])["required"], name
 
     # The two exceptions, and both are deliberate: attach *derives* a nickname,
     # and directory with none reports the whole session.
-    assert "nickname" not in by_name["attach"].inputSchema.get("required", [])
-    assert "nickname" not in by_name["directory"].inputSchema.get("required", [])
+    assert "nickname" not in input_schema(by_name["attach"]).get("required", [])
+    assert "nickname" not in input_schema(by_name["directory"]).get("required", [])
 
 
 def test_the_instructions_teach_the_premise_where_the_model_reads_it():
@@ -343,7 +368,7 @@ def test_a_query_returns_its_whole_result(session):
     asked = call("query", nickname="staff", sql="SELECT * FROM simple LIMIT 2")
     assert asked["row_count"] == 2
 
-    schema = {tool.name: tool for tool in listed_tools()}["query"].inputSchema
+    schema = input_schema({tool.name: tool for tool in listed_tools()}["query"])
     assert "limit" not in schema["properties"]
 
 
@@ -1501,7 +1526,7 @@ def test_the_tool_descriptions_name_exactly_the_formats_that_exist():
     from localdata_mcp.export import WRITERS
     from localdata_mcp.loader import READERS
 
-    described = {tool.name: tool.description for tool in listed_tools()}
+    described = {tool.name: what_the_agent_reads(tool) for tool in listed_tools()}
 
     def listed(pattern: str, text: str) -> set[str]:
         found = re.search(pattern, text)
