@@ -7049,6 +7049,51 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > every other engine's tests skipped, none failed. Offline, the three files: 132 passed. Restoring the old wording turned
 > 19 red: the 13 new offline tests that pin the words and the rephrase, and the 6 edited frozen rows.
 
+> **Amended 2026-11-04 — a shape refusal is not a refused write
+> ([#135](https://github.com/ChrisGVE/localdata-mcp/issues/135)).** The words above sat inside the
+> refused-write frame, "query reads; it does not write … To add a table or an index use create",
+> because every reader gate raises a DBAPI error that `query` explained as a write. For `SELECT
+> 'a;b'`, `SELECT 1 AS U&"d\0061ta"` and `SELECT 'outfile'`, all reads, that frame is false. The
+> rules are unchanged and still fail closed. `Refusal` now records whether a refusal is a rule
+> about how the statement is written (`shape`), and `query` words such a refusal as `query did
+> not run this statement. It meets a rule about how a statement is written, …`, with no verb
+> advice. Shape rules: a `;` (PostgreSQL family, MySQL, MariaDB, MonetDB), a `U&"…"` name
+> (PostgreSQL family), and, where the text occurs only inside a quoted string, a refused function,
+> view, schema or operator (PostgreSQL family), a stored function, `OUTFILE`/`DUMPFILE`, `/*!` or
+> `LOAD_FILE(` (MySQL, MariaDB). Outside a quoted string the same text may be a call, and keeps
+> the refused-write frame. Which text is quoted is read with a pattern for string constants used
+> for the wording only, never to decide a refusal.
+>
+> A word in a literal is offered back split in two halves the gate admits: the gate's own check
+> is run on `SELECT <rephrase>` before it is offered, and no split it refuses is offered. Measured
+> through `query` on a read-only attach from the runner, one container at a time:
+>
+> | Engine | Statement | Answer |
+> |---|---|---|
+> | PostgreSQL 16.15, CockroachDB 26.3.4, YugabyteDB 2.25.2.0, openGauss 7.0.0-RC3 | `SELECT 'set_config' AS w` | refused, shape frame, offers `'set_c' \|\| 'onfig'` |
+> | the same four | `SELECT 'set_c' \|\| 'onfig'` | `set_config` |
+> | the same four | `SELECT 1 AS U&"d\0061ta"` | refused, shape frame, offers `"data"` |
+> | the same four | `SELECT 1 AS "data"` | one column, `data` |
+> | the same four | `SELECT set_config('a.b', 'c', false)` | refused, refused-write frame (unchanged) |
+> | MySQL 8.0.46, MariaDB 11.8.9 | `SELECT 'outfile' AS w` | refused, shape frame, offers `CONCAT('out', 'file')` |
+> | the same two | `SELECT CONCAT('out', 'file')` | `outfile` |
+> | the same two | `SELECT CONCAT('/', '*!')` | `/*!` |
+> | the same two | `SELECT CONCAT('load_', 'file(')` | `load_file(` |
+> | the same two | `SELECT '<stored function>' AS w` | refused, shape frame; its two halves return the name; calling it keeps the refused-write frame |
+> | the six above and MonetDB 11.55.7 | `SELECT 'a;b'` | refused, shape frame, the #127 rephrase |
+>
+> Two frozen endpoint tests asserted the old frame for shape refusals and were changed with
+> sign-off: in `tests/test_postgresql_read_gate.py` the `unicode-escape` and `two-statements`
+> cases, in `tests/test_monetdb_read_gate.py` the two `;` cases of the hidden-write test (each
+> still asserts the refusal, and MonetDB's that the table holds 5 rows). Live, the new
+> `tests/test_shape_refusal_framing.py` with the PostgreSQL, MySQL, MonetDB, `;` and `LOAD_FILE`
+> gate tests: PostgreSQL 51 passed, CockroachDB 29, YugabyteDB 48, openGauss 47, MySQL 32,
+> MariaDB 29, MonetDB 24; 0 failed on each.
+>
+> **Not changed:** DuckDB's refusal of two statements that are both queries, and SQL Server's of
+> a batch of two reads, are also rules about shape and still use the refused-write frame;
+> neither involves a `;` inside a literal, since both servers parse.
+
 ## §35 — SQL Server text lands as `NVARCHAR`, sized in UTF-16 code units (2026-11-03)
 
 Refs [#128](https://github.com/ChrisGVE/localdata-mcp/issues/128). Measured on `new-v3` from

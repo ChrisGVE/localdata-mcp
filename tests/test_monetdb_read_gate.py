@@ -313,7 +313,13 @@ def test_monetdb_query_refuses_a_write_before_it_runs(monetdb, shape):
     )
 
     assert written["ok"] is False, written
-    assert "create" in written["error"], written
+    if ";" in _HIDDEN_WRITES[shape]:
+        # Refused for its ';' before its plan is asked for: a rule about how
+        # the statement is written, which a read meets too (#135).
+        assert written["error"].startswith("query did not run this statement"), written
+        assert "put a ';' before its end" in written["error"], written
+    else:
+        assert "create" in written["error"], written
     assert _count(monetdb) == [[5]], written
 
 

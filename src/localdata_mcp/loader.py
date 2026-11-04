@@ -2728,7 +2728,18 @@ class Workspace:
         fails as a plain "no such table", which tells an agent its table is
         missing when in fact its addressing is stale.
         """
+        shaped = entry.engines.refusal.shape
         denied = entry.engines.refusal.take()
+        if denied is not None and shaped:
+            # A rule about how the statement is written, met by a read as
+            # surely as by a write: no write is implied, and no verb for one is
+            # offered. The words carry the rephrase (#135).
+            return LoadError(
+                f"query did not run this statement. It meets a rule about how a "
+                f"statement is written, which the reader applies before asking "
+                f"what a statement does, so a read meets it as surely as a "
+                f"write: this statement asks to {denied}."
+            )
         if denied is not None:
             return LoadError(
                 f"query reads; it does not write. This statement asks to "

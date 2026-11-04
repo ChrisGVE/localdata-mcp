@@ -444,7 +444,14 @@ there as well, and so is a view calling it
 For a `;` in the data there, write `CHAR(59 USING utf8mb4)`, as in
 `SELECT CONCAT('a', CHAR(59 USING utf8mb4), 'b')`; `CHAR(59)` alone is a binary
 string and comes back as `0x3b`
-([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)). **One exception
+([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)). A refusal of
+that kind is a rule about how the statement is written, which a read meets as
+surely as a write: a `;`, a `U&"…"` name, or a refused word that sits only
+inside a quoted string. It opens `query did not run this statement` rather than
+calling the statement a write, names what it met, and gives a rephrase the gate
+admits, such as `SELECT 'set_c' || 'onfig'` for the text `set_config` on the
+PostgreSQL family and `SELECT CONCAT('out', 'file')` on MySQL and MariaDB
+([#135](https://github.com/ChrisGVE/localdata-mcp/issues/135)). **One exception
 remains.** Oracle commits DDL before anything can object and has no
 session-level read-only posture, so a `CREATE` sent to `query` there really does
 take effect; its DML still rolls back, and the refusal says the `CREATE` stands

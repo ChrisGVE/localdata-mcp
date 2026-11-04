@@ -254,7 +254,10 @@ MariaDB** it also refuses a statement containing the words `OUTFILE` or
 `DUMPFILE`, a call to `LOAD_FILE()` (a file on the database server: to read
 a file of your own, `attach` it), or the name of a stored function
 or of a view calling one, even inside a quoted string. If a read is refused for
-a word in a literal, rephrase the literal (`CONCAT('out', 'file')`). On all six,
+a word in a literal, the refusal opens `query did not run this statement`
+rather than calling it a write, and gives the literal split in two halves the
+gate admits (`CONCAT('out', 'file')` there, `'set_c' || 'onfig'` on the
+PostgreSQL four); send that. On all six,
 as on MonetDB, a `;` anywhere but at the end is refused, even inside a quoted
 string. For a `;` in the data write `chr(59)` on the PostgreSQL four
 (`SELECT 'a' || chr(59) || 'b'`), and `CHAR(59 USING utf8mb4)` on MySQL and

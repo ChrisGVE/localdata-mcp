@@ -398,7 +398,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And thirty-six found in this release's own code before it shipped:
+And thirty-seven found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -766,6 +766,20 @@ And thirty-six found in this release's own code before it shipped:
   the name and its parenthesis; a view that calls it is refused by its name,
   like a view calling a stored function. A column, an alias or a literal that
   only holds the word is still answered. To read a file of your own, `attach` it.
+- **A read refused for how it is written was explained as a refused write**
+  ([#135](https://github.com/ChrisGVE/localdata-mcp/issues/135)). `SELECT 'a;b'`,
+  a `U&"…"` name on the PostgreSQL family, and a read holding a refused word only
+  inside a quoted string (`SELECT 'outfile'`, `SELECT 'set_config'`) came back as
+  "query reads; it does not write", with advice to use `create`, `update` or
+  `drop`. They are reads, and the advice sent the caller to the wrong verb. The
+  rules are unchanged and still fail closed. Their refusal now opens `query did
+  not run this statement`, says it is a rule about how a statement is written that
+  a read meets too, names what it met, and gives a rephrase the gate admits: the
+  literal in two halves (`'set_c' || 'onfig'` on the PostgreSQL family,
+  `CONCAT('out', 'file')` on MySQL and MariaDB), the plain spelling of a `U&"…"`
+  name, and the `;` forms from #127. A refused word or symbol outside a quoted
+  string may be a call, and keeps the refused-write wording. MonetDB's `;` is
+  framed the same way.
 
 ### Known limitations
 

@@ -452,6 +452,12 @@ _ABSENT = {
 }
 
 
+#: Shapes refused for how they are written, before what they name is asked
+#: about: a ``U&"…"`` name and a ``;``. A read meets those rules as surely as a
+#: write, so they are not explained as a refused write (#135).
+_REFUSED_BY_SHAPE = {"unicode-escape", "two-statements"}
+
+
 @pytest.mark.endpoint
 @pytest.mark.parametrize("shape", sorted(_REFUSED_EVERYWHERE))
 def test_query_refuses_what_could_act_past_the_read(server, shape):
@@ -460,7 +466,12 @@ def test_query_refuses_what_could_act_past_the_read(server, shape):
     answer = _call(
         "query", nickname="endpoint", sql=_REFUSED_EVERYWHERE[shape].format(t=server.t)
     )
-    _refused(answer)
+    if shape in _REFUSED_BY_SHAPE:
+        assert answer["ok"] is False, answer
+        assert answer["error"].startswith("query did not run this statement"), answer
+        assert "does not write" not in answer["error"], answer
+    else:
+        _refused(answer)
 
 
 @pytest.mark.endpoint

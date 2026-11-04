@@ -135,13 +135,20 @@ class Refusal:
     difference between an agent that can fix its statement and one that only
     knows it was denied. A backend that cannot name the action leaves it ``None``
     and the message degrades to its general form; nothing else changes.
+
+    ``shape`` says the refusal is a rule about how the statement is *written*
+    — a ``;``, a ``U&"…"`` name, a refused word inside a quoted string — which
+    a read meets as surely as a write. Such a refusal is not explained as a
+    refused write, and its ``what`` carries the rephrase that gets the read
+    through (#135).
     """
 
     what: str | None = None
+    shape: bool = False
 
     def take(self) -> str | None:
         """Read the last refusal and forget it, so it cannot leak into the next."""
-        seen, self.what = self.what, None
+        seen, self.what, self.shape = self.what, None, False
         return seen
 
 
@@ -1726,6 +1733,44 @@ def _semicolon_refusal(why: str, rephrase: str) -> str:
     )
 
 
+def _quoted_halves(
+    text: str, join: Callable[[str, str], str], passes: Callable[[str], bool]
+) -> str | None:
+    """``text`` as two quoted halves joined back together, for a rephrase.
+
+    A refused word in a quoted string is refused because the gate matches
+    words, not because the string does anything; split in two, no whole word
+    is left to match, and the engine joins the halves back into ``text``.
+    ``join`` is the family's concatenation, ``passes`` the gate's own check of
+    ``SELECT <rephrase>``: the split nearest the middle that the gate admits is
+    offered, so a rephrase is never one the gate itself would refuse.
+    ``None`` where no split passes, a one-character text among them, and then
+    no rephrase is offered at all.
+    """
+    middle = len(text) // 2
+    for offset in range(len(text)):
+        for cut in (middle - offset, middle + offset):
+            if 0 < cut < len(text):
+                rephrase = join(f"'{text[:cut]}'", f"'{text[cut:]}'")
+                if passes(f"SELECT {rephrase}"):
+                    return rephrase
+    return None
+
+
+def _quoted_text_refusal(text: str, why: str, rephrase: str) -> str:
+    """What a gate says when the text it refuses is only inside a quoted string.
+
+    Worded to follow "This statement asks to", like every refusal. It names
+    the text, says why it is refused even there, and gives the rephrase
+    :func:`_quoted_halves` measured against the gate (#135).
+    """
+    return (
+        f"hold {text} in a quoted string (refused wherever it appears, a quoted "
+        f"string included, because {why}; for that text in the data write it in "
+        f"two halves, as in SELECT {rephrase})"
+    )
+
+
 def _one_statement(sql: str) -> bool:
     """Whether ``sql`` holds no ``;`` but an optional trailing one.
 
@@ -1959,6 +2004,16 @@ _PG_RUNS_WHAT_IT_IS_GIVEN = re.compile(r"_to_xml", re.IGNORECASE)
 #: which names ``lo_export`` without containing the word. Measured: it ran.
 _PG_UNICODE_IDENTIFIER = re.compile(r'u&"', re.IGNORECASE)
 
+#: A string constant as PostgreSQL writes one: ``'…'`` with ``''`` for a quote,
+#: ``E'…'`` with backslash escapes, and ``$tag$…$tag$``. Used only to word a
+#: refusal (#135), never to decide one: what the gate refuses is decided on the
+#: whole statement, a quoted string included.
+_PG_LITERAL = re.compile(
+    r"(?<![\w$])[Ee]'(?:[^'\\]|\\.|'')*'"
+    r"|'(?:[^']|'')*'"
+    r"|(?<![\w$])\$([A-Za-z_]\w*|)\$[\s\S]*?\$\1\$"
+)
+
 
 @dataclass(frozen=True)
 class _PGFunction:
@@ -2175,7 +2230,8 @@ def _pg_shape_refusal(sql: str) -> str | None:
     if _PG_UNICODE_IDENTIFIER.search(sql):
         return (
             'spell a name with Unicode escapes (U&"…"), which hides what it '
-            "names; write the name itself"
+            'names; write the name itself, quoted if it needs quotes, as in "data" '
+            'for U&"d\\0061ta"'
         )
     return None
 
@@ -2241,6 +2297,41 @@ def _pg_unsafe(cursor: Any, relations_query: str) -> _PGUnsafe:
         if _pg_refused_word(function, system_names) is not None:
             operators[symbol] = function.name
     return _PGUnsafe(words=words, operators=operators)
+
+
+def _pg_join(left: str, right: str) -> str:
+    """Two quoted strings joined on the PostgreSQL family."""
+    return f"{left} || {right}"
+
+
+def _pg_quoted_refusal(sql: str, unsafe: _PGUnsafe) -> str | None:
+    """:func:`_pg_refusal` worded as a shape rule, where only a quoted string trips it.
+
+    ``None`` when the statement mentions a refused name or operator outside
+    a string constant (:data:`_PG_LITERAL`), which may be a call: that keeps
+    the refused-write wording. Otherwise the refusal says the text is refused
+    even inside a string and gives the rephrase (#135).
+    """
+    if _pg_refusal(_PG_LITERAL.sub("''", sql), unsafe) is not None:
+        return None
+    word = _named_as_word(sql, set(unsafe.words))
+    if word is not None:
+        text = word
+        why = f"the word names {unsafe.words[word]}"
+    else:
+        symbols = [symbol for symbol in sorted(unsafe.operators) if symbol in sql]
+        if not symbols:
+            return None
+        text = symbols[0]
+        why = f"the symbol is an operator calling {unsafe.operators[text]}"
+
+    def passes(statement: str) -> bool:
+        return _pg_shape_refusal(statement) is None and (
+            _pg_refusal(statement, unsafe) is None
+        )
+
+    rephrase = _quoted_halves(text, _pg_join, passes)
+    return None if rephrase is None else _quoted_text_refusal(text, why, rephrase)
 
 
 def _pg_refusal(sql: str, unsafe: _PGUnsafe) -> str | None:
@@ -2361,6 +2452,7 @@ def _refuse_postgresql_write(
     if parameters:
         return
     refused = _pg_shape_refusal(statement)
+    shape = refused is not None
     if refused is None:
         catalog = cursor.connection.cursor()
         try:
@@ -2371,11 +2463,16 @@ def _refuse_postgresql_write(
             if refused is None:
                 unsafe = _pg_unsafe(catalog, relations_query)
                 refused = _pg_refusal(statement, unsafe)
+                if refused is not None:
+                    quoted = _pg_quoted_refusal(statement, unsafe)
+                    if quoted is not None:
+                        refused, shape = quoted, True
         finally:
             catalog.close()
         if refused is None:
             return
     refusal.what = refused
+    refusal.shape = shape
     raise context.dialect.loaded_dbapi.ProgrammingError(
         f"query may not {refusal.what}."
     )
@@ -2623,6 +2720,17 @@ _MYSQL_SEMICOLON = _semicolon_refusal(
 )
 
 
+#: A string constant as MySQL writes one: ``'…'`` with ``''`` or a backslash
+#: escape. A ``"…"`` string is left out, because under ``ANSI_QUOTES`` it is a
+#: name. Used only to word a refusal (#135), never to decide one.
+_MYSQL_LITERAL = re.compile(r"'(?:[^'\\]|\\.|'')*'")
+
+
+def _mysql_join(left: str, right: str) -> str:
+    """Two quoted strings joined on MySQL and MariaDB, where ``||`` is ``OR``."""
+    return f"CONCAT({left}, {right})"
+
+
 #: What the reader says when a statement calls ``LOAD_FILE`` (#36).
 _MYSQL_FILE_READ_REFUSAL = (
     "read a file on the database server with LOAD_FILE(), which a read-only "
@@ -2634,6 +2742,29 @@ _MYSQL_FILE_READ_REFUSAL = (
 
 def _mysql_shape_refusal(sql: str) -> str | None:
     """What ``sql``'s shape alone refuses it for, or ``None`` if it may be a read.
+
+    The words of :func:`_mysql_shape`, without whether they are a shape rule.
+    """
+    shaped = _mysql_shape(sql)
+    return None if shaped is None else shaped[0]
+
+
+def _mysql_quoted_only(sql: str, rule: re.Pattern[str]) -> str | None:
+    """The text ``rule`` matches, where it matches only inside quoted strings."""
+    if rule.search(_MYSQL_LITERAL.sub("''", sql)) is not None:
+        return None
+    found = rule.search(sql)
+    return None if found is None else found.group(0)
+
+
+def _mysql_shape(sql: str) -> tuple[str, bool] | None:
+    """What ``sql``'s shape alone refuses it for, and whether that is a shape rule.
+
+    The second half is ``True`` where a read meets the rule as surely as a
+    write: a ``;``, and an executable comment, ``OUTFILE``/``DUMPFILE`` or a
+    ``LOAD_FILE(`` that appears only inside quoted strings, whose refusal
+    gives the rephrase (#135). Anywhere else they may be what they look like,
+    and keep the refused-write wording.
 
     Decided without lexing, each rule failing closed, for the reason
     :func:`_monetdb_single_statement` gives: a server that parses another
@@ -2649,24 +2780,45 @@ def _mysql_shape_refusal(sql: str) -> str | None:
     * **A first keyword in** :data:`_MYSQL_READS`.
     """
     if not _one_statement(sql):
-        return _MYSQL_SEMICOLON
-    if _MYSQL_EXECUTABLE_COMMENT.search(sql):
-        return "run an executable comment (/*! … */), which the server runs as SQL"
-    if _MYSQL_FILE_WRITE.search(sql):
-        return (
+        return _MYSQL_SEMICOLON, True
+    rules = (
+        (
+            _MYSQL_EXECUTABLE_COMMENT,
+            "run an executable comment (/*! … */), which the server runs as SQL",
+            "the server runs an executable comment as SQL",
+        ),
+        (
+            _MYSQL_FILE_WRITE,
             "write a file with INTO OUTFILE or INTO DUMPFILE (the two words are "
-            "refused anywhere in the statement, even inside a quoted string)"
+            "refused anywhere in the statement, even inside a quoted string)",
+            "OUTFILE and DUMPFILE make a statement write a file",
+        ),
+        (
+            _MYSQL_FILE_READ_CALL,
+            _MYSQL_FILE_READ_REFUSAL,
+            "LOAD_FILE( reads a file on the database server",
+        ),
+    )
+    for rule, refused, why in rules:
+        if rule.search(sql) is None:
+            continue
+        quoted = _mysql_quoted_only(sql, rule)
+        if quoted is None:
+            return refused, False
+        rephrase = _quoted_halves(
+            quoted, _mysql_join, lambda statement: _mysql_shape(statement) is None
         )
-    if _MYSQL_FILE_READ_CALL.search(sql):
-        return _MYSQL_FILE_READ_REFUSAL
+        if rephrase is None:
+            return refused, False
+        return _quoted_text_refusal(quoted, why, rephrase), True
     rest = sql[_MYSQL_LEADING.match(sql).end() :]
     first = re.match(r"\(|[A-Za-z_]+|\S+", rest)
     if first is None:
-        return "run a statement that does not begin with a keyword"
+        return "run a statement that does not begin with a keyword", False
     keyword = first.group(0).upper()
     if keyword in _MYSQL_READS:
         return None
-    return f"run a {keyword} statement"
+    return f"run a {keyword} statement", False
 
 
 def _named_as_word(sql: str, names: set[str]) -> str | None:
@@ -2811,20 +2963,42 @@ def _refuse_mysql_write(
     """
     if parameters:
         return
-    refused = _mysql_shape_refusal(statement)
-    if refused is None:
-        name = _named_as_word(statement, _mysql_unsafe_names(cursor))
+    shaped = _mysql_shape(statement)
+    if shaped is None:
+        unsafe = _mysql_unsafe_names(cursor)
+        name = _named_as_word(statement, unsafe)
         if name is None:
             return
-        refused = (
-            f"use {name}, a stored or loadable function, or a view calling one, "
-            f"which can change the server even inside a read-only transaction "
-            f"(refused wherever the name appears as a word)"
-        )
+        shaped = _mysql_named_refusal(statement, name, unsafe)
     import pymysql
 
-    refusal.what = refused
+    refusal.what, refusal.shape = shaped
     raise pymysql.err.ProgrammingError(f"query may not {refusal.what}.")
+
+
+def _mysql_named_refusal(sql: str, name: str, unsafe: set[str]) -> tuple[str, bool]:
+    """Why ``sql`` is refused for naming ``name``, and whether that is a shape rule.
+
+    A shape rule where every unsafe name ``sql`` mentions is inside a quoted
+    string, which a read meets as surely as a call, with the rephrase (#135).
+    """
+    why = (
+        "a stored or loadable function, or a view calling one, which can change "
+        "the server even inside a read-only transaction"
+    )
+    named = f"use {name}, {why} (refused wherever the name appears as a word)"
+    if _named_as_word(_MYSQL_LITERAL.sub("''", sql), unsafe) is not None:
+        return named, False
+
+    def passes(statement: str) -> bool:
+        return _mysql_shape(statement) is None and (
+            _named_as_word(statement, unsafe) is None
+        )
+
+    rephrase = _quoted_halves(name, _mysql_join, passes)
+    if rephrase is None:
+        return named, False
+    return _quoted_text_refusal(name, f"{name} is {why}", rephrase), True
 
 
 @dataclass(frozen=True)
@@ -3817,8 +3991,9 @@ def _refuse_monetdb_write(
     """
     if parameters:
         return
+    shape = False
     if not _monetdb_single_statement(statement):
-        refused = _MONETDB_SEMICOLON
+        refused, shape = _MONETDB_SEMICOLON, True
     else:
         cursor.execute(f"EXPLAIN {statement}")
         plan = [line for (line,) in cursor.fetchall()]
@@ -3839,6 +4014,7 @@ def _refuse_monetdb_write(
     from pymonetdb.exceptions import ProgrammingError
 
     refusal.what = refused
+    refusal.shape = shape
     raise ProgrammingError(f"query may not {refusal.what}.")
 
 
