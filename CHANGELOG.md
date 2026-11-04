@@ -326,6 +326,15 @@ rebuild it.
   `localdata-test-postgres-tls` and the keytab also holds
   `postgres/localdata-test-postgres-krb`. `docker/test/in-network.compose.yml`
   gives each run its own network and makes YDB advertise its service name.
+- **ruff is the declared formatter and linter**
+  ([#131](https://github.com/ChrisGVE/localdata-mcp/issues/131)).
+  `pyproject.toml` declared black and an isort profile while the tree was
+  formatted with ruff, so a tool honouring the declaration rewrote lines nobody
+  had touched. `[tool.black]` and `[tool.isort]` are gone; `[tool.ruff]` states
+  line length 88, the classic `E4`/`E7`/`E9`/`F` lint set, and keeps the
+  formatter off Markdown. ruff is pinned at 0.17.3 in the `dev` extra, and
+  `ruff format --check .` and `ruff check .` are clean on the tree at that
+  version.
 - **`scripts/endpoint-run.sh` replaces `scripts/endpoint-batch.sh`**
   ([#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)). It runs one
   database at a time under the machine-wide lock `/tmp/localdata-docker.lock`.

@@ -311,11 +311,20 @@ reached.
 
 ### Style
 
-- Follow PEP 8. `pyproject.toml` configures black at line length 88, isort on
-  the black profile, and mypy targeting 3.11 with `no_implicit_optional` and
-  `strict_optional`. **None of the three is in the `dev` extra**, so install them
-  yourself if you want to run them locally — `uv tool install black`, and the
-  same for `isort` and `mypy` (one package per invocation).
+- Follow PEP 8. ruff is the formatter and the linter, configured in
+  `pyproject.toml` (`[tool.ruff]`, line length 88) and pinned exactly in the
+  `dev` extra, because its output changes between releases. Before you commit:
+
+  ```bash
+  .venv/bin/ruff format .
+  .venv/bin/ruff check .
+  ```
+
+  Both are clean on the tree at the pinned version. An editor or hook running a
+  different formatter (black, or another ruff) rewrites lines nobody touched.
+- `pyproject.toml` also configures mypy, targeting 3.11 with
+  `no_implicit_optional` and `strict_optional`. It is **not** in the `dev` extra,
+  so install it yourself to run it locally: `uv tool install mypy`.
 - Use type hints on all public function signatures.
 - **Write the docstring for a reader who has to justify the code, not describe
   it.** This codebase says why a thing is the way it is — which measurement
