@@ -3703,6 +3703,15 @@ lineage they share rather than in either one:
 > still renders bare `DOUBLE`. On 0.3.0 the override asks for the type the dialect would have chosen
 > anyway. It can go when the Python floor reaches 3.11 and the `firebird` extra can say `>=0.3`.
 > The Firebird endpoint tests pass on 0.3.0 (20 passed).
+
+> **Amended 2026-11-04 — both conditions above are met, and #55 is closed.** The Python floor is
+> 3.11 (99da3076), and the `firebird` extra says `sqlalchemy-firebirdsql>=0.3` (d5b7676a), so no
+> supported install resolves 0.1.0 any more. The lock holds 0.3.0. Compiled with the dialect it
+> registers, Core's `Double` renders `v DOUBLE PRECISION`. The `column_type` respelling is still in
+> place. It now asks for what the dialect would choose anyway, and removing it is left to the
+> separate retirement of the test that pins it. `sqlalchemy-firebird`
+> ([fdcastel/sqlalchemy-firebird#93](https://github.com/fdcastel/sqlalchemy-firebird/issues/93),
+> still open) is not a dependency of this server.
 >
 > **The endpoint suite cannot tell whether this respelling is needed.** Deleting the `REAL` branch
 > and running the Firebird endpoint tests on **0.1.0** also gives 20 passed, because no endpoint
@@ -4309,6 +4318,13 @@ Reported on the issue that already existed for it,
 24.4.4.2 on Colima / Apple Silicon. The comment confirms it on **26.1.1.22, Docker Desktop, x86_64** —
 so it is neither platform-specific nor fixed — and carries the 6.17 MB measurement showing the
 variable saves nothing worth the trap.
+
+> **Amended 2026-11-04 — a known upstream limit, and #63 is closed.**
+> [ydb-platform/ydb#17760](https://github.com/ydb-platform/ydb/issues/17760) is still open, with no
+> fix in a release. This server's workaround stands: `docker-compose.test.yml` leaves
+> `YDB_USE_IN_MEMORY_PDISKS` unset and says why. `scripts/endpoint-run.sh` now creates and removes
+> the container on each run (§13.7), so the harness no longer restarts one. A stack brought up by
+> hand and then stopped and started is still covered by the disk-backed default.
 
 ### 22.8 Everything else, and it really was almost everything
 
@@ -7354,6 +7370,33 @@ server and exits with the slot still attached, detached, or with a raw connectio
 So it is a property of one long process that has made many DuckDB objects, not of a single code
 path found here. 1.5.5 prints nothing like it. Its cause is not established
 ([#136](https://github.com/ChrisGVE/localdata-mcp/issues/136)).
+
+> **Amended 2026-11-04 — a known upstream limit, and what holds the objects.** Two open DuckDB issues
+> report the same message, with the same six types and 84 functions:
+> [duckdb/duckdb-python#732](https://github.com/duckdb/duckdb-python/issues/732), when a DuckDB type
+> sits in a `typing.overload` signature and numpy is imported, and
+> [#736](https://github.com/duckdb/duckdb-python/issues/736), whose minimal reproducer is one stray
+> reference to the `DuckDBPyConnection` type. The report is printed at shutdown when DuckDB objects
+> are still alive. Measured here on DuckDB 2.0.0 and duckdb-engine 0.17.0, Python 3.12.9, each
+> variant a full offline run (1689 passed, exit 0, every time):
+>
+> | Variant, at `pytest_unconfigure` | DuckDB objects alive after `gc.collect()` | Report |
+> |---|---|---|
+> | nothing | 137 duckdb-engine dialects, 519 `DuckDBPyType` | 517 instances |
+> | this server's `_reset()` first | the same | 517 instances |
+> | `cache_clear()` on every `lru_cache` method of SQLAlchemy's `PGDialect` | 0 dialects | **27 instances** |
+>
+> So this server's own state is not what holds them. SQLAlchemy's `PGDialect` caches its catalog
+> queries with `lru_cache` on methods, keyed by the dialect, at most 128 per method. duckdb-engine's
+> dialect subclasses it, so those caches keep up to that many DuckDB dialects, and their types,
+> alive until exit. That is bounded, and SQLAlchemy's design rather than a leak. The remaining 27 are
+> the count #736's reproducer gives. In isolation nothing here reproduces it: `import duckdb` with
+> numpy, pandas or pyarrow; `import duckdb_engine`; `import localdata_mcp.server`; and 1, 3 or 20
+> SQLAlchemy DuckDB engines each reflected and disposed. All exit clean. `typing._overload_registry`
+> held no overload naming a DuckDB type at the end of the run, so #732's trigger is not the one here.
+> #736's `Py_IncRef` reproducer, run in this venv, prints `leaked 27 instances!`. Nothing is filed
+> upstream from here: both issues are open, and the full-suite case reproduces only as a whole.
+
 
 ### 36.2 The `.wal` write is unchanged
 
