@@ -2620,6 +2620,44 @@ Three parts of the new spec are worth a second look then, none urgent:
   not share slots. That is fine for a local stdio server, which is what this is, and it is the reason
   hosting was dropped as a concern rather than a gap to close.
 
+### 14.5 Stable fastmcp 4.1.6 adopted (2026-11-04)
+
+> **Amended 2026-11-04.** §14.4's condition is met: fastmcp 4.1.6 (MCP SDK `mcp` 2.3.0) is stable,
+> and the lock now pins it. §14.2 counted one failing test against the beta. Against 4.1.6 the
+> whole offline suite showed **two**, and the second was not predicted:
+
+| Run (offline suite, `-m 'not slow'`) | Result |
+|---|---|
+| unedited tests, fastmcp 4.1.6 | 1536 passed, 1192 skipped, **2 failed** |
+| edited tests, locked fastmcp 4.1.6, `-W error::DeprecationWarning` | **1538 passed, 1192 skipped, 0 failed** |
+
+1. **The formats test** failed for the reason §14.3 gave. On 4.1.6 the `attach` description is
+   2041 chars with no `Args:` text, and the reader list is in `properties.database.description`.
+   The test now reads the description and every parameter's schema description together. Removing
+   `.numbers` from the docstring still fails it on 3.2.0 and on 4.1.6.
+2. **The handshake test (#83)** failed because fastmcp 4's `Client` defaults to `mode="auto"`. That
+   mode negotiates the sessionless `2026-07-28` protocol, where there is no `initialize`, so
+   `client.initialize_result` is `None`. The server was right in both eras. `mode="legacy"`
+   negotiated `2025-11-25` and `mode="auto"` negotiated `2026-07-28`, and both reported
+   `localdata 3.0.0.dev0` through `client.server_info`. The test now checks both handshakes on
+   fastmcp 4 and the single one on fastmcp 3.
+3. **The `inputSchema` deprecation** was the run's one warning. Test reads now go through one
+   accessor that prefers `input_schema`.
+
+**Still no source change.** The suite passes on 3.2.0 too, so the pin stays uncapped.
+
+**The instrument hid this first time.** `uv run --with 'fastmcp==X' pytest` does not test X. The
+bare `pytest` resolves to `.venv/bin/pytest`, and its shebang names the project venv's interpreter,
+so the run ignores the `--with` overlay. That run passed on the locked 3.2.0 and looked like a clean
+4.1.6 result. Only `uv run --with … python -m pytest` runs under the overlay. Check the version from
+inside the run (`fastmcp.__version__` in a test) before trusting the result.
+
+**Live client.** The installed `localdata-mcp` entrypoint was driven over stdio in both handshakes:
+`attach` (`;`), `query` and `stats` gave 3 rows, 1 null and a sum of 40. A headless Claude Code
+agent ran against the same server with only its tools, and was not told the separator. It read the
+refusal and declined to guess. Told `;`, it reached the same three numbers, and every call
+returned `ok: true`.
+
 ## §15 — YugabyteDB, and the retryable error §12.3 asked for (2026-07-29)
 
 Third entry from the backend catalogue, and the first to **fail** against the seam rather than pass

@@ -237,6 +237,14 @@ rebuild it.
   3.10 classifier is gone. The `tomli` backport that 3.10 needed is no longer a
   dependency, because `tomllib` is in the standard library from 3.11. No release
   of this line had reached users on 3.10: 3.0.0 has not been published.
+- **Built and tested on fastmcp 4.1.6 (MCP SDK 2.3.0), and still runs on
+  fastmcp 3.** The requirement stays `fastmcp>=3.0.0`, uncapped. On fastmcp 4 the
+  server answers both the classic `initialize` handshake and the sessionless
+  2026-07-28 protocol, and reports `localdata` and this project's version in
+  both. One thing a client will see differently: the per-parameter prose in each
+  tool's docstring, the file-format lists included, now arrives in that
+  parameter's schema `description` rather than in the tool description. No
+  source change was needed. Measured in CONSTRAINTS §14.5.
 - **Every datasource is a database**, whatever it came from, and the same nine
   verbs address all of them. In 2.x a CSV and a PostgreSQL connection were
   different kinds of thing: `connect_database` took both, and which of the
