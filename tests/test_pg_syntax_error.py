@@ -11,10 +11,10 @@ So before reporting a refused kind, the explainer asks the server to *parse*
 the statement: the extended protocol's Parse message, ``PQprepare`` with the
 unnamed statement, which parses and analyses and never plans, binds or
 executes. A syntax error there (42601) is the answer, in the server's words;
-a statement that parses keeps the refused-kind answer. That runs on psycopg 3,
-the driver of PostgreSQL, CockroachDB and YugabyteDB. openGauss is reached
-through psycopg 2, which has no Parse of its own, and asks the server's keyword
-list instead: a first word that is no keyword cannot begin a statement.
+a statement that parses keeps the refused-kind answer. On PostgreSQL,
+CockroachDB and YugabyteDB it is psycopg 3's connection that is asked. openGauss
+is reached through psycopg 2, which sends no Parse of its own, so the same
+``PQprepare`` is asked through the libpq psycopg 2 loaded, on its connection.
 
 The live half needs the containers and skips without them, like every
 endpoint test. It proves the parse cannot run a write: an ``INSERT`` and a
@@ -199,53 +199,10 @@ def test_anything_but_a_syntax_error_leaves_the_refused_kind_reading(result):
 
 
 def test_a_driver_without_a_parse_of_its_own_is_not_asked():
-    """psycopg 2 has no ``pgconn``: no answer, and nothing is sent."""
+    """Neither psycopg's ``pgconn`` nor psycopg 2's ``pgconn_ptr``: no answer, nothing sent."""
     engine = _Engine(SimpleNamespace())
 
     assert backend_for("postgresql").syntax_error(engine, "SELEC 1", "…") is None
-
-
-class _KeywordEngine:
-    """``engine.connect().execute(...).scalar()`` answering whether a word is a keyword."""
-
-    def __init__(self, keywords):
-        self.keywords = keywords
-        self.asked: list[dict] = []
-
-    def connect(self):
-        engine = self
-
-        class _Connection:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def execute(self, statement, parameters):
-                engine.asked.append(parameters)
-                return SimpleNamespace(
-                    scalar=lambda: int(parameters["word"] in engine.keywords)
-                )
-
-        return _Connection()
-
-
-def test_opengauss_answers_a_word_no_keyword_list_holds_with_the_servers_message():
-    engine = _KeywordEngine({"select", "insert"})
-    message = _CURSOR_MESSAGE.format(verb="SELEC", sql="SELEC 1")
-
-    assert backend_for("opengauss").syntax_error(engine, "SELEC 1", message) == message
-    assert engine.asked == [{"word": "selec"}]  # bound, never spliced
-
-
-def test_opengauss_leaves_a_keyword_to_the_refused_kind_reading():
-    engine = _KeywordEngine({"select", "insert"})
-
-    assert (
-        backend_for("opengauss").syntax_error(engine, "INSERT INTO t VALUES (1)", "…")
-        is None
-    )
 
 
 def test_generic_backends_have_no_one_to_ask():
@@ -327,16 +284,10 @@ def _exists(admin, table: str) -> bool:
         )
 
 
-#: Where the answer is the server's message from the cursor declaration rather
-#: than from a parse: openGauss, reached through psycopg 2, asks its keyword
-#: list instead (see ``OpenGaussBackend.syntax_error``).
-_KEYWORD_LIST = {"opengauss"}
-
-
 @pytest.mark.endpoint
 @pytest.mark.parametrize("sql", ["SELEC 1", "INSERTT INTO {t} VALUES (2)"])
 def test_a_misspelled_first_word_is_the_servers_syntax_error(server, sql):
-    table, _, name = server
+    table, _, _ = server
     word = sql.split()[0]
 
     answer = _call("query", nickname="endpoint", sql=sql.format(t=table))
@@ -345,8 +296,7 @@ def test_a_misspelled_first_word_is_the_servers_syntax_error(server, sql):
     assert "syntax error" in answer["error"], answer
     assert word in answer["error"], answer
     assert "create" not in answer["error"], answer
-    if name not in _KEYWORD_LIST:
-        assert "CURSOR" not in answer["error"], answer
+    assert "CURSOR" not in answer["error"], answer
 
 
 @pytest.mark.endpoint
@@ -368,3 +318,120 @@ def test_asking_the_server_to_parse_a_write_does_not_run_it(server):
 
     assert _count(admin, table) == 1
     assert not _exists(admin, f"{table}_made")
+
+
+# ---------------------------------------------------------------------------
+# openGauss asks the same Parse, through psycopg 2's own libpq (#143 residual)
+# ---------------------------------------------------------------------------
+#
+# psycopg 2 sends no Parse message of its own, but it is a libpq client and
+# hands out its connection's ``PGconn *`` as ``pgconn_ptr``. Asked through the
+# libpq psycopg 2 itself loaded, ``PQprepare`` is the same Parse the psycopg 3
+# engines are asked, so on openGauss a keyword that cannot begin a statement
+# (``FROM t``) is answered with the server's syntax error too, where asking the
+# keyword list could not tell it from ``CREATE``.
+
+
+class _Libpq:
+    """libpq's five calls, answering one prepared result, recording the calls."""
+
+    def __init__(self, status, code=None, message=b"", severity=b"ERROR"):
+        self.status = status
+        self.code = code
+        self.message = message
+        self.severity = severity
+        self.prepared: list[tuple] = []
+        self.cleared: list[object] = []
+
+    def PQprepare(self, conn, name, command, count, types):
+        self.prepared.append((conn, name, command, count, types))
+        return "result"
+
+    def PQresultStatus(self, result):
+        return self.status
+
+    def PQresultErrorField(self, result, field):
+        return {ord("C"): self.code, ord("S"): self.severity}.get(field)
+
+    def PQresultErrorMessage(self, result):
+        return self.message
+
+    def PQclear(self, result):
+        self.cleared.append(result)
+
+
+def _psycopg2(monkeypatch, libpq):
+    from localdata_mcp import dialects
+
+    monkeypatch.setattr(dialects, "_psycopg2_libpq", lambda: libpq)
+    return _Engine(SimpleNamespace(pgconn_ptr=4242, encoding="UTF8"))
+
+
+_PGRES_COMMAND_OK = 1
+_PGRES_FATAL_ERROR = 7
+
+
+@pytest.mark.parametrize("name", ["opengauss", "postgresql"])
+def test_psycopg2s_connection_is_asked_to_parse_with_the_unnamed_statement(
+    monkeypatch, name
+):
+    libpq = _Libpq(
+        _PGRES_FATAL_ERROR,
+        b"42601",
+        b'ERROR:  syntax error at or near "FROM"\nLINE 1: FROM t\n        ^\n',
+    )
+    engine = _psycopg2(monkeypatch, libpq)
+
+    answer = backend_for(name).syntax_error(engine, "FROM t", "the cursor's words")
+
+    assert answer == 'syntax error at or near "FROM"\nLINE 1: FROM t\n        ^'
+    assert libpq.prepared == [(4242, b"", b"FROM t", 0, None)]
+    assert libpq.cleared == ["result"]  # the result is freed, whatever it said
+
+
+@pytest.mark.parametrize(
+    "libpq",
+    [
+        _Libpq(_PGRES_COMMAND_OK),
+        _Libpq(_PGRES_FATAL_ERROR, b"42P01", b'ERROR:  relation "t" does not exist\n'),
+    ],
+    ids=["parses", "parses-but-names-a-missing-table"],
+)
+def test_psycopg2_anything_but_a_syntax_error_leaves_the_refused_kind_reading(
+    monkeypatch, libpq
+):
+    engine = _psycopg2(monkeypatch, libpq)
+
+    answer = backend_for("opengauss").syntax_error(
+        engine, "CREATE TABLE t (a INT)", "…"
+    )
+
+    assert answer is None
+    assert libpq.cleared == ["result"]
+
+
+def test_the_libpq_asked_is_the_one_psycopg2_itself_loaded():
+    """Resolved through psycopg 2's own extension, so the PGconn is the one it made."""
+    psycopg2 = pytest.importorskip("psycopg2")
+    from localdata_mcp import dialects
+
+    libpq = dialects._psycopg2_libpq()
+
+    assert libpq.PQlibVersion() == psycopg2.__libpq_version__
+
+
+@pytest.mark.endpoint
+@pytest.mark.parametrize("sql", ["FROM {t}", "WHERE a = 1"])
+def test_a_keyword_that_cannot_begin_a_statement_is_the_servers_syntax_error(
+    server, sql
+):
+    table, admin, _ = server
+    word = sql.split()[0]
+
+    answer = _call("query", nickname="endpoint", sql=sql.format(t=table))
+
+    assert answer["ok"] is False, answer
+    assert f'syntax error at or near "{word}"' in answer["error"], answer
+    assert "CURSOR" not in answer["error"], answer
+    assert "create" not in answer["error"], answer
+    assert _count(admin, table) == 1

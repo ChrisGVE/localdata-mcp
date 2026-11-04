@@ -3999,6 +3999,36 @@ which streams without declaring a server-side cursor at all.
 > the row count at 1 and no new table, on both attaches (on openGauss the Parse path has no
 > connection to ask and answers `None`; `query` there goes through the keyword question).
 
+> **Amended 2026-11-05 — openGauss is asked the same Parse, and the residual is closed
+> ([#143](https://github.com/ChrisGVE/localdata-mcp/issues/143)).** psycopg2 sends no Parse of its
+> own, but it is a libpq client and hands out its connection's `PGconn *` as `pgconn_ptr`.
+> `PQprepare` resolved through psycopg2's own extension module (a symbol lookup in a loaded library
+> searches the libraries it depends on, so this is the libpq that made that connection: in the
+> runner `psycopg2_binary.libs/libpq-f521cc7d.so.5.17`, `PQlibVersion()` 170009, equal to
+> `psycopg2.__libpq_version__`) is the same Parse message, with the unnamed statement. Measured
+> from the runner on openGauss 7.0.0-RC3, the reader's own connection, a probe beside the tests:
+>
+> | Parse of | Answer |
+> |---|---|
+> | `FROM t`, `FROM 1`, `WHERE a = 1`, `AS 1`, `INTO t`, `ON 1`, `SELEC 1`, `SELECT , FROM t` | 42601, `syntax error at or near "<word>"` |
+> | `SELECT 1`, `INSERT`, `CREATE TABLE`, `DROP TABLE`, `DELETE`, `UPDATE`, `TRUNCATE`, `ALTER TABLE`, `GRANT`, `COPY … TO STDOUT`, `MERGE`, `SHOW`, `EXPLAIN SELECT 1`, `VACUUM`, `BEGIN`, `SET`, `PURGE RECYCLEBIN` | parses (`PGRES_COMMAND_OK`) |
+> | `INSERT INTO nosuch …` | 42P01 |
+>
+> Where SQL `PREPARE` refused `CREATE`, `DROP`, `SHOW` and `EXPLAIN` exactly as it refused a typo,
+> Parse tells them apart. After the probe the table still held its one row and its one column,
+> `probe143b` had not been made, the transaction status stayed idle throughout, and psycopg2 read
+> the table on the same connection afterwards. So `OpenGaussBackend` no longer asks
+> `pg_get_keywords()`: `PostgreSQLBackend.syntax_error` asks psycopg 3's connection where there is
+> one and psycopg2's through its libpq otherwise, and only a 42601 is an answer, as before. Before
+> the fix, from the runner: `FROM t` and `WHERE a = 1` were answered "it is not a read" on both
+> attaches, and `SELEC 1` carried the cursor's `CURSOR WITHOUT HOLD FOR` excerpt (6 failed). After
+> it, the standard selections from the runner: openGauss 104 passed, 13 skipped, PostgreSQL 170
+> passed, 319 skipped, 0 failed. No skip is in `tests/test_pg_syntax_error.py`: they are the TLS,
+> Kerberos and trust targets and the other engines, whose containers were not up, and checks the
+> engine does not offer. `FROM t` and `WHERE a = 1` now answer `syntax error at or near "<word>"` on
+> both, on both attaches, with the table's one row intact. CockroachDB and YugabyteDB were not run:
+> their path, psycopg 3's connection, is the code of 0a080260 moved into a function unchanged.
+
 ### 21.4 Everything else, and it really was everything
 
 | Axis | openGauss |

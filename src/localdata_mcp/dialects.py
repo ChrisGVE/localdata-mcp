@@ -54,11 +54,12 @@ statement as an opaque one rather than to give YDB an override for it (#59).
 
 from __future__ import annotations
 
+import ctypes
 import re
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import partial
+from functools import cache, partial
 from inspect import signature
 from pathlib import Path
 from types import MethodType, SimpleNamespace
@@ -1908,6 +1909,82 @@ _PG_READ_ONLY = "25006"
 #: PostgreSQL's code for a statement it cannot parse, ``syntax_error``.
 _PG_SYNTAX_ERROR = "42601"
 
+#: libpq's ``PGRES_FATAL_ERROR``, the status of a result the server refused.
+_PGRES_FATAL_ERROR = 7
+
+
+@cache
+def _psycopg2_libpq() -> ctypes.CDLL:
+    """libpq exactly as psycopg 2 loaded it, with the calls a Parse needs (#143).
+
+    Resolved through psycopg 2's own extension module rather than by a library
+    name: looking a symbol up in a loaded library also searches the libraries it
+    depends on, so ``PQprepare`` here is the libpq that made the ``PGconn`` behind
+    ``connection.pgconn_ptr``, never another copy whose structures could differ
+    (``psycopg2-binary`` bundles its own, and psycopg 3 may carry a second).
+    """
+    from psycopg2 import _psycopg
+
+    libpq = ctypes.CDLL(_psycopg.__file__)
+    libpq.PQprepare.restype = ctypes.c_void_p
+    libpq.PQprepare.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+    ]
+    libpq.PQresultStatus.argtypes = [ctypes.c_void_p]
+    libpq.PQresultErrorField.restype = ctypes.c_char_p
+    libpq.PQresultErrorField.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    libpq.PQresultErrorMessage.restype = ctypes.c_char_p
+    libpq.PQresultErrorMessage.argtypes = [ctypes.c_void_p]
+    libpq.PQclear.argtypes = [ctypes.c_void_p]
+    return libpq
+
+
+def _parsed_by_psycopg3(driver: Any, sql: str) -> str | None:
+    """The server's syntax error for ``sql`` from a Parse on psycopg 3's connection."""
+    from psycopg import errors, pq
+
+    encoding = driver.info.encoding
+    result = driver.pgconn.prepare(b"", sql.encode(encoding))
+    if result.status != pq.ExecStatus.FATAL_ERROR:
+        return None
+    code = result.error_field(pq.DiagnosticField.SQLSTATE)
+    if code != _PG_SYNTAX_ERROR.encode():
+        return None
+    return str(errors.error_from_result(result, encoding=encoding))
+
+
+def _parsed_by_psycopg2(driver: Any, sql: str) -> str | None:
+    """The same Parse on psycopg 2's connection, through the libpq it loaded.
+
+    The server's message comes back as libpq words it, ``ERROR:  …``; the
+    severity is taken off, as psycopg does, so the answer reads as it does on
+    the psycopg 3 engines.
+    """
+    from psycopg2.extensions import encodings
+
+    encoding = encodings.get(driver.encoding, "utf-8")
+    libpq = _psycopg2_libpq()
+    result = libpq.PQprepare(driver.pgconn_ptr, b"", sql.encode(encoding), 0, None)
+    try:
+        if libpq.PQresultStatus(result) != _PGRES_FATAL_ERROR:
+            return None
+        if libpq.PQresultErrorField(result, ord("C")) != _PG_SYNTAX_ERROR.encode():
+            return None
+        message = (libpq.PQresultErrorMessage(result) or b"").decode(
+            encoding, errors="replace"
+        )
+        severity = (libpq.PQresultErrorField(result, ord("S")) or b"").decode(
+            encoding, errors="replace"
+        )
+    finally:
+        libpq.PQclear(result)
+    return message.removeprefix(f"{severity}:  ").rstrip("\n")
+
+
 #: The schemas the server itself provides. A function in one of these is the
 #: server's own, and is refused only if it can act past the transaction.
 _PG_SYSTEM_SCHEMAS = frozenset({"pg_catalog", "information_schema"})
@@ -2737,25 +2814,21 @@ class PostgreSQLBackend(Backend):
         Only a syntax error (42601) is an answer; anything else, a missing
         table included, leaves the refused-kind reading as it was.
 
-        psycopg 2, openGauss's driver, offers no Parse of its own; there the
-        answer is ``None`` unless :meth:`OpenGaussBackend.syntax_error` says
-        otherwise.
+        psycopg 2, openGauss's driver, sends no Parse of its own, but it hands
+        out its connection's libpq handle as ``pgconn_ptr``, and the same
+        ``PQprepare`` is asked through the libpq psycopg 2 loaded. Measured on
+        openGauss 7.0.0-RC3, that Parse answers ``FROM t`` with 42601 and lets
+        ``CREATE``, ``DROP``, ``INSERT`` and ``SHOW`` parse, running none of
+        them, where SQL ``PREPARE`` refused them all alike. A driver offering
+        neither is not asked.
         """
         with engine.connect() as conn:
             driver = conn.connection.driver_connection
-            pgconn = getattr(driver, "pgconn", None)
-            if pgconn is None:
-                return None
-            from psycopg import errors, pq
-
-            encoding = driver.info.encoding
-            result = pgconn.prepare(b"", sql.encode(encoding))
-            if result.status != pq.ExecStatus.FATAL_ERROR:
-                return None
-            code = result.error_field(pq.DiagnosticField.SQLSTATE)
-            if code != _PG_SYNTAX_ERROR.encode():
-                return None
-            return str(errors.error_from_result(result, encoding=encoding))
+            if getattr(driver, "pgconn", None) is not None:
+                return _parsed_by_psycopg3(driver, sql)
+            if getattr(driver, "pgconn_ptr", None) is not None:
+                return _parsed_by_psycopg2(driver, sql)
+            return None
 
 
 @dataclass(frozen=True)
@@ -2806,26 +2879,6 @@ class OpenGaussBackend(PostgreSQLBackend):
     banner_query: ClassVar[str] = ""
     impostors: ClassVar[Mapping[str, str]] = {}
     relations_query: ClassVar[str] = _OPENGAUSS_RELATIONS
-
-    def syntax_error(self, engine: Engine, sql: str, message: str) -> str | None:
-        """The server's syntax error where the first word is no keyword of its grammar.
-
-        psycopg 2 offers no Parse message, so the server is asked something
-        narrower, through the reader and with the word as a bound value: is
-        the statement's first word in ``pg_get_keywords()``? A word that is not
-        cannot begin any statement, so the server's own message is the syntax
-        error it says it is (#143). A keyword that cannot begin one either,
-        ``FROM 1``, is still read as a refused kind; that is the residual.
-        """
-        first = re.match(r"[A-Za-z_]\w*", sql.lstrip())
-        if first is None:
-            return None
-        with engine.connect() as conn:
-            known = conn.execute(
-                text("SELECT count(*) FROM pg_get_keywords() WHERE word = :word"),
-                {"word": first.group(0).lower()},
-            ).scalar()
-        return None if known else message
 
 
 # ---------------------------------------------------------------------------

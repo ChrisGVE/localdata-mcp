@@ -422,7 +422,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And forty-three found in this release's own code before it shipped:
+And forty-four found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -790,8 +790,17 @@ And forty-three found in this release's own code before it shipped:
   syntax error, without the cursor declaration. openGauss is reached through
   psycopg 2, which has no Parse step of its own; there a first word that is no
   keyword of the server's grammar is answered with the server's message. A
-  keyword that cannot begin a statement (`FROM t`) is still read as a refused
-  kind there.
+  keyword that cannot begin a statement (`FROM t`) was still read as a refused
+  kind there; that is the next entry.
+- **On openGauss, a keyword that cannot begin a statement is reported as the
+  syntax error it is** ([#143](https://github.com/ChrisGVE/localdata-mcp/issues/143)).
+  `FROM t` and `WHERE a = 1` were answered "it is not a read" with `create`,
+  `update` and `drop`, because asking whether the first word was a keyword
+  could not tell `FROM` from `CREATE`. openGauss is now asked the same Parse
+  step as the other three engines, through the libpq its driver loaded, so
+  every statement that does not parse there is answered with the server's own
+  syntax error, without the cursor declaration, as on PostgreSQL, CockroachDB
+  and YugabyteDB.
 - **A refused locking read was explained as a statement that returns no rows**
   ([#144](https://github.com/ChrisGVE/localdata-mcp/issues/144)).
   `SELECT * FROM t FOR UPDATE` on the PostgreSQL family was answered "That
