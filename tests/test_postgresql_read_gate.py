@@ -1108,8 +1108,9 @@ def test_a_locking_read_is_stopped_by_the_read_only_session(server, clause):
     on YugabyteDB 2.25 without the line, 4 passed on each with it. CockroachDB
     and openGauss pass with it too; the drill was not run on those two.
 
-    Only the refusal is asserted. Its wording is a separate defect (#144): it
-    says the statement returns no rows.
+    Only the refusal is asserted here. Its wording, which names the locking
+    clause and gives the same SELECT without it (#144), is asserted in
+    ``tests/test_locking_read.py``.
     """
     answer = _call(
         "query", nickname="endpoint", sql=f"SELECT * FROM {server.t} {clause}"
