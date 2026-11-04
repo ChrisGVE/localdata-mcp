@@ -250,8 +250,12 @@ For each service it:
 6. then removes the containers, volumes, network and image, and any base image
    the run had to pull, even when the tests fail or the run is interrupted.
 
-When the last service is done, the runner image goes too, with the build cache
-the run created. A service that needs a helper brings it up with it: the TLS
+The runner image is built first, under the same lock, with a tag of the run's
+own (`localdata-test/runner:run-<id>`). When the last service is done it goes
+too, with the build cache records the run's own builds created. Two invocations
+can therefore run at once: the second waits for the lock, and neither removes an
+image or a cache record the other made
+([#142](https://github.com/ChrisGVE/localdata-mcp/issues/142)). A service that needs a helper brings it up with it: the TLS
 PostgreSQL brings the CA, and the Kerberos one brings the KDC. The standard
 selection is `-m endpoint -k <name>`, which `tests/endpoints.py`'s `selection()`
 derives from `TARGETS`. Exit status is the worst pytest exit status across the

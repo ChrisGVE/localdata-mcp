@@ -422,7 +422,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And forty found in this release's own code before it shipped:
+And forty-three found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -859,6 +859,15 @@ And forty found in this release's own code before it shipped:
   columns it is computed from. Formulas are still not evaluated. `.xlsx` and
   `.xlsm` only: `.ods` loses the value the same way and is not detected (see
   *Known limitations*).
+- **A second `scripts/endpoint-run.sh` no longer loses its runner to the first**
+  ([#142](https://github.com/ChrisGVE/localdata-mcp/issues/142)). Both
+  invocations tagged the runner `localdata-test/runner:local` and built it
+  before taking the lock, so the run that finished first removed the image of
+  the run still waiting, which then failed at `docker run` with exit 125. The
+  end-of-run pass also pruned every build cache record new since the run
+  started, the other run's included. Each run now builds its runner under the
+  lock with a tag of its own, records the cache its own builds created, and
+  removes only that, before it releases the lock.
 
 ### Known limitations
 

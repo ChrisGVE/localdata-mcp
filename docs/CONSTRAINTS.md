@@ -2532,6 +2532,24 @@ is ordinarily deployed.
 > 286 of PostgreSQL's 303 skips are "Nothing is listening": its authentication modes, whose
 > services were not up in that run.
 
+> **Amended 2026-11-04 — a run removes only what it created, with another run waiting**
+> ([#142](https://github.com/ChrisGVE/localdata-mcp/issues/142)). Measured 2026-11-03: two
+> invocations shared the runner tag `localdata-test/runner:local` and built it before taking the
+> lock, so the one that finished first removed the runner of the one still waiting. That run then
+> brought openGauss up, healthy after 20 s, and failed at `docker run` with exit 125. Its end-of-run
+> cache pass had the same shape: it pruned every unshared record new since the run began, a
+> concurrent run's included. The runner is now built under the lock, tagged
+> `localdata-test/runner:run-<id>` from the run's scratch directory. Every build the script makes is
+> under the lock, so the records that appear during one are that build's; the run keeps that list and
+> prunes nothing else. The runner and its pulled bases go before the lock is released.
+> `tests/test_endpoint_run.py` drives two runs at once (A over two services, B starting while A holds
+> the lock) against `tests/fake_docker.py`, which models the image store and the build cache. On the
+> old script: 3 failed and 1 passed, B exiting 125, and A removing B's runner and pruning one of B's
+> records. On the new one: 4 passed. One real run, `scripts/endpoint-run.sh postgres`: runner
+> `localdata-test/runner:run-52Quum`, "reclaimed the build cache this run created (14 records, 6
+> passes)". Afterwards there were 0 build cache IDs and 0 image IDs that were not there before it,
+> and the lock was free.
+
 ## §14 — The MCP 2026-07-28 specification, measured against this server (2026-07-29)
 
 The fifth MCP spec release landed on 2026-07-28: a **stateless protocol core**, Multi Round-Trip

@@ -3,7 +3,9 @@
 # isolated compose project, with the tests themselves running in a container,
 # then put the machine back the way it was found (task 35, #139).
 #
-# For each service named, serially:
+# First, under the machine-wide lock, build the runner image (docker/test/runner)
+# with a tag of this run's own, so that another invocation's cleanup can never
+# remove it (#142). Then, for each service named, serially:
 #
 #   1. take the machine-wide lock, so only one test database is ever up;
 #   2. build its image from docker/test/<service>/Dockerfile;
@@ -18,6 +20,11 @@
 #
 # When the last service is done the runner image goes too, with the build cache
 # this run created. The Dockerfiles are what stays.
+#
+# A second invocation waits for the lock and is otherwise independent: every
+# image and build cache record a run removes is one it created itself. That holds
+# because this script builds only while it holds the lock, so what the build
+# cache gains during one of its builds is that build's.
 #
 # A service that needs a helper brings it up with it, by its compose
 # `depends_on`: the TLS PostgreSQL brings the CA, the Kerberos one the KDC. That
@@ -61,6 +68,7 @@
 # Environment:
 #   HEALTH_TIMEOUT         seconds to wait for a healthcheck (default 900)
 #   LOCALDATA_DOCKER_LOCK  the lock directory (default /tmp/localdata-docker.lock)
+#   LOCALDATA_LOCK_POLL    seconds between attempts at a held lock (default 20)
 
 set -euo pipefail
 
@@ -73,10 +81,10 @@ fi
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILES=(-f "$REPO/docker-compose.test.yml" -f "$REPO/docker/test/in-network.compose.yml")
-RUNNER_IMAGE="localdata-test/runner:local"
+RUNNER_IMAGE="" # localdata-test/runner:<this run's id>, set once the run has one
 RUNNER_DOCKERFILE="$REPO/docker/test/runner/Dockerfile"
 LOCK="${LOCALDATA_DOCKER_LOCK:-/tmp/localdata-docker.lock}"
-LOCK_POLL=20
+LOCK_POLL="${LOCALDATA_LOCK_POLL:-20}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-900}" # Exasol builds a cluster before it serves.
 HEALTH_POLL=5
 PREFIX="localdata-test-"
@@ -143,18 +151,37 @@ remove_pulled() {
 
 # Removing an image does not remove the layers BuildKit cached while building it;
 # measured, the runner leaves about 800 MB behind (docs/CONSTRAINTS.md §13.7). So
-# the end of a run reclaims the records that are new since it started and are no
-# longer shared with any image. A record that was here before is never touched.
+# the end of a run reclaims the records its own builds created that are no longer
+# shared with any image. A record that was here before is never touched, and
+# neither is one another invocation created while this run was waiting for the
+# lock or testing without it (#142).
 #
 # In passes, because the records form chains and BuildKit keeps a parent until
 # its children are gone: measured, one pass over the runner's records left six of
 # eleven behind, and the fourth pass cleared the last.
+cache_ids() {
+	docker buildx du --format '{{.ID}}' 2>/dev/null | sort || true
+}
+
+# Run a build command, and add the build cache records that appeared during it to
+# the ones this run owns. Called only while the lock is held, which is what makes
+# what appeared this build's and not another invocation's.
+owned_build() {
+	local before rc=0
+	before="$(mktemp "$WORK/cache-before.XXXXXX")"
+	cache_ids >"$before"
+	"$@" || rc=$?
+	cache_ids | comm -13 "$before" - >>"$WORK/cache-mine"
+	rm -f "$before"
+	return "$rc"
+}
+
 reclaim_build_cache() {
 	local id candidates present pass
-	[[ -f "$WORK/cache-before" ]] || return 0
+	[[ -s "$WORK/cache-mine" ]] || return 0
 	candidates="$WORK/cache-candidates"
 	docker buildx du --format '{{.ID}} {{.Shared}}' 2>/dev/null |
-		awk '$2 == "false" { print $1 }' | sort | comm -23 - "$WORK/cache-before" >"$candidates"
+		awk '$2 == "false" { print $1 }' | sort | comm -12 - <(sort -u "$WORK/cache-mine") >"$candidates"
 	[[ -s "$candidates" ]] || return 0
 	for pass in 1 2 3 4 5 6 7 8 9 10; do
 		present="$(docker buildx du --format '{{.ID}}' 2>/dev/null | grep -Fx -f "$candidates" || true)"
@@ -170,7 +197,9 @@ reclaim_build_cache() {
 }
 
 dispose_runner() {
-	docker rmi "$RUNNER_IMAGE" >/dev/null 2>&1 && echo "removed $RUNNER_IMAGE"
+	if [[ -n "$RUNNER_IMAGE" ]]; then
+		docker rmi "$RUNNER_IMAGE" >/dev/null 2>&1 && echo "removed $RUNNER_IMAGE"
+	fi
 	PULLED=("${RUNNER_PULLED[@]}")
 	remove_pulled
 	reclaim_build_cache
@@ -276,9 +305,9 @@ run_tests() {
 	return "${PIPESTATUS[0]}"
 }
 
-# What a kept run leaves for --dispose: the build cache as it stood before the
-# run, and the bases it pulled, so that disposing later removes exactly what the
-# run added and nothing that was here before it.
+# What a kept run leaves for --dispose: its runner's tag, the build cache records
+# its builds created, and the bases it pulled, so that disposing later removes
+# exactly what the run added and nothing that was here before it.
 keep_state_dir() {
 	echo "${TMPDIR:-/tmp}/localdata-endpoint-run/$1"
 }
@@ -287,7 +316,9 @@ save_keep_state() {
 	local state
 	state="$(keep_state_dir "$CURRENT_PROJECT")"
 	mkdir -p "$state"
-	cp "$WORK/cache-before" "$state/cache-before"
+	touch "$WORK/cache-mine"
+	cp "$WORK/cache-mine" "$state/cache-mine"
+	echo "$RUNNER_IMAGE" >"$state/runner-image"
 	printf '%s\n' "${PULLED[@]}" >"$state/pulled"
 	printf '%s\n' "${RUNNER_PULLED[@]}" >"$state/runner-pulled"
 }
@@ -318,6 +349,7 @@ dispose_kept() {
 		exit 2
 	fi
 	WORK="$state"
+	RUNNER_IMAGE="$(cat "$state/runner-image")"
 	mapfile -t PULLED < <(grep -v '^$' "$state/pulled" || true)
 	mapfile -t RUNNER_PULLED < <(grep -v '^$' "$state/runner-pulled" || true)
 	# The kept run took the lock and left it held for the database it left up.
@@ -329,8 +361,8 @@ dispose_kept() {
 		echo "  $LOCK is not held by the kept run of $short; leaving it alone"
 	fi
 	teardown
-	release_lock
 	dispose_runner
+	release_lock
 	rm -rf "$state"
 	WORK=""
 	echo "disposed of $short"
@@ -343,9 +375,12 @@ cleanup() {
 	local status=$?
 	trap - EXIT INT TERM
 	if [[ $KEEP -eq 0 ]]; then
+		# The runner and its pulled bases go before the lock does, so that what
+		# this run removes is never a base another invocation is building on:
+		# that invocation builds only while it holds the lock.
 		teardown
-		release_lock
 		dispose_runner
+		release_lock
 	fi
 	[[ -n "$WORK" ]] && rm -rf "$WORK"
 	exit "$status"
@@ -387,19 +422,25 @@ fi
 # --- run --------------------------------------------------------------------------
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/endpoint-run.XXXXXX")"
-docker buildx du --format '{{.ID}}' 2>/dev/null | sort >"$WORK/cache-before" || true
 trap cleanup EXIT
 trap 'echo; echo "interrupted — cleaning up"; exit 130' INT TERM
 
-# The runner first, and outside the lock: building is not running a database,
-# and the runner is what answers which services exist and what each one's tests
-# are. Every run rebuilds it, which takes seconds when pyproject.toml and uv.lock
-# have not changed, and is what keeps the image from going stale when they have.
+# The runner first: it is what answers which services exist and what each one's
+# tests are. Its tag is this run's own, from the scratch directory's unique name,
+# and it is built under the lock, so that its build cache is attributable to this
+# run and no other invocation's cleanup can remove it (#142): with one shared tag,
+# a run that finished removed the runner of a run still waiting for the lock,
+# which then failed at `docker run` with exit 125. Every run rebuilds it, which
+# takes seconds when pyproject.toml and uv.lock have not changed, and is what
+# keeps the image from going stale when they have.
+RUNNER_IMAGE="localdata-test/runner:run-${WORK##*.}"
+take_lock runner
 echo "building the runner image ($RUNNER_IMAGE)..."
 while read -r base; do pull_if_absent "$base"; done < <(bases_of "$RUNNER_DOCKERFILE")
 RUNNER_PULLED=("${PULLED[@]}")
 PULLED=()
-docker build -q -f "$RUNNER_DOCKERFILE" -t "$RUNNER_IMAGE" "$REPO" >/dev/null
+owned_build docker build -q -f "$RUNNER_DOCKERFILE" -t "$RUNNER_IMAGE" "$REPO" >/dev/null
+release_lock
 
 SERVICES=()
 for name in "${REQUESTED[@]}"; do
@@ -421,7 +462,9 @@ fi
 worst=0
 SUMMARY=()
 
+remaining=${#SERVICES[@]}
 for service in "${SERVICES[@]}"; do
+	remaining=$((remaining - 1))
 	short="${service#"$PREFIX"}"
 	echo
 	echo "=============================================================="
@@ -448,7 +491,7 @@ for service in "${SERVICES[@]}"; do
 	done
 
 	echo "  building..."
-	compose build -q --with-dependencies "$service"
+	owned_build compose build -q --with-dependencies "$service"
 	echo "  starting under project $CURRENT_PROJECT..."
 	compose up -d "$service"
 
@@ -479,7 +522,9 @@ for service in "${SERVICES[@]}"; do
 		print_keep_instructions "$service" "$short"
 	else
 		teardown
-		release_lock
+		# After the last service the lock is held on into the cleanup, which
+		# disposes of the runner under it.
+		((remaining == 0)) || release_lock
 	fi
 done
 
