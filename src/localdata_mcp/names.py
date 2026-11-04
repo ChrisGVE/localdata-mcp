@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from typing import Sequence
 
-__all__ = ["clashes", "sanitize", "unique"]
+__all__ = ["clashes", "sanitize", "table_names", "unique"]
 
 _UNSAFE = re.compile(r"\W+")
 
@@ -68,6 +68,20 @@ def unique(names: Sequence[str]) -> list[str]:
         taken.add(candidate)
         out.append(candidate)
     return out
+
+
+def table_names(given: Sequence[str | None], stem: str) -> tuple[list[str], list[str]]:
+    """The table each of a file's tables lands as, before and after de-duplication.
+
+    Returns what each table's name cleans up to and the distinct name it gets,
+    in file order. A table the file did not name — a CSV is just rows — is named
+    after the file. Every path that turns one file into several tables asks
+    here, so ``attach`` lands them under the names ``create`` says they would
+    arrive as, and a reader that names its tables in a note — a JSON document's
+    key paths — names the ones they really land as.
+    """
+    wanted = [sanitize(name or stem, "table") for name in given]
+    return wanted, unique(wanted)
 
 
 def clashes(wanted: Sequence[str], given: Sequence[str]) -> list[tuple[str, list[int]]]:

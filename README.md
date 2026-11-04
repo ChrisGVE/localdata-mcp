@@ -330,9 +330,13 @@ repeated column header does: the one earlier in the file keeps `q2_prices` and
 the next arrives as `q2_prices_1`. Each `loaded` entry names the `sheet` it came
 from beside the `table` it became, and `warnings` names both sheets and where
 each went. `update` renames one, keeping its rows and indexes. A JSON, YAML or
-XML document is the other way round: one candidate table loads with a note naming
-the key it came from, and **two are refused, naming both**, rather than one being
-picked silently.
+XML document holding several tables lands all of them the same way. In JSON and
+YAML every non-empty array of objects is a table, found at any depth through
+objects, and is named from its **key path** — `{"customers": [...], "meta":
+{"orders": [...]}}` arrives as `customers` and `meta_orders` — while in XML each
+element repeated under the root is a table named after its tag. `warnings` says
+which path became which table. A document whose one table sits under a key
+loads as one table named after the file, with a note naming the key.
 
 `create(type="table")` is stricter than `attach` about the same file, and for a
 reason worth stating: **it makes one table, so a source holding more than one is

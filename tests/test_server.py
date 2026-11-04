@@ -1553,12 +1553,16 @@ def test_a_readers_note_reaches_the_caller_as_a_warning(session):
     assert any("employees" in warning for warning in attached["warnings"])
 
 
-def test_a_json_file_with_two_tables_is_refused_over_the_wire(session):
-    refused = call("attach", database=str(session / "two_tables.json"), nickname="x")
+def test_a_json_file_with_two_tables_lands_both_over_the_wire(session):
+    attached = call("attach", database=str(session / "two_tables.json"), nickname="x")
 
-    assert refused["ok"] is False
-    assert "employees" in refused["error"] and "departments" in refused["error"]
-    assert call("directory")["slots_used"] == 0
+    assert attached["ok"] is True
+    assert [(e["sheet"], e["table"]) for e in attached["loaded"]] == [
+        ("employees", "employees"),
+        ("departments", "departments"),
+    ]
+    assert any("'departments' as departments" in w for w in attached["warnings"])
+    assert call("directory")["slots_used"] == 1
 
 
 def test_the_delimiter_reaches_attach_over_the_wire(session):

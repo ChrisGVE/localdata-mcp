@@ -86,7 +86,7 @@ from .errors import LoadError, undeclared_separator
 # columns and tables follow one rule and the readers can reach it too. Imported
 # under its old private name, which `slots` and the comments here still use.
 from .names import sanitize as _sanitize
-from .names import unique
+from .names import table_names, unique
 from .paths import resolve_read_path
 
 # The readers and the shapes they hand back. Imported into this namespace on
@@ -383,19 +383,6 @@ class Tagged:
 # ---------------------------------------------------------------------------
 # Names
 # ---------------------------------------------------------------------------
-
-
-def table_names(given: Sequence[str | None], stem: str) -> tuple[list[str], list[str]]:
-    """The table each of a file's tables lands as, before and after de-duplication.
-
-    Returns what each table's name cleans up to and the distinct name it gets,
-    in file order. A table the file did not name — a CSV is just rows — is named
-    after the file. Every path that turns one file into several tables asks
-    here, so ``attach`` lands them under the names ``create`` says they would
-    arrive as.
-    """
-    wanted = [_sanitize(name or stem, "table") for name in given]
-    return wanted, unique(wanted)
 
 
 #: How the backends we have seen say "that table is not here". Matching driver

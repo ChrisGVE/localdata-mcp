@@ -458,10 +458,15 @@ def _table_warnings(info: TableInfo) -> list[str]:
 
 
 def _described(registry: Registry, nickname: str, tables: tuple[str, ...]) -> tuple:
-    """Describe several tables, and collect whatever is worth warning about."""
+    """Describe several tables, and collect whatever is worth warning about.
+
+    Each warning is said once. A reader's note describes reading the *file*, so
+    it reaches every table that came out of it, and a document of three tables
+    would otherwise say how its tables were named three times over.
+    """
     described = [registry.describe(nickname, table) for table in tables]
     warnings = [w for info in described for w in _table_warnings(info)]
-    return described, warnings
+    return described, list(dict.fromkeys(warnings))
 
 
 def _attachment_payload(attachment: Attachment, registry: Registry) -> dict[str, Any]:
@@ -577,13 +582,16 @@ def attach(
 
     A flat file becomes a new database holding one table named after the file; a
     SQLite or DuckDB database arrives with the tables it already has. A file that
-    holds several tables — a workbook's sheets, a ``.numbers`` document's tables —
-    becomes a database holding all of them, under the names the file gives them
-    made safe for SQL. Two names that come out the same — ``Q2 Prices`` and
-    ``Q2-Prices`` are both ``q2_prices`` — still land as two tables: the one
-    earlier in the file keeps the name and the next gets a numeric suffix,
-    ``q2_prices_1``. Each ``loaded`` entry then names the ``sheet`` it came from
-    beside the ``table`` it became.
+    holds several tables — a workbook's sheets, a ``.numbers`` document's tables,
+    the arrays of objects in a JSON or YAML document, the elements repeated in an
+    XML one — becomes a database holding all of them, under the names the file
+    gives them made safe for SQL. A document's table is named from its key path:
+    ``{"meta": {"orders": [...]}}`` lands ``meta_orders``. Two names that come
+    out the same — ``Q2 Prices`` and ``Q2-Prices`` are both ``q2_prices`` — still
+    land as two tables: the one earlier in the file keeps the name and the next
+    gets a numeric suffix, ``q2_prices_1``. Each ``loaded`` entry then names the
+    ``sheet`` it came from — the key path or tag, for a document — beside the
+    ``table`` it became.
 
     For a file, the answer already carries what it loaded — columns, types, row
     count and any warning — so calling ``directory`` straight afterwards returns the

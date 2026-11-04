@@ -15,7 +15,7 @@ a ``LoadError`` naming what was wrong with the file, because a wrong answer that
 looks like data is the failure nothing downstream can report.
 
 **A reader may also warn.** Several formats have a shape a table does not: a
-JSON object with one array under it, a workbook with several sheets. Those
+JSON object with arrays under its keys, a workbook with several sheets. Those
 come back as notes on the result rather than as refusals, because the data is
 readable and the caller is the one who can say whether it was read the way they
 meant.
@@ -33,7 +33,7 @@ from xml.etree import ElementTree
 import pandas as pd
 
 from .errors import LoadError, undeclared_separator
-from .names import sanitize
+from .names import sanitize, table_names
 
 __all__ = ["NamedFrame", "ReadResult", "Reader"]
 
@@ -63,9 +63,10 @@ class ReadResult:
 
     Most formats need no second field either: a CSV's rows are the whole story.
     Some cannot say everything in the data. A JSON file whose tables hang under
-    a key was read from *one* of those keys. That is a fact about the source the
-    caller can act on and would otherwise have to infer from a shape that looks
-    perfectly ordinary — so it is carried out rather than dropped here.
+    keys was read from those keys, and each table is named from its key path.
+    That is a fact about the source the caller can act on and would otherwise
+    have to infer from a shape that looks perfectly ordinary — so it is carried
+    out rather than dropped here.
 
     A note is a sentence, and the contract is the same as the warnings the load
     path already produces: state what happened and what to do about it. It is
@@ -180,28 +181,30 @@ def _shortened(text: str) -> str:
 
 
 def read_json(path: Path) -> ReadResult:
-    """Read a JSON document that holds one table.
+    """Read a JSON document: the table in it, or every table in it.
 
     A JSON file is only *sometimes* tabular, so this reader says which shapes it
     takes rather than reshaping whatever it finds:
 
     * **An array of objects** is the table, and nothing is assumed.
-    * **An object with exactly one non-empty array of objects under it** — the
-      shape an API dump takes, ``{"count": 2, "employees": [...]}`` — is that
-      array, and the note says which key it came from. There is no choice to
-      make when there is one candidate, and refusing would be a dead end: an
-      agent holding this file has no way to lift the array out of it, so a
-      refusal it cannot act on is worse than a load it is told about.
-    * **Anything else is refused**, naming what was found. Two candidate arrays
-      is a genuine choice between tables, and choosing is the caller's.
+    * **An object with exactly one non-empty array of objects in it**, at any
+      depth — the shape an API dump takes, ``{"count": 2, "employees": [...]}``
+      — is that array, and the note says which key path it came from. There is
+      no choice to make when there is one candidate, and refusing would be a
+      dead end: an agent holding this file has no way to lift the array out of
+      it, so a refusal it cannot act on is worse than a load it is told about.
+    * **An object with several** is several tables, and all of them land, the
+      way a workbook's sheets do: a datasource is a database, and leaving one
+      of them unreachable would be the silent loss the workbook rule exists to
+      prevent. Each is named from its key path (see :func:`_tables_within`).
+    * **Anything else is refused**, naming what was found.
     """
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise LoadError(f"Could not read {path.name}: {exc}") from exc
 
-    records, notes = _table_within(document, path.name)
-    return _frame_of_records(records, notes)
+    return _document_tables(document, path)
 
 
 def read_jsonl(path: Path) -> ReadResult:
@@ -261,8 +264,7 @@ def read_yaml(path: Path) -> ReadResult:
     except Exception as exc:
         raise LoadError(f"Could not read {path.name}: {exc}") from exc
 
-    records, notes = _table_within(document, path.name)
-    return _frame_of_records(records, notes)
+    return _document_tables(document, path)
 
 
 def read_columnar(path: Path) -> ReadResult:
@@ -423,7 +425,7 @@ def _without_grid_padding(rows: Sequence[Sequence[Any]]):
 
 
 def read_xml(path: Path) -> ReadResult:
-    """Read an XML document whose root holds one repeated element per row.
+    """Read an XML document whose root holds repeated elements, one per row.
 
     Written rather than delegated to ``pandas.read_xml``, which is fail-open on
     two shapes this corpus contains. Measured against the stdlib parser: a row
@@ -435,32 +437,39 @@ def read_xml(path: Path) -> ReadResult:
     Columns are the row's attributes and the tags of its direct children. A
     child with children of its own is kept as its XML text (as a nested JSON
     value is kept as JSON text); a tag appearing twice in one row is a list
-    rather than a column, and is refused by name.
+    rather than a column, and is refused by name. Each element that repeats
+    under the root is a table, and every one of them lands (see
+    :func:`_rows_within`).
     """
     try:
         root = ElementTree.parse(path).getroot()
     except ElementTree.ParseError as exc:
         raise LoadError(f"Could not read {path.name}: {exc}") from exc
 
-    rows, notes = _rows_within(root, path.name)
+    found, notes = _rows_within(root, path.name)
 
-    records = []
-    nested: dict[str, None] = {}  # insertion-ordered, and deduplicating
-    for element in rows:
-        record, held = _record_of(element, path.name)
-        records.append(record)
-        nested.update(dict.fromkeys(held))
+    tables = []
+    for tag, rows in found:
+        records = []
+        nested: dict[str, None] = {}  # insertion-ordered, and deduplicating
+        for element in rows:
+            record, held = _record_of(element, path.name)
+            records.append(record)
+            nested.update(dict.fromkeys(held))
 
-    if nested:
-        notes = notes + (
-            f"Nested elements in {', '.join(nested)} were kept as XML text, "
-            f"because SQL has no nested type. The text is the element as it "
-            f"stood in the file, so nothing was lost.",
-        )
+        if nested:
+            where = (
+                ", ".join(nested) if tag is None else f"{', '.join(nested)} of <{tag}>"
+            )
+            notes = notes + (
+                f"Nested elements in {where} were kept as XML text, "
+                f"because SQL has no nested type. The text is the element as it "
+                f"stood in the file, so nothing was lost.",
+            )
 
-    result = _frame_of_records(records, notes)
-    frame = result.tables[0].frame
-    return _one(_inferred_types(frame), result.notes)
+        frame, _ = _frame_and_nested_note(records, None)
+        tables.append(NamedFrame(_inferred_types(frame), tag))
+    return ReadResult(tuple(tables), notes)
 
 
 def _inferred_types(frame: pd.DataFrame) -> pd.DataFrame:
@@ -492,13 +501,19 @@ def _inferred_types(frame: pd.DataFrame) -> pd.DataFrame:
 
 def _rows_within(
     root: ElementTree.Element, name: str
-) -> tuple[list[ElementTree.Element], tuple[str, ...]]:
-    """Pick the repeated element that is the table, on JSON's rules.
+) -> tuple[list[tuple[str | None, list[ElementTree.Element]]], tuple[str, ...]]:
+    """Pick the repeated elements that are the tables, on JSON's rules.
 
     One kind of child is the table. Several kinds, one of which repeats, is the
     wrapped shape — a ``<generated>`` beside the rows — and the note names what
-    was left out. Two kinds that both repeat are two tables, which is a choice,
-    so it is refused.
+    was left out. Several kinds that repeat are several tables, and every one
+    lands, named after its tag the way a JSON table is named after its key
+    path. A tag is ``None`` for the one table of a document holding one, which
+    is named after the file as it always was.
+
+    An XML text value carries no record of whether a child appeared once
+    because it is metadata or because the table it starts has one row, and
+    this rule reads it as metadata — as it did before several tables landed.
     """
     groups: dict[str, list[ElementTree.Element]] = {}
     for child in root:
@@ -507,22 +522,27 @@ def _rows_within(
     if not groups:
         raise LoadError(f"Could not read {name}: <{root.tag}> holds no elements.")
     if len(groups) == 1:
-        return next(iter(groups.values())), ()
+        return [(None, next(iter(groups.values())))], ()
 
     repeated = [tag for tag, members in groups.items() if len(members) > 1]
+    others = ", ".join(f"<{tag}>" for tag in groups if tag not in repeated)
     if len(repeated) == 1:
         tag = repeated[0]
-        others = ", ".join(f"<{other}>" for other in groups if other != tag)
-        return groups[tag], (
+        return [(None, groups[tag])], (
             f"{name} holds <{tag}> repeated among other elements, and <{tag}> "
             f"was loaded as the table. The rest ({others}) are not part of it.",
         )
     if repeated:
-        listed = ", ".join(f"<{tag}>" for tag in repeated)
-        raise LoadError(
-            f"Could not read {name}: it holds more than one table ({listed}), "
-            f"and which one you want is not something this server should "
-            f"decide. Split the file, or attach it as one table per file."
+        _, landing = table_names(repeated, Path(name).stem)
+        where = ", ".join(
+            f"<{tag}> as {table}" for tag, table in zip(repeated, landing)
+        )
+        rest = f" The rest ({others}) are not part of any table." if others else ""
+        return [(tag, groups[tag]) for tag in repeated], (
+            f"{name} holds {len(repeated)} tables, each an element repeated "
+            f"under <{root.tag}>, and every one of them landed as a table of its "
+            f"own, named from its tag made safe for SQL the way a sheet name is: "
+            f"{where}. Each loaded entry names its tag as its sheet.{rest}",
         )
     raise LoadError(
         f"Could not read {name}: <{root.tag}> holds one each of "
@@ -559,8 +579,76 @@ def _record_of(element: ElementTree.Element, name: str) -> tuple[dict, list[str]
     return record, nested
 
 
-def _table_within(document: object, name: str) -> tuple[list[dict], tuple[str, ...]]:
-    """Find the one table in a parsed JSON document, or refuse and say why."""
+#: A key path, from the document's root down to one value: ``("meta", "orders")``.
+KeyPath = tuple[str, ...]
+
+
+def _shown(path: KeyPath) -> str:
+    """A key path as a caller reads it, and as its table is named: ``meta.orders``."""
+    return ".".join(path)
+
+
+def _is_table(value: object) -> bool:
+    """A non-empty array of objects: each one a row, its keys the columns.
+
+    Empty arrays are not tables, which is what makes the common
+    ``{"data": [...], "errors": []}`` one table rather than two.
+    """
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, dict) for item in value)
+    )
+
+
+def _walk(document: dict) -> tuple[list[tuple[KeyPath, list[dict]]], list[KeyPath]]:
+    """Every table under an object, in document order, and every key left out.
+
+    Only objects are walked into. An array of objects is a table and is not
+    looked inside — a list of objects within one of its rows is that row's
+    value, stored as JSON text like any other nested value — and anything else
+    is a value rather than a place a table can be.
+
+    A key is *left out* when it is neither a table nor an object holding one,
+    and it is reported at the level where it stops leading anywhere: a sibling
+    ``{"page": {"n": 1}}`` is reported as ``page``, not as ``page.n``. Keys
+    inside an object that holds no table are not walked for the report, which
+    keeps the one-table note exactly what it was before nesting was walked.
+
+    Iterative rather than recursive, so a document nested as deep as the parser
+    accepted is never deeper than this walk survives.
+    """
+    tables: list[tuple[KeyPath, list[dict]]] = []
+    visited: list[tuple[KeyPath, object]] = []
+    stack: list[tuple[KeyPath, object]] = [((), document)]
+    while stack:
+        path, value = stack.pop()
+        if path:
+            visited.append((path, value))
+        if _is_table(value):
+            tables.append((path, value))
+        elif isinstance(value, dict):
+            # Reversed onto the stack, so the walk comes off it in file order.
+            stack.extend(
+                ((*path, str(key)), child) for key, child in reversed(value.items())
+            )
+
+    leading = {path[:depth] for path, _ in tables for depth in range(len(path) + 1)}
+    left_out = [
+        path for path, _ in visited if path not in leading and path[:-1] in leading
+    ]
+    return tables, left_out
+
+
+def _tables_within(
+    document: object, name: str
+) -> tuple[list[tuple[KeyPath | None, list[dict]]], tuple[str, ...]]:
+    """Find the tables in a parsed JSON or YAML document, or refuse and say why.
+
+    Returns each table's key path — ``None`` for the one table of a document
+    whose answer is a single table, which is then named after the file as it
+    always was — with its records, and the note saying what was assumed.
+    """
     if isinstance(document, list):
         offender = next(
             (v for v in document if not isinstance(v, dict)),
@@ -572,47 +660,76 @@ def _table_within(document: object, name: str) -> tuple[list[dict], tuple[str, .
                 f"{_json_kind(offender)}, and a table needs an array of objects "
                 f"— each one a row, its keys the columns."
             )
-        return document, ()
+        return [(None, document)], ()
 
     if isinstance(document, dict):
-        # Empty arrays are not candidates, which is what makes the common
-        # `{"data": [...], "errors": []}` unambiguous rather than a refusal.
-        candidates = [
-            key
-            for key, value in document.items()
-            if isinstance(value, list)
-            and value
-            and all(isinstance(item, dict) for item in value)
-        ]
-        if len(candidates) == 1:
-            key = candidates[0]
-            return document[key], (
+        tables, left_out = _walk(document)
+        others = ", ".join(_shown(path) for path in left_out)
+        if len(tables) == 1:
+            path, records = tables[0]
+            return [(None, records)], (
                 f"{name} is an object rather than an array, and the array under "
-                f"{key!r} was the only table in it — that is what was loaded. "
-                f"The other keys ({', '.join(k for k in document if k != key)}) "
-                f"are not part of this table.",
+                f"{_shown(path)!r} was the only table in it — that is what was "
+                f"loaded. The other keys ({others}) are not part of this table.",
             )
-        if candidates:
-            raise LoadError(
-                f"Could not read {name}: it holds more than one table "
-                f"({', '.join(repr(k) for k in candidates)}), and which one you "
-                f"want is not something this server should decide. Split the "
-                f"file, or attach it as one table per file."
+        if tables:
+            shown = [_shown(path) for path, _ in tables]
+            _, landing = table_names(shown, Path(name).stem)
+            where = ", ".join(
+                f"{given!r} as {table}" for given, table in zip(shown, landing)
+            )
+            rest = (
+                f" The other keys ({others}) are not part of any table."
+                if left_out
+                else ""
+            )
+            return list(tables), (
+                f"{name} holds {len(tables)} tables, each an array of objects "
+                f"under its own key, and every one of them landed as a table of "
+                f"its own, named from its key path — the keys from the top of "
+                f"the document down, joined by '.', then made safe for SQL the "
+                f"way a sheet name is: {where}. Each loaded entry names its key "
+                f"path as its sheet.{rest}",
             )
 
     raise LoadError(
         f"Could not read {name}: it holds no table. This reader takes an array "
-        f"of objects, or an object with exactly one array of objects under it."
+        f"of objects, or an object with arrays of objects in it — at any depth, "
+        f"each becoming a table of its own."
     )
 
 
+def _document_tables(document: object, path: Path) -> ReadResult:
+    """Every table in a parsed JSON or YAML document, as frames with their notes."""
+    found, notes = _tables_within(document, path.name)
+    tables = []
+    for key_path, records in found:
+        name = None if key_path is None else _shown(key_path)
+        frame, nested = _frame_and_nested_note(
+            records, None if name is None else repr(name)
+        )
+        tables.append(NamedFrame(frame, name))
+        notes = notes + nested
+    return ReadResult(tuple(tables), notes)
+
+
 def _frame_of_records(records: list[dict], notes: tuple[str, ...]) -> ReadResult:
+    """One unnamed table from JSON records, with the reader's notes and its own."""
+    frame, nested = _frame_and_nested_note(records, None)
+    return _one(frame, notes + nested)
+
+
+def _frame_and_nested_note(
+    records: list[dict], table: str | None
+) -> tuple[pd.DataFrame, tuple[str, ...]]:
     """Build a frame from JSON records, encoding anything SQL cannot hold.
 
     A nested value has no SQL type, so it is written as its JSON text. That is
     lossless and reversible, and unlike dropping or flattening it invents
     nothing — but the resulting column looks like ordinary text, so the note
-    names the columns and the function that reads back into them.
+    names the columns and the function that reads back into them. ``table`` is
+    how the note names the table, for a file holding more than one: a reader's
+    notes reach every table the file holds, so each has to say which it is about.
     """
     frame = pd.DataFrame(records)
 
@@ -628,14 +745,15 @@ def _frame_of_records(records: list[dict], notes: tuple[str, ...]) -> ReadResult
         )
         encoded.append(str(name))
 
-    if encoded:
-        notes = notes + (
-            f"Nested values in {', '.join(encoded)} were stored as JSON text, "
-            f"because SQL has no nested type. Read into them with "
-            f"json_extract(column, '$.key'); the text is exactly what was in the "
-            f"file, so nothing was lost.",
-        )
-    return _one(frame, notes)
+    if not encoded:
+        return frame, ()
+    where = ", ".join(encoded) if table is None else f"{', '.join(encoded)} of {table}"
+    return frame, (
+        f"Nested values in {where} were stored as JSON text, "
+        f"because SQL has no nested type. Read into them with "
+        f"json_extract(column, '$.key'); the text is exactly what was in the "
+        f"file, so nothing was lost.",
+    )
 
 
 def _json_kind(value: object) -> str:

@@ -2615,6 +2615,11 @@ Three parts of the new spec are worth a second look then, none urgent:
   naming both. **It should be resisted by default**: the server offers primitives and the LLM does
   the judging, and a refusal that names both candidates already gives the
   caller everything it needs to choose.
+
+  > **Amended 2026-11-04 — the ambiguous-source case no longer exists.** A document with
+  > several candidate tables now lands every one of them, each named from its key path, as a
+  > workbook's sheets do (`LEVEL0.md`, *The premise*, *Resolved (2026-11-04)*). There is no
+  > refusal left for MRTR to replace, so this point no longer argues either way.
 * **The stateless core bounds where this server could ever be deployed**, not how it behaves today. A
   slot is memory or a temp file in *this* process, so several instances behind a load balancer would
   not share slots. That is fine for a local stdio server, which is what this is, and it is the reason

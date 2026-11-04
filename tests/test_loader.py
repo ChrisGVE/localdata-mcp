@@ -717,13 +717,15 @@ def test_the_only_array_in_a_wrapped_object_is_the_table_and_it_says_so(
     assert "employees" in info.notes[0]
 
 
-def test_two_candidate_arrays_are_refused_and_both_are_named(workspace, root):
-    """Now there IS a choice, so the server does not make it."""
-    with pytest.raises(LoadError) as raised:
-        workspace.load_file(str(root / "two_tables.json"), "main")
+def test_two_candidate_arrays_both_land_each_under_its_own_key(workspace, root):
+    """Two candidates are two tables, and both land, as a workbook's sheets do."""
+    landed = workspace.load_file(str(root / "two_tables.json"), "main")
 
-    assert "employees" in str(raised.value)
-    assert "departments" in str(raised.value)
+    assert [info.name for info in landed] == ["employees", "departments"]
+    assert [info.row_count for info in landed] == [1, 1]
+    note = " ".join(landed[0].notes)
+    assert "'employees' as employees" in note
+    assert "'departments' as departments" in note
 
 
 def test_a_nested_value_becomes_json_text_and_the_columns_are_named(workspace, root):
@@ -866,11 +868,13 @@ def test_the_one_repeated_element_is_the_table_and_the_singletons_are_named(
     assert "row" in info.notes[0] and "generated" in info.notes[0]
 
 
-def test_two_repeated_elements_are_two_tables_and_are_refused(workspace, root):
-    with pytest.raises(LoadError) as raised:
-        workspace.load_file(str(root / "two_kinds.xml"), "main")
+def test_two_repeated_elements_are_two_tables_and_both_land(workspace, root):
+    landed = workspace.load_file(str(root / "two_kinds.xml"), "main")
 
-    assert "employee" in str(raised.value) and "department" in str(raised.value)
+    assert [info.name for info in landed] == ["employee", "department"]
+    assert [info.row_count for info in landed] == [2, 2]
+    note = " ".join(landed[0].notes)
+    assert "<employee> as employee" in note and "<department> as department" in note
 
 
 def test_a_nested_element_is_kept_as_xml_text_rather_than_dropped(workspace, root):

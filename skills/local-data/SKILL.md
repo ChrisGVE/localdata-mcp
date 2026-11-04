@@ -543,13 +543,14 @@ step for the user, not something to route around by asking for a different file.
 **The same file twice is refused**, naming the datasource already holding it.
 That is not an error to work around — go and use the one that is open.
 
-**A JSON, YAML or XML file with two tables in it is refused, naming both.** A
-workbook's sheets all land, but a document is different: an array under a key is
-a table only by guesswork, so one candidate loads with a note saying which key it
-came from, and two are refused rather than one being picked. Take that back to
-the user with the two names — *"that file has a `customers` list and an `orders`
-list; which did you want, or shall we do both as separate files?"* — because the
-answer is theirs and splitting the file is the fix.
+**A JSON, YAML or XML file with several tables in it lands all of them**, as a
+workbook's sheets do. Each array of objects becomes a table named from its key
+path — `meta.orders` arrives as `meta_orders` — and each `loaded` entry shows the
+path as `sheet` beside the `table` it became. A document whose one table sits
+under a key loads under the file's name, with a warning naming the key. The
+warnings also name the keys that were not part of any table. When the user meant
+only one list, it is already there under its own name: query that table and
+leave the rest.
 
 **Dates.** A column of ISO 8601 dates is rewritten into one canonical UTC
 spelling and stays text; `attach` and `directory` mark it

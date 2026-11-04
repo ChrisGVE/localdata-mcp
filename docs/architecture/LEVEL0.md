@@ -96,6 +96,22 @@ true, and the second sheet overwrote the first without a word.
 > That is a defensible line, and it is the line the code draws. But the refusal's own
 > wording — *"which one you want"* — is the pick-one model this design left behind, and
 > the premise above is the reason to revisit it. **Open, not decided.**
+>
+> **Resolved (2026-11-04) — every candidate lands, the way a sheet does.** Decided for the
+> premise: a document holding several tables is a database of several tables. In JSON and
+> YAML every non-empty array of objects is a table, found at any depth by walking objects —
+> never inside an array, whose objects are its rows — and each is named from its **key
+> path**, the keys from the root down joined by `.` and then cleaned like a sheet name:
+> `{"customers": [...], "meta": {"orders": [...]}}` lands `customers` and `meta_orders`. In
+> XML each element repeated under the root is a table named after its tag. The workbook
+> machinery does the rest unchanged — `names.table_names` cleans and de-duplicates (`a_b`
+> and `a.b` land `a_b` and `a_b_1`, with the clash warning), each `loaded` entry names the
+> key path or tag as its `sheet`, and one warning says which path became which table and
+> which keys were part of none. The *"which one you want"* refusal is gone. A document with
+> one table loads exactly as before, under the file's name with the same note; walking
+> nested objects means that now includes a single table deeper than the top level, which
+> was refused as holding no table. `create` still makes one table and refuses a document
+> of several, naming what each would arrive as.
 
 That premise was already true of the registry. What level 0 changes is the *verbs*:
 they were file verbs wearing database names. Attach made a database, and after that you
@@ -544,8 +560,9 @@ Four decisions recur across the readers, and they are the same decision each tim
 what is unambiguous, say what was assumed, refuse an actual choice*:
 
 - **One candidate is not a choice.** A JSON or YAML object with exactly one array of
-  objects under it loads from that key, with a note naming it. Two candidates are two
-  tables and are refused, naming both.
+  objects in it loads from that key path, with a note naming it. Two candidates are two
+  tables and both land, each named from its key path, as a workbook's sheets do
+  (*Resolved (2026-11-04)* under *The premise*).
 - **What SQL cannot hold is encoded, not dropped.** A nested JSON value becomes its JSON
   text and a nested XML element its XML text — lossless and reversible — and a note names
   the columns. `pandas.read_xml` drops the subtree and reports nothing, which is why that
@@ -786,14 +803,14 @@ correct against each other.
 
 **What is left before level 0 closes is no longer code**: a pass driving the live server
 through a real client, since every verb has changed since the last one, and a review of the
-issues that were fixed forward. Two design questions are open and are recorded where they
-arise, under an **Open, not decided** mark (they share one, since the second is moot if the
-first resolves against the refusal):
+issues that were fixed forward. Two design questions were open and are recorded where they
+arose, under an **Open, not decided** mark (they shared one, since the second was moot once
+the first resolved against the refusal). Both are now resolved:
 
-| Question | Where |
-|---|---|
-| Whether a JSON, YAML or XML document with two candidate tables should still be refused, given the premise that a file may hold more than one table | *The premise*, above |
-| Whether the refusal's wording — *"which one you want"* — should survive, since it is the pick-one model this design left behind | *The premise*, above |
+| Question | Where | Status |
+|---|---|---|
+| Whether a JSON, YAML or XML document with two candidate tables should still be refused, given the premise that a file may hold more than one table | *The premise*, above | **Resolved (2026-11-04)**: every candidate lands, named from its key path |
+| Whether the refusal's wording — *"which one you want"* — should survive, since it is the pick-one model this design left behind | *The premise*, above | **Resolved (2026-11-04)**: the refusal is gone, so its wording is too |
 
 The rest of this section is how the two catalogues went, and is history rather than plan.
 Both are **done**: the format catalogue first, then the backends — every entry that can be

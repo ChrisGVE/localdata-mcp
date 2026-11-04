@@ -149,9 +149,24 @@ rebuild it.
   up alike — `Q2 Prices` and `Q2-Prices` — get a numeric suffix in file order,
   as repeated column headers do (`q2_prices`, `q2_prices_1`), and `attach` says
   which sheet became which table. 2.x read the
-  first sheet and said nothing about the rest. A JSON, YAML or XML document with
-  **two** candidate tables is refused instead, naming both, rather than one being
-  picked silently.
+  first sheet and said nothing about the rest. A JSON, YAML or XML document
+  holding several tables lands every one of them the same way — see the next
+  entry.
+- **A JSON, YAML or XML document holding several tables lands all of them**,
+  where it used to be refused, naming both, with *"which one you want is not
+  something this server should decide"*. Each non-empty array of objects in a
+  JSON or YAML document is a table, found at any depth through objects (never
+  inside an array, whose objects are rows), and is named from its **key path** —
+  the keys from the root down, joined by `.` and cleaned like a sheet name, so
+  `meta.orders` lands as `meta_orders`. In XML each element repeated under the
+  root is a table, named after its tag. Names that clean up alike get the
+  workbook's numeric suffix (`a_b`, `a_b_1`) and the workbook's clash warning;
+  each `loaded` entry names its key path or tag as `sheet`, and `warnings` says
+  once which path became which table and which keys were not part of any. A
+  document holding one table loads exactly as before — under the file's name,
+  with the same note — and that now includes one nested deeper than the top
+  level, which used to be refused as holding no table. `create` still makes one
+  table and refuses a document of several, naming what each would arrive as.
 - **Seventeen database backends**: SQLite, DuckDB, PostgreSQL, MySQL, MariaDB,
   SQL Server, Oracle, ClickHouse, CockroachDB, YugabyteDB, Trino, MonetDB,
   CrateDB, Firebird, openGauss, YDB and Exasol. Fifteen are exercised
