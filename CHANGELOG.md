@@ -398,7 +398,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And thirty-eight found in this release's own code before it shipped:
+And thirty-nine found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -792,6 +792,16 @@ And thirty-eight found in this release's own code before it shipped:
   name, and the `;` forms from #127. A refused word or symbol outside a quoted
   string may be a call, and keeps the refused-write wording. MonetDB's `;` is
   framed the same way.
+- **`stats` answered a reader-gate refusal in the driver's raw words**
+  ([#133](https://github.com/ChrisGVE/localdata-mcp/issues/133)). Where the gate
+  refuses every read of a table, a view calling an unsafe function, or every
+  statement on an openGauss server holding a cast between two of its own types,
+  `stats` came back as `ProgrammingError: (psycopg2.ProgrammingError) query may
+  not …`, with the SQL it had built and a SQLAlchemy link: the wrong verb's name,
+  a statement the caller never wrote, and nothing to act on. It now says `stats
+  did not profile <table>: reading it would …`, with the gate's own reason, as
+  `directory` does for a count, and any other failure of its aggregate in the
+  driver's words alone.
 
 ### Known limitations
 

@@ -383,7 +383,8 @@ which is not equally far:
   MySQL's `EXPLAIN` cannot describe them. So the reader also refuses, before sending, any
   statement that is more than one, holds `/*!` or `OUTFILE`/`DUMPFILE`, begins with a keyword
   no read begins with, or names a stored or loadable function or a view calling one. A view
-  refused that way is listed with `rows: null`
+  refused that way is listed with `rows: null`, and `stats` on it says why in the same words
+  ([#133](https://github.com/ChrisGVE/localdata-mcp/issues/133))
   ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). "More than one" is decided
   without lexing, so a `;` anywhere but at the end is refused, inside a quoted string too, and
   the refusal offers `CHAR(59 USING utf8mb4)` for a `;` in the data

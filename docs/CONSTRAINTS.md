@@ -7049,6 +7049,18 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > - the "both types are the server's own" condition removed from the question: 3 red, the
 >   frozen #125 cast tests on openGauss, which would otherwise fail closed on a user type's cast.
 
+> **Amended 2026-11-04 — `stats` now says what `query` says
+> ([#133](https://github.com/ChrisGVE/localdata-mcp/issues/133)).** The third bullet of "What it
+> costs" above is fixed: `stats` reads the gate's `Refusal` around its own aggregate and answers
+> `stats did not profile <table>: reading it would <the gate's reason>. query refuses a read of it
+> for the same reason.`, with no driver class, no rendered SQL and no SQLAlchemy link; any other
+> failure of the aggregate comes back in the driver's words alone. Measured live from the runner on
+> a view calling a user-defined function (PostgreSQL family) or a stored function (MySQL), which
+> the gate refuses: PostgreSQL 16 47 passed, openGauss 43 passed, MySQL 19 passed with the
+> PostgreSQL, server-cast and MySQL gate tests beside it, 0 failed; YugabyteDB answered the same
+> from the host before that run. The cast case itself was not re-run: it reaches the same code
+> through the same `Refusal`.
+
 > **Amended 2026-11-03 — the PostgreSQL- and MySQL-family `;` refusal: what it says, and a
 > rephrase that works ([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)).** The
 > PostgreSQL-family gate (#124: PostgreSQL, CockroachDB, YugabyteDB, openGauss) and the MySQL gate

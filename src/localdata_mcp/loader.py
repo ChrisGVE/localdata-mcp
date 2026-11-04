@@ -2433,10 +2433,20 @@ class Workspace:
             for key, expression in plan.items():
                 selected.append(expression.label(f"c{index}_{key}"))
 
-        with entry.engines.read.connect() as conn:
-            row = (
-                conn.execute(select(*selected).select_from(reflected)).mappings().one()
-            )
+        # A reader gate can refuse the read, on a server whose catalog makes
+        # every read of this table reach past it (#129, #133). That is
+        # explained in the words query uses for it, not handed on as the
+        # driver's error with its SQL and its SQLAlchemy link.
+        entry.engines.refusal.take()
+        try:
+            with entry.engines.read.connect() as conn:
+                row = (
+                    conn.execute(select(*selected).select_from(reflected))
+                    .mappings()
+                    .one()
+                )
+        except _driver_failures(entry) as exc:
+            raise self._explain(entry, exc, "", profiling=table) from exc
 
         return [
             self._profiled(name, signals.get(name), reflected.c[name], plan, row, index)
@@ -2719,7 +2729,14 @@ class Workspace:
         except _driver_failures(entry) as exc:
             raise self._explain(entry, exc, sql) from exc
 
-    def _explain(self, entry: Tagged, exc: SQLAlchemyError, sql: str) -> LoadError:
+    def _explain(
+        self,
+        entry: Tagged,
+        exc: SQLAlchemyError,
+        sql: str,
+        *,
+        profiling: str | None = None,
+    ) -> LoadError:
         """Turn a driver error into something an agent can act on.
 
         Two cases are worth naming. A refused write should say *what* was
@@ -2727,7 +2744,22 @@ class Workspace:
         ``tag.table`` — the spelling the previous ``ATTACH``-based design took —
         fails as a plain "no such table", which tells an agent its table is
         missing when in fact its addressing is stale.
+
+        ``profiling`` names the table when the statement is ``stats``' own
+        aggregate rather than the caller's SQL (#133). A gate's refusal is then
+        said in ``stats``' name, as ``directory`` says it for a count, and any
+        other failure in the driver's own words, without SQLAlchemy's
+        rendering of a statement the caller never wrote.
         """
+        if profiling is not None:
+            denied = entry.engines.refusal.take()
+            if denied is not None:
+                return LoadError(
+                    f"stats did not profile {profiling}: reading it would "
+                    f"{denied}. query refuses a read of it for the same reason."
+                )
+            return LoadError(driver_message(exc))
+
         shaped = entry.engines.refusal.shape
         denied = entry.engines.refusal.take()
         if denied is not None and shaped:
