@@ -7163,6 +7163,33 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > a batch of two reads, are also rules about shape and still use the refused-write frame;
 > neither involves a `;` inside a literal, since both servers parse.
 
+> **Amended 2026-11-04 — the read-only session has a witness again
+> ([#134](https://github.com/ChrisGVE/localdata-mcp/issues/134)).** After #129 the gate refused
+> the cast read that had been the session's witness, so no test went red without
+> `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`. Measured on PostgreSQL 16 as the
+> container's administrator. Each statement went through `query`, through the gate's own functions
+> on a raw cursor, and as a raw `DECLARE … CURSOR FOR` in a never-committed transaction with and
+> without `SET TRANSACTION READ ONLY`:
+>
+> | Statement | Gate | Raw, read-only | Raw, read-write |
+> |---|---|---|---|
+> | `SELECT * FROM t FOR UPDATE` (also `FOR NO KEY UPDATE`, `FOR SHARE`, `FOR KEY SHARE`, `FOR UPDATE SKIP LOCKED`) | **passes** | 25006 "cannot execute SELECT FOR UPDATE in a read-only transaction" | 5 rows |
+> | `SELECT nextval('s')`, `SELECT lo_create(0)` | refused | 25006 | 1 row |
+> | `SELECT set_config(…)`, `pg_notify`, `pg_advisory_xact_lock`, a user function | refused | runs | runs |
+> | `WITH x AS (INSERT/UPDATE/DELETE … RETURNING *) SELECT * FROM x` | passes | 0A000 "DECLARE CURSOR must not contain data-modifying statements in WITH" | the same 0A000 |
+> | `SELECT … INTO TEMP …` | passes | 42601 syntax error | 42601 |
+> | `SELECT txid_current()`, `SELECT pg_current_xact_id()` | passes | runs | runs |
+>
+> So a locking read is what passes the gate and is stopped only by the session: without it, the
+> read answers its rows and holds a lock on each for as long as it runs. A data-modifying CTE
+> passes the gate too, but the cursor declaration refuses it whatever the session says.
+> `tests/test_postgresql_read_gate.py::test_a_locking_read_is_stopped_by_the_read_only_session`
+> asserts each of the four locking clauses is refused through `query`. Revert drill, the `SET`
+> line replaced by `pass`: 4 failed on PostgreSQL 16 and 4 failed on YugabyteDB 2.25. With the
+> line: 4 passed on each, and on CockroachDB 26.3 and openGauss 7.0.0-RC3. The refusal's wording
+> for a locking read is wrong ("returns no rows"), and is tracked as
+> [#144](https://github.com/ChrisGVE/localdata-mcp/issues/144).
+
 ## §35 — SQL Server text lands as `NVARCHAR`, sized in UTF-16 code units (2026-11-03)
 
 Refs [#128](https://github.com/ChrisGVE/localdata-mcp/issues/128). Measured on `new-v3` from

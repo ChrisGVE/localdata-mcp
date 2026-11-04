@@ -1084,3 +1084,34 @@ def test_a_cast_between_the_servers_own_types_is_refused_by_the_gate(server):
     finally:
         _try(server.admin, "DROP CAST IF EXISTS (INT AS BYTEA)")
         _try(server.admin, f"DROP FUNCTION IF EXISTS {t}_tobytes(INT)")
+
+
+#: Every row-locking clause PostgreSQL's grammar has. Each names no function,
+#: so the gate lets it through, and each takes row locks on another session's
+#: rows for as long as the read runs.
+_LOCKING_CLAUSES = ["FOR UPDATE", "FOR NO KEY UPDATE", "FOR SHARE", "FOR KEY SHARE"]
+
+
+@pytest.mark.endpoint
+@pytest.mark.parametrize("clause", _LOCKING_CLAUSES)
+def test_a_locking_read_is_stopped_by_the_read_only_session(server, clause):
+    """The witness for the read-only session itself (#134).
+
+    The gate decides by what a statement mentions, and a locking clause
+    mentions nothing it refuses: measured on PostgreSQL 16, the gate passes
+    ``SELECT * FROM t FOR UPDATE``. What stops it is the session the reader
+    opens with ``SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY``: the
+    server answers 25006, "cannot execute SELECT FOR UPDATE in a read-only
+    transaction". Without that line the same read answers its five rows and
+    holds a lock on each while it runs, so this test goes red when the line is
+    removed. Revert drill, 2026-11-04: 4 failed on PostgreSQL 16 and 4 failed
+    on YugabyteDB 2.25 without the line, 4 passed on each with it. CockroachDB
+    and openGauss pass with it too; the drill was not run on those two.
+
+    Only the refusal is asserted. Its wording is a separate defect (#144): it
+    says the statement returns no rows.
+    """
+    answer = _call(
+        "query", nickname="endpoint", sql=f"SELECT * FROM {server.t} {clause}"
+    )
+    assert answer["ok"] is False, answer
