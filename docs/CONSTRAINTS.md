@@ -7463,3 +7463,45 @@ decimal columns, and `statistics.stdev` over the squares (119266275.712…) to w
 - **Trino had still not taken in the 20001-row table after twenty minutes**, measured, through
   `create` against the memory catalog. Since `big` exists to catch an estimated median, the
   test lands it only where a median is declared.
+
+## §38 — A formula a program wrote has no stored result, and loads as NULL (2026-11-04)
+
+Task 20, measured on pandas 3 with openpyxl, on this machine.
+
+### 38.1 The case
+
+`pandas.read_excel` reads an `.xlsx` through openpyxl with `data_only=True`, which returns the result
+stored beside each formula, not the formula. A workbook written by openpyxl stores the formula and an
+empty result: the cell XML is `<c r="C2"><f>A2*B2</f><v /></c>`, and the workbook part carries
+`<calcPr fullCalcOnLoad="1"/>`, asking the next application that opens it to compute everything. Read
+before that happens, a sheet of `qty`, `price` and `=A2*B2` came back with the formula column entirely
+NaN and the other two intact. pandas reads every sheet from cell A1 and does not skip a blank first
+row or column (a header at B2 came back as `Unnamed: 0` with a blank first row), so a cell's column
+letter is its position in the frame and row 1 is the header.
+
+### 38.2 What is detected, and how
+
+A formula cell is one with `<f>`; it has no result when `<v>` is missing or empty, **except** under
+`t="str"`, which is how Excel writes a formula whose result is the empty string. A shared formula's
+dependent cells (`<f t="shared" si="0"/>`) are formula cells. Header-row cells are not counted.
+`attach` warns per sheet, naming each column as it landed and by letter, the cell count, and the first
+formula. Nothing is evaluated.
+
+Cost, on a 100,000-row, four-column sheet written by openpyxl with one formula column: pandas alone
+took 10.1 s and 7.6 s in two runs; one streaming `iterparse` pass over the sheet part took 2.2 s; the
+whole read with the scan took 12.2 s. Reading the workbook through openpyxl twice more instead —
+formulas once, results once, compared cell by cell — took 19.3 s on top of pandas' 10.1 s, which is
+why the scan reads the package directly. The scan runs only on a sheet whose frame holds a NULL,
+since a missing result can only show up as one.
+
+### 38.3 What is not detected
+
+- **`.ods`: loses the value the same way, measured.** A sheet written by odfpy with
+  `TableCell(formula="of:=[.A2]*[.B2]")` and no `office:value` read as NaN in every formula cell.
+  Detecting it means walking `content.xml` with `table:number-columns-repeated` and
+  `table:number-rows-repeated` expanded to positions, which is a reader of its own rather than a
+  check; not done, and listed as a known limitation.
+- **`.xls`: not measured.** No program writer for BIFF (`xlwt`) is installed, so no fixture could be
+  made honestly. Whether such a file loads as NULL is not known here.
+- **`.numbers`** is read by `numbers-parser`, not pandas, and was not part of this measurement.
+

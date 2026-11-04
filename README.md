@@ -569,6 +569,14 @@ answer belongs to whoever wrote the file, it reports and carries on.
   instants a nanosecond apart are then one value: `DISTINCT` and `GROUP BY`
   count them once, an equality join pairs them, and `ORDER BY` cannot put them
   in order.
+- **A formula a program wrote loads as NULL, and is flagged.** A workbook keeps
+  each formula beside the result the spreadsheet application last computed, and
+  that stored result is what is read; nothing here evaluates a formula. A file
+  written by a program — openpyxl, this server's own writer, most exports —
+  stores no result, so the column arrives empty. For `.xlsx` and `.xlsm` the
+  warning names the sheet, the column, how many cells have no result and the
+  first formula, so the column can be rebuilt in SQL. An `.ods` loses the value
+  the same way **without** a warning.
 - **What SQL cannot hold is encoded, not dropped.** A nested JSON value becomes
   its JSON text and a nested XML element its XML text — lossless and reversible,
   reachable with `json_extract(column, '$.key')` — and the warning names the

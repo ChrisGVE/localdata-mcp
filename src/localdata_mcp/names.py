@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from typing import Sequence
 
-__all__ = ["clashes", "sanitize", "table_names", "unique"]
+__all__ = ["clashes", "column_names", "sanitize", "table_names", "unique"]
 
 _UNSAFE = re.compile(r"\W+")
 
@@ -68,6 +68,21 @@ def unique(names: Sequence[str]) -> list[str]:
         taken.add(candidate)
         out.append(candidate)
     return out
+
+
+def column_names(raw_names: Sequence[object]) -> list[str]:
+    """The column each of a table's headers lands as: safe for SQL, and distinct.
+
+    CSV headers arrive duplicated, blank, and full of punctuation. Silently
+    dropping a duplicate would lose a column, so collisions get a numeric suffix
+    — by the same rule a workbook's sheets get theirs, :func:`unique`. A blank
+    header is named after its position, ``column_3``. Here rather than in
+    ``loader`` so that a reader warning about a column can name the one the
+    caller will find.
+    """
+    return unique(
+        [sanitize(raw, f"column_{index + 1}") for index, raw in enumerate(raw_names)]
+    )
 
 
 def table_names(given: Sequence[str | None], stem: str) -> tuple[list[str], list[str]]:

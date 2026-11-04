@@ -86,7 +86,7 @@ from .errors import LoadError, undeclared_separator
 # columns and tables follow one rule and the readers can reach it too. Imported
 # under its old private name, which `slots` and the comments here still use.
 from .names import sanitize as _sanitize
-from .names import table_names, unique
+from .names import column_names, table_names
 from .paths import resolve_read_path
 
 # The readers and the shapes they hand back. Imported into this namespace on
@@ -722,15 +722,8 @@ def _index_name(table: str, columns: Sequence[str]) -> str:
 
 
 def _unique_columns(raw_names: list[Any]) -> list[str]:
-    """Make column names safe and unique, preserving order.
-
-    CSV headers arrive duplicated, blank, and full of punctuation. Silently
-    dropping a duplicate would lose a column, so collisions get a numeric suffix
-    — by the same rule a workbook's sheets get theirs, :func:`names.unique`.
-    """
-    return unique(
-        [_sanitize(raw, f"column_{index + 1}") for index, raw in enumerate(raw_names)]
-    )
+    """Make column names safe and unique, preserving order: :func:`names.column_names`."""
+    return column_names(raw_names)
 
 
 # ---------------------------------------------------------------------------

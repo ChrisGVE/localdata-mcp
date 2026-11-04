@@ -455,6 +455,17 @@ plain words, and, where a name was wrong, the names that were right. Read the
 error and act on what it says; nothing here throws a call away, so there is
 never anything to retry blindly.
 
+**A formula column that came back empty.** A warning saying a sheet's formulas
+were *never computed by a spreadsheet application* means the workbook was written
+by a program, which stored each formula and no result, so those cells are NULL.
+The server does not evaluate formulas. Rebuild the column in SQL from the columns
+it is made of — the warning quotes the first formula, and its letters are the
+sheet's columns in order, so `=A2*B2` over `qty` and `unit_price` is
+`SELECT qty * unit_price`. If the user would rather have the stored values, they
+can open the file in their spreadsheet application and save it. An `.ods` file
+loses the values the same way and is *not* flagged: a formula column that is
+entirely NULL there is worth asking about.
+
 **Mixed columns.** `attach` warns when a column holds both numbers and text.
 This is not pedantry: `avg()` over such a column silently counts the text rows
 as zero and keeps them in the denominator, so the average is wrong and nothing

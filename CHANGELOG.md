@@ -827,8 +827,26 @@ And forty found in this release's own code before it shipped:
   did not profile <table>: reading it would …`, with the gate's own reason, as
   `directory` does for a count, and any other failure of its aggregate in the
   driver's words alone.
+- **A formula column in a workbook a program wrote loaded as all NULL, silently**
+  (task 20). pandas reads an `.xlsx` through openpyxl with `data_only=True`, which
+  returns the result a spreadsheet application stored beside each formula; a
+  workbook written by openpyxl, this server's own writer or most export
+  pipelines stores the formula and no result, so every such cell read as NULL
+  and nothing said why. `attach` now warns, per sheet, naming each column under
+  the name it landed as and its spreadsheet letter, how many cells have no
+  result, and the first formula, so the column can be rebuilt in SQL from the
+  columns it is computed from. Formulas are still not evaluated. `.xlsx` and
+  `.xlsm` only: `.ods` loses the value the same way and is not detected (see
+  *Known limitations*).
 
 ### Known limitations
+
+- **A formula with no stored result in an `.ods` loads as NULL without a
+  warning.** Measured: an OpenDocument sheet written by odfpy with
+  `table:formula` and no `office:value` reads as NaN in every such cell, the
+  case `.xlsx` and `.xlsm` now warn about. Not detected for `.ods`, and not
+  measured for `.xls`, where no program writer was at hand to make the fixture
+  (`docs/CONSTRAINTS.md` §38).
 
 - **Known-unsupported pin: `sqlalchemy-cockroachdb` 2.0.4 is run on SQLAlchemy
   2.1.6 by an override.** The dialect declares `SQLAlchemy<2.1`, so the resolver

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -33,7 +34,8 @@ from xml.etree import ElementTree
 import pandas as pd
 
 from .errors import LoadError, undeclared_separator
-from .names import sanitize, table_names
+from .names import column_names, sanitize, table_names
+from .ooxml import UncomputedColumn, column_letters, uncomputed_formulas
 
 __all__ = ["NamedFrame", "ReadResult", "Reader"]
 
@@ -339,9 +341,70 @@ def workbook(module: str, extra: str) -> Reader:
         )
         if not tables:
             raise LoadError(f"Could not read {path.name}: every sheet in it is empty.")
-        return ReadResult(tables)
+        # Only openpyxl's formats store a formula beside its result in a way that
+        # can be read back here. The others are listed in CONSTRAINTS.md, not
+        # checked (task 20).
+        notes = _uncomputed_formula_notes(path, tables) if module == "openpyxl" else ()
+        return ReadResult(tables, notes)
 
     return read_workbook
+
+
+def _uncomputed_formula_notes(
+    path: Path, tables: tuple[NamedFrame, ...]
+) -> tuple[str, ...]:
+    """Say which formula columns loaded as NULL because the file has no result for them.
+
+    Only sheets holding a NULL are scanned: a cell with no stored result is
+    read as NULL, so a sheet without one cannot hold such a cell, and the scan
+    is skipped where it can find nothing.
+    """
+    frames = {str(table.name): table.frame for table in tables}
+    suspect = {name for name, frame in frames.items() if frame.isna().to_numpy().any()}
+    if not suspect:
+        return ()
+    try:
+        found = uncomputed_formulas(path, suspect)
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError):
+        # pandas has just read this package, so it is sound; a part this scan
+        # cannot find is a layout it does not know, and the load is not the
+        # place to fail over a warning.
+        return ()
+    return tuple(
+        _uncomputed_formula_note(sheet, frames[sheet], columns)
+        for sheet, columns in found.items()
+    )
+
+
+def _uncomputed_formula_note(
+    sheet: str, frame: pd.DataFrame, columns: list[UncomputedColumn]
+) -> str:
+    """One sheet's uncomputed formula columns, as the sentence the caller reads."""
+    landed = column_names(list(frame.columns))
+    named = []
+    for column in columns:
+        letter = column_letters(column.index)
+        where = f"spreadsheet column {letter}"
+        name = (
+            f"{landed[column.index]} ({where})" if column.index < len(landed) else where
+        )
+        named.append(
+            f"{name}, {column.cells} {'cell' if column.cells == 1 else 'cells'}"
+        )
+    total = sum(column.cells for column in columns)
+    counted = f", {total} cells in all" if len(columns) > 1 else ""
+    first = columns[0].first_formula
+    example = f" The first is ={first}." if first else ""
+    return (
+        f"Sheet {sheet!r} holds formulas whose results were never computed by a "
+        f"spreadsheet application — {'; '.join(named)}{counted} — "
+        f"so those cells loaded as NULL. A program wrote this workbook: it stored "
+        f"each formula and no result, and this server reads stored results and "
+        f"does not evaluate formulas.{example} Rebuild the column in SQL from the "
+        f"columns it is computed from, where the letters are the sheet's columns "
+        f"in order; or open the file in a spreadsheet application, save it, and "
+        f"attach it again."
+    )
 
 
 def read_numbers(path: Path) -> ReadResult:
