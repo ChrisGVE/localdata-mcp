@@ -122,7 +122,9 @@ def test_a_csv_becomes_a_database_holding_one_table(registry, root):
 def test_the_table_is_named_from_the_file_not_from_the_nickname(registry, root):
     """The nickname names the database; the file names the table inside it."""
     csv_at(root / "quarterly_report.csv")
-    attachment = registry.attach(str(root / "quarterly_report.csv"), "q3", delimiter=",")
+    attachment = registry.attach(
+        str(root / "quarterly_report.csv"), "q3", delimiter=","
+    )
     assert attachment.slot.tables == ("quarterly_report",)
 
 
@@ -314,7 +316,9 @@ def test_disambiguation_keeps_counting_past_the_second_collision(registry, root)
         (root / directory).mkdir()
         csv_at(root / directory / "sales.csv", f"sku,qty\nx,{index}\n")
     names = [
-        registry.attach(str(root / directory / "sales.csv"), delimiter=",").slot.nickname
+        registry.attach(
+            str(root / directory / "sales.csv"), delimiter=","
+        ).slot.nickname
         for directory in ("a", "b", "c")
     ]
     assert names == ["sales", "sales_2", "sales_3"]
@@ -461,7 +465,9 @@ def test_the_eviction_record_carries_what_is_needed_to_rebuild_the_slot(root):
         source = csv_at(root / "sales.csv")
         registry.attach(str(source), "shop", delimiter=",")
         csv_at(root / "other.csv", "a\n1\n")
-        evicted = registry.attach(str(root / "other.csv"), "next", delimiter=",").evicted
+        evicted = registry.attach(
+            str(root / "other.csv"), "next", delimiter=","
+        ).evicted
 
         assert evicted.nickname == "shop"
         assert evicted.source == str(source.resolve())
@@ -487,7 +493,9 @@ def test_the_eviction_record_names_a_table_that_create_added(root):
         registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
 
         csv_at(root / "other.csv", "a\n1\n")
-        evicted = registry.attach(str(root / "other.csv"), "next", delimiter=",").evicted
+        evicted = registry.attach(
+            str(root / "other.csv"), "next", delimiter=","
+        ).evicted
 
         assert set(evicted.tables) == {"sales", "prices"}
     finally:
@@ -659,7 +667,9 @@ def test_a_url_slot_composes_like_any_other(registry, root):
     csv_at(root / "stock.csv")
     registry._attach_engine(f"sqlite:///{root / 'remote.db'}", "remote", writable=True)
 
-    added = registry.create_table("remote", source=str(root / "stock.csv"), delimiter=",")
+    added = registry.create_table(
+        "remote", source=str(root / "stock.csv"), delimiter=","
+    )
 
     assert added.name == "stock"
     assert added.row_count == 2
@@ -797,7 +807,9 @@ def test_a_second_file_joins_the_first_inside_one_database(registry, root):
     csv_at(root / "prices.csv", "sku,price\na,10\nb,20\n")
     registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
-    added = registry.create_table("shop", source=str(root / "prices.csv"), delimiter=",")
+    added = registry.create_table(
+        "shop", source=str(root / "prices.csv"), delimiter=","
+    )
 
     # `qualified` identifies the table; it is not how a statement addresses it.
     assert added.qualified == "shop.prices"
@@ -815,11 +827,15 @@ def test_the_added_table_is_named_from_its_file_unless_told_otherwise(registry, 
     csv_at(root / "2025 prices.csv", "sku,price\na,10\n")
     registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
-    derived = registry.create_table("shop", source=str(root / "2025 prices.csv"), delimiter=",")
+    derived = registry.create_table(
+        "shop", source=str(root / "2025 prices.csv"), delimiter=","
+    )
     assert derived.name == "table_2025_prices"
 
     csv_at(root / "more.csv", "sku,x\na,1\n")
-    named = registry.create_table("shop", table="extra", source=str(root / "more.csv"), delimiter=",")
+    named = registry.create_table(
+        "shop", table="extra", source=str(root / "more.csv"), delimiter=","
+    )
     assert named.name == "extra"
 
 
@@ -829,7 +845,9 @@ def test_adding_over_an_existing_table_is_refused(registry, root):
     registry.attach(str(root / "sales.csv"), "shop", delimiter=",")
 
     with pytest.raises(SlotError, match="already exists"):
-        registry.create_table("shop", table="sales", source=str(root / "sales.csv"), delimiter=",")
+        registry.create_table(
+            "shop", table="sales", source=str(root / "sales.csv"), delimiter=","
+        )
 
     _, rows = registry.query("shop", "SELECT count(*) FROM sales")
     assert rows == [(2,)]
@@ -1227,7 +1245,9 @@ def test_the_spilled_slot_keeps_its_name_and_its_place_in_eviction_order(root):
         # The shelf is full, so the next attach evicts the oldest — which must
         # still be 'one', not the slot that happens to have moved most recently.
         csv_at(root / "fourth.csv", "d\n4\n")
-        evicted = registry.attach(str(root / "fourth.csv"), "four", delimiter=",").evicted
+        evicted = registry.attach(
+            str(root / "fourth.csv"), "four", delimiter=","
+        ).evicted
         assert evicted is not None
         assert evicted.nickname == "one"
     finally:
@@ -1261,7 +1281,9 @@ def test_a_spilled_database_is_still_writable_and_composable(root):
         csv_at(root / "labels.csv", "id,note\n1,first\n")
         registry.create_table("big", source=str(root / "labels.csv"), delimiter=",")
         csv_at(root / "more.csv", "id,note\n2,second\n")
-        registry.create_table("big", source=str(root / "more.csv"), table="more", delimiter=",")
+        registry.create_table(
+            "big", source=str(root / "more.csv"), table="more", delimiter=","
+        )
 
         _, rows = registry.query(
             "big",
@@ -1497,7 +1519,7 @@ def mixed_case_database(path: Path, table: str = "MyTable") -> Path:
     """
     connection = sqlite3.connect(path)
     connection.execute(f'CREATE TABLE "{table}" (id INTEGER, val TEXT)')
-    connection.execute(f'INSERT INTO "{table}" VALUES (1, \'x\')')
+    connection.execute(f"INSERT INTO \"{table}\" VALUES (1, 'x')")
     connection.commit()
     connection.close()
     return path

@@ -1391,9 +1391,9 @@ def test_attach_and_create_say_their_answer_needs_no_directory_call(session):
     """
     documented = {tool.name: tool.description for tool in listed_tools()}
     for name in ("attach", "create"):
-        assert (
-            "directory" in documented[name]
-        ), f"{name} never mentions the redundant call"
+        assert "directory" in documented[name], (
+            f"{name} never mentions the redundant call"
+        )
 
 
 def test_readme_never_teaches_a_qualified_table_name(session):

@@ -313,8 +313,9 @@ def test_vacuum_into_produces_a_database_that_still_answers(workspace, root, tmp
             tuple(r)
             for r in copied.execute("SELECT name, salary FROM simple ORDER BY name")
         ] == [tuple(r) for r in original[1]]
-        assert copied.execute("SELECT sum(salary) FROM simple").fetchone()[0] == (
-            workspace.query("scratch", "SELECT sum(salary) FROM simple")[1][0][0]
+        assert (
+            copied.execute("SELECT sum(salary) FROM simple").fetchone()[0]
+            == (workspace.query("scratch", "SELECT sum(salary) FROM simple")[1][0][0])
         )
     finally:
         copied.close()
@@ -1605,9 +1606,9 @@ def test_the_excerpt_may_be_cut_anywhere_before_the_cursor_keyword(hex_digits, b
     for cut in range(statement.index("CURSOR") + 1):
         excerpt = statement if cut == 0 else f"...{statement[cut:]}"
         message = f'syntax error at or near "INSERT"\nLINE 1: {excerpt}\n'
-        assert (
-            loader_module._objected_to_the_leading_verb(message, sql) is True
-        ), excerpt
+        assert loader_module._objected_to_the_leading_verb(message, sql) is True, (
+            excerpt
+        )
 
 
 _POSTGRES_LINUX_MALFORMED_SELECT = (
@@ -1755,9 +1756,9 @@ def test_the_added_key_is_explained_rather_than_merely_present(
 
     (info,) = workspace.load_file(str(root / "simple.csv"), "scratch", delimiter=",")
 
-    assert any(
-        "_row" in note and "primary key" in note for note in info.notes
-    ), info.notes
+    assert any("_row" in note and "primary key" in note for note in info.notes), (
+        info.notes
+    )
 
 
 def test_nothing_is_added_where_the_backend_does_not_demand_it(workspace, root):

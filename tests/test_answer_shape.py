@@ -116,9 +116,9 @@ def refusal(verb: str, **arguments: Any) -> str:
         ) from exc
     assert isinstance(answer, dict), f"{verb} answered {type(answer).__name__}"
     assert answer.get("ok") is False, f"{verb} was not a refusal: {answer!r}"
-    assert (
-        isinstance(answer.get("error"), str) and answer["error"]
-    ), f"{verb} refused without a reason: {answer!r}"
+    assert isinstance(answer.get("error"), str) and answer["error"], (
+        f"{verb} refused without a reason: {answer!r}"
+    )
     return answer["error"]
 
 
@@ -245,7 +245,15 @@ def test_a_slot_attached_read_only_refuses_every_verb_that_would_change_it(root)
     succeeds("directory", nickname="ro")
 
     cells = [
-        ("create", {"nickname": "ro", "type": "table", "source": str(other_csv(root)), "delimiter": ","}),
+        (
+            "create",
+            {
+                "nickname": "ro",
+                "type": "table",
+                "source": str(other_csv(root)),
+                "delimiter": ",",
+            },
+        ),
         ("create", {"nickname": "ro", "type": "index", "table": "t", "columns": ["a"]}),
         ("update", {"nickname": "ro", "type": "table", "name": "t", "to": "u"}),
         ("drop", {"nickname": "ro", "type": "table", "name": "t"}),

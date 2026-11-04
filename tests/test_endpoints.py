@@ -1100,6 +1100,7 @@ _NO_RETURNING = frozenset(
     {"mysql", "mariadb", "oracle", "trino", "clickhouse", "exasol", "mssql"}
 )
 
+
 def test_query_refuses_insert_returning_even_where_the_datasource_permits_it(live):
     """``INSERT … RETURNING`` hands rows back like a read, and is still a write (#118).
 

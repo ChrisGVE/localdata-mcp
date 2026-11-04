@@ -224,7 +224,9 @@ class _KeywordEngine:
 
             def execute(self, statement, parameters):
                 engine.asked.append(parameters)
-                return SimpleNamespace(scalar=lambda: int(parameters["word"] in engine.keywords))
+                return SimpleNamespace(
+                    scalar=lambda: int(parameters["word"] in engine.keywords)
+                )
 
         return _Connection()
 
@@ -240,7 +242,10 @@ def test_opengauss_answers_a_word_no_keyword_list_holds_with_the_servers_message
 def test_opengauss_leaves_a_keyword_to_the_refused_kind_reading():
     engine = _KeywordEngine({"select", "insert"})
 
-    assert backend_for("opengauss").syntax_error(engine, "INSERT INTO t VALUES (1)", "…") is None
+    assert (
+        backend_for("opengauss").syntax_error(engine, "INSERT INTO t VALUES (1)", "…")
+        is None
+    )
 
 
 def test_generic_backends_have_no_one_to_ask():

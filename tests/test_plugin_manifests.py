@@ -118,9 +118,9 @@ def test_every_skill_sits_one_level_under_skills_and_is_named_for_its_directory(
     assert found, "no skill ships"
 
     for path in found:
-        assert (
-            path.parent.parent == skills
-        ), f"{path.relative_to(ROOT)} is nested too deep"
+        assert path.parent.parent == skills, (
+            f"{path.relative_to(ROOT)} is nested too deep"
+        )
         frontmatter = re.match(
             r"^---\n(.*?)\n---\n", path.read_text(encoding="utf-8"), re.S
         )

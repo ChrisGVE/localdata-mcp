@@ -193,7 +193,10 @@ def test_readers_running_against_a_load_do_not_lose_rows(session):
             )
 
             tasks = [
-                client.call_tool("attach", {"database": str(big), "nickname": "big", "delimiter": ","})
+                client.call_tool(
+                    "attach",
+                    {"database": str(big), "nickname": "big", "delimiter": ","},
+                )
             ]
             tasks += [
                 client.call_tool(

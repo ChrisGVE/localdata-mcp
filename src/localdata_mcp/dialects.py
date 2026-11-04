@@ -1215,9 +1215,7 @@ def _adapt_duckdb_column_reflection(dialect: Any) -> None:
 
     original_query = dialect_class._columns_query
 
-    def _columns_query(
-        self, schema, has_filter_names, scope, kind
-    ):
+    def _columns_query(self, schema, has_filter_names, scope, kind):
         query = original_query(self, schema, has_filter_names, scope, kind)
         return replacement_traverse(query, {}, _null_collation)
 
@@ -1227,9 +1225,7 @@ def _adapt_duckdb_column_reflection(dialect: Any) -> None:
     if "named_type_loader" not in signature(original_info).parameters:
         return
 
-    def _get_columns_info(
-        self, rows, domains, enums, schema
-    ):
+    def _get_columns_info(self, rows, domains, enums, schema):
         loader = SimpleNamespace(domains=domains, enums=enums)
         return original_info(self, rows, loader, schema)
 

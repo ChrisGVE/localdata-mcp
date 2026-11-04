@@ -144,9 +144,9 @@ def test_a_workbook_is_read_and_written_by_the_same_library():
         writing = _engine_bound_into(fmt.writer)
         if reading is None or writing is None:
             continue
-        assert (
-            reading == writing
-        ), f"{suffix} reads with {reading}, writes with {writing}"
+        assert reading == writing, (
+            f"{suffix} reads with {reading}, writes with {writing}"
+        )
         checked += 1
     assert checked, "no workbook format carried an engine — the probe stopped working"
 
