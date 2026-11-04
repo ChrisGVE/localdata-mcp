@@ -410,6 +410,26 @@ class Backend:
         """
         return False
 
+    def syntax_error(self, engine: Engine, sql: str, message: str) -> str | None:
+        """The server's own syntax error for ``sql``, found without running it.
+
+        Asked by :meth:`loader.Workspace._explain` only where it is about to
+        report a statement as a kind the reader refuses, because the server
+        objected to its first word inside a cursor declaration (#143). A
+        misspelled first word looks exactly like that: ``SELEC 1`` arrives as
+        ``syntax error at or near "SELEC"`` beside ``CURSOR FOR SELEC``, just
+        as ``INSERT`` does. ``None`` means the statement parses, so the
+        refused-kind reading stands; generically there is no one to ask, and
+        the answer is ``None``.
+
+        ``message`` is the driver's own words for the failure, for a backend
+        that can tell a typo apart only from them.
+
+        **Whatever asks must not run the statement or open a write path**: it
+        is asked of the reader, about a statement nothing has checked yet.
+        """
+        return None
+
     def ddl_survives_refusal(self) -> bool:
         """Whether DDL sent to a read connection takes effect despite refusal.
 
@@ -1791,6 +1811,9 @@ def _one_statement(sql: str) -> bool:
 #: ``read_only_sql_transaction``. CockroachDB answers a write with it too.
 _PG_READ_ONLY = "25006"
 
+#: PostgreSQL's code for a statement it cannot parse, ``syntax_error``.
+_PG_SYNTAX_ERROR = "42601"
+
 #: The schemas the server itself provides. A function in one of these is the
 #: server's own, and is refused only if it can act past the transaction.
 _PG_SYSTEM_SCHEMAS = frozenset({"pg_catalog", "information_schema"})
@@ -2572,6 +2595,38 @@ class PostgreSQLBackend(Backend):
             for attribute in ("sqlstate", "pgcode")
         )
 
+    def syntax_error(self, engine: Engine, sql: str, message: str) -> str | None:
+        """The server's syntax error for ``sql``, from a parse that runs nothing (#143).
+
+        The question is the extended protocol's *Parse* message, libpq's
+        ``PQprepare`` on psycopg 3's connection, with the unnamed statement:
+        the server parses and analyses ``sql`` and answers whether it could,
+        and nothing is planned, bound or executed, so nothing it says can
+        happen. It takes any kind of statement, where SQL's ``PREPARE`` takes
+        a query or DML only and so could not tell ``CREATE`` from a typo.
+        Only a syntax error (42601) is an answer; anything else, a missing
+        table included, leaves the refused-kind reading as it was.
+
+        psycopg 2, openGauss's driver, offers no Parse of its own; there the
+        answer is ``None`` unless :meth:`OpenGaussBackend.syntax_error` says
+        otherwise.
+        """
+        with engine.connect() as conn:
+            driver = conn.connection.driver_connection
+            pgconn = getattr(driver, "pgconn", None)
+            if pgconn is None:
+                return None
+            from psycopg import errors, pq
+
+            encoding = driver.info.encoding
+            result = pgconn.prepare(b"", sql.encode(encoding))
+            if result.status != pq.ExecStatus.FATAL_ERROR:
+                return None
+            code = result.error_field(pq.DiagnosticField.SQLSTATE)
+            if code != _PG_SYNTAX_ERROR.encode():
+                return None
+            return str(errors.error_from_result(result, encoding=encoding))
+
 
 @dataclass(frozen=True)
 class CockroachDBBackend(PostgreSQLBackend):
@@ -2621,6 +2676,26 @@ class OpenGaussBackend(PostgreSQLBackend):
     banner_query: ClassVar[str] = ""
     impostors: ClassVar[Mapping[str, str]] = {}
     relations_query: ClassVar[str] = _OPENGAUSS_RELATIONS
+
+    def syntax_error(self, engine: Engine, sql: str, message: str) -> str | None:
+        """The server's syntax error where the first word is no keyword of its grammar.
+
+        psycopg 2 offers no Parse message, so the server is asked something
+        narrower, through the reader and with the word as a bound value: is
+        the statement's first word in ``pg_get_keywords()``? A word that is not
+        cannot begin any statement, so the server's own message is the syntax
+        error it says it is (#143). A keyword that cannot begin one either,
+        ``FROM 1``, is still read as a refused kind; that is the residual.
+        """
+        first = re.match(r"[A-Za-z_]\w*", sql.lstrip())
+        if first is None:
+            return None
+        with engine.connect() as conn:
+            known = conn.execute(
+                text("SELECT count(*) FROM pg_get_keywords() WHERE word = :word"),
+                {"word": first.group(0).lower()},
+            ).scalar()
+        return None if known else message
 
 
 # ---------------------------------------------------------------------------

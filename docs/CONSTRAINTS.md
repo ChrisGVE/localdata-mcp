@@ -3933,6 +3933,40 @@ which streams without declaring a server-side cursor at all.
 > as one. This predates #141, since the excerpt for so short a statement keeps `DECLARE`. Tracked in
 > [#143](https://github.com/ChrisGVE/localdata-mcp/issues/143).
 
+> **Amended 2026-11-04 — the misspelled first word is asked of the server
+> ([#143](https://github.com/ChrisGVE/localdata-mcp/issues/143)).** Before `query` calls a statement
+> a refused kind on these words, the reader asks the server whether the statement parses, which
+> runs nothing, through `Backend.syntax_error`. Measured from the runner with a probe asking each
+> engine directly:
+>
+> | Engine (driver) | How it is asked | `SELEC 1`, `INSERTT …`, `FROM t` | `INSERT`, `CREATE TABLE`, `DROP TABLE`, `SHOW`, `EXPLAIN` |
+> |---|---|---|---|
+> | CockroachDB 26.3.4 (psycopg 3) | Parse message, `PQprepare` with the unnamed statement | 42601, the server's syntax error | parses (`COMMAND_OK`) |
+> | YugabyteDB 2.25.2.0 (psycopg 3) | the same | 42601 | parses |
+> | openGauss 7.0.0-RC3 (psycopg2) | SQL `PREPARE` | 42601 | `INSERT` parses; `CREATE`, `DROP`, `SHOW` and `EXPLAIN` are 42601 too |
+>
+> After every probe statement the table's count and the catalog were as before: the prepared
+> `INSERT` added no row, the prepared `CREATE TABLE` made no table, the prepared `DROP TABLE` dropped
+> nothing. The probe's PostgreSQL 16 leg failed on a bug of its own (it read the result status as
+> an enum); the same Parse path is what the tests below run there.
+>
+> So on the three psycopg 3 engines the answer is the Parse message: a syntax error (42601) is
+> returned in the server's words, without the cursor declaration, and anything else, a statement
+> that parses or one naming a missing table, keeps the refused-kind answer. Parse takes every kind
+> of statement, which SQL `PREPARE` does not: on openGauss `PREPARE` answers `CREATE` exactly as it
+> answers a typo, so it cannot be the question. psycopg2 has no Parse of its own, and openGauss is
+> asked whether the first word is in `pg_get_keywords()` instead, through the reader with the word
+> bound: a word that is no keyword cannot begin a statement, and the server's own message (with its
+> cursor excerpt) is returned. **Residual, openGauss only:** a keyword that cannot begin a statement,
+> `FROM t`, is still explained as a refused kind; the psycopg 3 engines answer it as 42601.
+>
+> `tests/test_pg_syntax_error.py` live, on a read-only and on a writable attach, with
+> `tests/test_postgresql_read_gate.py`: PostgreSQL 51 passed, CockroachDB 30, YugabyteDB 49,
+> openGauss 48, 0 failed but the probe. It includes the proof that asking cannot write: an `INSERT`,
+> a `CREATE TABLE` and a `DELETE`, each put to the Parse path and then sent through `query`, leave
+> the row count at 1 and no new table, on both attaches (on openGauss the Parse path has no
+> connection to ask and answers `None`; `query` there goes through the keyword question).
+
 ### 21.4 Everything else, and it really was everything
 
 | Axis | openGauss |

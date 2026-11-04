@@ -2756,6 +2756,12 @@ class Workspace:
 
         message = driver_message(exc)
         if _objected_to_the_leading_verb(message, sql):
+            # The same words come from a first word that is not SQL at all, so
+            # the server is asked to parse the statement, which runs nothing:
+            # a typo is answered with its own syntax error (#143).
+            unparsed = entry.backend.syntax_error(entry.engines.read, sql, message)
+            if unparsed is not None:
+                return LoadError(unparsed)
             return LoadError(_not_a_read(entry))
 
         stale = re.search(rf"no such table:\s*{re.escape(entry.tag)}\.(\w+)", message)

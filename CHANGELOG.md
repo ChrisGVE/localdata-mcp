@@ -398,7 +398,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And thirty-seven found in this release's own code before it shipped:
+And thirty-eight found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -753,9 +753,21 @@ And thirty-seven found in this release's own code before it shipped:
   beside the cursor's `FOR SELECT`, which is how a refused write looks. A
   statement that opens with `SELECT`, `VALUES`, `TABLE` or `WITH` is now never
   explained as a write, since a cursor is declared over exactly those. A
-  misspelled first word such as `SELEC 1` is still explained as a refused write
-  on all four PostgreSQL-family backends
-  ([#143](https://github.com/ChrisGVE/localdata-mcp/issues/143)).
+  misspelled first word such as `SELEC 1` was still explained as a refused write;
+  that is the next entry.
+- **On the PostgreSQL family, a misspelled first word is reported as the syntax
+  error it is** ([#143](https://github.com/ChrisGVE/localdata-mcp/issues/143)).
+  `SELEC 1` arrived as `syntax error at or near "SELEC"` beside the cursor's
+  `CURSOR FOR SELEC`, the same words a refused `INSERT` arrives in, and was
+  answered with `create`, `update` and `drop`. Before calling a statement a
+  refused kind, the reader now asks the server to parse it: on PostgreSQL,
+  CockroachDB and YugabyteDB with the protocol's Parse step, which runs
+  nothing, so a statement that does not parse is answered with the server's own
+  syntax error, without the cursor declaration. openGauss is reached through
+  psycopg 2, which has no Parse step of its own; there a first word that is no
+  keyword of the server's grammar is answered with the server's message. A
+  keyword that cannot begin a statement (`FROM t`) is still read as a refused
+  kind there.
 - **On MySQL and MariaDB, `query` read files on the database server through
   `LOAD_FILE()`** ([#36](https://github.com/ChrisGVE/localdata-mcp/issues/36)).
   It is a read, so the read-only session let it run, and as a built-in it is in
