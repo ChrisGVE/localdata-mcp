@@ -663,16 +663,21 @@ class Backend:
         return _PORTABLE_TYPES[declared]()
 
     def text_width(
-        self, *, characters: int | None, utf16_units: int | None
+        self,
+        *,
+        characters: int | None,
+        utf16_units: int | None,
+        utf8_bytes: int | None = None,
     ) -> int | None:
         """The width a loaded text column is sized to here, in this engine's unit.
 
-        The loader measures the widest value two ways, because the engines that
-        size text do not agree on what a width counts. Characters, generically,
-        which is what Firebird's ``CHARACTER SET UTF8`` column counts (#56).
-        SQL Server's ``NVARCHAR`` counts UTF-16 code units instead, and a
-        character outside the Basic Multilingual Plane — every emoji — is two of
-        them (:meth:`MSSQLBackend.text_width`).
+        The loader measures the widest value three ways, because the engines
+        that size text do not agree on what a width counts. Characters,
+        generically, which is what Firebird's ``CHARACTER SET UTF8`` column
+        counts (#56). SQL Server's ``NVARCHAR`` counts UTF-16 code units
+        instead, and a character outside the Basic Multilingual Plane — every
+        emoji — is two of them (:meth:`MSSQLBackend.text_width`). Oracle sizes in
+        characters and caps in UTF-8 bytes (:meth:`OracleBackend.text_width`).
 
         Whatever this answers is what :meth:`column_type` and
         :meth:`column_note` receive as ``longest``, asked once per column, so
@@ -3292,6 +3297,33 @@ class OracleBackend(Backend):
             return Text()
         return String(width)
 
+    def text_width(
+        self,
+        *,
+        characters: int | None,
+        utf16_units: int | None,
+        utf8_bytes: int | None = None,
+    ) -> int | None:
+        """Characters, unless the widest value is more bytes than a ``VARCHAR2`` holds.
+
+        SQLAlchemy writes ``String(n)`` as ``VARCHAR2(n CHAR)`` on every Oracle
+        since 9, so the width counts characters and ``été`` fits the three it
+        was measured at — measured on Oracle Free, where the session's own
+        ``NLS_LENGTH_SEMANTICS`` is ``BYTE`` (#132). The 4,000 ceiling is
+        another matter: on a database without extended string sizes it counts
+        **bytes** whatever the semantics, and 1,400 CJK ideographs — 1,400
+        characters, 4,200 bytes — were refused on insert into the
+        ``VARCHAR2(1400 CHAR)`` they were given.
+
+        So past the ceiling in bytes the byte count is the answer: it is wider
+        than :data:`_VARCHAR2_MAX`, and :meth:`column_type` makes it the
+        ``CLOB`` nothing narrower can be. ``utf8_bytes`` is ``None`` only for a
+        caller that did not measure it, which then gets characters as before.
+        """
+        if utf8_bytes is not None and utf8_bytes > _VARCHAR2_MAX:
+            return utf8_bytes
+        return characters
+
     def unstorable_column_types(self) -> frozenset[str]:
         """Oracle has no time-of-day type.
 
@@ -3505,7 +3537,11 @@ class MSSQLBackend(Backend):
         return Unicode(width) if width <= _NVARCHAR_MAX else Unicode()
 
     def text_width(
-        self, *, characters: int | None, utf16_units: int | None
+        self,
+        *,
+        characters: int | None,
+        utf16_units: int | None,
+        utf8_bytes: int | None = None,
     ) -> int | None:
         """UTF-16 code units, because that is what ``NVARCHAR(n)`` counts.
 

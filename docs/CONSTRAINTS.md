@@ -7505,3 +7505,39 @@ since a missing result can only show up as one.
   made honestly. Whether such a file loads as NULL is not known here.
 - **`.numbers`** is read by `numbers-parser`, not pandas, and was not part of this measurement.
 
+## §39 — Oracle text: sized in characters, capped in bytes (2026-11-04)
+
+Issue [#132](https://github.com/ChrisGVE/localdata-mcp/issues/132), found by reading the code while
+fixing #128, predicted that a text column landing as `VARCHAR2(n)` takes the session's
+`NLS_LENGTH_SEMANTICS` and so counts bytes. Measured on the Oracle Free endpoint
+(`gvenzl/oracle-free:slim`, `scripts/endpoint-run.sh oracle`, `tests/test_oracle_text.py`), through
+`create` from a CSV, the server's own load path.
+
+### 39.1 The prediction was half wrong
+
+- The session's `NLS_LENGTH_SEMANTICS` is `BYTE` and the character set `AL32UTF8`, as predicted.
+- **The declaration does not inherit it.** SQLAlchemy 2.1.6 writes `String(n)` as
+  `VARCHAR2(n CHAR)` on every Oracle but 8 (`OracleTypeCompiler._visit_varchar`, gated on
+  `_supports_char_length`). `user_tab_columns` reports `CHAR_USED = 'C'`.
+- So `plain`, `été`, `日本` and `😀`, each alone in a column sized to it, read back exactly; a column
+  of all four was `VARCHAR2(5 CHAR)` and read back byte for byte; 1,000 `é` (2,000 bytes) in a
+  `VARCHAR2(1000 CHAR)` read back whole. Six live tests, all passing on the code as it stood.
+
+### 39.2 The ceiling counts bytes
+
+The 4,000 ceiling (`_VARCHAR2_MAX`) was compared with the width in **characters**. On a database
+without extended string sizes a `VARCHAR2` holds at most 4,000 bytes whatever its semantics, so 1,400
+`日` — 1,400 characters, 4,200 bytes — got `VARCHAR2(1400 CHAR)` and the insert was refused: `create`
+answered `{"ok": false, "error": "Could not insert rows from …cjk.csv: …"}`. The driver error inside it was cut short in the test log, so its ORA code was not read.
+
+Fixed by measuring the widest value in UTF-8 bytes too, beside characters and UTF-16 code units, and
+by `OracleBackend.text_width` answering the byte count when it passes 4,000, which `column_type`
+turns into a `CLOB`. 2,000 `é` (exactly 4,000 bytes) stays `VARCHAR2(2000 CHAR)`; one byte more is a
+`CLOB`. Live, the 1,400-ideograph value then landed and read back whole.
+
+### 39.3 Not measured
+
+Whether this endpoint has extended string sizes (`MAX_STRING_SIZE = EXTENDED`, a 32,767-byte
+`VARCHAR2`) was not read; the server assumes the standard 4,000 everywhere, as it did before, so on
+an extended database a column between 4,000 and 32,767 bytes is a `CLOB` that need not be one.
+

@@ -827,6 +827,18 @@ And forty found in this release's own code before it shipped:
   did not profile <table>: reading it would …`, with the gate's own reason, as
   `directory` does for a count, and any other failure of its aggregate in the
   driver's words alone.
+- **On Oracle a text column of fewer than 4,000 characters but more than 4,000
+  bytes was refused on insert** ([#132](https://github.com/ChrisGVE/localdata-mcp/issues/132)).
+  A text column lands as `VARCHAR2(n CHAR)`, sized in characters, and became a
+  `CLOB` only past 4,000 characters; but the 4,000 ceiling of a database without
+  extended string sizes counts bytes whatever the length semantics, so 1,400 CJK
+  ideographs (4,200 bytes in UTF-8) were refused by the `VARCHAR2(1400 CHAR)`
+  they were given. The widest value is now measured in UTF-8 bytes as well, and
+  a column past 4,000 bytes is a `CLOB`, which holds it whole. Measured on
+  Oracle Free: `été`, `日本` and `😀` at exactly their column's width read back
+  byte for byte under the session's `BYTE` semantics, before and after, because
+  SQLAlchemy writes `CHAR` into the declaration — the defect #132 predicted
+  there was not there.
 - **A formula column in a workbook a program wrote loaded as all NULL, silently**
   (task 20). pandas reads an `.xlsx` through openpyxl with `data_only=True`, which
   returns the result a spreadsheet application stored beside each formula; a

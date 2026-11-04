@@ -759,6 +759,33 @@ def _utf16_units(present: pd.Series) -> pd.Series:
     return present.str.len() + present.str.count(_ASTRAL)
 
 
+#: Characters UTF-8 spells in two bytes or more, and in three or more. With
+#: :data:`_ASTRAL`, four, each band adds a byte to every character inside it.
+#: Literal code points, for the same RE2 reason.
+_BEYOND_ASCII = "[\u0080-\U0010ffff]"
+_BEYOND_TWO_BYTES = "[\u0800-\U0010ffff]"
+
+
+def _utf8_bytes(present: pd.Series) -> pd.Series:
+    """How many bytes each string takes in UTF-8, counted without encoding it."""
+    return (
+        present.str.len()
+        + present.str.count(_BEYOND_ASCII)
+        + present.str.count(_BEYOND_TWO_BYTES)
+        + present.str.count(_ASTRAL)
+    )
+
+
+def _longest_utf8_value(values: pd.Series, declared: str) -> int | None:
+    """:func:`_longest_value` in UTF-8 bytes, which Oracle's 4,000 ceiling counts (#132)."""
+    if declared != "TEXT":
+        return None
+    present = values.dropna()
+    if present.empty:
+        return 0
+    return int(_utf8_bytes(present.astype(str)).max())
+
+
 def _longest_utf16_value(values: pd.Series, declared: str) -> int | None:
     """:func:`_longest_value` in UTF-16 code units, which SQL Server sizes by (#128).
 
@@ -993,13 +1020,16 @@ class ColumnMeasurement:
     #: ``"int"``, ``"float"``, ``"bool"`` or ``"text"``. ``None`` where the frame
     #: was already typed and there is nothing to turn back.
     family: str | None = None
-    #: The widest value's width in characters, and in UTF-16 code units, or
-    #: ``None`` for a column holding no text. Two because engines disagree about
-    #: what a text width counts, and the backend picks the one its own does
-    #: (:meth:`~localdata_mcp.dialects.Backend.text_width`). They differ only
-    #: when a value holds a character outside the Basic Multilingual Plane.
+    #: The widest value's width in characters, in UTF-16 code units and in
+    #: UTF-8 bytes, or ``None`` for a column holding no text. Three because
+    #: engines disagree about what a text width counts, and the backend picks
+    #: the one its own does (:meth:`~localdata_mcp.dialects.Backend.text_width`).
+    #: Characters and code units differ only when a value holds a character
+    #: outside the Basic Multilingual Plane; bytes, whenever it holds one
+    #: outside ASCII.
     longest: int | None = None
     longest_utf16: int | None = None
+    longest_utf8: int | None = None
     #: The spelling to rewrite this column's dates in, or ``None`` to leave its
     #: text alone — which covers a column that is not temporal *and* one already
     #: canonical throughout, since :func:`temporal.standardize` rewrites neither.
@@ -1081,6 +1111,7 @@ def measure_frame(frame: pd.DataFrame) -> tuple[ColumnMeasurement, ...]:
                 declared_type=declared,
                 longest=_longest_value(series, declared),
                 longest_utf16=_longest_utf16_value(series, declared),
+                longest_utf8=_longest_utf8_value(series, declared),
                 temporal_kind=binding.column_temporal_kind(series),
                 temporal_standard=standard,
                 numeric_values=numeric,
@@ -1134,6 +1165,7 @@ class _ColumnScan:
         self._rows = 0
         self._longest = 0
         self._longest_utf16 = 0
+        self._longest_utf8 = 0
         # Four all-or-nothing temporal questions. Each stops being asked as
         # soon as a chunk answers no, because no later chunk can answer yes.
         self._canonical_throughout = True
@@ -1172,6 +1204,7 @@ class _ColumnScan:
         self._had_values = True
         self._longest = max(self._longest, int(present.str.len().max()))
         self._longest_utf16 = max(self._longest_utf16, int(_utf16_units(present).max()))
+        self._longest_utf8 = max(self._longest_utf8, int(_utf8_bytes(present).max()))
         self._observe_family(present)
         self._observe_temporal(present, raw)
 
@@ -1319,14 +1352,18 @@ class _ColumnScan:
         )
         described = standard or time_of_day
 
-        # A canonical spelling is ASCII, so it is as many code units as
-        # characters.
+        # A canonical spelling is ASCII, so it is as many code units, and as
+        # many bytes, as characters.
         if declared != "TEXT":
-            longest = longest_utf16 = None
+            longest = longest_utf16 = longest_utf8 = None
         elif spelling is not None:
-            longest = longest_utf16 = temporal.canonical_width(spelling)
+            longest = longest_utf16 = longest_utf8 = temporal.canonical_width(spelling)
         else:
-            longest, longest_utf16 = self._longest, self._longest_utf16
+            longest, longest_utf16, longest_utf8 = (
+                self._longest,
+                self._longest_utf16,
+                self._longest_utf8,
+            )
 
         return ColumnMeasurement(
             name=self.name,
@@ -1334,6 +1371,7 @@ class _ColumnScan:
             family=family,
             longest=longest,
             longest_utf16=longest_utf16,
+            longest_utf8=longest_utf8,
             spelling=spelling,
             temporal_standard=(
                 temporal.ISO8601_UTC
@@ -2079,10 +2117,13 @@ class Workspace:
 
         def width(column: ColumnMeasurement) -> int | None:
             # In the unit this backend's text width counts — characters, or
-            # SQL Server's UTF-16 code units (#128). One answer per column,
+            # SQL Server's UTF-16 code units (#128) — with Oracle also reading
+            # the bytes its ceiling counts (#132). One answer per column,
             # handed to both `column_note` and `column_type` below.
             return entry.backend.text_width(
-                characters=column.longest, utf16_units=column.longest_utf16
+                characters=column.longest,
+                utf16_units=column.longest_utf16,
+                utf8_bytes=column.longest_utf8,
             )
 
         notes = (
