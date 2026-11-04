@@ -251,7 +251,8 @@ until the cast is gone. No rephrase gets past it, so stop retrying. Tell the
 user which cast it names and that an administrator of that database must drop
 it with the `DROP CAST` the refusal gives. On **MySQL and
 MariaDB** it also refuses a statement containing the words `OUTFILE` or
-`DUMPFILE`, or the name of a stored function
+`DUMPFILE`, a call to `LOAD_FILE()` (a file on the database server: to read
+a file of your own, `attach` it), or the name of a stored function
 or of a view calling one, even inside a quoted string. If a read is refused for
 a word in a literal, rephrase the literal (`CONCAT('out', 'file')`). On all six,
 as on MonetDB, a `;` anywhere but at the end is refused, even inside a quoted

@@ -6670,6 +6670,36 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > removing the gate turned 15 live tests red, the shape half alone 9, the name half alone 6.
 > Full suite, MySQL and MariaDB live: 1274 passed, 0 failed.
 
+> **Amended 2026-11-04 — `LOAD_FILE()` is refused after all
+> ([#36](https://github.com/ChrisGVE/localdata-mcp/issues/36)).** The residual above left it to the
+> account's `FILE` privilege and `secure_file_priv`. Measured from the runner
+> (`scripts/endpoint-run.sh mysql mariadb`, a probe outside the server, in
+> `SET SESSION TRANSACTION READ ONLY`):
+>
+> - **MySQL 8.0.46**, `secure_file_priv = /var/lib/mysql-files/`: as root (who holds `FILE`),
+>   `LOAD_FILE('/etc/hostname')` and `LOAD_FILE('/etc/passwd')` are NULL; a file root wrote into
+>   `/var/lib/mysql-files/` with `INTO DUMPFILE` read back whole. The test user (no `FILE`) gets
+>   NULL everywhere.
+> - **MariaDB 11.8.9**, `secure_file_priv` NULL, which on MariaDB means *no* restriction: as root,
+>   `LOAD_FILE('/etc/passwd')` is not NULL and `LOAD_FILE('/etc/hostname')` returned the
+>   container's hostname. Any file the server's own user can read is readable. The test user gets
+>   NULL.
+> - On both, every spelling is the built-in, none a syntax error: `load_file`, `` `load_file` ``
+>   backquoted, a space, a newline, `/**/`, a `#` comment and a `-- ` comment between the name and
+>   its parenthesis.
+>
+> So the gate's shape half now refuses a call (`_MYSQL_FILE_READ_CALL`: the word, then a
+> parenthesis or a comment, any case, backquoted or not), and the name half follows `load_file`
+> into view definitions like a stored function, so a view calling it is refused by its name. The
+> word alone is not refused: `SELECT load_file FROM t`, `SELECT 1 AS load_file` and
+> `SELECT 'load_file'` answer. One consequence of following it into views: a view whose
+> definition the account cannot read (no `SHOW VIEW`) now counts as reaching a refused name on
+> every server, where before it did so only when a stored or loadable function existed.
+> `tests/test_mysql_load_file.py` with `tests/test_mysql_read_gate.py`, live from the runner: MySQL
+> 26 passed, MariaDB 22 passed, 0 failed. On MariaDB the call tests read `/etc/hostname`, which
+> root reads there unrefused; on MySQL a file planted in `secure_file_priv`. Offline suite: 1564
+> passed, 1206 skipped, 0 failed.
+
 > **Amended 2026-11-02 — the PostgreSQL family: a rollback does not reach a function's effects
 > ([#124](https://github.com/ChrisGVE/localdata-mcp/issues/124)).** Measured on `postgres:16`
 > (16.14), CockroachDB 26.3, YugabyteDB 2.25 (PostgreSQL 15.12) and openGauss 7.0.0-RC3, each as

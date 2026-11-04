@@ -2569,6 +2569,21 @@ _MYSQL_EXECUTABLE_COMMENT = re.compile(r"/\*M?!", re.IGNORECASE)
 #: The two words that make a ``SELECT`` or a ``TABLE`` write a file.
 _MYSQL_FILE_WRITE = re.compile(r"outfile|dumpfile", re.IGNORECASE)
 
+#: The built-in that reads a file on the database server (#36). It is a read, so
+#: the read-only transaction lets it run, and no catalog lists it.
+_MYSQL_FILE_READ = "load_file"
+
+#: ``LOAD_FILE`` as a call: the name as a word, then, past any whitespace, the
+#: opening parenthesis or the start of a comment that could stand before one.
+#: Backquoted too, so a quoted spelling is refused whether or not the server
+#: resolves it to the built-in. A comment after the name is refused whatever
+#: follows it, which costs a column called ``load_file`` with a comment after it
+#: and never admits a call spelled ``LOAD_FILE/**/(…)``. A column, an alias or a
+#: literal that merely holds the word, with no parenthesis after it, is a read.
+_MYSQL_FILE_READ_CALL = re.compile(
+    r"(?<![\w$])`?load_file`?\s*(?:\(|/\*|#|--)", re.IGNORECASE
+)
+
 #: Every stored function a read could call, outside ``sys`` (MySQL's own
 #: helpers, which only an administrator can add to), and every view with its
 #: definition. Both readable by an unprivileged user, measured on MySQL 8.0 and
@@ -2608,6 +2623,15 @@ _MYSQL_SEMICOLON = _semicolon_refusal(
 )
 
 
+#: What the reader says when a statement calls ``LOAD_FILE`` (#36).
+_MYSQL_FILE_READ_REFUSAL = (
+    "read a file on the database server with LOAD_FILE(), which a read-only "
+    "transaction does not stop (refused wherever LOAD_FILE is followed by a "
+    "parenthesis or a comment, even inside a quoted string; to read a file of "
+    "your own, attach it)"
+)
+
+
 def _mysql_shape_refusal(sql: str) -> str | None:
     """What ``sql``'s shape alone refuses it for, or ``None`` if it may be a read.
 
@@ -2620,6 +2644,8 @@ def _mysql_shape_refusal(sql: str) -> str | None:
     * **No executable comment.** ``/*!80000 SET GLOBAL … */`` is a ``SET``.
     * **Neither OUTFILE nor DUMPFILE, anywhere.** Not even inside a quoted
       string, which costs that read and says so, so the caller can rephrase.
+    * **No call to LOAD_FILE** (:data:`_MYSQL_FILE_READ_CALL`), which reads a
+      file on the database server inside a read-only transaction (#36).
     * **A first keyword in** :data:`_MYSQL_READS`.
     """
     if not _one_statement(sql):
@@ -2631,6 +2657,8 @@ def _mysql_shape_refusal(sql: str) -> str | None:
             "write a file with INTO OUTFILE or INTO DUMPFILE (the two words are "
             "refused anywhere in the statement, even inside a quoted string)"
         )
+    if _MYSQL_FILE_READ_CALL.search(sql):
+        return _MYSQL_FILE_READ_REFUSAL
     rest = sql[_MYSQL_LEADING.match(sql).end() :]
     first = re.match(r"\(|[A-Za-z_]+|\S+", rest)
     if first is None:
@@ -2753,7 +2781,12 @@ def _mysql_unsafe_names(cursor: Any) -> set[str]:
         functions |= {name for (name,) in cursor.fetchall()}
     cursor.execute(_MYSQL_VIEWS)
     views = {name: definition or "" for name, definition in cursor.fetchall()}
-    return _reachable_names(functions, views)
+    # LOAD_FILE is followed into views like a stored function, so a view
+    # reading a server file is refused by its name. The word itself is left
+    # out of what a statement may not mention: the shape half refuses the
+    # call, and a column or a literal holding the word is a read (#36).
+    reaching = _reachable_names(functions | {_MYSQL_FILE_READ}, views)
+    return reaching - ({_MYSQL_FILE_READ} - functions)
 
 
 def _refuse_mysql_write(

@@ -398,7 +398,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And thirty-five found in this release's own code before it shipped:
+And thirty-six found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -756,6 +756,16 @@ And thirty-five found in this release's own code before it shipped:
   misspelled first word such as `SELEC 1` is still explained as a refused write
   on all four PostgreSQL-family backends
   ([#143](https://github.com/ChrisGVE/localdata-mcp/issues/143)).
+- **On MySQL and MariaDB, `query` read files on the database server through
+  `LOAD_FILE()`** ([#36](https://github.com/ChrisGVE/localdata-mcp/issues/36)).
+  It is a read, so the read-only session let it run, and as a built-in it is in
+  no catalog the #123 gate asks. Whatever the account behind the URL could read
+  (its `FILE` privilege, under the server's `secure_file_priv`) a `query` caller
+  could read too. The reader now refuses a call to it before sending, in any
+  case, in a subquery or an expression, backquoted, and with a comment between
+  the name and its parenthesis; a view that calls it is refused by its name,
+  like a view calling a stored function. A column, an alias or a literal that
+  only holds the word is still answered. To read a file of your own, `attach` it.
 
 ### Known limitations
 

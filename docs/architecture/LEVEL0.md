@@ -387,9 +387,11 @@ which is not equally far:
   ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)). "More than one" is decided
   without lexing, so a `;` anywhere but at the end is refused, inside a quoted string too, and
   the refusal offers `CHAR(59 USING utf8mb4)` for a `;` in the data
-  ([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)). `LOAD_FILE()` is left
-  alone: it reads a file on the database server, and whether it may is the account's `FILE`
-  privilege and the server's `secure_file_priv` — the database's grant, not this server's.
+  ([#127](https://github.com/ChrisGVE/localdata-mcp/issues/127)). A call to `LOAD_FILE()` is
+  refused too, and so is a view calling it: it reads a file on the database server, a read the
+  session lets through, and the caller of `query` is not the account whose `FILE` privilege
+  decides it. A column or a literal that only holds the word is answered
+  ([#36](https://github.com/ChrisGVE/localdata-mcp/issues/36)).
 - **PostgreSQL**, and CockroachDB, YugabyteDB and openGauss, keep the transactional floor —
   the read connection never commits, so a write is rolled back, DDL included — and it is not
   sufficient: a function can act where a rollback does not reach. Measured on a read-only

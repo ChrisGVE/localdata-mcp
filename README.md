@@ -438,6 +438,9 @@ single one, begin with a read's keyword, contain no executable comment and
 neither `OUTFILE` nor `DUMPFILE`, and name no stored or loadable function, or
 view calling one. That holds even inside a quoted string, and the refusal says
 which rule it met ([#123](https://github.com/ChrisGVE/localdata-mcp/issues/123)).
+A call to `LOAD_FILE()`, which reads a file on the database server, is refused
+there as well, and so is a view calling it
+([#36](https://github.com/ChrisGVE/localdata-mcp/issues/36)).
 For a `;` in the data there, write `CHAR(59 USING utf8mb4)`, as in
 `SELECT CONCAT('a', CHAR(59 USING utf8mb4), 'b')`; `CHAR(59)` alone is a binary
 string and comes back as `0x3b`
