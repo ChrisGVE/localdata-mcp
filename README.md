@@ -390,7 +390,9 @@ refuses at statement preparation through an authorizer, DuckDB opens a
 read-only datasource `access_mode=read_only`, runs `query` on a writable one in a
 `READ ONLY` transaction, has its own file access (`read_csv`, `COPY … TO`)
 switched off on every connection, and runs a statement only if DuckDB's own
-parser calls it one query, a `CALL`, or an `EXPLAIN` of a query, because a `COPY`
+parser calls it one query, a `CALL` (but not `force_checkpoint()`, which DuckDB
+refuses there in words about a transaction, so it is refused first in this
+server's, [#138](https://github.com/ChrisGVE/localdata-mcp/issues/138)), or an `EXPLAIN` of a query, because a `COPY`
 onto the database's own `.wal` got past the rest and could lose committed rows
 ([#137](https://github.com/ChrisGVE/localdata-mcp/issues/137)), MySQL and MariaDB open a read-only session
 because their DDL commits itself, ClickHouse carries `readonly=1` because it has

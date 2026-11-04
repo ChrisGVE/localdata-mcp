@@ -398,7 +398,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And thirty-nine found in this release's own code before it shipped:
+And forty found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -792,6 +792,16 @@ And thirty-nine found in this release's own code before it shipped:
   name, and the `;` forms from #127. A refused word or symbol outside a quoted
   string may be a call, and keeps the refused-write wording. MonetDB's `;` is
   framed the same way.
+- **On DuckDB, `query` answered `CALL force_checkpoint()` in DuckDB's transaction
+  words** ([#138](https://github.com/ChrisGVE/localdata-mcp/issues/138)).
+  DuckDB refuses it inside the reader's read-only transaction with "Cannot FORCE
+  CHECKPOINT: the current transaction has been started", which talks about a
+  transaction to an agent that never opened one. Nothing was written. The reader
+  now finds the call with DuckDB's own tokenizer, quoted, qualified or behind a
+  comment, and refuses it before DuckDB is asked, saying that DuckDB runs it only
+  outside a transaction and that `CHECKPOINT` and `FORCE CHECKPOINT` run here,
+  both measured through `query`. A literal or a column holding the word is still
+  a read.
 - **`stats` answered a reader-gate refusal in the driver's raw words**
   ([#133](https://github.com/ChrisGVE/localdata-mcp/issues/133)). Where the gate
   refuses every read of a table, a view calling an unsafe function, or every

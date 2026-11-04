@@ -7377,6 +7377,20 @@ comparison.
 > gate. The measurements behind the gate, and the decision for each statement kind, are in the
 > §29.4 amendment of the same date.
 
+> **Amended 2026-11-04 — `force_checkpoint()` is refused in this server's words
+> ([#138](https://github.com/ChrisGVE/localdata-mcp/issues/138)).** The gate runs a `CALL` so that
+> `CHECKPOINT` keeps working. Measured on DuckDB 2.0.0 inside `BEGIN TRANSACTION READ ONLY` on a
+> file database: `CHECKPOINT`, `FORCE CHECKPOINT`, `CALL checkpoint()` and `CALL pragma_version()`
+> run; `CALL force_checkpoint()`, and the same call upper-cased, quoted (`"force_checkpoint"`),
+> qualified (`main.`, `system.`), behind a `/**/` comment, or as `SELECT * FROM
+> force_checkpoint()`, each raise `TransactionException: … Cannot FORCE CHECKPOINT: the current
+> transaction has been started for this database`. Nothing is written either way. The reader now
+> finds the call with DuckDB's tokenizer, an identifier `force_checkpoint` whose next token past a
+> comment is `(`, so `SELECT 'force_checkpoint()'` and `SELECT 1 AS force_checkpoint` still answer,
+> and refuses it before DuckDB is asked, naming `CHECKPOINT` and `FORCE CHECKPOINT`, which both
+> answered `ok` through `query` on a read-only and on a writable attach.
+> `tests/test_duckdb_force_checkpoint.py`: 34 passed; with the gate change removed, 18 of them fail.
+
 ## §37 — `stats`: which engines have a median and a sample standard deviation (2026-11-03)
 
 Refs [#95](https://github.com/ChrisGVE/localdata-mcp/issues/95). Measured on `new-v3` from

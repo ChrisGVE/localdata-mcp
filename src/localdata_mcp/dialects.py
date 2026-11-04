@@ -1472,6 +1472,41 @@ def _duckdb_explained(connection: Any, explain: str) -> str | None:
     return None
 
 
+#: What the DuckDB reader says when a statement calls ``force_checkpoint`` (#138).
+#: DuckDB refuses it inside the reader's read-only transaction in its own words,
+#: "Cannot FORCE CHECKPOINT: the current transaction has been started"; both
+#: statements named here ran through ``query`` on 2.0.0, measured.
+_DUCKDB_FORCE_CHECKPOINT = (
+    "call force_checkpoint(), which DuckDB runs only outside a transaction, and "
+    "query reads inside a read-only one (CHECKPOINT and FORCE CHECKPOINT run "
+    "here)"
+)
+
+
+def _duckdb_calls_force_checkpoint(sql: str) -> bool:
+    """Whether ``sql`` calls ``force_checkpoint``, read with DuckDB's own tokenizer.
+
+    The call is an identifier ``force_checkpoint``, quoted or not and in any
+    case, whose next token past any comment is ``(``. A string constant is a
+    token of its own kind and a column or an alias has no ``(`` after it, so
+    neither is a call. Only the words depend on this: DuckDB refuses the call
+    itself, measured, so a spelling missed here is still refused, in DuckDB's
+    words.
+    """
+    import duckdb
+
+    comment = duckdb.token_type.comment
+    identifier = duckdb.token_type.identifier
+    tokens = [(start, kind) for start, kind in duckdb.tokenize(sql) if kind != comment]
+    for (start, kind), (after, _) in zip(tokens, tokens[1:]):
+        if kind != identifier or not sql.startswith("(", after):
+            continue
+        name = re.match(r'"?(\w+)"?', sql[start:])
+        if name is not None and name.group(1).lower() == "force_checkpoint":
+            return True
+    return False
+
+
 def _duckdb_read_refusal(connection: Any, sql: str) -> str | None:
     """What running ``sql`` on the reader would ask to do, or ``None`` for a read.
 
@@ -1505,10 +1540,13 @@ def _duckdb_read_refusal(connection: Any, sql: str) -> str | None:
        ``PIVOT`` without ``IN`` is a ``CREATE`` and a ``SELECT``, and on 2.0.0
        it is one statement of kind ``MULTI``. Either way its refusal says so
        in plain words, with the one-query form (:func:`_duckdb_unlisted_pivot`).
-    3. **More than one statement**, even all of them queries: DuckDB answers
+    3. **A call to ``force_checkpoint``** (:func:`_duckdb_calls_force_checkpoint`),
+       which DuckDB refuses inside the transaction in words about a
+       transaction the caller never opened (#138).
+    4. **More than one statement**, even all of them queries: DuckDB answers
        with the last one's rows alone, so the others ran for nothing the
        caller can see.
-    4. **An ``EXPLAIN`` of anything but a query** (:func:`_duckdb_explained`).
+    5. **An ``EXPLAIN`` of anything but a query** (:func:`_duckdb_explained`).
 
     A string that parses to no statement at all, such as a lone comment, is
     left to DuckDB, which runs nothing and so answers no rows.
@@ -1526,6 +1564,8 @@ def _duckdb_read_refusal(connection: Any, sql: str) -> str | None:
                 else _duckdb_kind_words(kind)
             )
             return f"{named} ({several})" if len(kinds) > 1 else named
+    if _duckdb_calls_force_checkpoint(sql):
+        return _DUCKDB_FORCE_CHECKPOINT
     if len(kinds) > 1:
         return f"run {len(kinds)} statements ({', '.join(kinds)}) in one call"
     if kinds == ["EXPLAIN"]:
