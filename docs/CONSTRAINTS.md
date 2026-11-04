@@ -7206,6 +7206,56 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > for a locking read is wrong ("returns no rows"), and is tracked as
 > [#144](https://github.com/ChrisGVE/localdata-mcp/issues/144).
 
+> **Amended 2026-11-04 — what every engine with a locking clause does with it on the reader
+> ([#144](https://github.com/ChrisGVE/localdata-mcp/issues/144)).** The amendment above is
+> unchanged: the PostgreSQL session refuses a locking read with 25006. That is the code it
+> refuses a write with, and `query` read it as one: "That statement returns no rows, so it is not
+> a read". Measured on `new-v3` at `89ec8886`, one container at a time through
+> `scripts/endpoint-run.sh`, as each container's administrator (MySQL and MariaDB as `root`,
+> since `FOR UPDATE` there needs `UPDATE` on the table). Each statement went through `query` on a
+> read-only attach of a five-row table. Then another session updated one row, to see whether a
+> lock outlived the call. The probe is `tmp/p144/test_probe144.py`, not committed. DuckDB 2.0.0
+> and SQLite 3.47.1 were measured in-process.
+>
+> | Engine | Clause | What the engine did on the reader | `query` before | Same SELECT without the clause |
+> |---|---|---|---|---|
+> | PostgreSQL 16, YugabyteDB 2.25, CockroachDB 26.3, openGauss 7.0.0-RC3 | `FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE`, `FOR KEY SHARE`, with `SKIP LOCKED`, `NOWAIT` or `OF t`, in any case | refused, 25006 | "returns no rows", **wrong** | 5 rows |
+> | the same four | `/* FOR UPDATE */` (a comment) | ran | 5 rows | — |
+> | MySQL 8.0 | `FOR UPDATE`, with `NOWAIT` or `SKIP LOCKED` | refused, 1792 | "returns no rows", **wrong** | 5 rows |
+> | MySQL 8.0 | `FOR SHARE`, `LOCK IN SHARE MODE` | ran | 5 rows | 5 rows |
+> | MariaDB 11 | `FOR UPDATE`, with `NOWAIT`, `SKIP LOCKED` or `WAIT 1` | refused, 1792 | "returns no rows", **wrong** | 5 rows |
+> | MariaDB 11 | `LOCK IN SHARE MODE` | ran | 5 rows | 5 rows |
+> | MariaDB 11 | `FOR SHARE` | 1064 syntax error | the server's syntax error | 5 rows |
+> | Firebird 5.0.4 | `WITH LOCK` | refused, 335544361 (`isc_read_only_trans`) | "returns no rows", **wrong** | 5 rows |
+> | Firebird 5.0.4 | `FOR UPDATE`, `FOR UPDATE WITH LOCK` | ran | `ok` with **0 rows** | 5 rows |
+> | Oracle Free (`gvenzl/oracle-free:slim`) | `FOR UPDATE`, with `NOWAIT`, `SKIP LOCKED`, `WAIT 1` or `OF salary` | ran | 5 rows | 5 rows |
+> | SQL Server 2022 | `WITH (UPDLOCK)`, `(XLOCK)`, `(HOLDLOCK)`, `(UPDLOCK, ROWLOCK)`, `(TABLOCKX)`, `(UPDLOCK, READPAST)` | ran | 5 rows | 5 rows |
+> | DuckDB 2.0.0, SQLite 3.47.1 | `FOR UPDATE`, `FOR SHARE` | syntax error | the engine's syntax error | 5 rows |
+>
+> After every statement, on every engine, the other session's update went through at once. So
+> no lock a clause took outlived the call: the reader never commits, and the locks end with its
+> transaction. Within the call they are real. Oracle, SQL Server, and MySQL's two share clauses
+> take row locks for as long as the read runs, and on those engines nothing here refuses that.
+>
+> The four **wrong** rows are fixed. Where `Backend.denies_write` recognises the session's
+> refusal and `Backend.without_row_locks` finds a locking clause in the statement, the refusal now
+> names the clause, says it asks for row locks this reader does not take, and ends with the
+> statement with every locking clause removed. The clause is found in the statement with strings,
+> quoted names and comments masked, so `'FOR UPDATE'` in the data is not one. It is used only to
+> word the refusal; the session still decides it. The PostgreSQL family, MySQL and MariaDB, and
+> Firebird each have their own grammar for it.
+> `tests/test_locking_read.py` sends each refused clause through `query`, checks the wording,
+> then sends the rephrase the refusal gave back through `query` and asserts 5 rows. Without the
+> new branch in `Workspace._explain`, every refused clause failed: 6 of 6 on PostgreSQL 16 and
+> on openGauss, 3 of 3 on MySQL 8.0 and on MariaDB 11, and 2 of 2 on Firebird, with the offline
+> explainer test.
+>
+> Firebird's 0 rows for `FOR UPDATE` is a driver defect and is not fixed here.
+> `firebirdsql` 1.5.0 fetches only when the statement type is `isc_info_sql_stmt_select` (1),
+> and the server reports a `FOR UPDATE` select as `isc_info_sql_stmt_select_for_upd` (12). The
+> same 0 rows came on a read-write connection, through `fetchall`, `fetchone`, `fetchmany` and
+> iteration alike. Tracked as [#145](https://github.com/ChrisGVE/localdata-mcp/issues/145).
+
 ## §35 — SQL Server text lands as `NVARCHAR`, sized in UTF-16 code units (2026-11-03)
 
 Refs [#128](https://github.com/ChrisGVE/localdata-mcp/issues/128). Measured on `new-v3` from

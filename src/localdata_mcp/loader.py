@@ -160,6 +160,21 @@ _NOT_A_READ = (
     "either. A statement that does read returns rows even when it matches none."
 )
 
+#: What a caller is told when the reader's read-only session refused a locking
+#: read (#144). The statement reads, so it is not told it does not: what the
+#: session refused is the clause asking for a lock on the rows read. ``{read}``
+#: is the same statement with the clause removed, which reads the same rows,
+#: measured on every engine whose session refuses one (docs/CONSTRAINTS.md
+#: §34). The lock refused is the one the clause names: MySQL's session refuses
+#: ``FOR UPDATE`` and lets ``FOR SHARE`` take its shared locks.
+_LOCKING_READ = (
+    "query did not run this statement: its {clause} clause asks the database to "
+    "take row locks on the rows it reads, which this reader does not take, so "
+    "its read-only session refused the clause — whatever the datasource itself "
+    "permits. The statement is a read otherwise, and the same SELECT without "
+    "the clause reads the same rows: {read}"
+)
+
 #: Added where the refusal arrives too late to be the whole truth. One backend
 #: needs it: Oracle commits a CREATE or a DROP as it runs it, before anything
 #: here can object. The wording is about the *consequence* rather than the
@@ -2804,7 +2819,16 @@ class Workspace:
 
         if entry.backend.denies_write(exc):
             # The backend refused the statement itself and said so in its own
-            # words, which name no verb the caller could use instead.
+            # words, which name no verb the caller could use instead. A
+            # read-only session refuses a locking read with the same code as
+            # a write, and that statement does read: it is told what it asked
+            # for that a write would not explain, and the read without it
+            # (#144).
+            unlocked = entry.backend.without_row_locks(sql)
+            if unlocked is not None:
+                return LoadError(
+                    _LOCKING_READ.format(clause=unlocked[0], read=unlocked[1])
+                )
             return LoadError(_not_a_read(entry))
 
         message = driver_message(exc)

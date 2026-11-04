@@ -792,6 +792,19 @@ And forty-three found in this release's own code before it shipped:
   keyword of the server's grammar is answered with the server's message. A
   keyword that cannot begin a statement (`FROM t`) is still read as a refused
   kind there.
+- **A refused locking read was explained as a statement that returns no rows**
+  ([#144](https://github.com/ChrisGVE/localdata-mcp/issues/144)).
+  `SELECT * FROM t FOR UPDATE` on the PostgreSQL family was answered "That
+  statement returns no rows, so it is not a read", with advice to use `create`,
+  `update` or `drop`. The read-only session refuses the clause with the code it
+  refuses a write with, but the statement reads, and the way forward is to drop
+  the clause. The refusal now names the clause, says it asks for row locks this
+  reader does not take, and ends with the same statement without it, which reads
+  the same rows. Measured on every engine with a locking clause: the PostgreSQL
+  family refuses all four strengths, MySQL and MariaDB refuse `FOR UPDATE`, and
+  Firebird refuses `WITH LOCK`; all are now explained this way. MySQL's
+  `FOR SHARE` and `LOCK IN SHARE MODE`, Oracle's `FOR UPDATE` and SQL Server's
+  lock hints are not refused, and run.
 - **On MySQL and MariaDB, `query` read files on the database server through
   `LOAD_FILE()`** ([#36](https://github.com/ChrisGVE/localdata-mcp/issues/36)).
   It is a read, so the read-only session let it run, and as a built-in it is in
@@ -870,6 +883,14 @@ And forty-three found in this release's own code before it shipped:
   removes only that, before it releases the lock.
 
 ### Known limitations
+
+- **On Firebird, `SELECT … FOR UPDATE` answers `ok` with no rows**, whatever the
+  table holds ([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)).
+  Measured on Firebird 5.0.4 with `firebirdsql` 1.5.0, on a read-only and a
+  read-write connection alike: the driver fetches rows only for a plain select
+  statement, and the server reports a `FOR UPDATE` select as a different kind.
+  `query` cannot tell that empty answer from a real one. Leave the clause out:
+  `SELECT * FROM t` reads the rows. `WITH LOCK` alone is refused (#144).
 
 - **A formula with no stored result in an `.ods` loads as NULL without a
   warning.** Measured: an OpenDocument sheet written by odfpy with

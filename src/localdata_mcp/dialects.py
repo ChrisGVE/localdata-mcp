@@ -410,6 +410,21 @@ class Backend:
         """
         return False
 
+    def without_row_locks(self, sql: str) -> tuple[str, str] | None:
+        """``sql``'s row-locking clause and the same read without it, or ``None``.
+
+        Asked by :meth:`loader.Workspace._explain` only where
+        :meth:`denies_write` has recognised the backend's own refusal, because
+        a read-only session can refuse a locking read with the code it refuses
+        a write with: on PostgreSQL ``SELECT * FROM t FOR UPDATE`` is answered
+        25006, as an ``INSERT`` is. Such a statement does read, so explaining
+        it as a write is false (#144). A backend whose session refuses a
+        locking clause answers here with the clause as written and the
+        statement with it removed, which reads the same rows; generically no
+        session refuses one, and the answer is ``None``.
+        """
+        return None
+
     def syntax_error(self, engine: Engine, sql: str, message: str) -> str | None:
         """The server's own syntax error for ``sql``, found without running it.
 
@@ -1832,6 +1847,44 @@ def _quoted_text_refusal(text: str, why: str, rephrase: str) -> str:
     )
 
 
+def _without_row_locks(
+    sql: str, opaque: re.Pattern[str], clause: re.Pattern[str]
+) -> tuple[str, str] | None:
+    """``sql``'s first row-locking clause and ``sql`` with every one removed (#144).
+
+    ``None`` where it holds none. Used only to word a read-only session's
+    refusal of a locking read, never to decide one: the session refuses, and
+    this says what it refused and gives the same read without the locks.
+    ``opaque`` is what the family's grammar writes that a clause can sit beside
+    without being one, its strings, quoted names and comments; ``clause`` is a
+    locking clause in that grammar, with the whitespace before it.
+
+    The opaque parts are masked before the clause is looked for, so
+    ``'FOR UPDATE'`` in the data is not one, and they keep their length, so a
+    clause found in the mask is cut out of the statement as written. A comment
+    is masked with spaces and the rest with ``x``, so a quoted name in an
+    ``OF`` list still reads as a name. The clause is named with its whitespace
+    collapsed, as the statement would read on one line.
+    """
+
+    def mask(found: re.Match[str]) -> str:
+        quoted = found.group(0)
+        filler = " " if quoted.startswith(("--", "/*", "#")) else "x"
+        return filler * len(quoted)
+
+    clauses = list(clause.finditer(opaque.sub(mask, sql)))
+    if not clauses:
+        return None
+    first = clauses[0]
+    named = " ".join(sql[first.start() : first.end()].split())
+    kept, start = [], 0
+    for found in clauses:
+        kept.append(sql[start : found.start()])
+        start = found.end()
+    kept.append(sql[start:])
+    return named, "".join(kept)
+
+
 def _one_statement(sql: str) -> bool:
     """Whether ``sql`` holds no ``;`` but an optional trailing one.
 
@@ -2077,6 +2130,31 @@ _PG_LITERAL = re.compile(
     r"|'(?:[^']|'')*'"
     r"|(?<![\w$])\$([A-Za-z_]\w*|)\$[\s\S]*?\$\1\$"
 )
+
+#: What a locking clause can sit beside without being one: a string constant
+#: (:data:`_PG_LITERAL`, first, because its dollar quote refers to its own
+#: group 1), a quoted identifier, and a comment.
+_PG_OPAQUE = re.compile(
+    _PG_LITERAL.pattern + r'|"(?:[^"]|"")*"' + r"|--[^\n]*|/\*[\s\S]*?\*/"
+)
+
+#: A row-locking clause as PostgreSQL's grammar writes one, with the
+#: whitespace before it: ``FOR`` and a lock strength, an optional ``OF`` and
+#: the tables it names, and an optional ``NOWAIT`` or ``SKIP LOCKED``. Matched
+#: on a statement whose strings, quoted names and comments are masked
+#: (:func:`_pg_without_row_locks`), so a quoted name in the ``OF`` list is a
+#: run of word characters there.
+_PG_LOCKING_CLAUSE = re.compile(
+    r"\s*\bFOR\s+(?:UPDATE|NO\s+KEY\s+UPDATE|SHARE|KEY\s+SHARE)\b"
+    r"(?:\s+OF\s+[\w$.]+(?:\s*,\s*[\w$.]+)*)?"
+    r"(?:\s+(?:NOWAIT|SKIP\s+LOCKED)\b)?",
+    re.IGNORECASE,
+)
+
+
+def _pg_without_row_locks(sql: str) -> tuple[str, str] | None:
+    """:func:`_without_row_locks` in PostgreSQL's grammar (#144)."""
+    return _without_row_locks(sql, _PG_OPAQUE, _PG_LOCKING_CLAUSE)
 
 
 @dataclass(frozen=True)
@@ -2636,6 +2714,17 @@ class PostgreSQLBackend(Backend):
             for attribute in ("sqlstate", "pgcode")
         )
 
+    def without_row_locks(self, sql: str) -> tuple[str, str] | None:
+        """The locking clause the read-only session refused with 25006 (#144).
+
+        Measured on PostgreSQL 16: ``FOR UPDATE``, ``FOR NO KEY UPDATE``,
+        ``FOR SHARE`` and ``FOR KEY SHARE``, with ``NOWAIT``, ``SKIP LOCKED`` or
+        an ``OF`` list, each passed the gate and was refused by the session,
+        and the same SELECT without the clause answered its five rows
+        (docs/CONSTRAINTS.md §34). See :func:`_pg_without_row_locks`.
+        """
+        return _pg_without_row_locks(sql)
+
     def syntax_error(self, engine: Engine, sql: str, message: str) -> str | None:
         """The server's syntax error for ``sql``, from a parse that runs nothing (#143).
 
@@ -2840,6 +2929,35 @@ _MYSQL_SEMICOLON = _semicolon_refusal(
 #: escape. A ``"…"`` string is left out, because under ``ANSI_QUOTES`` it is a
 #: name. Used only to word a refusal (#135), never to decide one.
 _MYSQL_LITERAL = re.compile(r"'(?:[^'\\]|\\.|'')*'")
+
+
+#: What a locking clause can sit beside without being one on MySQL and
+#: MariaDB: a string in single or double quotes (double quotes make a string
+#: unless ``ANSI_QUOTES`` is set, and either way they are not a clause), a
+#: backquoted name, and the three comment forms.
+_MYSQL_OPAQUE = re.compile(
+    r"'(?:[^'\\]|\\.|'')*'"
+    r'|"(?:[^"\\]|\\.|"")*"'
+    r"|`(?:[^`]|``)*`"
+    r"|--[\s\x00-\x1f][^\n]*|#[^\n]*|/\*[\s\S]*?\*/"
+)
+
+#: A locking clause as MySQL 8.0 and MariaDB 11 write one, with the whitespace
+#: before it: ``FOR UPDATE`` or ``FOR SHARE`` (MySQL only) with an optional
+#: ``OF`` list, or ``LOCK IN SHARE MODE``, then an optional ``NOWAIT``,
+#: ``SKIP LOCKED`` or ``WAIT n`` (MariaDB). Matched on a masked statement
+#: (:func:`_without_row_locks`).
+_MYSQL_LOCKING_CLAUSE = re.compile(
+    r"\s*(?:\bFOR\s+(?:UPDATE|SHARE)\b(?:\s+OF\s+[\w$.]+(?:\s*,\s*[\w$.]+)*)?"
+    r"|\bLOCK\s+IN\s+SHARE\s+MODE\b)"
+    r"(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+)\b)?",
+    re.IGNORECASE,
+)
+
+
+def _mysql_without_row_locks(sql: str) -> tuple[str, str] | None:
+    """:func:`_without_row_locks` in MySQL's and MariaDB's grammar (#144)."""
+    return _without_row_locks(sql, _MYSQL_OPAQUE, _MYSQL_LOCKING_CLAUSE)
 
 
 def _mysql_join(left: str, right: str) -> str:
@@ -3159,6 +3277,19 @@ class MySQLBackend(Backend):
         origin = getattr(exc, "orig", exc)
         arguments = getattr(origin, "args", ())
         return bool(arguments) and arguments[0] == _MYSQL_READ_ONLY
+
+    def without_row_locks(self, sql: str) -> tuple[str, str] | None:
+        """The locking clause the read-only session refused with 1792 (#144).
+
+        Measured through ``query`` on MySQL 8.0 and MariaDB 11: ``FOR UPDATE``,
+        with ``NOWAIT``, ``SKIP LOCKED`` or MariaDB's ``WAIT 1``, was refused,
+        and the same SELECT without it answered its five rows. ``FOR SHARE``
+        (MySQL) and ``LOCK IN SHARE MODE`` (both) are not refused: they ran
+        and answered the five rows (docs/CONSTRAINTS.md §34). They are found
+        here all the same, so a statement holding one beside a refused
+        ``FOR UPDATE`` is given back with every clause removed.
+        """
+        return _mysql_without_row_locks(sql)
 
     def optional_aggregates(self) -> Mapping[str, Any]:
         """The sample standard deviation, and no median, on both engines (#95).
@@ -4537,6 +4668,29 @@ class CrateDBBackend(Backend):
 #: ``NONE``, and its width counts bytes.
 _FIREBIRD_VARCHAR_MAX = 8191
 
+#: What a locking clause can sit beside without being one on Firebird: a
+#: string with ``''`` for a quote, a quoted name, and the two comment forms.
+_FIREBIRD_OPAQUE = re.compile(
+    r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|/\*[\s\S]*?\*/"
+)
+
+#: Firebird's locking clause, with the whitespace before it: ``WITH LOCK``,
+#: optionally after ``FOR UPDATE`` and its ``OF`` list and optionally followed
+#: by ``SKIP LOCKED``. Not a common table expression called ``lock``, which
+#: ``WITH LOCK AS (…)`` or ``WITH LOCK (…)`` would be. Matched on a masked
+#: statement (:func:`_without_row_locks`).
+_FIREBIRD_LOCKING_CLAUSE = re.compile(
+    r"\s*(?:\bFOR\s+UPDATE\b(?:\s+OF\s+[\w$.]+(?:\s*,\s*[\w$.]+)*)?\s+)?"
+    r"\bWITH\s+LOCK\b(?!\s*(?:AS\b|\())(?:\s+SKIP\s+LOCKED\b)?",
+    re.IGNORECASE,
+)
+
+
+def _firebird_without_row_locks(sql: str) -> tuple[str, str] | None:
+    """:func:`_without_row_locks` in Firebird's grammar (#144)."""
+    return _without_row_locks(sql, _FIREBIRD_OPAQUE, _FIREBIRD_LOCKING_CLAUSE)
+
+
 #: ``isc_read_only_trans``: "attempted update during read-only transaction".
 #: Firebird's own code for a write its read-only transaction refused, carried by
 #: ``firebirdsql`` on the exception's ``gds_codes``. Measured on Firebird 5 with
@@ -4611,6 +4765,19 @@ class FirebirdBackend(Backend):
         """
         origin = getattr(exc, "orig", exc)
         return _FIREBIRD_READ_ONLY in (getattr(origin, "gds_codes", None) or ())
+
+    def without_row_locks(self, sql: str) -> tuple[str, str] | None:
+        """The locking clause the read-only transaction refused (#144).
+
+        Measured through ``query`` on Firebird 5.0.4 with ``firebirdsql``
+        1.5.0: ``SELECT * FROM t WITH LOCK`` was refused with
+        :data:`_FIREBIRD_READ_ONLY`, and ``SELECT * FROM t`` answered its five
+        rows. ``FOR UPDATE`` with or without ``WITH LOCK`` is not refused; the
+        driver answers it with no rows at all, read-only or not, because it
+        fetches only for a plain select statement (#145, docs/CONSTRAINTS.md
+        §34).
+        """
+        return _firebird_without_row_locks(sql)
 
     def optional_aggregates(self) -> Mapping[str, Any]:
         """The sample standard deviation, and no median (#95).

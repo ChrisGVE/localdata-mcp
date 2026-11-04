@@ -457,7 +457,16 @@ inside a quoted string. It opens `query did not run this statement` rather than
 calling the statement a write, names what it met, and gives a rephrase the gate
 admits, such as `SELECT 'set_c' || 'onfig'` for the text `set_config` on the
 PostgreSQL family and `SELECT CONCAT('out', 'file')` on MySQL and MariaDB
-([#135](https://github.com/ChrisGVE/localdata-mcp/issues/135)). **One exception
+([#135](https://github.com/ChrisGVE/localdata-mcp/issues/135)). A locking read,
+such as `SELECT * FROM t FOR UPDATE`, is refused by the read-only session on the
+PostgreSQL family, on MySQL and MariaDB (`FOR UPDATE`) and on Firebird
+(`WITH LOCK`). The refusal names the clause, says it asks for row locks this
+reader does not take, and gives the same statement without it, which reads the
+same rows ([#144](https://github.com/ChrisGVE/localdata-mcp/issues/144)). Oracle
+and SQL Server run their locking clauses, and the locks end with the read. On
+Firebird `FOR UPDATE` comes back with no rows at all, a driver defect
+([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)), so leave the
+clause out there. **One exception
 remains.** Oracle commits DDL before anything can object and has no
 session-level read-only posture, so a `CREATE` sent to `query` there really does
 take effect; its DML still rolls back, and the refusal says the `CREATE` stands

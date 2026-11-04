@@ -266,6 +266,14 @@ alone comes back as `0x3b`, and `||` means `OR`. A view
 `directory` lists with `rows: null` is one of those, and cannot be queried;
 `stats` on it answers `stats did not profile <table>: …` with the same reason.
 
+A read never needs a row lock, so do not write `FOR UPDATE`, `FOR SHARE`,
+`LOCK IN SHARE MODE` or `WITH LOCK`. Where the read-only session refuses one
+(the PostgreSQL four, MySQL and MariaDB, Firebird), the refusal names the clause
+and ends with the same statement without it; send that, and it returns the same
+rows. On Firebird, `FOR UPDATE` is not refused but comes back with **no rows**
+whatever the table holds, so an empty answer to it means nothing: drop the
+clause and ask again.
+
 On **SQL Server**, text a file brought in is stored as `NVARCHAR`, so any
 character survives. Under the server's default collation `ORDER BY` on such a
 column passes over a hyphen and an apostrophe: `a-b` sorts between `ab` and

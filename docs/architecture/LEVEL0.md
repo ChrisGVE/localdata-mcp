@@ -483,6 +483,20 @@ a read**, and is refused on that ground. No SQL is parsed to decide it — a `SE
 rows even when it matches none — and without it a rolled-back write came back as a
 statement that succeeded and returned nothing, which is indistinguishable from success.
 
+**A locking read is a read, and is not explained as a write**
+([#144](https://github.com/ChrisGVE/localdata-mcp/issues/144)). A read-only session refuses a
+row-locking clause with the code it refuses a write with, so `SELECT * FROM t FOR UPDATE` was
+answered "returns no rows, so it is not a read". Where the backend's own read-only refusal meets
+a statement holding a locking clause, the refusal now names the clause, says it asks for row
+locks this reader does not take, and gives the statement with the clause removed, which reads
+the same rows. Measured on 2026-11-04 (`docs/CONSTRAINTS.md` §34): the PostgreSQL family refuses
+`FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE` and `FOR KEY SHARE`; MySQL and MariaDB refuse
+`FOR UPDATE` and run `FOR SHARE` and `LOCK IN SHARE MODE`, taking shared locks for the length
+of the read; Firebird refuses `WITH LOCK`. Oracle's `FOR UPDATE` and SQL Server's lock hints
+are not refused: they run, and the read's locks end with it, since the reader never commits.
+Firebird answers `FOR UPDATE` with no rows at all, a driver defect tracked as
+[#145](https://github.com/ChrisGVE/localdata-mcp/issues/145).
+
 A database that was `save`d and is attached again later is, like any other external
 database, **read-only by default** until the caller says otherwise.
 
