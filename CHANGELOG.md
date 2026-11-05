@@ -934,6 +934,15 @@ And forty-five found in this release's own code before it shipped:
   not dropped for you: another session can write into it while it is being
   filled (measured on YugabyteDB), so a drop could destroy rows that are not
   this server's.
+- **`directory` no longer lists the placeholder CockroachDB keeps beside an
+  index it is still building** ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)).
+  While an index is being built, CockroachDB 26.3 builds it through a temporary
+  index over the same columns, named `crdb_internal_index_<n>_name_placeholder`,
+  and reflection reported both. `directory` listed an index nobody made and
+  nobody can drop, and `create(type="index")` sent again for the same columns
+  answered "already indexed on salary, by crdb_internal_index_3_name_placeholder"
+  rather than naming the index being built. The placeholder is now left out;
+  the index being built is still listed.
 
 ### Known limitations
 

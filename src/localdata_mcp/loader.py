@@ -1960,6 +1960,11 @@ class Workspace:
         verb wherever warnings are errors (issue #107) — so not asking is the
         fix at the root, not a suppression. An index already in such a
         datasource, made outside this server, is therefore not listed.
+
+        **Not an index the database keeps for itself**
+        (:meth:`Backend.internal_index`): CockroachDB reports a placeholder
+        beside an index it is still building, over the same columns, and
+        listing it would name an index nobody made or can drop.
         """
         entry = self.entry(tag)
         if not entry.backend.builds_indexes():
@@ -1983,6 +1988,7 @@ class Workspace:
                 )
                 for index in reported
                 if index.get("name")
+                and not entry.backend.internal_index(str(index["name"]))
             )
         return tuple(found)
 

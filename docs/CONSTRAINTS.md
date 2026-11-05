@@ -2937,6 +2937,22 @@ write would raise, which is precisely the case `_run_again_once` deliberately de
 > `row_count=self._count(entry, table)`, a `COUNT(*)` on the read engine after the commit, so the
 > 50 462 above is that count including the other session's 462 rows, not what the call inserted.
 > Left as it is, pending a decision.
+>
+> **Amended 2026-11-05 — CockroachDB's placeholder for an index it is still building
+> ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)).** Measured on CockroachDB v26.3.4
+> while measuring #148: another session read the table and left its transaction open, and a
+> `CREATE INDEX` on that table, cut off by a 3 s `statement_timeout`, left its build running as a job
+> (`SHOW JOBS`: `running`). SQLAlchemy 2.1.6's reflection then reported two indexes over `salary`:
+> `crdb_internal_index_3_name_placeholder` and the one asked for, both
+> `dialect_options={'postgresql_invalid': True}`; `pg_index` agreed (`indisvalid` false for both),
+> and `pg_indexes` listed neither. The placeholder is the temporary index CockroachDB's declarative
+> schema changer builds an index through. Through the server, `directory` listed it, and
+> `create(type='index')` sent again on the same column was refused as "already indexed on salary,
+> by crdb_internal_index_3_name_placeholder", because the pre-check matched it first. Once the other
+> transaction ended, the build completed and the placeholder was gone. `Backend.internal_index` now
+> lets a backend name such an index, and `Workspace.indexes` leaves it out; CockroachDB names only
+> that exact shape. `tests/test_cockroachdb_index_placeholder.py` pins it offline and, live, reads
+> `directory` and sends `create` again while another session's build is held up.
 
 ## §16 — Trino, the backend that owns no data (2026-07-29)
 

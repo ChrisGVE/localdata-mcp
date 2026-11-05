@@ -823,6 +823,17 @@ class Backend:
         """
         return True
 
+    def internal_index(self, name: str) -> bool:
+        """Whether an index reflection found is the database's own, not a caller's.
+
+        ``False`` generically: every index reflection finds is listed. A
+        database that keeps indexes of its own beside the caller's, which nobody
+        made and nobody can drop, names them here, so that ``directory`` does
+        not list them and ``create`` does not mistake one for the caller's. See
+        :meth:`CockroachDBBackend.internal_index`.
+        """
+        return False
+
     def build_index(
         self, name: str, table: Table, columns: Sequence[str]
     ) -> tuple[Index, tuple[str, ...]]:
@@ -1924,6 +1935,10 @@ def _one_statement(sql: str) -> bool:
 #: ``read_only_sql_transaction``. CockroachDB answers a write with it too.
 _PG_READ_ONLY = "25006"
 
+#: The name CockroachDB gives the temporary index it builds an index through;
+#: see :meth:`CockroachDBBackend.internal_index`.
+_CRDB_BUILD_PLACEHOLDER = re.compile(r"crdb_internal_index_\d+_name_placeholder")
+
 #: PostgreSQL's code for a statement it cannot parse, ``syntax_error``.
 _PG_SYNTAX_ERROR = "42601"
 
@@ -2864,6 +2879,22 @@ class CockroachDBBackend(PostgreSQLBackend):
     """
 
     name: str = "cockroachdb"
+
+    def internal_index(self, name: str) -> bool:
+        """The placeholder CockroachDB keeps beside an index while it builds it.
+
+        Its declarative schema changer builds an index through a temporary one
+        over the same columns, named ``crdb_internal_index_<n>_name_placeholder``,
+        and reflection reports it until the build completes. Measured on
+        v26.3.4, a build held up by another session's open read: reflection
+        answered ``crdb_internal_index_3_name_placeholder`` and the index asked
+        for, both over ``salary``, both ``postgresql_invalid``. Listed, it was an
+        index nobody made; matched by columns first, it was what ``create``
+        named as the existing index (docs/CONSTRAINTS.md §15, amendment of
+        2026-11-05). Only that exact shape, so an index a caller named
+        ``crdb_internal_…`` is still theirs.
+        """
+        return _CRDB_BUILD_PLACEHOLDER.fullmatch(name) is not None
 
     def optional_aggregates(self) -> Mapping[str, Any]:
         """The median over the column cast to a double, and ``stddev_samp``.
