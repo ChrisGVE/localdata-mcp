@@ -479,9 +479,10 @@ The server does not evaluate formulas. Rebuild the column in SQL from the column
 it is made of — the warning quotes the first formula, and its letters are the
 sheet's columns in order, so `=A2*B2` over `qty` and `unit_price` is
 `SELECT qty * unit_price`. If the user would rather have the stored values, they
-can open the file in their spreadsheet application and save it. An `.ods` file
-loses the values the same way and is *not* flagged: a formula column that is
-entirely NULL there is worth asking about.
+can open the file in their spreadsheet application and save it. This holds for
+`.xlsx`, `.xlsm` and `.ods`. An `.xls` written by a program loses the values the
+same way and is *not* flagged: a formula column that is entirely NULL there is
+worth asking about.
 
 **Mixed columns.** `attach` warns when a column holds both numbers and text.
 This is not pedantry: `avg()` over such a column silently counts the text rows

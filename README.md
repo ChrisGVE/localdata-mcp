@@ -584,8 +584,9 @@ answer belongs to whoever wrote the file, it reports and carries on.
   written by a program — openpyxl, this server's own writer, most exports —
   stores no result, so the column arrives empty. For `.xlsx` and `.xlsm` the
   warning names the sheet, the column, how many cells have no result and the
-  first formula, so the column can be rebuilt in SQL. An `.ods` loses the value
-  the same way **without** a warning.
+  first formula, so the column can be rebuilt in SQL; an `.ods` gets the same
+  warning. An `.xls` written by a program (xlwt) loses the value the same way
+  **without** a warning.
 - **What SQL cannot hold is encoded, not dropped.** A nested JSON value becomes
   its JSON text and a nested XML element its XML text — lossless and reversible,
   reachable with `json_extract(column, '$.key')` — and the warning names the

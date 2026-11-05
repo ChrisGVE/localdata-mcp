@@ -35,7 +35,8 @@ import pandas as pd
 
 from .errors import LoadError, undeclared_separator
 from .names import column_names, sanitize, table_names
-from .ooxml import UncomputedColumn, column_letters, uncomputed_formulas
+from . import ooxml, opendocument
+from .ooxml import UncomputedColumn, column_letters
 
 __all__ = ["NamedFrame", "ReadResult", "Reader"]
 
@@ -341,17 +342,30 @@ def workbook(module: str, extra: str) -> Reader:
         )
         if not tables:
             raise LoadError(f"Could not read {path.name}: every sheet in it is empty.")
-        # Only openpyxl's formats store a formula beside its result in a way that
-        # can be read back here. The others are listed in CONSTRAINTS.md, not
-        # checked (task 20).
-        notes = _uncomputed_formula_notes(path, tables) if module == "openpyxl" else ()
+        # The formats whose package says which formula cells have no stored
+        # result. An `.xls` is not among them: xlrd hands back a formula's
+        # result and not the formula, and the empty result a program like xlwt
+        # writes is the same as a formula that really computed "", so there is
+        # nothing to tell them apart by (CONSTRAINTS.md §38).
+        scan = _FORMULA_SCANS.get(module)
+        notes = _uncomputed_formula_notes(path, tables, scan) if scan else ()
         return ReadResult(tables, notes)
 
     return read_workbook
 
 
+#: Which formula cells carry no stored result, per reading library: the
+#: scan answers, for each named sheet, the columns where they sit.
+FormulaScan = Callable[[Path, set[str]], dict[str, list[UncomputedColumn]]]
+
+_FORMULA_SCANS: dict[str, FormulaScan] = {
+    "openpyxl": ooxml.uncomputed_formulas,
+    "odf": opendocument.uncomputed_formulas,
+}
+
+
 def _uncomputed_formula_notes(
-    path: Path, tables: tuple[NamedFrame, ...]
+    path: Path, tables: tuple[NamedFrame, ...], scan: FormulaScan
 ) -> tuple[str, ...]:
     """Say which formula columns loaded as NULL because the file has no result for them.
 
@@ -364,7 +378,7 @@ def _uncomputed_formula_notes(
     if not suspect:
         return ()
     try:
-        found = uncomputed_formulas(path, suspect)
+        found = scan(path, suspect)
     except (zipfile.BadZipFile, KeyError, ElementTree.ParseError):
         # pandas has just read this package, so it is sound; a part this scan
         # cannot find is a layout it does not know, and the load is not the

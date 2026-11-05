@@ -7767,6 +7767,45 @@ since a missing result can only show up as one.
   made honestly. Whether such a file loads as NULL is not known here.
 - **`.numbers`** is read by `numbers-parser`, not pandas, and was not part of this measurement.
 
+> **Amended 2026-11-05 — `.ods` is now detected, and `.xls` was measured (task 38).** Both bullets
+> of §38.3 above are superseded; they stay as written because they were true when measured.
+>
+> **`.ods`.** `attach` now warns on an OpenDocument sheet the way it does on an `.xlsx`: same
+> sentence, same trigger (only a sheet whose frame holds a NULL is scanned), header row not
+> counted. A formula cell is one carrying `table:formula`; it has a result when it carries
+> `office:value`, `office:date-value`, `office:time-value` or `office:boolean-value`, or is typed
+> `office:value-type="string"` — which, as with `t="str"` in an `.xlsx`, includes an empty string.
+> `content.xml` is read in one `iterparse` pass with `table:number-rows-repeated` and
+> `table:number-columns-repeated` expanded to positions and a `table:covered-table-cell` counted as
+> one, which is how pandas' odf reader lays out the frame (it also keeps leading blank rows and
+> columns, and drops a trailing column holding nothing, header included). The formula is quoted
+> without its syntax prefix, so `of:=[.A2]*[.B2]` reads `=[.A2]*[.B2]`.
+> (`src/localdata_mcp/opendocument.py`, `tests/test_ods_formulas.py`.)
+>
+> Cost, on a 100,000-row, four-column sheet written by odfpy with one formula column and no
+> results (`tmp/b3i1_ods_cost.py`, two runs): pandas alone took 222.7 s and 239.1 s; one
+> streaming pass of the scan took 34.4 s and 28.3 s; the whole read with the scan took 294.2 s and 234.9 s, and found all 100,000 cells.
+> These were taken while other work held the machine at a load average of 250 to 390, so the
+> absolute times are inflated and not comparable with the `.xlsx` figures above. The ratio is
+> the reading: the scan costs about an eighth of what pandas' odf reader spends on the same sheet,
+> and it runs only when the frame holds a NULL.
+>
+> **`.xls`.** A fixture was written with xlwt 1.3.0 (BIFF8), in an isolated environment, the
+> §38.1 sheet: `qty`, `Unit Price`, `=A2*B2`, `note`. Read at record level, every FORMULA record
+> (0x0006) carries the 8-byte result field `03 00 00 00 00 00 FF FF` and option flags 0: BIFF8's
+> encoding for *"the result is the empty string"*, followed by no STRING record. The format has
+> no way to say "no result" — the field is always present — so xlwt does not omit the result, it
+> writes an empty-string one. xlrd 2.0.2 reads it as a text cell holding `''` (its source says so:
+> *"empty (zero-length) string, NOT an empty cell"*), pandas reads `''` as NaN, and through `attach`
+> the column landed as three NULLs with no warning. The same workbook with each record's result
+> field carrying the IEEE double (2.5, 5.0, 7.5), as Excel stores it, landed as `REAL` 2.5, 5.0,
+> 7.5. So a BIFF file carries its results, and only a writer that stores an empty one loses them.
+> xlrd keeps the result of a formula and nothing of the formula. The result field xlwt writes is,
+> by the BIFF8 specification, the one for a formula whose real result is `""` (`=IF(…,"",…)`),
+> so xlrd cannot tell xlwt's cells from those, and reading the records directly would not
+> either. That second point is from the specification, not from a file Excel saved; no such file
+> was measured. `.xls` stays undetected, and is the known limitation now.
+
 ## §39 — Oracle text: sized in characters, capped in bytes (2026-11-04)
 
 Issue [#132](https://github.com/ChrisGVE/localdata-mcp/issues/132), found by reading the code while

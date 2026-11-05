@@ -905,9 +905,11 @@ And forty-five found in this release's own code before it shipped:
   and nothing said why. `attach` now warns, per sheet, naming each column under
   the name it landed as and its spreadsheet letter, how many cells have no
   result, and the first formula, so the column can be rebuilt in SQL from the
-  columns it is computed from. Formulas are still not evaluated. `.xlsx` and
-  `.xlsm` only: `.ods` loses the value the same way and is not detected (see
-  *Known limitations*).
+  columns it is computed from. Formulas are still not evaluated. `.xlsx`,
+  `.xlsm` and `.ods`: an OpenDocument sheet written by a program, odfpy for
+  one, loses the value the same way and gets the same warning, with repeated
+  rows and columns counted at the positions they cover. `.xls` is not flagged
+  (see *Known limitations*).
 - **A second `scripts/endpoint-run.sh` no longer loses its runner to the first**
   ([#142](https://github.com/ChrisGVE/localdata-mcp/issues/142)). Both
   invocations tagged the runner `localdata-test/runner:local` and built it
@@ -944,12 +946,13 @@ And forty-five found in this release's own code before it shipped:
   `query` cannot tell that empty answer from a real one. Leave the clause out:
   `SELECT * FROM t` reads the rows. `WITH LOCK` alone is refused (#144).
 
-- **A formula with no stored result in an `.ods` loads as NULL without a
-  warning.** Measured: an OpenDocument sheet written by odfpy with
-  `table:formula` and no `office:value` reads as NaN in every such cell, the
-  case `.xlsx` and `.xlsm` now warn about. Not detected for `.ods`, and not
-  measured for `.xls`, where no program writer was at hand to make the fixture
-  (`docs/CONSTRAINTS.md` §38).
+- **A formula an `.xls` writer stored with an empty result loads as NULL
+  without a warning.** Measured with xlwt 1.3.0: every formula it writes carries
+  the result "empty string", which reads as NULL, the case `.xlsx`, `.xlsm` and
+  `.ods` warn about. A workbook Excel saved stores the real result and reads
+  correctly. xlrd hands back a formula's result and not the formula, so an
+  empty-string result is indistinguishable from a formula that really computed
+  `""`, and no warning is given (`docs/CONSTRAINTS.md` §38).
 
 - **Known-unsupported pin: `sqlalchemy-cockroachdb` 2.0.4 is run on SQLAlchemy
   2.1.6 by an override.** The dialect declares `SQLAlchemy<2.1`, so the resolver
