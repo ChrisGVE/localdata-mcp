@@ -13,8 +13,7 @@ import pytest
 
 from localdata_mcp import export as export_module
 from localdata_mcp import loader as loader_module
-from localdata_mcp import readers as readers_module
-from localdata_mcp import writers as writers_module
+from localdata_mcp import formats as formats_module
 from localdata_mcp.formats import (
     DELIMITED,
     FORMATS,
@@ -55,9 +54,10 @@ def test_a_delimiter_cannot_be_declared_for_a_format_nothing_writes():
     """The other half, which only became reachable once the separator was declared.
 
     While the suffix supplied the separator it supplied it to both sides at
-    once, so this could not be got wrong. Now that each side is told, a format
-    declaring `delimited` with no writer is a format whose files this server
-    could read at a separator it has no way of ever having written at.
+    once, so this could not be got wrong. Now that each side resolves its own —
+    declared, else the format's standard — a format declaring `delimited` with
+    no writer is a format whose files this server could read at a separator it
+    has no way of ever having written at.
     """
     with pytest.raises(ValueError, match="missing a writer"):
         Format(suffix=".oneway", reader=lambda path: None, delimited=True)
@@ -168,12 +168,14 @@ def test_every_streamed_format_is_one_whose_rows_arrive_in_order():
 
 
 def test_the_three_delimited_suffixes_are_one_declaration():
-    """`.csv`, `.tsv` and `.txt` differ in nothing this server can act on.
+    """`.csv`, `.tsv` and `.txt` share one reader, one writer and one set of flags.
 
     Identity rather than equality, and for the reason identity is used
     everywhere else in this module: three entries that happen to agree today is
-    exactly the arrangement that let them disagree tomorrow. The file is a CSV
-    whatever it is called, and what separates it arrives with the request.
+    exactly the arrangement that let them disagree tomorrow. The one thing that
+    differs between them is the separator a published standard gives each — a
+    comma for `.csv`, a tab for `.tsv`, none for `.txt` — and that is a field of
+    its own, tested in test_standard_delimiter.py.
     """
     entries = [FORMATS[suffix] for suffix in (".csv", ".tsv", ".txt")]
     first = entries[0]
@@ -184,26 +186,35 @@ def test_the_three_delimited_suffixes_are_one_declaration():
         assert other.streamed is first.streamed is True
 
 
-def test_no_suffix_carries_a_separator_of_its_own():
-    """The whole content of the change, asserted against the table itself.
+def test_every_delimited_suffix_resolves_its_separator_in_one_place():
+    """No suffix carries a reader or writer bound to a separator of its own.
 
-    Derived from `FORMATS` rather than from a list written here, so a fourth
-    delimited suffix added later is covered without anyone remembering to.
+    The table's reader and writer for delimited text both go through
+    `formats.resolve_separator`, which reads the standard off the entry. A
+    reader bound to `','` for one suffix would be a second place a default
+    lives. Derived from `FORMATS` rather than from a list written here, so a
+    fourth delimited suffix added later is covered without anyone remembering to.
     """
     for suffix in DELIMITED:
         reader = FORMATS[suffix].reader
         writer = FORMATS[suffix].writer
-        assert reader is readers_module.reading_needs_a_separator, suffix
-        assert writer is writers_module.writing_needs_a_separator, suffix
+        assert reader is formats_module.read_delimited_text, suffix
+        assert writer is formats_module.write_delimited_text, suffix
 
 
-@pytest.mark.parametrize("suffix", sorted(DELIMITED))
+@pytest.mark.parametrize("suffix", [".txt"])
 def test_reading_delimited_text_without_a_separator_is_refused(tmp_path, suffix):
-    """And the refusal names the parameter, since a caller can act on that."""
+    """Where no standard separator exists, and the refusal names the parameter.
+
+    `.csv` and `.tsv` read at their standard when nothing is declared, so the
+    refusal is left only for `.txt`, which has none. Named rather than derived
+    from the table: derived, a `.txt` that gained a default would empty the
+    list and the test would skip instead of failing.
+    """
     path = tmp_path / f"data{suffix}"
     path.write_text("a;b\n1;2\n")
 
-    with pytest.raises(loader_module.LoadError, match="does not guess"):
+    with pytest.raises(loader_module.LoadError, match="no published standard"):
         loader_module.read_file(path)
     with pytest.raises(loader_module.LoadError, match="delimiter"):
         loader_module.read_source(path)

@@ -149,8 +149,9 @@ because what it asserts is about the table itself rather than about reading any
 particular file.
 
 There are no sub-packages and no plugin registry: a new format is one entry in
-`formats.FORMATS` — the reader, the writer, and whether a delimiter or chunked
-reading mean anything for it, all on the one `Format` — and a new backend is a
+`formats.FORMATS` — the reader, the writer, whether a delimiter or chunked
+reading mean anything for it, and the separator its published standard gives it
+if any, all on the one `Format` — and a new backend is a
 `dialects.Backend` subclass **only if** the generic SQLAlchemy answer means
 something different for it — several backends needed no subclass at all, which is
 the result rather than an omission.

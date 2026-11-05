@@ -109,7 +109,7 @@ backends — which is what `--all-extras` above exists to avoid.
 Then point it at a file and ask:
 
 ```python
-attach("./sales.csv", delimiter=",")
+attach("./sales.csv")
 # → {"ok": true, "nickname": "sales", "kind": "file",
 #    "backend": "sqlite", "saveable": true,
 #    "source": "…/sales.csv", "writable": true,
@@ -353,8 +353,8 @@ workbook, write the sheet you want out to a flat file with `query(path=…)`, th
 
 ```
 attach("/path/book.xlsx")                                   # → "book"
-query("book", "SELECT * FROM prices", path="/path/prices.csv", delimiter=",")
-create(nickname="shop", type="table", source="/path/prices.csv", delimiter=",")
+query("book", "SELECT * FROM prices", path="/path/prices.csv")
+create(nickname="shop", type="table", source="/path/prices.csv")
 ```
 
 The backend catalogue is closed rather than open-ended, and a database is in
@@ -371,8 +371,8 @@ The common request — *"can you cross-reference this with that other file?"* �
 uses `create`, not a second `attach`:
 
 ```python
-attach("./sales.csv", delimiter=",")                               # → "sales"
-create("sales", type="table", source="./prices.csv", delimiter=",")
+attach("./sales.csv")                                              # → "sales"
+create("sales", type="table", source="./prices.csv")
 query("sales", "SELECT s.sku, s.qty * p.price AS total "
                "FROM sales s JOIN prices p ON s.sku = p.sku")
 ```
@@ -593,25 +593,26 @@ answer belongs to whoever wrote the file, it reports and carries on.
   reachable with `json_extract(column, '$.key')` — and the warning names the
   columns. `pandas.read_xml` drops the subtree and reports nothing, which is why
   that reader is written directly on ElementTree.
-- **Nothing sniffs a delimiter, and nothing assumes one either.** `.csv`, `.tsv`
-  and `.txt` are one format — character-separated text — and the separator is
-  **declared, not inferred from the name**: a file called `.csv` is as likely to
-  be separated by `;` or `|` or a tab, and reading it at the wrong one changes
-  what the data is while the answer looks perfectly ordinary. A declaration is
-  what makes the file checkable at all, so it is required rather than defaulted.
-  Declared wrongly, the whole header line becomes one column and the warning
-  quotes that header back at you — the stored column name is that header
-  sanitised, so it is not the string the warning shows. It reports what it sees
-  and does not re-read at a guessed separator, because a guess that is usually
-  right is the worst kind. The declaration is **one character**: an empty string
-  or a longer one such as `||` is refused, so a file separated by a
-  multi-character string is not one this server reads.
+- **The standard separator is the default, and nothing sniffs one.** `.csv`,
+  `.tsv` and `.txt` are one format — character-separated text — read and written
+  at the separator its published standard gives it when none is declared: a
+  comma for `.csv` (RFC 4180) and a tab for `.tsv` (IANA
+  `text/tab-separated-values`). A `delimiter` you pass always wins, on every
+  suffix. `.txt` has no standard, so for it nothing is assumed and the call asks
+  for one. A file called `.csv` that is really separated by `;` therefore loads
+  as one column at the default: the whole header line becomes that column and
+  the warning quotes the header back at you and names the `;` in it — the stored
+  column name is that header sanitised, so it is not the string the warning
+  shows. The same happens when a separator is declared wrongly. It reports what
+  it sees and does not re-read at a guessed separator, because a guess that is
+  usually right is the worst kind. The declaration is **one character**: an
+  empty string or a longer one such as `||` is refused, so a file separated by
+  a multi-character string is not one this server reads.
 
-  **Both directions require it**, and that is not decoration: while the suffix
-  supplied the separator it supplied it to reader and writer alike, so a file
-  this server wrote was one it could read back. Required on the way in only,
-  that property would be gone and `query(path=…)`-then-`attach` would stop
-  round-tripping.
+  **Both directions follow the same rule**, and that is not decoration: a file
+  this server writes with nothing declared is one it reads back with nothing
+  declared, so `query(path=…)`-then-`attach` round-trips — a `.tsv` is written
+  at a tab and read at a tab.
   What still differs is the *inapplicable* case — a suffix with no separator at
   all. On the way in, `attach` and `create` **refuse** a `delimiter` there,
   because the caller has misread the file. On the way out, `query(path=…)`

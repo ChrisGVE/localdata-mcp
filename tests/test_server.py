@@ -66,9 +66,10 @@ def session(monkeypatch, tmp_path):
 def separator_for(destination) -> dict[str, str]:
     """``delimiter=`` for a destination that is character-separated text.
 
-    Empty for every other format, because a delimiter is inert there rather
-    than required. The suffix no longer supplies a separator to the server —
-    it has to be declared — so the tests state the one their fixtures use.
+    Empty for every other format, because a delimiter is inert there. The
+    server reads .csv at a comma and .tsv at a tab when nothing is declared
+    (#153), and .txt needs one; these tests were written while every suffix
+    needed one, so they state the separator their fixtures use.
     """
     suffix = Path(str(destination)).suffix.lower()
     if suffix not in DELIMITED:
@@ -1585,10 +1586,10 @@ def test_the_delimiter_reaches_attach_over_the_wire(session):
 def test_a_wrongly_declared_separator_warns_and_names_the_parameter(session):
     """The warning is what turns a wrong declaration into something actionable.
 
-    It used to catch a caller who had never heard of the parameter, because the
-    separator was assumed. The separator is required now, so what it catches is
-    a caller who declared the wrong one — a narrower case and a better-founded
-    note, since the character actually used is known rather than guessed.
+    Here it catches a caller who declared the wrong separator: a `;` file
+    attached with `delimiter=","`. The character actually used is the declared
+    one, so the note can name it. The same warning for a `;` `.csv` read at the
+    standard comma with nothing declared is tested in test_standard_delimiter.py.
     """
     loaded = call(
         "attach",

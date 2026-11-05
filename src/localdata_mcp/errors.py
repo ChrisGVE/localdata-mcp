@@ -20,6 +20,8 @@ its own without the exception type or a stack trace beside it.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 __all__ = ["ExportError", "LoadError", "undeclared_separator"]
 
 
@@ -32,31 +34,41 @@ class ExportError(ValueError):
 
 
 def undeclared_separator(name: str, *, reading: bool) -> str:
-    """The one sentence both sides say when no separator was declared.
+    """The one sentence both sides say when a separator has to be declared.
+
+    A delimiter is only ever missing for a suffix with no published standard
+    separator. ``.csv`` has one (a comma, RFC 4180) and ``.tsv`` has one (a tab,
+    the IANA ``text/tab-separated-values`` registration), and each is the
+    default when nothing is declared (project first principle 7). ``.txt`` has
+    none, so for it nothing is assumed and the caller is asked instead.
 
     It lives here, beside the two errors that carry it, because the read side
-    and the write side each raise their own error type over the *same* rule —
-    character-separated text has no separator until the caller says what it is.
+    and the write side each raise their own error type over the *same* rule.
     Said twice it would drift, and the halves that drift are exactly the halves
     a caller compares when a round trip stops working.
 
-    ``reading`` picks the verb and the consequence, which are the only parts
-    that legitimately differ: reading at the wrong separator misreads data that
-    already exists, and writing at an assumed one produces a file whose name
-    disagrees with its contents.
+    ``reading`` picks the next step, which is the only part that legitimately
+    differs. Reading, the caller may not be able to see the file, so the step
+    that works without a shell is given too: try a separator and read the
+    warnings, which name the one the header holds when the guess was wrong.
+    Writing, the caller is choosing, so it is told how to choose.
     """
+    suffix = Path(name).suffix.lower() or "this"
+    gap = (
+        f"{name} is character-separated text, and a {suffix} file has no "
+        f"published standard separator — unlike .csv (a comma) or .tsv (a "
+        f"tab) — so nothing is assumed for it."
+    )
     if reading:
         return (
-            f"{name} is character-separated text, and this server does not "
-            f"guess what separates it. Pass delimiter — a file called .csv is "
-            f"as likely to be separated by ';' or '|' or a tab as by ',', and "
-            f"reading it at the wrong one changes what the data is while the "
-            f"result looks perfectly ordinary. The extension does not decide "
-            f"this and neither does anything else here."
+            f"{gap} Pass delimiter. If you can see the file's first line, pass "
+            f"the character between its fields. If you cannot, attach at the "
+            f"likeliest one (',' ';' a tab or '|') and read warnings: read at "
+            f"the wrong one, the file loads as a single column and a warning "
+            f"names the separator its header holds — detach and attach again "
+            f"at that one."
         )
     return (
-        f"{name} is character-separated text, so say what should separate it: "
-        f"pass delimiter. The suffix does not decide it, here or anywhere else "
-        f"— a file whose name and separator disagree is something only whatever "
-        f"reads it next finds out about, and by then the file is what exists."
+        f"{gap} Pass delimiter to say what should separate it, or name the "
+        f"file .csv or .tsv to write at that format's standard."
     )

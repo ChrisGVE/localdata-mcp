@@ -963,6 +963,18 @@ correctly.
 > still one column `a_b_c`, but the answer now carries a warning naming the `;` in the header line
 > and telling the caller to attach again at the right character. Nothing re-reads the file at the
 > character it spotted. The table above is the record of the default as it stood.
+>
+> **Amended 2026-11-05 — the standard separator is the default again, for `.csv` and `.tsv` only
+> (#153).** Chris's ruling, project first principle 7: *"We need to comply with the standard, tsv
+> uses tabs, csv uses comma. If we have to guess that's what we go for. If we are told, this is a
+> different story."* With no `delimiter`, `.csv` reads at a comma (RFC 4180) and `.tsv` at a tab
+> (IANA `text/tab-separated-values`); a declared one always wins; `.txt` has no standard and is
+> still refused without one. So the silent half of this section is open again in one case: a
+> semicolon file named `.csv`, attached with no `delimiter`, loads as one column — as the table
+> above recorded. It is no longer silent. The single-column warning quotes the header and names the
+> `;`, and that warning is the net for the default. What it does not catch is a file the wrong
+> separator still splits into several columns (#152, open). The 2026-10-29 amendment above
+> describes the contract that stood from 2026-08-14 until this date.
 
 ### 8.3 A slot's table list was a snapshot, and three messages reported it after it went stale
 
@@ -1524,6 +1536,14 @@ fix and is also the seam every new format arrives through.
 > because reader and writer read the same default off the suffix, and now holds because the
 > caller names the character in each direction. The overlap counts are unaffected — the same
 > fifteen suffixes are still both read and written.
+>
+> **Amended 2026-11-05: `.csv` and `.tsv` carry their standard separator again (#153).** The
+> amendment above describes the contract from 2026-08-14 until this date. `delimiter` is no longer
+> required for `.csv` (a comma, RFC 4180) or `.tsv` (a tab, IANA `text/tab-separated-values`);
+> `.txt` has no standard and still requires it, and a declared one wins on every suffix. The
+> default is written once, as `Format.standard_delimiter`, and reader and writer both resolve
+> through `formats.resolve_separator`, so the round-trip property holds by construction again: a
+> file written with nothing declared reads back with nothing declared.
 >
 > **Amended 2026-08-14: `.fwf` was removed from the catalogue**, so every count above drops by one
 > on the read side — **17 readable, 15 writable, 14 both** — and the "Read only" row is now three

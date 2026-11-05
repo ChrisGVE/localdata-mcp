@@ -33,12 +33,12 @@ from typing import Iterable, Mapping, Sequence
 # Defined in `errors` rather than here, for the same reason `LoadError` is: the
 # format layer below raises it. Imported into this namespace deliberately — the
 # tests and `server` both say `export.ExportError`.
-from .errors import ExportError, undeclared_separator
+from .errors import ExportError
 
 # The one table of formats, and the two views of it this module works from.
 # Imported into this namespace deliberately: the tests and the docs say
 # `export.WRITERS` and `export.DELIMITED`, and they name the same objects here.
-from .formats import DELIMITED, WRITERS
+from .formats import DELIMITED, WRITERS, resolve_separator
 from .paths import refuse_url_destination, resolve_write_path
 from .writers import SPREADSHEET_ROW_LIMIT, Writer, delimited_writer
 
@@ -76,12 +76,12 @@ def export_rows(
     Refuses a suffix with no writer, a path outside the allowed root, a file a
     live slot is sitting on, and an existing file unless ``force``.
 
-    ``delimiter`` is **required** for the character-separated formats — there is
-    no separator a suffix supplies — and is **ignored** for a format that has
-    none. Requiring it matches the read side, and has to: while the suffix
-    supplied the separator it supplied it to both sides at once, so a file this
-    server wrote was one it could read back. Declared on one side only, that
-    property is gone. Ignoring it for Parquet is not the same asymmetry: writing
+    ``delimiter`` is the separator for the character-separated formats. Left
+    out, the format's published standard is used — a comma for ``.csv``, a tab
+    for ``.tsv`` — and ``.txt``, which has none, is refused. That is the same
+    rule the read side applies (``formats.resolve_separator``), so a file this
+    server writes with nothing declared is one it reads back with nothing
+    declared. It is **ignored** for a format that has no separator: writing
     Parquet produces correct Parquet whatever this says, so the parameter is
     merely inert there, and refusing it would block a caller carrying one
     default delimiter across a mix of destinations.
@@ -130,8 +130,9 @@ def _writer_for(raw_path: str, delimiter: str | None) -> Writer:
     existing target under ``force``, so a request this server was never going to
     satisfy must not cost the user a file on its way to failing. The delimited
     formats are why this now takes ``delimiter`` rather than checking it later:
-    their writer cannot be chosen until the separator is known, and finding that
-    out after the destination was cleared would be exactly that.
+    their writer cannot be chosen until the separator is resolved, and finding
+    out only after the destination was cleared that a ``.txt`` has none would be
+    exactly that.
     """
     suffix = Path(raw_path).suffix.lower()
     writer = WRITERS.get(suffix)
@@ -147,13 +148,11 @@ def _writer_for(raw_path: str, delimiter: str | None) -> Writer:
         # A delimiter here is inert rather than wrong — see `export_rows`.
         return writer
 
-    if delimiter is None:
-        # The same refusal `writers.writing_needs_a_separator` carries, raised
-        # early so nothing has been written or cleared when it happens.
-        raise ExportError(undeclared_separator(Path(raw_path).name, reading=False))
-    if len(delimiter) != 1:
+    if delimiter is not None and len(delimiter) != 1:
         raise ExportError(f"delimiter must be a single character, not {delimiter!r}.")
-    return delimited_writer(delimiter)
+    # Declared, else the format's standard, else refused — raised here, early,
+    # so nothing has been written or cleared when it happens.
+    return delimited_writer(resolve_separator(raw_path, delimiter, reading=False))
 
 
 def _remove_quietly(path: Path) -> None:

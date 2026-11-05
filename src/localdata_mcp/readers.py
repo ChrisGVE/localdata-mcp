@@ -33,7 +33,7 @@ from xml.etree import ElementTree
 
 import pandas as pd
 
-from .errors import LoadError, undeclared_separator
+from .errors import LoadError
 from .names import column_names, sanitize, table_names
 from . import ooxml, opendocument
 from .ooxml import UncomputedColumn, column_letters
@@ -94,13 +94,14 @@ _COMMON_DELIMITERS = {";": "';'", "\t": "a tab", "|": "'|'", ",": "','"}
 
 
 def delimited(separator: str) -> Reader:
-    """A reader for character-separated text, at the separator the caller gave.
+    """A reader for character-separated text, at the separator it is given.
 
-    There is no default and no suffix that supplies one: ``.csv``, ``.tsv`` and
-    ``.txt`` are the same format here — character-separated text — and which
-    character it is arrives with the request. A factory rather than a parameter
-    so that the separator does not have to be threaded through the signature of
-    every other format's reader, none of which has one.
+    Which separator that is is decided before this is called, by
+    ``formats.resolve_separator``: the one the caller declared, else the
+    format's published standard (a comma for ``.csv``, a tab for ``.tsv``). This
+    reader only applies it. A factory rather than a parameter so that the
+    separator does not have to be threaded through the signature of every other
+    format's reader, none of which has one.
     """
 
     def read(path: Path) -> ReadResult:
@@ -112,29 +113,16 @@ def delimited(separator: str) -> Reader:
     return read
 
 
-def reading_needs_a_separator(path: Path) -> ReadResult:
-    """The reader every character-separated format has until one is declared.
-
-    It sits in ``FORMATS`` where a bound reader used to, and it is the table's
-    way of saying that ``.csv`` is readable *and* that nothing here can read it
-    on the strength of its name alone. Before this, the suffix supplied the
-    separator — comma for ``.csv`` and ``.txt``, tab for ``.tsv`` — which is a
-    guess wearing a convention: files called ``.csv`` are shipped semicolon-,
-    pipe- and tab-separated every day, and each one loaded as a single fat
-    column or, worse, as plausible columns that were not the file's.
-    """
-    raise LoadError(undeclared_separator(path.name, reading=True))
-
-
 def fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str, ...]:
     """Say when a file was plainly read at the wrong separator.
 
-    Requiring the separator does not make this redundant, it makes it sharper.
-    Before, this diagnosed a guess *this server* had made; now it diagnoses a
-    declaration the caller made, so the note can say which character was asked
-    for and be certain that is what was used. One column whose header still
-    contains a common delimiter is the signature of the mistake and nothing
-    else — the whole header line became the column.
+    This is the net under the standard default. A file named ``.csv`` is read at
+    a comma unless the caller says otherwise, and one that is really separated
+    by ``;`` — common from European tools — then loads as one column. The same
+    holds for a separator the caller declared wrongly. Either way the character
+    used is known, so the note can name it and name the one the header holds.
+    One column whose header still contains a common delimiter is the signature
+    of the mistake and nothing else — the whole header line became the column.
 
     This states what it found; it does not re-read the file at the character it
     spotted. Sniffing is the fail-open shape this project keeps being bitten by,

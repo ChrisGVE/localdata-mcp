@@ -34,20 +34,25 @@ of by subtracting one dict from another.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Sequence
 
+from .errors import ExportError, LoadError, undeclared_separator
 from .readers import (
+    ReadResult,
     Reader,
+    delimited as delimited_reader,
     read_columnar,
     read_json,
     read_jsonl,
     read_numbers,
     read_xml,
     read_yaml,
-    reading_needs_a_separator,
     workbook,
 )
 from .writers import (
     Writer,
+    delimited_writer,
     workbook_writer,
     write_columnar,
     write_json,
@@ -55,10 +60,17 @@ from .writers import (
     write_markdown,
     write_xml,
     write_yaml,
-    writing_needs_a_separator,
 )
 
-__all__ = ["DELIMITED", "FORMATS", "READERS", "STREAMED", "WRITERS", "Format"]
+__all__ = [
+    "DELIMITED",
+    "FORMATS",
+    "READERS",
+    "STREAMED",
+    "WRITERS",
+    "Format",
+    "resolve_separator",
+]
 
 
 @dataclass(frozen=True)
@@ -74,14 +86,24 @@ class Format:
     this server can do neither way has no reason to be in the table.
 
     ``delimited`` says the file is character-separated text rather than
-    something carrying its own structure — and therefore that **the caller must
-    declare what separates it, in both directions**. It belongs on the format
-    rather than on either side because it is one fact governing two rules: a
-    delimited format refuses to be read or written until a separator is given,
-    and a format that is *not* delimited refuses a separator on the read side
-    (the caller has misread the file) and ignores one on the write side (the
-    parameter is merely inert, and refusing would block a caller carrying one
-    default across a mix of destinations).
+    something carrying its own structure — and therefore that a separator
+    means something for it, in both directions. It belongs on the format rather
+    than on either side because it is one fact governing two rules: a delimited
+    format is read and written at a separator, and a format that is *not*
+    delimited refuses a separator on the read side (the caller has misread the
+    file) and ignores one on the write side (the parameter is merely inert, and
+    refusing would block a caller carrying one default across a mix of
+    destinations).
+
+    ``standard_delimiter`` is the separator a published standard gives the
+    format, used when the caller declares none: a comma for ``.csv`` (RFC 4180)
+    and a tab for ``.tsv`` (the IANA ``text/tab-separated-values``
+    registration). This is project first principle 7 — the standard is the
+    default, and a value the caller passes always wins. ``None`` means no
+    standard exists, as for ``.txt``, and then nothing is assumed: the format
+    refuses to be read or written until a separator is declared. It is the
+    only place a default separator is written down; ``resolve_separator``
+    reads it for every path that reads or writes delimited text.
 
     ``streamed`` says the reader can produce the file in chunks instead of
     materialising it whole. It is a property of the format, not a preference: a
@@ -94,6 +116,7 @@ class Format:
     writer: Writer | None = None
     delimited: bool = False
     streamed: bool = False
+    standard_delimiter: str | None = None
 
     def __post_init__(self) -> None:
         if self.reader is None and self.writer is None:
@@ -108,6 +131,17 @@ class Format:
                 f"format has to go both ways: the separator is declared on each "
                 f"side, and a file written at one this server could not read "
                 f"back at is the property `delimited` exists to keep."
+            )
+        if self.standard_delimiter is not None and not self.delimited:
+            raise ValueError(
+                f"{self.suffix} declares a standard separator but is not "
+                f"delimited. Only character-separated text has a separator, "
+                f"so only a delimited format can have a standard one."
+            )
+        if self.standard_delimiter is not None and len(self.standard_delimiter) != 1:
+            raise ValueError(
+                f"{self.suffix} declares the standard separator "
+                f"{self.standard_delimiter!r}, but a separator is one character."
             )
         if self.streamed and self.reader is None:
             raise ValueError(
@@ -131,19 +165,71 @@ def _format(suffix: str, **known: object) -> tuple[str, Format]:
     return suffix, Format(suffix=suffix, **known)  # type: ignore[arg-type]
 
 
-#: Character-separated text, which is **one format under three names**. `.csv`,
-#: `.tsv` and `.txt` differ in nothing this server can act on: the file is a CSV
-#: whatever it is called, and what separates its fields is declared by the
-#: caller rather than read off the name. So they share one declaration here
-#: instead of three that have to be kept saying the same thing.
-#:
-#: The reader and the writer are the pair that refuse until a separator is
-#: given. Both directions, deliberately — see `writers.writing_needs_a_separator`
-#: for why taking the default off the read side alone would have broken the
-#: round-trip property this table exists to hold.
+def resolve_separator(name: str, declared: str | None, *, reading: bool) -> str:
+    """The character a delimited file is split on, or the reason there is none.
+
+    The one rule every path that reads or writes delimited text goes through —
+    ``attach`` and ``create(source=…)``, read whole or in chunks, and
+    ``query(path=…)`` — so none of them carries a default of its own:
+
+    1. A separator the caller declared wins, on every suffix. A ``;`` declared
+       for a ``.csv`` reads and writes at ``;``.
+    2. Otherwise the format's ``standard_delimiter``: a comma for ``.csv``, a
+       tab for ``.tsv``. Project first principle 7, in Chris's words: *"the
+       standard is always the default, unless the LLM provides something
+       else"*. A file named ``.csv`` that is really separated by ``;`` loads as
+       one column at the default, and ``readers.fat_column_note`` says so and
+       names the ``;`` in its header.
+    3. Otherwise refuse, because no standard exists to fall back on — ``.txt``.
+       ``reading`` picks the error type: a ``LoadError`` for a source that is
+       already there, an ``ExportError`` for a destination not yet written.
+
+    Because both directions resolve the same way, a file this server writes
+    with nothing declared is one it reads back with nothing declared.
+
+    ``name`` is a file name or path; only its suffix is looked up, and it must
+    be a delimited one. Whether a declared separator is one character is
+    checked by the callers, before this, in their own words.
+    """
+    if declared is not None:
+        return declared
+    standard = FORMATS[Path(name).suffix.lower()].standard_delimiter
+    if standard is not None:
+        return standard
+    error = LoadError if reading else ExportError
+    raise error(undeclared_separator(Path(name).name, reading=reading))
+
+
+def read_delimited_text(path: Path) -> ReadResult:
+    """The table's reader for delimited text: at the standard, or refuse.
+
+    This is what the format table binds, so ``READERS`` reads a ``.csv`` the
+    way ``attach`` does when nothing is declared. A declared separator never
+    reaches it — the loader builds a reader at that separator instead.
+    """
+    return delimited_reader(resolve_separator(path.name, None, reading=True))(path)
+
+
+def write_delimited_text(
+    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
+) -> int:
+    """The table's writer for delimited text: at the standard, or refuse.
+
+    The mirror of ``read_delimited_text``, so a file written through ``WRITERS``
+    with nothing declared reads back through ``READERS`` with nothing declared.
+    """
+    separator = resolve_separator(path.name, None, reading=False)
+    return delimited_writer(separator)(columns, rows, path)
+
+
+#: Character-separated text: one format under three names. `.csv`, `.tsv` and
+#: `.txt` share one reader, one writer and the same flags, so they are declared
+#: from this one dictionary rather than three that have to be kept saying the
+#: same thing. What differs is the separator a standard gives each, which is
+#: why `standard_delimiter` is set per entry below and nowhere else.
 _DELIMITED_TEXT: dict[str, object] = dict(
-    reader=reading_needs_a_separator,
-    writer=writing_needs_a_separator,
+    reader=read_delimited_text,
+    writer=write_delimited_text,
     delimited=True,
     streamed=True,
 )
@@ -152,8 +238,11 @@ _DELIMITED_TEXT: dict[str, object] = dict(
 #: The whole catalogue. A new format is one entry here and nothing else.
 FORMATS: dict[str, Format] = dict(
     (
-        _format(".csv", **_DELIMITED_TEXT),
-        _format(".tsv", **_DELIMITED_TEXT),
+        # RFC 4180 makes the comma the CSV separator; the IANA registration of
+        # text/tab-separated-values makes it the tab for TSV. `.txt` has no
+        # standard, so it has no default and a separator must be declared.
+        _format(".csv", standard_delimiter=",", **_DELIMITED_TEXT),
+        _format(".tsv", standard_delimiter="\t", **_DELIMITED_TEXT),
         _format(".txt", **_DELIMITED_TEXT),
         # Formats carrying their own structure. A delimiter means nothing for
         # any of them, which is why `delimited` is left false rather than

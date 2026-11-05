@@ -172,12 +172,12 @@ def chunked(request, monkeypatch):
 def separator_of(path: Path) -> dict[str, str]:
     """The declared separator for this fixture, as keyword arguments.
 
-    The server takes no separator from a suffix any more — it has to be declared
-    on every read of character-separated text — but this corpus was written to
-    the usual convention, so the tests say which character that is here, once,
-    instead of at every call. The mapping deliberately reproduces what the
-    suffixes used to imply, so each test still reads its fixture the way it was
-    written and goes on meaning what it meant.
+    The server reads .csv at a comma and .tsv at a tab when nothing is declared
+    (#153), and .txt needs one. These tests were written while every suffix
+    needed one, so they say which character this corpus uses, once, instead of
+    at every call. The mapping is the standard where one exists and a comma for
+    .txt, so each test reads its fixture the way it was written and goes on
+    meaning what it meant.
 
     Empty for a format that has no separator, because passing one there is
     refused rather than ignored — which is itself a test in this module.

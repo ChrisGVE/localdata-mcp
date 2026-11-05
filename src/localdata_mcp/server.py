@@ -84,18 +84,17 @@ mcp = FastMCP(
         "named by a nickname**, so even a single CSV holds its rows in a table. "
         "attach returns the nickname it actually used, which may not be the one "
         "you asked for — use what it returns.\n\n"
-        "**Character-separated text says what separates it.** .csv, .tsv and "
-        ".txt are one format here, and no suffix carries a separator, so "
-        "delimiter is required on every call that reads or writes one — "
-        "attach(database='sales.csv', delimiter=','), create(..., "
-        "delimiter=';'), query(..., path='out.csv', delimiter=','). "
-        "Without it the call is refused rather than guessed at, because a file "
-        "called .csv is as likely to be separated by ';' or '|' or a tab, and "
-        "reading it at the wrong one changes what the data is while the answer "
-        "looks perfectly ordinary. If you cannot see the file's first line, "
-        "attach at the likeliest separator and read the warnings: at the wrong "
-        "one the file loads as a single column, and a warning names the "
-        "separator its header contains — detach and attach again at that one. "
+        "**Character-separated text is read and written at its standard "
+        "separator unless you pass delimiter.** .csv uses ',' (RFC 4180) and "
+        ".tsv a tab (IANA text/tab-separated-values), so attach(database="
+        "'sales.csv') and query(..., path='out.tsv') need no delimiter; pass "
+        "one only when the file uses another — attach(database='sales.csv', "
+        "delimiter=';') — and what you pass always wins. .txt has no standard, "
+        "so it needs a delimiter on every call: read the file's first line if "
+        "you can, otherwise attach at the likeliest separator and read the "
+        "warnings. Read at the wrong separator, a file loads as a single "
+        "column and a warning names the separator its header contains — "
+        "detach and attach again with delimiter set to that one. "
         "Handed to a format that has no separator — "
         "a workbook, .parquet — it is refused by name on attach and create.\n\n"
         "**Each call names one datasource, and the SQL addresses tables inside it "
@@ -614,7 +613,8 @@ def attach(
     holding values of more than one type, a column of dates in no recognised
     standard, two sheets whose names made the same table name and where each
     went, and anything the reader had to decide about the file itself — a
-    header line that suggests the declared delimiter was the wrong one, or a
+    header line that suggests the delimiter used — declared, or the
+    standard one — was the wrong one, or a
     nested value stored as its text. Only a file is described on the way in, so
     only a file's attach can carry them. ``directory``, ``stats`` and
     ``create`` return the same field, built the same way.
@@ -634,22 +634,21 @@ def attach(
             The grant belongs to this attach, and the same source attached twice
             is refused — so granting write to something already open means
             ``detach`` first, then attach it again with this set.
-        delimiter: The character separating fields. **Required** for .csv,
-            .tsv and .txt, which are one format here — character-separated
-            text — and refused for every other, which carries its own
-            structure. There is no default and the extension supplies nothing:
-            files called .csv are shipped separated by ';' or '|' or a tab as
-            readily as by ',', and reading one at the wrong character changes
-            what the data is while the answer looks perfectly ordinary. Look at
-            the file's first line if you can. If you cannot, attach at the
-            likeliest character and read ``warnings``: read at the wrong one, a
-            file loads as a single column, and a warning quotes its header and
-            names the separator the header contains — ``detach`` and attach
-            again at that one. Ask the user only when the columns still do not
-            look like the data and no warning says why. It is
-            exactly one character: an empty string or a longer one such as
-            ``'||'`` is refused, and a tab is the tab character itself, not a
-            backslash followed by ``t``.
+        delimiter: The character separating fields, for .csv, .tsv and .txt —
+            character-separated text — and refused for every other format,
+            which carries its own structure. Left out, the published standard
+            is used: ',' for .csv (RFC 4180) and a tab for .tsv (IANA
+            text/tab-separated-values). Pass it only when the file uses another
+            character; what you pass always wins. .txt has no standard, so it
+            needs one: read the file's first line if you can, otherwise attach
+            at the likeliest character and read ``warnings``. Read at the wrong
+            one, a file loads as a single column, and a warning quotes its
+            header and names the separator the header contains — ``detach`` and
+            attach again with ``delimiter`` set to that one. Ask the user only
+            when the columns still do not look like the data and no warning
+            says why. It is exactly one character: an empty string or a longer
+            one such as ``'||'`` is refused, and a tab is the tab character
+            itself, not a backslash followed by ``t``.
 
     Refuses a datasource that is already attached, naming the slot holding it.
     ``collided_with`` says which live slot forced a suffix, and ``evicted``
@@ -967,13 +966,13 @@ def query(
             user has said to — the path is theirs, so the refusal you get
             without it is a question to put to them, not a retry to make. A file
             an attached datasource is sitting on is refused either way.
-        delimiter: The character to separate fields with. **Required** when
-            ``path`` names .csv, .tsv or .txt, for the same reason it is
-            required on the way in: the suffix decides the format and never the
-            separator, so writing without saying would put commas in a file
-            called .tsv on request. Exactly one character, as on ``attach``.
-            Ignored for a format that has no separator, so one value can be
-            carried across a mix of destinations.
+        delimiter: The character to separate fields with when ``path`` names
+            .csv, .tsv or .txt. Left out, the standard is used, as on
+            ``attach``: ',' for .csv and a tab for .tsv, so a file written
+            without one reads back without one. .txt has no standard and needs
+            it. What you pass always wins. Exactly one character, as on
+            ``attach``. Ignored for a format that has no separator, so one
+            value can be carried across a mix of destinations.
     """
     with _lock:
         registry = _session()
@@ -1091,9 +1090,10 @@ def create(
         columns: For an index, the columns to index, in order. Required for
             ``type="index"``.
         delimiter: For a table read from .csv, .tsv or .txt, the character
-            separating fields. Means the same here as on ``attach``, including
-            that it is required, that it is exactly one character, and that
-            nothing sniffs for it.
+            separating fields. Means the same here as on ``attach``: left out,
+            .csv reads at ',' and .tsv at a tab, .txt needs one, what you pass
+            always wins, it is exactly one character, and nothing sniffs for
+            it.
     """
     with _lock:
         registry = _session()

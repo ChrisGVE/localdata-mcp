@@ -259,7 +259,8 @@ including one from a verb that took a URL for a path and never knew it held a cr
 **`attach`.** A workbook becomes a database holding a table per sheet and a `.numbers`
 document one per table, snake_cased, and two whose names snake_case alike are told apart
 by a numeric suffix and a warning. `delimiter` applies to character-separated text only,
-where it is **required**, and is refused elsewhere. The answer's `kind` says how the
+and is refused elsewhere. Left out, `.csv` reads at a comma and `.tsv` at a tab, their
+published standards; `.txt` has none and needs one; a declared one always wins. The answer's `kind` says how the
 datasource was opened (`file`, `database`, `engine`), which does not tell a SQLite file from
 a DuckDB one; `backend` names the engine as its backend names itself, and `saveable` says
 whether `save` will write it out. `directory` describes each datasource the same way.
@@ -268,8 +269,9 @@ whether `save` will write it out. `directory` describes each datasource the same
 by a check, and as far as each backend can refuse — see *Write is not the default*. The
 `path` suffix chooses the output format and one with no writer is refused by name; `force`
 is the same overwrite consent `save` takes, for the same reason. `delimiter` separates
-fields on the way *out*, for `.csv`/`.tsv`/`.txt` only, where it is **required** for the
-same reason it is on the way in, and is ignored rather than refused elsewhere.
+fields on the way *out*, for `.csv`/`.tsv`/`.txt` only, with the same defaults as on the
+way in — a comma for `.csv`, a tab for `.tsv`, none for `.txt` — and is ignored rather than
+refused elsewhere.
 
 **`update` and `drop`.** `update`'s `name` is the snake_cased name `directory` lists rather than
 the spelling in the spreadsheet, and case is the part of that the server closes: a name
@@ -508,8 +510,8 @@ database, **read-only by default** until the caller says otherwise.
 ## Sources and targets
 
 Everything keyed on a file suffix is declared once, in `formats.FORMATS`: a format is one
-`Format` naming its reader, its writer, whether a delimiter means anything for it and
-whether it can be read in chunks. Adding one is that single entry, because everything
+`Format` naming its reader, its writer, whether a delimiter means anything for it, the
+separator its published standard gives it if any, and whether it can be read in chunks. Adding one is that single entry, because everything
 downstream of a reader works from a DataFrame and everything upstream of a writer works
 from columns and rows. `READERS`, `WRITERS`, `DELIMITED` and `STREAMED` still exist as the
 names the rest of the code uses, but they are **views** of that table now rather than four
@@ -586,22 +588,26 @@ what is unambiguous, say what was assumed, refuse an actual choice*:
   text and a nested XML element its XML text — lossless and reversible — and a note names
   the columns. `pandas.read_xml` drops the subtree and reports nothing, which is why that
   reader is written directly on ElementTree.
-- **Nothing sniffs, and nothing defaults.** The extension implies no separator: `.csv`,
-  `.tsv` and `.txt` are one format and the character is declared. A parameter alone would
-  not have been enough — a caller who does not know would never reach for it — so it is
-  required, which is also what makes the bytes checkable against the declaration at all.
-  Declared wrongly, the whole header line becomes one column and the warning quotes that
-  header back — the stored column name is that header sanitised, so it is not the string
-  the warning shows. It reports what it sees; it does not re-read at a guessed separator,
+- **Nothing sniffs; the standard is the default.** `.csv`, `.tsv` and `.txt` are one
+  format, read and written at the separator a published standard gives the suffix when
+  none is declared — a comma for `.csv` (RFC 4180), a tab for `.tsv` (IANA
+  `text/tab-separated-values`) — and a declared one always wins (project first principle
+  7). `.txt` has no standard, so it is refused until a separator is declared. The default
+  lives once, as `Format.standard_delimiter`, and every path that reads or writes
+  delimited text resolves through `formats.resolve_separator`. Read at the wrong
+  separator — a `;` file named `.csv` at the default, or a wrong declaration — the whole
+  header line becomes one column and the warning quotes that header back and names the
+  separator it holds; the stored column name is that header sanitised, so it is not the
+  string the warning shows. It reports what it sees; it does not re-read at a guessed separator,
   because a guess that is usually right is the worst kind. The declaration is one character;
   an empty or longer string is refused on both sides.
 
 `delimiter` earns its place on the same test `join_on` failed: it declares a **fact about
 the source** the server cannot know and the caller often does, rather than a judgement the
-caller was already making. It is **required in both directions** for character-separated
-text. Requiring it on the write side too is what keeps the round trip: while the suffix
-carried the separator it carried it to reader and writer alike, so a file written here was
-one readable here. Where the two directions still differ is the *inapplicable* case.
+caller was already making. Both directions resolve it by the same rule — declared, else
+the standard, else refused — which is what keeps the round trip: a file written here with
+nothing declared is one readable here with nothing declared. Where the two directions
+still differ is the *inapplicable* case.
 Reading — `attach` and `create` — **refuses** a delimiter for a format that has none: a
 `.parquet` handed one is a caller who has misunderstood the file, and the refusal names
 the suffix and the three that qualify. Writing — `query(path=…)` — **ignores** it there,

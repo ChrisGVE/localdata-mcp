@@ -551,8 +551,8 @@ def test_export_round_trips_back_into_the_workspace(workspace, root):
 def test_an_export_is_separated_by_the_character_that_was_declared(workspace, root):
     """The suffix chooses the format; the caller chooses the separator.
 
-    Both halves matter, and the second is why the file is written at a tab
-    rather than a comma here — the name says nothing about it.
+    Both halves matter. A `.tsv` would be written at a tab anyway, its
+    standard; the point here is that the declared tab is the one used.
     """
     target = root / "out.tsv"
 
@@ -1238,11 +1238,11 @@ def test_a_fat_column_header_is_truncated_before_it_is_quoted(workspace, root):
 
 
 def test_a_tab_separated_file_splits_at_the_declared_tab(workspace, root):
-    """There is no per-extension default left; the tab is declared like any other.
+    """A tab declared for a tab-separated file splits it.
 
-    This used to assert that `.tsv` defaulted to a tab. It now asserts the thing
-    that replaced that: a tab-separated file splits when the caller says tab,
-    and the suffix is not what carried the answer here.
+    `.tsv` defaults to a tab again (the IANA standard, #153), so this no longer
+    shows that the suffix did not carry the answer. It still shows a declared
+    tab reaching the reader.
     """
     (info,) = workspace.load_file(str(root / "mixed_tabs.tsv"), "main", delimiter="\t")
     assert len(info.columns) > 1
@@ -1263,9 +1263,9 @@ def test_a_delimiter_on_a_format_that_has_none_is_refused(workspace, root):
 def test_nothing_re_reads_at_a_separator_it_was_not_given(workspace, root):
     """A sniffer that is right most of the time is the fail-open shape, not a fix.
 
-    Requiring the separator removed the *guess this server used to make*; it did
-    not add a second guess to catch a caller's mistake. A semicolon file read at
-    the comma it was declared with must still land as one column — the note says
+    The separator is the one declared, else the format's published standard;
+    nothing adds a second guess to catch a mistake. A semicolon file read at the
+    comma it was declared with must still land as one column — the note says
     what it looks like, and nothing re-reads. If a later change starts guessing,
     this fails.
     """
@@ -1311,14 +1311,14 @@ def test_the_written_delimiter_round_trips_when_read_back_with_the_same_one(
 
 
 def test_writing_delimited_text_without_a_delimiter_is_refused(workspace, root):
-    """The successor to the test that asserted the suffix decided.
+    """Where the suffix has no standard separator, writing needs one declared.
 
-    It used to: a `.tsv` written with nothing said was tab-separated, because
-    the suffix supplied the separator. That is the guess this contract removed,
-    and it is removed on the write side as well as the read side — leaving it
-    here would write commas into a file named `.tsv` on request.
+    `.csv` and `.tsv` write at their standard (a comma, a tab) when nothing is
+    declared (#153), and that is tested in test_standard_delimiter.py. `.txt`
+    has no standard, so a write to it with nothing said is refused, on the
+    write side as on the read side.
     """
-    for name in ("plain.tsv", "plain.csv", "plain.txt"):
+    for name in ("plain.txt",):
         target = root / name
         with pytest.raises(export_module.ExportError, match="say what should separate"):
             export_module.export_rows(["a", "b"], [(1, 2)], str(target))
@@ -1334,7 +1334,7 @@ def test_a_refused_export_does_not_cost_the_user_the_file_that_was_there(
     refusal raised after that point would answer the question correctly and
     destroy the file on the way, which is worse than either outcome alone.
     """
-    target = root / "precious.csv"
+    target = root / "precious.txt"
     target.write_text("the user's own data\n")
 
     with pytest.raises(export_module.ExportError, match="say what should separate"):

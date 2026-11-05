@@ -80,7 +80,7 @@ from .dialects import Backend, Engines, backend_for, backend_for_url
 # raise it without importing `loader`. Imported into this namespace deliberately:
 # `slots`, the tests and the docs all say `loader.LoadError`, and there is one
 # class whichever name reaches it.
-from .errors import LoadError, undeclared_separator
+from .errors import LoadError
 
 # How a name the file gives becomes one SQL can use lives in `names`, so that
 # columns and tables follow one rule and the readers can reach it too. Imported
@@ -92,7 +92,7 @@ from .paths import resolve_read_path
 # The readers and the shapes they hand back. Imported into this namespace on
 # purpose, not merely used: `loader.READERS` and `loader.DELIMITED` are what the
 # tests, the docs and `export` all say, and they name the same objects here.
-from .formats import DELIMITED, READERS, STREAMED
+from .formats import DELIMITED, READERS, STREAMED, resolve_separator
 from .readers import NamedFrame, ReadResult, delimited, fat_column_note
 
 __all__ = [
@@ -1006,14 +1006,19 @@ def read_file(path: Path, *, delimiter: str | None = None) -> ReadResult:
     *before* committing to it. That ordering matters once slots are limited: a
     file that cannot be parsed must not cost a live datasource its place.
 
-    ``delimiter`` is **required** for the character-separated formats and has no
-    default: nothing here reads a separator off a suffix. Passing it for a
-    format that has no separator is refused rather than ignored, because a
-    caller who set it believes it did something.
+    ``delimiter`` is the separator for the character-separated formats. Left
+    out, the format's published standard is used — a comma for ``.csv``, a tab
+    for ``.tsv`` — and ``.txt``, which has none, is refused
+    (``formats.resolve_separator``). Passing it for a format that has no
+    separator is refused rather than ignored, because a caller who set it
+    believes it did something.
     """
     suffix = _readable_suffix(path)
     _check_delimiter(path, suffix, delimiter)
-    reader = delimited(delimiter) if delimiter is not None else READERS[suffix]
+    if suffix in DELIMITED:
+        reader = delimited(resolve_separator(path.name, delimiter, reading=True))
+    else:
+        reader = READERS[suffix]
 
     try:
         result = reader(path)
@@ -1587,19 +1592,6 @@ def _chunk_reader(path: Path, separator: str) -> Callable[[], Iterator[pd.DataFr
     return chunks
 
 
-def _declared_separator(path: Path, delimiter: str | None) -> str:
-    """The character this file's fields are split on. There is no default.
-
-    The streamed path needs this because it never reaches the format table's
-    reader — it drives ``read_csv`` itself, in chunks — so the requirement the
-    table states for the materialised path has to be stated here too. Both say
-    it in the same sentence, from ``errors``, so the two cannot drift apart.
-    """
-    if delimiter is None:
-        raise LoadError(undeclared_separator(path.name, reading=True))
-    return delimiter
-
-
 def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:
     """Measure a source, in chunks where the format allows it.
 
@@ -1628,7 +1620,11 @@ def read_source(path: Path, *, delimiter: str | None = None) -> SourceRead:
             notes=read.notes,
         )
 
-    separator = _declared_separator(path, delimiter)
+    # The streamed path drives `read_csv` itself, in chunks, so it never reaches
+    # the format table's reader. It resolves the separator through the same
+    # rule the table's reader and the write side use, so none of them carries
+    # a default of its own.
+    separator = resolve_separator(path.name, delimiter, reading=True)
     chunks = _chunk_reader(path, separator)
     scans: list[_ColumnScan] | None = None
     notes: tuple[str, ...] = ()

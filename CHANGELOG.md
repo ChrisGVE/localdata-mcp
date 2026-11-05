@@ -116,22 +116,22 @@ rebuild it.
   over either returns a real number that is not the number asked for. It is a
   verb rather than a flag on `directory` because a directory that reports statistics
   stops being one.
-- **The separator of a text file is declared, never inferred.** `.csv`, `.tsv`
-  and `.txt` are **one format** — character-separated text — and `delimiter` is
-  **required** for it, in both directions. No suffix supplies a default any
-  more: a file called `.csv` is shipped semicolon-, pipe- and tab-separated
-  every day, and read at the wrong character it loads as one fat column or,
-  worse, as plausible columns that are not the file's. Requiring the
-  declaration is also what makes the bytes checkable against it at all —
-  identifying a separator from the bytes is undecidable, verifying them against
-  a declared one is not. It is required on the **write** side for the same
-  reason it is on the read side: while the suffix carried the separator it
-  carried it to reader and writer alike, so a file this server wrote was one it
-  could read back, and requiring it on one side only would have ended that.
-  Handed to a format that has no separator it is still refused on the way in
-  and ignored on the way out. Nothing sniffs: a semicolon-separated file
-  declared as `,` loads as one column, and the warning says so and names the
-  parameter rather than re-reading at a guessed separator.
+- **A text file is read and written at its standard separator unless you say
+  otherwise.** `.csv`, `.tsv` and `.txt` are **one format** — character-separated
+  text — and `delimiter` names its separator, on `attach`, `create` and
+  `query(path=…)`. Left out, the separator a published standard gives the
+  suffix is used: a comma for `.csv` (RFC 4180) and a tab for `.tsv` (IANA
+  `text/tab-separated-values`). A `delimiter` you pass always wins, on every
+  suffix, so a `;`-separated `.csv` reads with `delimiter=";"`. **`.txt` has no
+  standard, so it now needs a `delimiter`**; without one the call is refused and
+  says how to find the separator. Both directions follow the same rule, so a
+  file this server writes with nothing declared is one it reads back with
+  nothing declared. Handed to a format that has no separator it is refused on
+  the way in and ignored on the way out. Nothing sniffs: a semicolon-separated
+  file read at a comma — the `.csv` default or a wrong declaration — loads as
+  one column, and the warning quotes the header and names the `;` in it rather
+  than re-reading at a guessed separator
+  ([#153](https://github.com/ChrisGVE/localdata-mcp/issues/153)).
 - **Seventeen file formats read** (`.csv` `.tsv` `.txt` `.json` `.jsonl`
   `.ndjson` `.xml` `.yaml` `.yml` `.xlsx` `.xlsm` `.xls` `.ods` `.numbers`
   `.parquet` `.feather` `.orc`) and **fifteen written** (the same, less

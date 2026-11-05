@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 from xml.sax.saxutils import escape
 
-from .errors import ExportError, undeclared_separator
+from .errors import ExportError
 
 __all__ = ["SPREADSHEET_ROW_LIMIT", "Writer"]
 
@@ -57,12 +57,14 @@ def write_delimited(
 
 
 def delimited_writer(delimiter: str) -> Writer:
-    """A writer for character-separated text, at the separator the caller gave.
+    """A writer for character-separated text, at the separator it is given.
 
-    The exact mirror of ``readers.delimited``, and mirrored on purpose: the
-    separator is declared on both sides or the round trip stops being one. A
-    factory rather than a parameter so it does not have to be threaded through
-    the signature of every other format's writer, none of which has one.
+    The exact mirror of ``readers.delimited``, and mirrored on purpose: both
+    sides take their separator from ``formats.resolve_separator`` — declared,
+    else the format's standard — so a file written here with nothing declared
+    reads back here with nothing declared. A factory rather than a parameter so
+    it does not have to be threaded through the signature of every other
+    format's writer, none of which has one.
     """
 
     def write(
@@ -71,26 +73,6 @@ def delimited_writer(delimiter: str) -> Writer:
         return write_delimited(columns, rows, path, delimiter=delimiter)
 
     return write
-
-
-def writing_needs_a_separator(
-    columns: Sequence[str], rows: Iterable[Sequence[object]], path: Path
-) -> int:
-    """The writer every character-separated format has until one is declared.
-
-    The mirror of ``readers.reading_needs_a_separator``, and the reason the read
-    side's change could not be made alone. While the suffix supplied the
-    separator it supplied it symmetrically — ``.tsv`` read at a tab and written
-    at a tab — so a file this server wrote was one it could read back. Take the
-    default off the read side only and that property breaks; take it off both
-    and it holds, because the caller names the character in each direction.
-
-    Leaving the write side defaulting would have been worse than asymmetric. It
-    would write commas into a file called ``.tsv`` on request, which is the
-    shape of the defect the format table exists to refuse: a file whose name
-    disagrees with its contents, produced by a call that answered ``ok``.
-    """
-    raise ExportError(undeclared_separator(path.name, reading=False))
 
 
 def write_json(
