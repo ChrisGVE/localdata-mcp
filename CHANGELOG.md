@@ -919,17 +919,23 @@ And forty-five found in this release's own code before it shipped:
   started, the other run's included. Each run now builds its runner under the
   lock with a tag of its own, records the cache its own builds created, and
   removes only that, before it releases the lock.
+- **A `create(type="table")` that fails while inserting and leaves its table
+  behind now says so** ([#147](https://github.com/ChrisGVE/localdata-mcp/issues/147)).
+  The table is made and filled in one transaction, on the premise that a
+  failed insert takes the `CREATE TABLE` with it. Measured, it does not on
+  SQLite, where the driver commits the `CREATE` before the first insert, nor on
+  YugabyteDB 2.25, where it survives the abort, whether the insert failed on a
+  value no 64-bit column holds or on a collision with another session (SQLSTATE
+  40001), nor on CockroachDB 26.3. The refusal said only why the insert failed, so
+  the same call sent again was refused with "already exists, holding 0 rows".
+  After a failed create the server now asks the database, on a fresh
+  connection, whether the table is there; if it is, the refusal names it with
+  the rows it holds and ends with the `drop` call that clears it. The table is
+  not dropped for you: another session can write into it while it is being
+  filled (measured on YugabyteDB), so a drop could destroy rows that are not
+  this server's.
 
 ### Known limitations
-
-- **On YugabyteDB, a `create(type="table")` that fails while inserting leaves
-  the new table behind, empty, and the refusal does not say so**
-  ([#147](https://github.com/ChrisGVE/localdata-mcp/issues/147)). Measured on
-  YugabyteDB 2.25: the `CREATE TABLE` is not undone when the transaction
-  aborts, whether the insert failed on a collision with another session
-  (SQLSTATE 40001) or on a value no 64-bit column holds. Sending the same call
-  again is then refused with "already exists, holding 0 rows". `drop` the table,
-  then create it again.
 
 - **On CockroachDB, `create(type="index")`, `update` and `drop` wait for as long
   as another session holds an open transaction on the table, and every other

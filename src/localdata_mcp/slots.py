@@ -832,6 +832,9 @@ class Registry:
                     f"own datasource instead — it becomes a database with all "
                     f"{len(read.tables)} in it, arriving as {arriving}."
                 )
+        except LoadError as exc:
+            raise SlotError(str(exc)) from exc
+        try:
             return self._workspace.insert_source(
                 read.tables[0],
                 table,
@@ -840,7 +843,60 @@ class Registry:
                 notes=read.notes,
             )
         except LoadError as exc:
-            raise SlotError(str(exc)) from exc
+            raise SlotError(self._left_behind(slot.nickname, table, str(exc))) from exc
+
+    def _left_behind(self, nickname: str, table: str, refusal: str) -> str:
+        """Add to a failed create's refusal whether the table it made is still there.
+
+        ``insert_source`` makes the table and fills it in one transaction on the
+        premise that a failed insert takes the ``CREATE`` with it, and on some
+        engines it does not: pysqlite commits the ``CREATE TABLE`` before the
+        first insert, and YugabyteDB and CockroachDB keep it through the abort
+        (issue #147; docs/CONSTRAINTS.md §15, amendment of 2026-11-05).
+        Firebird commits it first by design (#53). A caller told only why the insert failed sends
+        the same call again and is refused with "already exists".
+
+        So the database is asked, on a fresh connection and only on this failure
+        path, whether the table is there now; ``create`` refused before starting
+        if it already was, so a table found now is one this call made. The
+        refusal names it with the rows it holds and the call that clears it.
+
+        Reported, never dropped. Another session can write into the table while
+        it is being filled — measured on YugabyteDB — so a drop here could
+        destroy rows that are not this server's, and it would be a write the
+        caller did not ask for.
+        """
+        # One sentence after another, whatever the driver's text ended with.
+        joined = (
+            refusal if refusal.rstrip().endswith((".", "!", "?")) else f"{refusal}."
+        )
+        try:
+            left = self._workspace.resolve_table(nickname, table)
+        except Exception as exc:  # noqa: BLE001 - reported, never raised over the refusal
+            # The read-back is a second question to a database that has just
+            # failed one, and its failure must not replace the answer to the
+            # first. Said rather than swallowed, with the call that answers it.
+            return (
+                f"{joined} Whether the failed create left {nickname}.{table} "
+                f"behind could not be checked ({exc}); "
+                f"directory(nickname='{nickname}') lists what {nickname} holds."
+            )
+        if left is None:
+            return refusal
+        # Asked apart from the existence, because it can fail where that did
+        # not: on YugabyteDB, with another session still altering the table, the
+        # count was refused with 40001 after the table had been found (measured
+        # 2026-11-05). The table being there is the fact the caller acts on, so
+        # it is said either way; the count is said when it can be had.
+        try:
+            held = self._workspace.describe(nickname, left).rows_text
+        except Exception:  # noqa: BLE001 - the existence is still reported
+            held = "rows that could not be counted just now"
+        return (
+            f"{joined} The failed create left {nickname}.{left} behind, holding "
+            f"{held}: drop it with drop(nickname='{nickname}', type='table', "
+            f"name='{left}') before creating it again."
+        )
 
     def _table_name(self, table: str | None, source: str) -> str:
         """Settle on the table's name: given verbatim, or derived from the file."""

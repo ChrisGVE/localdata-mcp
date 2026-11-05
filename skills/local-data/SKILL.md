@@ -277,11 +277,14 @@ the same way, with the statement to send instead.
 A `create`, `update` or `drop` refused because *another session's transaction
 collided with this one* (SQLSTATE 40001) changed nothing, and the refusal says
 what is still as it was. Send the same call again once the other session is
-done; this server never resends a write by itself. One case is not covered by
-that: on **YugabyteDB**, a `create(type="table")` that fails while inserting,
-for a collision or for a bad value, leaves the new table behind, empty, and the
-refusal does not say so. Check `directory`; if the table is there, `drop` it
-before creating it again.
+done; this server never resends a write by itself.
+
+A `create(type="table")` that fails while inserting can leave the new table
+behind: on SQLite, YugabyteDB and CockroachDB the table is made before the
+insert fails and is not taken away with it. The refusal then says so, with the
+rows the table holds, and ends with the `drop` call that clears it; send that,
+then the `create` again. This server never drops it by itself, because another session
+may have written rows into it in the meantime.
 
 On **SQL Server**, text a file brought in is stored as `NVARCHAR`, so any
 character survives. Under the server's default collation `ORDER BY` on such a

@@ -2899,6 +2899,44 @@ write would raise, which is precisely the case `_run_again_once` deliberately de
 > a design decision and is [#147](https://github.com/ChrisGVE/localdata-mcp/issues/147). Whether
 > CockroachDB's wait should be bounded is a timeout, and is
 > [#148](https://github.com/ChrisGVE/localdata-mcp/issues/148).
+>
+> **Amended 2026-11-05 — the left-behind table is reported, and it is not a YugabyteDB case
+> ([#147](https://github.com/ChrisGVE/localdata-mcp/issues/147)).** The same trigger, a CSV whose row
+> holds `18446744073709551615` (pandas reads it as `uint64`, no signed 64-bit column holds it), sent
+> through `create(type='table')` with no other session, then the table read back on a connection of
+> the test's own:
+>
+> | Engine | Table after the failed create |
+> |---|---|
+> | SQLite 3.47.1 (pysqlite, SQLAlchemy 2.1.6), a `.sqlite` file and a file-built datasource, bad value on row 3 or row 5001 | present, 0 rows |
+> | YugabyteDB 2.25.2.0-b359, row 5001 | present, 0 rows |
+> | CockroachDB v26.3.4, row 5001 | present, 0 rows |
+> | DuckDB, `.duckdb` file, row 5001 | absent |
+>
+> So the premise `insert_source` states — one transaction, and a failed insert takes the `CREATE
+> TABLE` with it — holds on DuckDB and fails on three engines, one of them Major. On SQLite the
+> cause is the driver, not the engine: pysqlite opens a transaction only before DML, so the `CREATE`
+> runs and commits on its own. YugabyteDB's second trigger, a session adding a column to the new
+> table as soon as it appears, also left it (40001, `schema version mismatch`).
+>
+> Decided (option 1 of #147): report it, never drop it. After a failed `create`, `Slots._left_behind`
+> asks the database on a fresh connection whether the table is there — `create` refused before
+> starting if it was, so a table found now is one this call made — and the refusal adds
+> *"The failed create left `<nickname>.<table>` behind, holding N rows: drop it with
+> drop(nickname=…, type='table', name=…) before creating it again."* `drop` then `create` works
+> (measured on SQLite). No compensating drop, because another session can write into the table while
+> it fills. The read-back costs one catalogue lookup and, where the table is there, one `COUNT(*)`, on
+> the failure path only. Measured on YugabyteDB with the altering session still running: the
+> lookup found the table and the `COUNT(*)` was itself refused with `40001`, so the count is asked
+> apart from the existence and the table is named either way (*"holding rows that could not be
+> counted just now"*). A lookup that fails says the table could not be checked and names
+> `directory`. `tests/test_create_left_behind.py` pins SQLite and DuckDB offline and both YugabyteDB
+> triggers and the CockroachDB one live.
+>
+> **Still open: `rows` on a successful create is a read-back.** `insert_source` reports
+> `row_count=self._count(entry, table)`, a `COUNT(*)` on the read engine after the commit, so the
+> 50 462 above is that count including the other session's 462 rows, not what the call inserted.
+> Left as it is, pending a decision.
 
 ## §16 — Trino, the backend that owns no data (2026-07-29)
 
