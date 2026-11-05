@@ -279,6 +279,13 @@ collided with this one* (SQLSTATE 40001) changed nothing, and the refusal says
 what is still as it was. Send the same call again once the other session is
 done; this server never resends a write by itself.
 
+On **CockroachDB** a `create`, `update` or `drop` answers within 30 seconds. A
+schema change there waits for every other session's open transaction on the
+table, so a call held up that long is cut off, and the refusal says what is
+already in place. A rename or a drop held up this way is already made: do not
+send it again. An index is still being built: do not send the `create` again
+either; it becomes usable by itself, and `directory` lists it.
+
 A `create(type="table")` that fails while inserting can leave the new table
 behind: on SQLite, YugabyteDB and CockroachDB the table is made before the
 insert fails and is not taken away with it. The refusal then says so, with the

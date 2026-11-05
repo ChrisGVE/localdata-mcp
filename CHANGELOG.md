@@ -943,15 +943,38 @@ And forty-five found in this release's own code before it shipped:
   answered "already indexed on salary, by crdb_internal_index_3_name_placeholder"
   rather than naming the index being built. The placeholder is now left out;
   the index being built is still listed.
+- **On CockroachDB a write answers within 30 seconds, and says what it left**
+  ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)). A schema
+  change there waits, inside the statement, until every other session's open
+  transaction on the table has ended; a plain `SELECT` left open is enough.
+  `create(type="index")`, `update` and `drop` used to answer only once that
+  transaction ended, and since every call runs under the server's one lock, no
+  other call on any datasource answered in the meantime. Statements on the
+  write engine now carry a 30 second `statement_timeout`, and a write cut off
+  by it says what it waited on, what is in place, and what to do next.
+  Measured on CockroachDB 26.3: the rename and either drop are already made
+  when the bound fires, so the answer says so and not to send it again. An
+  index is not usable yet: CockroachDB keeps building it after the call, a
+  second `create` is refused while it exists, and it is usable once the other
+  transaction has ended. `directory` shows each of these.
 
 ### Known limitations
 
-- **On CockroachDB, `create(type="index")`, `update` and `drop` wait for as long
-  as another session holds an open transaction on the table, and every other
-  call waits with them** ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)).
-  Measured on CockroachDB 26.3: the change is made, and the answer, `ok: true`,
-  arrives when the other transaction ends. Until then the server answers
-  nothing, on any datasource.
+- **On CockroachDB, a write held up by another session's open transaction
+  holds every other call for up to 30 seconds**
+  ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)). The bound
+  cuts the wait off, but the server's one lock is held while it runs; letting
+  other datasources answer meanwhile is
+  [#150](https://github.com/ChrisGVE/localdata-mcp/issues/150). A `query` on a
+  table another session has written to and not committed is not bounded, and
+  waits for that transaction as before.
+- **On CockroachDB, `create(type="index")` over a large table answers at 30
+  seconds even with no other session connected**
+  ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)). The bound
+  covers the whole statement, and an index over 2,000,000 rows took 53 seconds
+  to build. The answer is the same as for a wait: the index is still being
+  built, `directory` lists it meanwhile, and it is usable once the build
+  completes (measured: 132 seconds after the call, by itself).
 
 - **On Firebird, `query` refuses a `SELECT` carrying `FOR UPDATE`**
   ([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)). Measured on

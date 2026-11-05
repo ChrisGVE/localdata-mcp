@@ -98,6 +98,7 @@ from sqlalchemy.pool import StaticPool
 
 __all__ = [
     "BACKENDS",
+    "COCKROACHDB_WRITE_BOUND_SECONDS",
     "Backend",
     "ClickHouseBackend",
     "CockroachDBBackend",
@@ -334,6 +335,7 @@ class Backend:
             refusal=refusal,
         )
         self.read_posture(engines.read, refusal)
+        self.write_posture(engines.write)
         return engines
 
     def connect_args(self) -> Mapping[str, Any]:
@@ -400,6 +402,37 @@ class Backend:
         trace of it survives. That is the floor. A dialect may raise it, and
         SQLite does, refusing at statement preparation instead so that the
         statement never runs at all and the refusal can name what was attempted.
+        """
+        return None
+
+    def write_posture(self, engine: Engine) -> None:
+        """Set what this engine's connections need in order to write. Nothing here.
+
+        The write engine's counterpart of :meth:`read_posture`, and set the same
+        way: once, at connect time, never toggled around a call. A dialect
+        overrides it where a write left to the database's defaults does harm
+        this server has measured. CockroachDB is the one: a schema change there
+        waits, without limit, for other sessions' open transactions, so its
+        writes are bounded (:meth:`CockroachDBBackend.write_posture`).
+
+        Called by the generic :meth:`open`. A dialect that replaces :meth:`open`
+        calls it there too if it overrides this.
+        """
+        return None
+
+    def write_bound(self, exc: Exception) -> float | None:
+        """The bound :meth:`write_posture` set, in seconds, if ``exc`` is it firing.
+
+        ``None`` generically, and truthfully so: the generic posture sets no
+        bound, so no failure here is one. A timeout configured on the server by
+        somebody else, or a statement cancelled from outside, is not this
+        server's bound, and what it left behind was never measured, so it keeps
+        the words every other failure has. A dialect that sets a bound answers
+        here, by the driver's error code, never its prose, for the reason
+        :meth:`denies_write` gives.
+
+        :meth:`loader.Workspace` asks this on a failed write so that it can say
+        what the call waited on and what is already in place.
         """
         return None
 
@@ -1935,9 +1968,24 @@ def _one_statement(sql: str) -> bool:
 #: ``read_only_sql_transaction``. CockroachDB answers a write with it too.
 _PG_READ_ONLY = "25006"
 
+#: ``query_canceled``: PostgreSQL's code for a statement cancelled, by a
+#: timeout among other things. CockroachDB answers its ``statement_timeout``
+#: with it, measured (``query execution canceled due to statement timeout``).
+_PG_QUERY_CANCELED = "57014"
+
 #: The name CockroachDB gives the temporary index it builds an index through;
 #: see :meth:`CockroachDBBackend.internal_index`.
 _CRDB_BUILD_PLACEHOLDER = re.compile(r"crdb_internal_index_\d+_name_placeholder")
+
+#: How long a write on CockroachDB may take before it is cancelled: 30 seconds.
+#: Chris's value, decided on 2026-11-05 in issue #148, and not a tuning knob.
+#:
+#: Why there is a bound at all: a schema change on CockroachDB waits, inside the
+#: statement, until every other session's open transaction on the table has
+#: ended — a plain ``SELECT`` left open is enough — and every verb runs under
+#: the server's one lock, so while it waited no other call answered, on any
+#: datasource. Releasing that lock is #150, and is not this.
+COCKROACHDB_WRITE_BOUND_SECONDS = 30
 
 #: PostgreSQL's code for a statement it cannot parse, ``syntax_error``.
 _PG_SYNTAX_ERROR = "42601"
@@ -2880,6 +2928,36 @@ class CockroachDBBackend(PostgreSQLBackend):
 
     name: str = "cockroachdb"
 
+    def write_posture(self, engine: Engine) -> None:
+        """Bound every statement the write engine sends (#148).
+
+        By ``statement_timeout``, because it is the one CockroachDB honours for
+        this wait. Measured on v26.3.4 with another session holding a ``SELECT``
+        or an uncommitted ``UPDATE`` open on the table (docs/CONSTRAINTS.md §15,
+        amendment of 2026-11-05): ``lock_timeout`` never fired, and 8 of 8
+        renames, drops and index builds waited until the other transaction
+        ended. CockroachDB is not waiting on a lock here: it is waiting for the
+        old version of the table's descriptor to drain from other sessions'
+        leases. ``statement_timeout`` fired 8 of 8, inside the DDL, with
+        SQLSTATE 57014.
+
+        On the write engine only: the decision bounds writes. Set once, at
+        connect time, as :meth:`PostgreSQLBackend.read_posture` sets the
+        reader's posture, and the transaction psycopg opens around the ``SET``
+        is ended so the pooled connection is idle when the server's own begins.
+        """
+
+        @event.listens_for(engine, "connect")
+        def _bounded(dbapi_conn, _record):  # noqa: ANN001 - SQLAlchemy's signature
+            cursor = dbapi_conn.cursor()
+            try:
+                cursor.execute(
+                    f"SET statement_timeout = '{COCKROACHDB_WRITE_BOUND_SECONDS}s'"
+                )
+            finally:
+                cursor.close()
+            dbapi_conn.commit()
+
     def internal_index(self, name: str) -> bool:
         """The placeholder CockroachDB keeps beside an index while it builds it.
 
@@ -2895,6 +2973,20 @@ class CockroachDBBackend(PostgreSQLBackend):
         ``crdb_internal_…`` is still theirs.
         """
         return _CRDB_BUILD_PLACEHOLDER.fullmatch(name) is not None
+
+    def write_bound(self, exc: Exception) -> float | None:
+        """:data:`COCKROACHDB_WRITE_BOUND_SECONDS` where ``exc`` is a 57014.
+
+        Taken as this server's bound because the write engine sets one and
+        nothing else here cancels its statements.
+        """
+        origin = getattr(exc, "orig", exc)
+        if any(
+            getattr(origin, attribute, None) == _PG_QUERY_CANCELED
+            for attribute in ("sqlstate", "pgcode")
+        ):
+            return COCKROACHDB_WRITE_BOUND_SECONDS
+        return None
 
     def optional_aggregates(self) -> Mapping[str, Any]:
         """The median over the column cast to a double, and ``stddev_samp``.

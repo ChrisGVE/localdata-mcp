@@ -2953,6 +2953,53 @@ write would raise, which is precisely the case `_run_again_once` deliberately de
 > lets a backend name such an index, and `Workspace.indexes` leaves it out; CockroachDB names only
 > that exact shape. `tests/test_cockroachdb_index_placeholder.py` pins it offline and, live, reads
 > `directory` and sends `create` again while another session's build is held up.
+>
+> **Amended 2026-11-05 — CockroachDB's DDL wait is bounded at 30 s, and what a cut-off write left
+> ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)).** Decided by Chris: bound writes
+> on CockroachDB at 30 s. Measured first, on CockroachDB v26.3.4 single node, through a SQLAlchemy
+> 2.1.6 `cockroachdb+psycopg` engine sending each DDL as the server does (`BEGIN`, the statement,
+> `COMMIT`), with the session setting applied on connect. Another session held a transaction open
+> on the table, either a `SELECT count(*)` or an uncommitted `UPDATE` of one row, and ended it by
+> itself after 12 s. The bound was 3 s for the comparison; the state was read on a fresh
+> connection the moment the call returned, and again 3 s after the other session ended.
+>
+> | Setting | DDL | Holder | Returned after | State at that moment | After the holder ended |
+> |---|---|---|---|---|---|
+> | `lock_timeout` | rename, drop table, create index, drop index | `SELECT` and `UPDATE` | 11.85–13.50 s, `ok`, 8 of 8 | applied | applied |
+> | `statement_timeout` | rename | both | 3.02 s, 57014, 2 of 2 | renamed | renamed |
+> | `statement_timeout` | drop table | both | 3.02 s, 57014, 2 of 2 | gone | gone |
+> | `statement_timeout` | drop index | both | 3.02 s, 57014, 2 of 2 | gone | gone |
+> | `statement_timeout` | create index | both | 3.02 s, 57014, 2 of 2 | not in `pg_indexes` | built |
+>
+> So `lock_timeout` is not honoured for this wait: CockroachDB is not waiting on a lock but for the
+> old descriptor version to drain from other sessions' leases. `statement_timeout` fires inside the
+> DDL, with SQLSTATE 57014 (`query execution canceled due to statement timeout`). With
+> `autocommit_before_ddl` on, the rename and both drops are already committed when it fires; the
+> index is not usable yet, its build continuing as a job (`SHOW JOBS`: `running`, then `succeeded`).
+> While that job ran, the same `CREATE INDEX` sent again was refused at once with 42P07 (`index
+> with name … already exists`), and a column read on the bounded engine answered in 0.04 s, so
+> catalog reads do not wait. Unbounded, with the reader never ending, a rename returned by itself
+> after 382.8 s.
+>
+> Two further measurements decide the words. With no other session at all, a `CREATE INDEX` over
+> 2,000,000 rows took 53.12 s unbounded, so the bound also cuts off a long build; cut off at 30 s,
+> the build carried on and the index was public 132 s after the call began. And no session setting
+> bounds the lease wait alone: `SHOW ALL` lists `lock_timeout`, `statement_timeout`,
+> `transaction_timeout`, `deadlock_timeout` and `idle_*` timeouts, and nothing for leases.
+>
+> So the write engine carries `statement_timeout = '30s'` (`CockroachDBBackend.write_posture`,
+> `COCKROACHDB_WRITE_BOUND_SECONDS`); the read engine is not bounded. A 57014 on that engine is
+> answered per verb (`loader._bound_fired`): it could not finish within 30 seconds; what it was
+> waiting on (another session's open transaction, or for an index also the size of the table);
+> what is in place (the rename made and the new name, the table or the index gone, the index still
+> being built and refused if sent again); and the `directory` call that shows it. The driver's text
+> follows. A 57014 from any backend that sets no bound keeps the words it had. Live through the MCP,
+> with another session's `SELECT` left open, each of the four verbs answered with that refusal and
+> the state it named, each whole test taking 30.72–33.14 s, set-up included; `directory` sent from a
+> second thread during the wait answered once the bound had fired
+> (`tests/test_cockroachdb_write_bound.py`). The server's
+> lock is still held for those 30 s; releasing it around the round-trip is
+> [#150](https://github.com/ChrisGVE/localdata-mcp/issues/150), level 1.
 
 ## §16 — Trino, the backend that owns no data (2026-07-29)
 

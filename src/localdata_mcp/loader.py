@@ -602,6 +602,38 @@ def _write_refused(doing: str, exc: BaseException, unchanged: str) -> str:
     )
 
 
+def _bound_fired(
+    entry: Tagged, doing: str, exc: BaseException, in_place: str
+) -> str | None:
+    """The refusal for a write cut off by the backend's own bound, or ``None``.
+
+    ``None`` unless :meth:`~localdata_mcp.dialects.Backend.write_bound` says
+    ``exc`` is the bound this server set on the write engine, which only
+    CockroachDB does (issue #148). There a schema change waits, inside the
+    statement, until every other session's open transaction on the table has
+    ended, and the bound cuts that wait off.
+
+    ``in_place`` says what the call was waiting on, what the database holds
+    at that moment, and what to do next. It is written per verb from what was
+    measured on CockroachDB v26.3.4, read on a fresh connection the moment the
+    bound fired (``docs/CONSTRAINTS.md`` §15, amendment of 2026-11-05): a
+    rename, a table drop and an index drop were already made, 6 of 6, and an
+    index was still being built, 2 of 2. A backend that sets a bound of its
+    own has to be measured the same way before these words are true of it.
+
+    The driver's text follows, as in :func:`_write_refused`, so nothing it
+    said is lost.
+    """
+    bound = entry.backend.write_bound(exc)
+    if bound is None:
+        return None
+    return (
+        f"Could not {doing} within {bound:g} seconds, the limit this server "
+        f"sets on a write to this database. {in_place} "
+        f"The database said: {failure_text(exc)}"
+    )
+
+
 def _run_again_once(read: Callable[[], _T]) -> _T:
     """Run a catalog read, once more if the database asked for exactly that.
 
@@ -1912,6 +1944,20 @@ class Workspace:
             with entry.engines.write.begin() as conn:
                 entry.backend.rename_table(conn, table, to)
         except SQLAlchemyError as exc:
+            bounded = _bound_fired(
+                entry,
+                f"finish renaming {tag}.{table}",
+                exc,
+                f"It was still waiting for another session's open transaction "
+                f"on the table to end. The rename is already made: "
+                f"{tag}.{table} is now {tag}.{to}. Do not send it again; "
+                f"directory(nickname='{tag}') lists the table under its new name.",
+            )
+            if bounded is not None:
+                # In place, so a description cached under the old name would
+                # describe a table that is no longer there.
+                self._tables.pop(f"{tag}.{table}", None)
+                raise LoadError(bounded) from exc
             raise LoadError(
                 _write_refused(
                     f"rename {tag}.{table}",
@@ -1934,6 +1980,18 @@ class Workspace:
             with entry.engines.write.begin() as conn:
                 target.drop(conn)
         except SQLAlchemyError as exc:
+            bounded = _bound_fired(
+                entry,
+                f"finish dropping {tag}.{table}",
+                exc,
+                f"It was still waiting for another session's open transaction "
+                f"on the table to end. The drop is already made: {tag}.{table} "
+                f"is gone. Do not send it again; directory(nickname='{tag}') no "
+                f"longer lists it.",
+            )
+            if bounded is not None:
+                self._tables.pop(f"{tag}.{table}", None)
+                raise LoadError(bounded) from exc
             raise LoadError(
                 _write_refused(
                     f"drop {tag}.{table}", exc, f"{tag}.{table} is still there"
@@ -2020,6 +2078,22 @@ class Workspace:
             with entry.engines.write.begin() as conn:
                 index.create(conn)
         except _driver_failures(entry) as exc:
+            bounded = _bound_fired(
+                entry,
+                f"finish creating {name} on {tag}.{table}",
+                exc,
+                f"It was still waiting, either for another session's open "
+                f"transaction on the table to end or because a large table takes "
+                f"longer than that to index (2,000,000 rows took 53 seconds with "
+                f"nobody else connected). The index is not usable yet: "
+                f"CockroachDB keeps building {name} after this call, and it is "
+                f"usable once any such transaction has ended and the build "
+                f"completes. Do not send this create again: it is refused while "
+                f"{name} exists. directory(nickname='{tag}', table='{table}') "
+                f"lists it.",
+            )
+            if bounded is not None:
+                raise LoadError(bounded) from exc
             raise LoadError(
                 _write_refused(
                     f"create {name} on {tag}.{table}",
@@ -2051,6 +2125,17 @@ class Workspace:
             with entry.engines.write.begin() as conn:
                 index.drop(conn)
         except _driver_failures(entry) as exc:
+            bounded = _bound_fired(
+                entry,
+                f"finish dropping {tag}.{name}",
+                exc,
+                f"It was still waiting for another session's open transaction "
+                f"on the table to end. The drop is already made: {tag}.{name} "
+                f"is gone. Do not send it again; directory(nickname='{tag}', "
+                f"table='{existing.table}') no longer lists it.",
+            )
+            if bounded is not None:
+                raise LoadError(bounded) from exc
             raise LoadError(
                 _write_refused(
                     f"drop {tag}.{name}", exc, f"{tag}.{name} is still there"
