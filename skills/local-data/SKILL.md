@@ -118,7 +118,11 @@ The sheet is addressed by the snake_cased name it arrived under, which the
 writes into has to exist already.
 
 The response describes the table it read in, so — as with `attach` — there is
-nothing for a `directory` call straight afterwards to add.
+nothing for a `directory` call straight afterwards to add. Its `rows` is how many
+rows the `create` sent. On a database other sessions also write to, one of them
+can put rows into the new table while it fills; the answer then carries a
+warning giving both numbers and the `query` that counts what the table holds
+now — report the count that matches what the user asked about.
 
 If the join is slow because both sides are large, index the column you are
 joining on first. Nothing guesses this for you, because which query is coming is

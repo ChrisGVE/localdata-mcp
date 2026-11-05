@@ -1176,6 +1176,33 @@ def _wide_integer_note(column: ColumnMeasurement) -> str:
     )
 
 
+def _sent_and_held_note(nickname: str, table: str, sent: int, held: int) -> str:
+    """Say that a create's table holds a different number of rows than it sent.
+
+    ``rows`` in a create's answer is what the call sent; this is said beside it
+    when the read-back disagrees. More is measured: on YugabyteDB the new table
+    is visible to other sessions before the create commits, and one inserted
+    462 rows into a 50 000-row create (#147). On SQLite another connection can
+    write into it between the ``CREATE TABLE`` and the first insert. Fewer has
+    no measured cause in this server — no backend here was found dropping rows
+    it accepted — so it is stated without one: another session deleting rows
+    before the read-back produces it, and that is all this sentence assumes.
+    """
+    if held > sent:
+        difference = (
+            f"{held}: another session wrote {held - sent} rows into it after "
+            f"this create made it"
+        )
+    else:
+        difference = f"{held}, {sent - held} fewer than it sent"
+    return (
+        f"This create sent {sent} rows into {table}, and the table now holds "
+        f"{difference}. rows is what this create sent; "
+        f"query(nickname='{nickname}', sql='SELECT COUNT(*) FROM {table}') "
+        f"counts what the table holds now."
+    )
+
+
 def measure_frame(frame: pd.DataFrame) -> tuple[ColumnMeasurement, ...]:
     """Measure a frame already in memory, a whole column at a time.
 
@@ -2380,10 +2407,14 @@ class Workspace:
                 target.drop(conn, checkfirst=True)
                 target.create(conn)
                 if together:
-                    self._fill(entry, conn, target, chunks, from_file, table, keyed)
+                    sent = self._fill(
+                        entry, conn, target, chunks, from_file, table, keyed
+                    )
             if not together:
                 with entry.engines.write.begin() as conn:
-                    self._fill(entry, conn, target, chunks, from_file, table, keyed)
+                    sent = self._fill(
+                        entry, conn, target, chunks, from_file, table, keyed
+                    )
         except Exception as exc:
             unrepresentable = _unrepresentable(exc)
             if unrepresentable is not None:
@@ -2398,20 +2429,39 @@ class Workspace:
                 ) from exc
             raise
 
+        # Read back after the commit, and kept for two reasons. It is what the
+        # table holds, which is what describing the table later has to say. And
+        # it is the only check that every row sent landed: the database is
+        # asked, rather than this call's own tally believed.
+        held = self._count(entry, table)
         info = TableInfo(
             # Under the name the database gave it, which is not always the one
             # asked for — see landed_as. Reporting the requested name would put
             # a table in this payload that is absent from the listing in the
             # next one, on the backend that folds.
             name=self.landed_as(tag, table),
-            row_count=self._count(entry, table),
+            row_count=held,
             columns=self._described_from(entry, table, measured, keyed),
             source=source,
             tag=tag,
             notes=notes,
         )
+        # The table as it is, for every later description of it.
         self._tables[info.qualified] = info
-        return info
+        # The answer to *this* call reports the rows it sent. On a backend whose
+        # new table is visible to other sessions before the create commits,
+        # the read-back also counts their rows: a 50 000-row create on
+        # YugabyteDB answered 50462 when another session inserted 462 while it
+        # filled (#147). When the two differ the answer says both. The note
+        # stays off the cached description because it is about this call, not
+        # about the table, and repeating it from `directory` would be wrong.
+        if held == sent:
+            return info
+        return replace(
+            info,
+            row_count=sent,
+            notes=(*notes, _sent_and_held_note(tag, info.name, sent, held)),
+        )
 
     def _fill(
         self,
@@ -2422,8 +2472,10 @@ class Workspace:
         columns: list[str],
         table: str,
         keyed: bool = False,
-    ) -> None:
+    ) -> int:
         """Put the source's rows into a table that already exists, then settle it.
+
+        Returns how many rows it sent: the number a create reports as ``rows``.
 
         Extracted from :meth:`insert_source` when Firebird made the transaction
         boundary a per-backend question (#53), and extracted rather than
@@ -2457,6 +2509,7 @@ class Workspace:
         # purpose: a write and the visibility of that write must not be separable
         # by a failure between them.
         entry.backend.settle(conn, table)
+        return rows_so_far
 
     @staticmethod
     def _blocks(

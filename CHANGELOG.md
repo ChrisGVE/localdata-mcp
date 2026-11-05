@@ -934,6 +934,14 @@ And forty-five found in this release's own code before it shipped:
   not dropped for you: another session can write into it while it is being
   filled (measured on YugabyteDB), so a drop could destroy rows that are not
   this server's.
+- **`rows` in a successful `create(type="table")` answer is the number of rows
+  the call sent.** It used to be a `COUNT(*)` read after the commit, so it
+  counted other sessions' rows too: on YugabyteDB the new table is visible to
+  other sessions while it fills, one inserted 462 rows, and a 50,000-row create
+  answered `rows: 50462`. The table is still counted afterwards, because that is
+  the only check that every row sent landed. Where the two differ, the answer
+  carries a warning giving both numbers and the `query` that counts what the
+  table holds now. `directory` still reports the table's own count.
 - **`directory` no longer lists the placeholder CockroachDB keeps beside an
   index it is still building** ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)).
   While an index is being built, CockroachDB 26.3 builds it through a temporary

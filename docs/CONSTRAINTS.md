@@ -3000,6 +3000,28 @@ write would raise, which is precisely the case `_run_again_once` deliberately de
 > (`tests/test_cockroachdb_write_bound.py`). The server's
 > lock is still held for those 30 s; releasing it around the round-trip is
 > [#150](https://github.com/ChrisGVE/localdata-mcp/issues/150), level 1.
+>
+> **Amended 2026-11-05 — `rows` on a successful create is what the call sent; the read-back stays
+> as a check.** This closes the *still open* item above. Decided by the director (option B):
+> `insert_source` reports the rows `_fill` sent, and still counts the table after the commit,
+> because that count is the only check that every row sent landed. The count is what the table's
+> description keeps, so `directory` reports it. Where the two differ, the create's answer carries a
+> warning giving both numbers and the `query` that counts the table now. Measured:
+>
+> | Where | Other session | Sent | Held at the answer | Held after the other session stopped |
+> |---|---|---|---|---|
+> | SQLite 3.47.1 file, offline: a second connection inserts 7 rows between the `CREATE TABLE` (pysqlite commits it on its own) and the first insert | 7 rows | 1,000 | 1,007 | 1,007 |
+> | YugabyteDB 2.25.2.0-b359, live: a second session inserting one row at a time in autocommit from the moment the table exists | 35,900 rows committed | 50,000 | 85,858 | 85,900 |
+>
+> On YugabyteDB the other session's 42 rows after the read-back are the difference between the last
+> two columns. So the issue's 462 was not a ceiling: how many rows land depends only on how fast the
+> other session writes. **Fewer was not found.** No backend here was seen dropping a row it
+> accepted: CrateDB's refresh timer was the one way a count fell short, and `settle` already closes it
+> (§19). The only way to produce fewer, offline, is another session deleting rows before the
+> read-back. So the warning for fewer gives the two numbers and the difference, and no cause. The
+> wording for more says another session wrote into the table *after this create made it*, rather
+> than *while it filled*, because the write can also fall between the commit and the read-back.
+> `tests/test_create_rows_sent.py` pins both offline cases, the silent equal case, and the live one.
 
 ## §16 — Trino, the backend that owns no data (2026-07-29)
 

@@ -1037,7 +1037,10 @@ def create(
     up against one already loaded: ``save`` writes one database rather than a
     join, so landing both sides in the same slot is what makes the lookup
     outlive the session. The answer describes the table it read, so ``directory``
-    straight afterwards tells you nothing new.
+    straight afterwards tells you nothing new. Its ``rows`` is how many rows this
+    call sent. The table is counted afterwards too, and where it holds a
+    different number — another session wrote into it while it filled — a
+    warning gives both and the query that counts it now.
 
     It makes **one** table, so a source holding more than one is refused, naming
     them — a two-sheet workbook that ``attach`` opens happily as a database of

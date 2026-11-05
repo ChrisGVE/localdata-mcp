@@ -518,9 +518,10 @@ class Backend:
         before it is visible. CrateDB writes into a Lucene index refreshed on a
         timer, so a table counted immediately after an insert answers **0** and
         answers correctly a second later. Left alone, that turns every write into
-        a race: ``insert_source`` reports the row count it read, and the number it
-        would report is whatever the timer happened to have done — which is not a
-        flaky test so much as a payload that is wrong for a reason the caller
+        a race: ``insert_source`` reads the count back to check that every row it
+        sent landed, and to describe the table afterwards, and the number it
+        would read is whatever the timer happened to have done — which is not a
+        flaky test so much as an answer that is wrong for a reason the caller
         cannot see.
 
         Waiting it out was the alternative and is worse: it trades a wrong answer
@@ -4761,10 +4762,10 @@ class CrateDBBackend(Backend):
         The default refresh interval is a second, which is *fast* and entirely
         beside the point: the question is not how long the wrong answer lasts
         but whether this server ever gives one. ``insert_source`` counts the rows
-        it just wrote and puts that number in the payload, so without this the
-        number reported is whatever the timer had done by then — 0 on a fast
-        machine, correct on a slow one, and no way for the caller to tell which
-        they were handed.
+        it just wrote, checks that number against the rows it sent and keeps it as
+        the table's description, so without this the count is whatever the timer
+        had done by then — 0 on a fast machine, correct on a slow one — and the
+        create would warn that rows it sent were missing when they were not.
 
         Run on the same connection as the insert, inside the same block, so a
         write and the visibility of that write cannot be separated by a failure.
