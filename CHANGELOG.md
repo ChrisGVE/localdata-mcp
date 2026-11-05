@@ -434,7 +434,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And forty-four found in this release's own code before it shipped:
+And forty-five found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -826,6 +826,21 @@ And forty-four found in this release's own code before it shipped:
   Firebird refuses `WITH LOCK`; all are now explained this way. MySQL's
   `FOR SHARE` and `LOCK IN SHARE MODE`, Oracle's `FOR UPDATE` and SQL Server's
   lock hints are not refused, and run.
+- **A write the database refused for a collision with another session said
+  nothing about what had happened** ([#47](https://github.com/ChrisGVE/localdata-mcp/issues/47)).
+  On YugabyteDB, a second session changing the same table made `drop` and
+  `create(type='index')` fail with SQLSTATE 40001, and the answer was the
+  driver's text alone: an exception class, a hybrid timestamp and a key dump.
+  The refusal from `create(type='index')`, `update` and `drop` now says that
+  another session's transaction collided with this one, that nothing was
+  changed (naming what is still as it was), and that the same call goes
+  through when sent again once the other session is done. The driver's text
+  follows. Measured: nothing had been applied on any refusal, and every
+  re-send succeeded. The server still sends a write once and never resends
+  it by itself. Reading a table's columns before an index is built is a
+  catalog read and is now run again once on 40001, like every catalog read;
+  a 40001 that persists is reported as a failed read, where it used to be
+  reported as "No such table" for a table that exists.
 - **On MySQL and MariaDB, `query` read files on the database server through
   `LOAD_FILE()`** ([#36](https://github.com/ChrisGVE/localdata-mcp/issues/36)).
   It is a read, so the read-only session let it run, and as a built-in it is in
@@ -904,6 +919,22 @@ And forty-four found in this release's own code before it shipped:
   removes only that, before it releases the lock.
 
 ### Known limitations
+
+- **On YugabyteDB, a `create(type="table")` that fails while inserting leaves
+  the new table behind, empty, and the refusal does not say so**
+  ([#147](https://github.com/ChrisGVE/localdata-mcp/issues/147)). Measured on
+  YugabyteDB 2.25: the `CREATE TABLE` is not undone when the transaction
+  aborts, whether the insert failed on a collision with another session
+  (SQLSTATE 40001) or on a value no 64-bit column holds. Sending the same call
+  again is then refused with "already exists, holding 0 rows". `drop` the table,
+  then create it again.
+
+- **On CockroachDB, `create(type="index")`, `update` and `drop` wait for as long
+  as another session holds an open transaction on the table, and every other
+  call waits with them** ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)).
+  Measured on CockroachDB 26.3: the change is made, and the answer, `ok: true`,
+  arrives when the other transaction ends. Until then the server answers
+  nothing, on any datasource.
 
 - **On Firebird, `SELECT … FOR UPDATE` answers `ok` with no rows**, whatever the
   table holds ([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)).

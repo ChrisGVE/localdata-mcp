@@ -558,6 +558,45 @@ def _asks_to_be_retried(exc: BaseException) -> bool:
     )
 
 
+def _write_refused(doing: str, exc: BaseException, unchanged: str) -> str:
+    """The refusal for a write the database would not apply, in this server's words.
+
+    ``doing`` completes "Could not …" and ``unchanged`` says what is still as it
+    was. Every other failure keeps the words it always had — ``Could not …``
+    and the driver's text — because only for 40001 does this server know both
+    what happened and what to do next.
+
+    **40001 on a write is explained, never resent** (issue #47). The code means
+    another session's transaction collided with this one and the database
+    aborted this one rather than apply both. Measured on YugabyteDB 2.25 with a
+    second connection changing the same table in a loop (``docs/CONSTRAINTS.md``
+    §15, amendment of 2026-11-05): a ``DROP TABLE`` and a ``CREATE INDEX`` were
+    each refused this way, the table was untouched every time, and the same
+    call sent again once the other session stopped went through. Each write
+    this covers is one statement in one transaction, so a refused one changed
+    nothing, and the refusal can say so.
+
+    The caller used to receive the driver's text alone — an exception class, a
+    hybrid timestamp, a key dump — with nothing on whether anything had changed
+    or what to do. The driver's text still follows, so nothing it said is lost.
+
+    Resending stays the caller's decision, for the reason §15.2 gives: whether a
+    write is safe to send again depends on what it was, and the caller is the
+    one who knows. What this adds is what the caller needs to make that call.
+    """
+    said = failure_text(exc)
+    if not _asks_to_be_retried(exc):
+        return f"Could not {doing}: {said}"
+    return (
+        f"Could not {doing}: another session's transaction collided with this "
+        f"one, and the database refused this change rather than apply both "
+        f"(SQLSTATE 40001, a serialization failure). Nothing was changed: "
+        f"{unchanged}. Send the same call again; it goes through once the other "
+        f"session's change has finished. This server does not resend a write by "
+        f"itself. The database said: {said}"
+    )
+
+
 def _run_again_once(read: Callable[[], _T]) -> _T:
     """Run a catalog read, once more if the database asked for exactly that.
 
@@ -590,6 +629,7 @@ def _run_again_once(read: Callable[[], _T]) -> _T:
     nothing for a backoff to help with. A *write* that fails this way is not
     retried here: whether it is safe to send again depends on what it was, and
     that is the caller's judgement rather than this server's to make.
+    :func:`_write_refused` is what tells the caller enough to make it.
     """
     try:
         return read()
@@ -1868,7 +1908,11 @@ class Workspace:
                 entry.backend.rename_table(conn, table, to)
         except SQLAlchemyError as exc:
             raise LoadError(
-                f"Could not rename {tag}.{table}: {failure_text(exc)}"
+                _write_refused(
+                    f"rename {tag}.{table}",
+                    exc,
+                    f"{tag}.{table} still has its old name",
+                )
             ) from exc
 
         landed = self.landed_as(tag, to)
@@ -1886,7 +1930,9 @@ class Workspace:
                 target.drop(conn)
         except SQLAlchemyError as exc:
             raise LoadError(
-                f"Could not drop {tag}.{table}: {failure_text(exc)}"
+                _write_refused(
+                    f"drop {tag}.{table}", exc, f"{tag}.{table} is still there"
+                )
             ) from exc
         self._tables.pop(f"{tag}.{table}", None)
 
@@ -1964,7 +2010,11 @@ class Workspace:
                 index.create(conn)
         except _driver_failures(entry) as exc:
             raise LoadError(
-                f"Could not create {name} on {tag}.{table}: {failure_text(exc)}"
+                _write_refused(
+                    f"create {name} on {tag}.{table}",
+                    exc,
+                    f"{tag}.{table} has no new index",
+                )
             ) from exc
         return IndexInfo(name=name, table=table, columns=tuple(columns), notes=notes)
 
@@ -1991,16 +2041,30 @@ class Workspace:
                 index.drop(conn)
         except _driver_failures(entry) as exc:
             raise LoadError(
-                f"Could not drop {tag}.{name}: {failure_text(exc)}"
+                _write_refused(
+                    f"drop {tag}.{name}", exc, f"{tag}.{name} is still there"
+                )
             ) from exc
         return existing
 
     @staticmethod
     def _reflect(entry: Tagged, tag: str, table: str) -> Table:
-        """The live schema of one table, or ``LoadError`` if there is none."""
+        """The live schema of one table, or ``LoadError`` if there is none.
+
+        A catalog read, so run again once if the database asks for exactly
+        that (:func:`_run_again_once`). A 40001 that survives the second read is
+        not a missing table and is not called one: measured on CockroachDB 26.3,
+        that answer told the caller a table it could see did not exist (issue
+        #47). Every other failure keeps the "No such table" it always had.
+        """
         try:
-            return _schema_of(entry, table)
+            return _run_again_once(lambda: _schema_of(entry, table))
         except SQLAlchemyError as exc:
+            if _asks_to_be_retried(exc):
+                raise LoadError(
+                    f"Could not read the columns of {tag}.{table}, so nothing "
+                    f"was changed: {failure_text(exc)}"
+                ) from exc
             raise LoadError(f"No such table: {tag}.{table}") from exc
 
     # -- loading -----------------------------------------------------------

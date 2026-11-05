@@ -2836,6 +2836,70 @@ here, exactly as §12.3 says of CockroachDB. The `40001` measured is the *catalo
 contention form — two transactions genuinely conflicting — is still unmeasured, and it is the one a
 write would raise, which is precisely the case `_run_again_once` deliberately declines to retry.
 
+> **Amended 2026-11-05 — the contention form, measured with one container
+> ([#47](https://github.com/ChrisGVE/localdata-mcp/issues/47)).** It needs no second node: a second
+> connection opened by the test (psycopg, not the server) is the concurrent writer. Measured on
+> CockroachDB 26.3 and YugabyteDB 2.25.2.0-b359, one container at a time, each verb sent through the
+> MCP, the state read back on a third connection.
+>
+> **CockroachDB never refused the server's write. It made it wait.** Other session holding an open
+> transaction on the table — an uncommitted `UPDATE`, the same at `PRIORITY HIGH`, a plain `SELECT`,
+> each also followed by a second statement while the server waited: `query`, `create(type='index')`,
+> `update` and `drop` each blocked until that transaction ended, then answered `ok: true` and the
+> change was in place. `create(type='table')` under a new name did not wait. Of 57 verb calls across
+> 11 such setups, 43 waited and none was refused with `40001`; when the two collided it was the *other* session that lost
+> (`relation … does not exist` after the rename and the drop). Timed directly, the wait is inside
+> the DDL statement, not at `COMMIT`: an `ALTER TABLE … RENAME` returned after 5.26 s, the moment the
+> reader committed, and the new name was already visible from a third connection while it waited.
+> CockroachDB 26.x runs DDL in an explicit transaction under `autocommit_before_ddl`, which commits
+> what came before it — the probe's own `ROLLBACK` after an `UPDATE` plus `ALTER` left the `UPDATE`
+> applied. The wait holds the server's one lock, so no other verb answers until it ends. No
+> automatic retry was seen: the server does not ask for one, and the engine did not surface one.
+>
+> **The commit path, on CockroachDB, with the engine's own injected `40001`.** The trigger was
+> forced, not provoked: `inject_retry_errors_on_commit_enabled` set on the server's write engine only
+> (set on the URL, it refuses `attach` itself). `update`, `drop`, `create(type='index')` and
+> `create(type='table')` each answered `ok: false` and nothing had been applied. With
+> `inject_retry_errors_enabled` (every statement in an explicit transaction, every time) the rename
+> had already been applied by its autocommitted DDL when the describe after it was refused, and the
+> answer said it had failed — the §15.1 shape, but only under an injection that never relents, so
+> one re-read cannot clear it. And `create(type='index')` said "No such table" of a table that was
+> there, because the column read before the build answered every failure that way.
+>
+> **YugabyteDB refused the server's write, and that is the case this amendment closes.** With the
+> other session running `COMMENT ON TABLE t` every 20 ms, `drop(type='table')` was refused 4 of 4
+> times (`create(type='index')` under the same loop built 5 of 5): `could not serialize access due to concurrent update … kConflict`, SQLSTATE `40001`. With
+> it running `ALTER TABLE t ADD COLUMN`, `create(type='index')` was refused 2 of 2: `schema version
+> mismatch … Catalog Version Mismatch: A DDL occurred while processing this query. Try again.` and
+> `Restart read required`, both `40001` (the drop under that loop went through). Every time the table and its indexes were exactly as before
+> the call, and the same call sent again once the other session stopped answered `ok: true` and was
+> applied. Open transactions alone (a held `UPDATE`, a held read) never made a YugabyteDB write wait
+> or fail; the other session took the `40001` instead.
+>
+> So the answer was truthful about *what happened* — `ok: false`, nothing applied — and said nothing
+> a caller could act on. `Workspace._write_refused` now words a `40001` on `rename`, `drop table`,
+> `create index` and `drop index`: another session's transaction collided with this one, nothing
+> was changed (naming what is still as it was), send the same call again once that session is done,
+> and then the driver's text. Each is one statement in one transaction, which is why "nothing was
+> changed" can be said of all four; it is the measured outcome for the two that were provoked, and
+> for all four under the commit-path injection. The write is still sent once (§15.2 stands). The
+> column read before an index is built is a catalog read and is now run again once on `40001`; a
+> `40001` that survives it is reported as a failed read, never as a missing table.
+> `tests/test_write_serialization.py` pins both offline, and drives the two YugabyteDB collisions
+> live, failing unless at least one attempt in five was actually refused.
+>
+> **Not truthful, and not fixed here: `create(type='table')` after a failed insert.** On YugabyteDB
+> the `CREATE TABLE` inside the transaction is not undone when the transaction aborts. With the other
+> session altering the new table as soon as it appeared, the insert was refused with `40001`; the
+> answer said "Could not insert rows", and the table was there with 0 rows, so the same call sent
+> again was refused with "already exists, holding 0 rows". The cause is not `40001`: a value no
+> 64-bit column holds, late in the file, leaves the same empty table. During a 50 000-row create the
+> table was visible to the other session, which inserted 462 rows into it before the create ended,
+> and the answer reported 50 462. Whether this server should drop what it created, or report it, is
+> a design decision and is [#147](https://github.com/ChrisGVE/localdata-mcp/issues/147). Whether
+> CockroachDB's wait should be bounded is a timeout, and is
+> [#148](https://github.com/ChrisGVE/localdata-mcp/issues/148).
+
 ## §16 — Trino, the backend that owns no data (2026-07-29)
 
 The fifth entry from the backend catalogue, and the first that is not a database. Trino is a *query
