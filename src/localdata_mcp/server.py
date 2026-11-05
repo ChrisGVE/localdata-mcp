@@ -92,7 +92,11 @@ mcp = FastMCP(
         "Without it the call is refused rather than guessed at, because a file "
         "called .csv is as likely to be separated by ';' or '|' or a tab, and "
         "reading it at the wrong one changes what the data is while the answer "
-        "looks perfectly ordinary. Handed to a format that has no separator — "
+        "looks perfectly ordinary. If you cannot see the file's first line, "
+        "attach at the likeliest separator and read the warnings: at the wrong "
+        "one the file loads as a single column, and a warning names the "
+        "separator its header contains — detach and attach again at that one. "
+        "Handed to a format that has no separator — "
         "a workbook, .parquet — it is refused by name on attach and create.\n\n"
         "**Each call names one datasource, and the SQL addresses tables inside it "
         "by their own names**: query(nickname='shop', sql='SELECT * FROM sales'), "
@@ -636,8 +640,13 @@ def attach(
             structure. There is no default and the extension supplies nothing:
             files called .csv are shipped separated by ';' or '|' or a tab as
             readily as by ',', and reading one at the wrong character changes
-            what the data is while the answer looks perfectly ordinary. Ask the
-            user or look at the file; do not guess on their behalf. It is
+            what the data is while the answer looks perfectly ordinary. Look at
+            the file's first line if you can. If you cannot, attach at the
+            likeliest character and read ``warnings``: read at the wrong one, a
+            file loads as a single column, and a warning quotes its header and
+            names the separator the header contains — ``detach`` and attach
+            again at that one. Ask the user only when the columns still do not
+            look like the data and no warning says why. It is
             exactly one character: an empty string or a longer one such as
             ``'||'`` is refused, and a tab is the tab character itself, not a
             backslash followed by ``t``.

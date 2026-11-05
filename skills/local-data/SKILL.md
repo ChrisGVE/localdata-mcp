@@ -530,13 +530,17 @@ without one is refused rather than guessed at:
 attach(database="/path/sales.csv", delimiter=";")
 ```
 
-Find out what it is instead of trying `,` first. A file written by a European
-tool is usually semicolon-separated whatever it is called, and declared wrongly
-it loads as **a single column whose name is the whole header line, sanitised** —
-`a;b;c` becomes `a_b_c` — with a warning quoting the header it read, so you can
-check it against the file. `ok: true` comes back and every number you compute
-from it is wrong, so this is one to notice rather than work around. If you
-cannot tell, ask the user or look at the first line of the file.
+If you can see the file's first line, read the separator off it. If you
+cannot — no shell, no file reader — attach at the likeliest one and check what
+comes back. A file written by a European tool is usually semicolon-separated
+whatever it is called. A wrong declaration costs one call and does not pass
+quietly: the file loads as **a single column whose name is the whole header
+line, sanitised** — `a;b;c` becomes `a_b_c` — and a warning quotes the header
+it read and names the separator that header contains. `detach` it and attach
+again at that one. What you must not do is carry on: `ok: true` comes back, and
+every number you compute from that one column is wrong. Ask the user only when
+the columns that come back still do not look like the data and no warning says
+why.
 
 It is **one character**. An empty string or a longer one such as `"||"` is
 refused, and a tab is the tab character itself (`"\t"` in JSON), not a
