@@ -261,6 +261,16 @@ selection is `-m endpoint -k <name>`, which `tests/endpoints.py`'s `selection()`
 derives from `TARGETS`. Exit status is the worst pytest exit status across the
 services run.
 
+**A run says what it did not cover.** An endpoint test skips when its database
+is not up, and a skip reads like a pass in pytest's closing line. So any pytest
+session that selects an endpoint test, the script's or a bare
+`pytest -m endpoint` on the host, ends with an `endpoint coverage` section: how
+many of the targets in `TARGETS` it reached, and why each of the others was not
+reached (no container, no driver, another missing precondition, a failed probe,
+or not selected). The script's own summary then names every target the whole
+invocation did not reach, with the command that runs it
+([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)).
+
 **One database at a time, machine-wide.** This machine is constrained, and a
 starved container fails the suite in ways that look exactly like broken code
 ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)). So every process

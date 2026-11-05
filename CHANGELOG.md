@@ -346,6 +346,18 @@ rebuild it.
   database up and `--dispose` removes it; `--seed` loads the standard assets
   into it through the new `scripts/seed_endpoint.py`, which uses the URL
   `tests/endpoints.py` builds and the server's own `attach` and `create`.
+- **An endpoint run names the targets it did not reach**
+  ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)). A skipped
+  endpoint test reads like a passing one, so a run against one container used to
+  end on a green line that said nothing about the rest of the catalogue. Any
+  pytest session that selects an endpoint test now ends with an
+  `endpoint coverage` section: how many of the 24 targets in `TARGETS` it
+  reached, and for each of the others whether there was no container, no driver,
+  another missing precondition, a failed probe, or no test that asked for it.
+  `scripts/endpoint-run.sh` collects what each service's session reached and
+  ends with the targets the whole invocation did not reach, each with the
+  command that would run it. The old closing line, "every one not listed
+  above", is gone.
 
 ### Removed
 
@@ -968,8 +980,8 @@ And forty-four found in this release's own code before it shipped:
   warns when it cut one
   ([#111](https://github.com/ChrisGVE/localdata-mcp/issues/111)).
 - **The backend catalogue is tested one database at a time.**
-  `scripts/endpoint-run.sh all` covers it in one invocation, but serially, and each
-  engine's line in its summary says nothing about the others
+  `scripts/endpoint-run.sh all` covers it in one invocation, but serially. A run
+  of fewer services says so: its summary names every target it did not reach
   ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46),
   [#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)).
 - **Db2 and OceanBase are eligible and unreachable** from a macOS host —

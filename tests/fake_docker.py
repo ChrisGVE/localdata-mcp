@@ -17,7 +17,8 @@ nothing else:
 file, in the repository, because that is how the script asks the harness
 (``tests/endpoints.py``) which services exist. ``run`` of pytest sleeps for
 ``FAKE_DOCKER_TEST_SECONDS`` and reports one pass: long enough for a second
-invocation to start while the first holds the lock.
+invocation to start while the first holds the lock. ``FAKE_DOCKER_PYTEST_OUTPUT``,
+when set, is printed before that pass, as a line of the session's own output.
 
 State lives in ``FAKE_DOCKER_STATE``, a directory, under a file lock, because
 two invocations of the script call this concurrently. Every call is appended to
@@ -111,6 +112,12 @@ def run(args: list[str]) -> int:
         ).returncode
     if "pytest" in command:
         time.sleep(float(os.environ.get("FAKE_DOCKER_TEST_SECONDS", "0")))
+        # What a test wants the session to have printed besides its result:
+        # tests/test_endpoint_coverage.py gives it the reached line of the
+        # endpoint coverage section, which the script collects.
+        extra = os.environ.get("FAKE_DOCKER_PYTEST_OUTPUT")
+        if extra:
+            print(extra)
         print("1 passed in 0.01s")
         return 0
     raise SystemExit(f"fake docker: unmodelled run {command}")

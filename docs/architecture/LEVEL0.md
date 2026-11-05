@@ -42,8 +42,8 @@ the suspension, and the backend can return from git history once the dialect is 
 Fifteen of the seventeen backends are reached through containers, and this machine runs
 them **one at a time**: `scripts/endpoint-run.sh all` brings each database up in turn, with
 its tests running in a container, and removes it before the next. A green line for one
-engine says nothing about another, so a run's coverage is the list of services it names
-(issues #46, #139).
+engine says nothing about another, so the run ends by naming every target of the catalogue
+(`TARGETS` in `tests/endpoints.py`) that it did not reach, and why (issues #46, #139).
 
 ## The premise
 

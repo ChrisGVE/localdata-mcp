@@ -62,6 +62,11 @@
 #          from state the kept run saved, so it removes exactly what that run
 #          added.
 #
+# The summary ends with every target of the catalogue (TARGETS in
+# tests/endpoints.py) that this invocation did not reach, read from the
+# "endpoint targets reached:" line each service's pytest session prints
+# (tests/conftest.py), each with the command that would run it (issue #46).
+#
 # Exit code: the worst pytest exit code across the services run; 1 for a
 # service that never became healthy or could not be seeded; 2 for a usage error.
 #
@@ -461,6 +466,8 @@ fi
 
 worst=0
 SUMMARY=()
+RAN=()     # services brought up, for the coverage report
+REACHED="" # each service's reached targets, comma separated (issue #46)
 
 remaining=${#SERVICES[@]}
 for service in "${SERVICES[@]}"; do
@@ -493,6 +500,7 @@ for service in "${SERVICES[@]}"; do
 	echo "  building..."
 	owned_build compose build -q --with-dependencies "$service"
 	echo "  starting under project $CURRENT_PROJECT..."
+	RAN+=("$service")
 	compose up -d "$service"
 
 	rc=0
@@ -514,6 +522,10 @@ for service in "${SERVICES[@]}"; do
 	fi
 
 	[[ $rc -gt $worst ]] && worst=$rc
+	# The session's endpoint coverage section names what it reached
+	# (tests/conftest.py); collected so the summary can say what the whole
+	# run did not.
+	REACHED+="$(sed -n 's/^endpoint targets reached: //p' "$log" 2>/dev/null | tail -1 || true),"
 	counts="$(grep -E '^=* *[0-9]+ (passed|failed|skipped|error|deselected)' "$log" 2>/dev/null | tail -1 | tr -d '=' | xargs || true)"
 	SUMMARY+=("$short: $([[ $rc -eq 0 ]] && echo PASS || echo "FAIL (exit $rc)")${counts:+ — $counts}")
 
@@ -532,8 +544,9 @@ echo
 echo "=============================================================="
 printf '%s\n' "${SUMMARY[@]}"
 echo
-echo "Engines NOT covered by this run are every one not listed above:"
-echo "a green line for one service says nothing about another (issue #46)."
+# Measured against the catalogue, TARGETS in tests/endpoints.py: every target
+# this run did not reach is named, with why (issue #46).
+endpoints_say "print('\n'.join(endpoints.run_report('$REACHED', '${RAN[*]}')))"
 echo "=============================================================="
 
 exit "$worst"

@@ -2550,6 +2550,27 @@ is ordinarily deployed.
 > passes)". Afterwards there were 0 build cache IDs and 0 image IDs that were not there before it,
 > and the lock was free.
 
+> **Amended 2026-11-05 — a run names the targets it did not reach**
+> ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46)). §13.5's closing reminder, "every
+> one not listed above", named what was run and left the reader to subtract it from the catalogue.
+> The subtraction is now done for them, against `TARGETS` in `tests/endpoints.py` and the probe
+> cache that records each target a session asked for. Any pytest session selecting an endpoint test
+> ends with an `endpoint coverage` section (`tests/conftest.py`), and `scripts/endpoint-run.sh` ends
+> with the targets its whole invocation did not reach. Measured at `efb0a60a` plus this change: a
+> bare `pytest -m endpoint` on the host, no test container up, ended "1361 skipped, 1765
+> deselected" over "0 of 24 endpoint targets reached", and each of the 24 lines said "no container"
+> with its address. `scripts/endpoint-run.sh postgres` passed 168, skipped 319, and ended "3 of 24
+> endpoint targets reached by this run": `postgres`, `postgres[env-password]` and
+> `postgres[pgpass-file]`. The other 21 were each named "not run", with the command that runs
+> them. `postgres[trust]`, `postgres[tls-verify-full]`, `postgres[client-cert]` and
+> `postgres[kerberos]` are among those 21: they match the `postgres` selection, but their own
+> services were not up.
+>
+> **No test needs two databases up at once.** Every endpoint test reaches its database through one
+> fixture parametrised over a single target, and calls `reach()` once. The only second container
+> any target needs is its helper (the CA for TLS, the KDC for Kerberos), which its compose
+> `depends_on` brings up with it.
+
 ## §14 — The MCP 2026-07-28 specification, measured against this server (2026-07-29)
 
 The fifth MCP spec release landed on 2026-07-28: a **stateless protocol core**, Multi Round-Trip

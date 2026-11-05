@@ -83,6 +83,18 @@ class Unavailable(Exception):
     """Why an endpoint cannot be exercised here. A skip, never a failure."""
 
 
+class NotListening(Unavailable):
+    """Nothing answers at the target's address: its container is not up here.
+
+    A kind of :class:`Unavailable` of its own so that the coverage summary
+    (:func:`coverage`) can say "no container" without reading the message.
+    """
+
+
+class DriverMissing(Unavailable):
+    """The Python driver this target's URL needs is not installed."""
+
+
 @dataclass(frozen=True)
 class Endpoint:
     """One endpoint dialect, and everything needed to decide whether to run it.
@@ -1833,7 +1845,7 @@ def _probe(target: Target) -> Reached:
     try:
         importlib.import_module(endpoint.driver)
     except ModuleNotFoundError as exc:
-        raise Unavailable(
+        raise DriverMissing(
             f"{endpoint.dialect} needs the {endpoint.driver} driver: "
             f"uv sync --extra {endpoint.extra}."
         ) from exc
@@ -1845,7 +1857,7 @@ def _probe(target: Target) -> Reached:
     service = _service(target)
     host, port = _address(target, service)
     if not _listening(host, port):
-        raise Unavailable(
+        raise NotListening(
             f"Nothing is listening on {host}:{port}. Start it with: "
             f"docker compose -f {COMPOSE.name} up -d {target.service}"
         )
@@ -1858,6 +1870,146 @@ def _probe(target: Target) -> Reached:
     with applied(reached.environ):
         _handshake(reached.url, target.warmup)
     return reached
+
+
+# ---------------------------------------------------------------------------
+# What a run covered (issue #46)
+# ---------------------------------------------------------------------------
+#
+# A skipped endpoint test reads like a passing one, so a run against one
+# container ends on a green line that says nothing about the rest of the
+# catalogue. These functions measure the gap rather than reminding the reader
+# of it: the catalogue is TARGETS, what a session reached is the probe cache
+# above, and every target is accounted for exactly once.
+
+#: Where the coverage figures point a reader for the catalogue they count.
+_CATALOGUE = "the catalogue is TARGETS in tests/endpoints.py"
+
+#: The line of :func:`coverage_report` that lists the reached targets, comma
+#: separated, or ``none``. ``scripts/endpoint-run.sh`` reads it out of each
+#: service's output and hands what it collected to :func:`run_report`.
+REACHED_LINE = "endpoint targets reached:"
+
+
+@dataclass(frozen=True)
+class Coverage:
+    """One catalogue target, and what one session made of it.
+
+    ``status`` is one of:
+
+    * ``reached`` — the probe completed; the tests ran against it;
+    * ``no container`` — nothing listening at its address;
+    * ``no driver`` — its Python driver is not installed;
+    * ``unavailable`` — another precondition failed (a system ODBC driver, TLS
+      material, an absent helper service);
+    * ``unreachable`` — something answered and the probe failed anyway, which
+      is a failure, not a skip;
+    * ``not selected`` — no test in the session asked for it.
+    """
+
+    target: str
+    service: str
+    status: str
+    #: The first line of the probe's complaint; empty when there was none.
+    reason: str = ""
+
+
+def _first_line(exc: Exception) -> str:
+    lines = [line for line in str(exc).splitlines() if line.strip()]
+    return lines[0] if lines else type(exc).__name__
+
+
+def coverage(
+    probed: dict[str, Reached | Exception], targets: tuple[Target, ...] = TARGETS
+) -> list[Coverage]:
+    """Every target of the catalogue, in its order, with what ``probed`` says of it."""
+    rows = []
+    for target in targets:
+        answer = probed.get(target.name)
+        if answer is None:
+            status, reason = "not selected", ""
+        elif isinstance(answer, Reached):
+            status, reason = "reached", ""
+        elif isinstance(answer, NotListening):
+            status, reason = "no container", _first_line(answer)
+        elif isinstance(answer, DriverMissing):
+            status, reason = "no driver", _first_line(answer)
+        elif isinstance(answer, Unavailable):
+            status, reason = "unavailable", _first_line(answer)
+        else:
+            status, reason = "unreachable", _first_line(answer)
+        rows.append(Coverage(target.name, target.service, status, reason))
+    return rows
+
+
+def coverage_report(
+    probed: dict[str, Reached | Exception], targets: tuple[Target, ...] = TARGETS
+) -> list[str]:
+    """The lines a pytest session ends with: the count, the reached, the rest.
+
+    Called by ``tests/conftest.py`` at the end of any session that selected an
+    endpoint test, with this module's own probe cache.
+    """
+    rows = coverage(probed, targets)
+    reached = [row.target for row in rows if row.status == "reached"]
+    lines = [
+        f"{len(reached)} of {len(rows)} endpoint targets reached ({_CATALOGUE})",
+        f"{REACHED_LINE} {', '.join(reached) or 'none'}",
+    ]
+    for row in rows:
+        if row.status == "reached":
+            continue
+        why = row.reason or "no test in this run asked for it"
+        lines.append(f"  {row.target}: {row.status} — {why}")
+    return lines
+
+
+def run_report(
+    reached: str, ran: str, targets: tuple[Target, ...] = TARGETS
+) -> list[str]:
+    """What one ``scripts/endpoint-run.sh`` invocation covered, across its services.
+
+    ``reached`` is what the script collected from the :data:`REACHED_LINE` of
+    each service's output, comma separated, ``none`` and blanks ignored. ``ran``
+    is the services it brought up, space separated. A target whose service ran
+    and was still not reached skipped or failed in that service's output; one
+    whose service did not run is named with the command that would run it.
+
+    A reached name the catalogue does not hold is refused: the two would have
+    drifted apart, and counting it would report coverage nobody can locate.
+    """
+    names = {target.name for target in targets}
+    got = [
+        name.strip()
+        for name in reached.split(",")
+        if name.strip() and name.strip() != "none"
+    ]
+    unknown = sorted(set(got) - names)
+    if unknown:
+        raise ValueError(
+            f"Reached targets not in the catalogue: {', '.join(unknown)}. "
+            f"tests/endpoints.py and the run's output have drifted apart."
+        )
+    services = set(ran.split())
+    hit = [target.name for target in targets if target.name in got]
+    lines = [
+        f"{len(hit)} of {len(targets)} endpoint targets reached by this run "
+        f"({_CATALOGUE})",
+        f"Reached: {', '.join(hit) or 'none'}",
+        "NOT reached:" if len(hit) < len(targets) else "NOT reached: none",
+    ]
+    for target in targets:
+        if target.name in hit:
+            continue
+        if target.service in services:
+            lines.append(
+                f"  {target.name}: its service ran, but it was not reached; "
+                f"its skip or failure is in {target.service}'s output above"
+            )
+        else:
+            short = target.service.removeprefix("localdata-test-")
+            lines.append(f"  {target.name}: not run — scripts/endpoint-run.sh {short}")
+    return lines
 
 
 # ---------------------------------------------------------------------------
