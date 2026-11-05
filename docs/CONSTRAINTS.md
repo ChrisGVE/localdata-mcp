@@ -4114,6 +4114,15 @@ which streams without declaring a server-side cursor at all.
 > both, on both attaches, with the table's one row intact. CockroachDB and YugabyteDB were not run:
 > their path, psycopg 3's connection, is the code of 0a080260 moved into a function unchanged.
 
+> **Amended 2026-11-05 — CockroachDB and YugabyteDB, run
+> ([#146](https://github.com/ChrisGVE/localdata-mcp/issues/146)).** The amendment above left both
+> unrun, and the new test's assertion was PostgreSQL's wording. CockroachDB words its own 42601
+> differently, `at or near "from": syntax error` followed by `DETAIL:  source SQL:` and a caret, with
+> the word lowercased; it was the server's own syntax error, without `CURSOR` or the refused-write
+> answer, and the test failed 4 of 4 on wording alone. The test now asks for `syntax error` and
+> `at or near "<word>"` case-blind. From the runner afterwards: CockroachDB 82 passed, 33 skipped,
+> YugabyteDB 104 passed, 13 skipped, 0 failed; no skip in `tests/test_pg_syntax_error.py`.
+
 ### 21.4 Everything else, and it really was everything
 
 | Axis | openGauss |

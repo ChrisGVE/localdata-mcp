@@ -431,7 +431,11 @@ def test_a_keyword_that_cannot_begin_a_statement_is_the_servers_syntax_error(
     answer = _call("query", nickname="endpoint", sql=sql.format(t=table))
 
     assert answer["ok"] is False, answer
-    assert f'syntax error at or near "{word}"' in answer["error"], answer
+    # Each engine's own wording: PostgreSQL, YugabyteDB and openGauss say
+    # `syntax error at or near "FROM"`, CockroachDB `at or near "from": syntax
+    # error`. Both name the word the server stopped at.
+    assert "syntax error" in answer["error"], answer
+    assert f'at or near "{word.lower()}"' in answer["error"].lower(), answer
     assert "CURSOR" not in answer["error"], answer
     assert "create" not in answer["error"], answer
     assert _count(admin, table) == 1
