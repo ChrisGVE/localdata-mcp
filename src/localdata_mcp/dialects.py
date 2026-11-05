@@ -142,14 +142,22 @@ class Refusal:
     a read meets as surely as a write. Such a refusal is not explained as a
     refused write, and its ``what`` carries the rephrase that gets the read
     through (#135).
+
+    ``lock`` says the gate refused a row-locking clause in a statement that
+    otherwise reads, and ``what`` is then why, worded to follow "its <clause>
+    clause". Such a refusal is explained as #144 explains a locking read the
+    session refused, with the clause named and the same read without it; only
+    the reason differs. Firebird's reader sets it, because its driver fetches no
+    rows for a select carrying ``FOR UPDATE`` (#145).
     """
 
     what: str | None = None
     shape: bool = False
+    lock: bool = False
 
     def take(self) -> str | None:
         """Read the last refusal and forget it, so it cannot leak into the next."""
-        seen, self.what, self.shape = self.what, None, False
+        seen, self.what, self.shape, self.lock = self.what, None, False, False
         return seen
 
 
@@ -1848,6 +1856,22 @@ def _quoted_text_refusal(text: str, why: str, rephrase: str) -> str:
     )
 
 
+def _masked(sql: str, opaque: re.Pattern[str]) -> str:
+    """``sql`` with what ``opaque`` matches masked, keeping every length.
+
+    A comment becomes spaces and a string or a quoted name a run of ``x``, so a
+    word inside one is no longer a word of the statement, and a quoted name
+    still reads as a name (:func:`_without_row_locks`).
+    """
+
+    def mask(found: re.Match[str]) -> str:
+        quoted = found.group(0)
+        filler = " " if quoted.startswith(("--", "/*", "#")) else "x"
+        return filler * len(quoted)
+
+    return opaque.sub(mask, sql)
+
+
 def _without_row_locks(
     sql: str, opaque: re.Pattern[str], clause: re.Pattern[str]
 ) -> tuple[str, str] | None:
@@ -1867,13 +1891,7 @@ def _without_row_locks(
     ``OF`` list still reads as a name. The clause is named with its whitespace
     collapsed, as the statement would read on one line.
     """
-
-    def mask(found: re.Match[str]) -> str:
-        quoted = found.group(0)
-        filler = " " if quoted.startswith(("--", "/*", "#")) else "x"
-        return filler * len(quoted)
-
-    clauses = list(clause.finditer(opaque.sub(mask, sql)))
+    clauses = list(clause.finditer(_masked(sql, opaque)))
     if not clauses:
         return None
     first = clauses[0]
@@ -4727,14 +4745,18 @@ _FIREBIRD_OPAQUE = re.compile(
     r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|/\*[\s\S]*?\*/"
 )
 
-#: Firebird's locking clause, with the whitespace before it: ``WITH LOCK``,
-#: optionally after ``FOR UPDATE`` and its ``OF`` list and optionally followed
-#: by ``SKIP LOCKED``. Not a common table expression called ``lock``, which
-#: ``WITH LOCK AS (…)`` or ``WITH LOCK (…)`` would be. Matched on a masked
+#: Firebird's ``WITH LOCK``, optionally followed by ``SKIP LOCKED``. Not a
+#: common table expression called ``lock``, which ``WITH LOCK AS (…)`` or
+#: ``WITH LOCK (…)`` would be.
+_FIREBIRD_WITH_LOCK = r"\bWITH\s+LOCK\b(?!\s*(?:AS\b|\())(?:\s+SKIP\s+LOCKED\b)?"
+
+#: Firebird's locking clause, with the whitespace before it: ``FOR UPDATE`` and
+#: an optional ``OF`` list, optionally followed by ``WITH LOCK``, or
+#: ``WITH LOCK`` alone (:data:`_FIREBIRD_WITH_LOCK`). Matched on a masked
 #: statement (:func:`_without_row_locks`).
 _FIREBIRD_LOCKING_CLAUSE = re.compile(
-    r"\s*(?:\bFOR\s+UPDATE\b(?:\s+OF\s+[\w$.]+(?:\s*,\s*[\w$.]+)*)?\s+)?"
-    r"\bWITH\s+LOCK\b(?!\s*(?:AS\b|\())(?:\s+SKIP\s+LOCKED\b)?",
+    r"\s*(?:\bFOR\s+UPDATE\b(?:\s+OF\s+[\w$.]+(?:\s*,\s*[\w$.]+)*)?"
+    rf"(?:\s+{_FIREBIRD_WITH_LOCK})?|{_FIREBIRD_WITH_LOCK})",
     re.IGNORECASE,
 )
 
@@ -4742,6 +4764,65 @@ _FIREBIRD_LOCKING_CLAUSE = re.compile(
 def _firebird_without_row_locks(sql: str) -> tuple[str, str] | None:
     """:func:`_without_row_locks` in Firebird's grammar (#144)."""
     return _without_row_locks(sql, _FIREBIRD_OPAQUE, _FIREBIRD_LOCKING_CLAUSE)
+
+
+#: A statement Firebird runs as a select: its first word, after any comment,
+#: is ``SELECT`` or ``WITH``. Matched on a masked statement (:func:`_masked`).
+_FIREBIRD_SELECT = re.compile(r"\s*(?:SELECT|WITH)\b", re.IGNORECASE)
+
+
+def _firebird_for_update(sql: str) -> tuple[str, str] | None:
+    """``sql``'s locking clause and the read without it, where it holds ``FOR UPDATE``.
+
+    Only a statement that is itself a select: Firebird reports one carrying
+    ``FOR UPDATE`` as a select for update, which the driver fetches nothing
+    for, and an ``EXECUTE BLOCK`` whose body selects ``FOR UPDATE`` as a plain
+    select, which it fetches. Measured, the block answered its five rows
+    (docs/CONSTRAINTS.md §34). ``None`` as well for a statement with no locking
+    clause, and for ``WITH LOCK`` alone, which the read-only transaction
+    refuses itself (#144). See :func:`_refuse_firebird_for_update` for why
+    ``FOR UPDATE`` is refused here.
+    """
+    if not _FIREBIRD_SELECT.match(_masked(sql, _FIREBIRD_OPAQUE)):
+        return None
+    found = _firebird_without_row_locks(sql)
+    if found is None or not re.match(r"FOR\s", found[0], re.IGNORECASE):
+        return None
+    return found
+
+
+#: Why a select carrying ``FOR UPDATE`` is refused on Firebird, worded to
+#: follow "its <clause> clause" (:class:`Refusal`, ``lock``).
+_FIREBIRD_UNFETCHED = (
+    "makes it a select that the Firebird driver this server uses fetches no "
+    "rows for, read-only or not, so it would answer with no rows whatever the "
+    "table holds, and that empty answer would be false"
+)
+
+
+def _refuse_firebird_for_update(refusal: Refusal, statement: str, context: Any) -> None:
+    """Refuse a select carrying ``FOR UPDATE`` before it is sent (#145).
+
+    ``firebirdsql`` 1.5.0 fetches rows only for a statement Firebird reports as
+    a plain select. Firebird 5 reports one carrying ``FOR UPDATE`` as a select
+    for update, so the driver never asks for its rows and the cursor holds
+    none: ``query`` answered such a statement ``ok`` with no rows whatever the
+    table held, on a read-only connection and a read-write one alike. Every
+    variant measured did, with or without ``OF`` or ``WITH LOCK`` and behind a
+    ``WHERE`` (docs/CONSTRAINTS.md §34). An empty answer that is false is the
+    worst one to give an agent, so the reader refuses the clause, and the
+    explainer gives the same select without it, which reads the rows.
+
+    Raises the driver's own ``ProgrammingError``, a DBAPI ``Error``, so
+    SQLAlchemy wraps it and ``query`` explains it.
+    """
+    found = _firebird_for_update(statement)
+    if found is None:
+        return
+    refusal.what, refusal.lock = _FIREBIRD_UNFETCHED, True
+    raise context.dialect.loaded_dbapi.ProgrammingError(
+        f"query may not run a select carrying {found[0]}."
+    )
 
 
 #: ``isc_read_only_trans``: "attempted update during read-only transaction".
@@ -4806,6 +4887,25 @@ class FirebirdBackend(Backend):
     name: str = "firebird"
     read_only_query: ClassVar[Mapping[str, str]] = {"readonly": "true"}
 
+    def read_posture(self, engine: Engine, refusal: Refusal) -> None:
+        """Refuse a select carrying ``FOR UPDATE`` before it runs (#145).
+
+        The read-only transaction is the posture, and it comes from the URL
+        (:attr:`read_only_query`); this adds only the gate
+        :func:`_refuse_firebird_for_update` explains, on every statement the
+        reader sends.
+        """
+
+        @event.listens_for(engine, "do_execute")
+        def _with_parameters(cursor, statement, parameters, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_firebird_for_update(refusal, statement, context)
+            return False
+
+        @event.listens_for(engine, "do_execute_no_params")
+        def _without_parameters(cursor, statement, context):  # noqa: ANN001, ANN202 - SQLAlchemy's signature
+            _refuse_firebird_for_update(refusal, statement, context)
+            return False
+
     def denies_write(self, exc: Exception) -> bool:
         """Recognise the read-only transaction's refusal, by its code.
 
@@ -4825,10 +4925,11 @@ class FirebirdBackend(Backend):
         Measured through ``query`` on Firebird 5.0.4 with ``firebirdsql``
         1.5.0: ``SELECT * FROM t WITH LOCK`` was refused with
         :data:`_FIREBIRD_READ_ONLY`, and ``SELECT * FROM t`` answered its five
-        rows. ``FOR UPDATE`` with or without ``WITH LOCK`` is not refused; the
-        driver answers it with no rows at all, read-only or not, because it
-        fetches only for a plain select statement (#145, docs/CONSTRAINTS.md
-        §34).
+        rows. ``FOR UPDATE``, with or without ``WITH LOCK``, is not refused by
+        the transaction: the driver answers it with no rows at all, read-only or
+        not, because it fetches only for a plain select statement. It is found
+        here as well, for the reader's own gate, which refuses it before it is
+        sent (:meth:`read_posture`, #145, docs/CONSTRAINTS.md §34).
         """
         return _firebird_without_row_locks(sql)
 

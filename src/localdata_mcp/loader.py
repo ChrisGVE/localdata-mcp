@@ -160,19 +160,24 @@ _NOT_A_READ = (
     "either. A statement that does read returns rows even when it matches none."
 )
 
-#: What a caller is told when the reader's read-only session refused a locking
-#: read (#144). The statement reads, so it is not told it does not: what the
-#: session refused is the clause asking for a lock on the rows read. ``{read}``
-#: is the same statement with the clause removed, which reads the same rows,
-#: measured on every engine whose session refuses one (docs/CONSTRAINTS.md
-#: §34). The lock refused is the one the clause names: MySQL's session refuses
-#: ``FOR UPDATE`` and lets ``FOR SHARE`` take its shared locks.
+#: What a caller is told when a locking read was refused (#144). The statement
+#: reads, so it is not told it does not: what was refused is its locking
+#: clause, and ``{why}`` says why. ``{read}`` is the same statement with the
+#: clause removed, which reads the same rows, measured on every engine that
+#: refuses one (docs/CONSTRAINTS.md §34).
 _LOCKING_READ = (
-    "query did not run this statement: its {clause} clause asks the database to "
-    "take row locks on the rows it reads, which this reader does not take, so "
-    "its read-only session refused the clause — whatever the datasource itself "
-    "permits. The statement is a read otherwise, and the same SELECT without "
-    "the clause reads the same rows: {read}"
+    "query did not run this statement: its {clause} clause {why}. The statement "
+    "is a read otherwise, and the same SELECT without the clause reads the same "
+    "rows: {read}"
+)
+
+#: ``{why}`` where the reader's read-only session refused the clause (#144).
+#: The lock refused is the one the clause names: MySQL's session refuses
+#: ``FOR UPDATE`` and lets ``FOR SHARE`` take its shared locks.
+_SESSION_REFUSED_LOCK = (
+    "asks the database to take row locks on the rows it reads, which this "
+    "reader does not take, so its read-only session refused the clause — "
+    "whatever the datasource itself permits"
 )
 
 #: Added where the refusal arrives too late to be the whole truth. One backend
@@ -2861,7 +2866,16 @@ class Workspace:
             return LoadError(driver_message(exc))
 
         shaped = entry.engines.refusal.shape
+        locked = entry.engines.refusal.lock
         denied = entry.engines.refusal.take()
+        unlocked = entry.backend.without_row_locks(sql) if locked else None
+        if denied is not None and unlocked is not None:
+            # The reader's gate refused a locking clause in a statement that
+            # otherwise reads, and said why: worded as a locking read the
+            # session refused is, with the gate's reason (#145).
+            return LoadError(
+                _LOCKING_READ.format(clause=unlocked[0], why=denied, read=unlocked[1])
+            )
         if denied is not None and shaped:
             # A rule about how the statement is written, met by a read as
             # surely as by a write: no write is implied, and no verb for one is
@@ -2891,7 +2905,9 @@ class Workspace:
             unlocked = entry.backend.without_row_locks(sql)
             if unlocked is not None:
                 return LoadError(
-                    _LOCKING_READ.format(clause=unlocked[0], read=unlocked[1])
+                    _LOCKING_READ.format(
+                        clause=unlocked[0], why=_SESSION_REFUSED_LOCK, read=unlocked[1]
+                    )
                 )
             return LoadError(_not_a_read(entry))
 

@@ -7379,6 +7379,48 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > and the server reports a `FOR UPDATE` select as `isc_info_sql_stmt_select_for_upd` (12). The
 > same 0 rows came on a read-write connection, through `fetchall`, `fetchone`, `fetchmany` and
 > iteration alike. Tracked as [#145](https://github.com/ChrisGVE/localdata-mcp/issues/145).
+>
+> **Amended 2026-11-05 — Firebird's `FOR UPDATE` is refused before it runs
+> ([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)).** The rows above stand. Re-measured
+> on `new-v3` at `e43e2f07`, Firebird 5.0.4 through `scripts/endpoint-run.sh firebird`,
+> `firebirdsql` 1.5.0, on a five-row table, first with the driver alone (no SQLAlchemy), on a
+> read-write and a read-only connection. `stmt_type` is what the server reported for the prepared
+> statement. The probe is `tmp/probe-145.py`, not committed.
+>
+> | Statement | Rows, read-write | Rows, read-only | `stmt_type` |
+> |---|---|---|---|
+> | `SELECT * FROM t` | 5 | 5 | 1 |
+> | `SELECT * FROM t FOR UPDATE` | 0 | 0 | 12 |
+> | `SELECT * FROM t FOR UPDATE OF salary` | 0 | 0 | 12 |
+> | `SELECT * FROM t WHERE salary > 2 FOR UPDATE` | 0 | 0 | 12 |
+> | `SELECT * FROM t FOR UPDATE WITH LOCK` | 0 | 0 | 12 |
+> | `WITH c AS (SELECT * FROM t) SELECT * FROM c FOR UPDATE` | 0 | 0 | 12 |
+> | `/* x */ SELECT * FROM t FOR UPDATE` | 0 | 0 | 12 |
+> | `SELECT * FROM t WITH LOCK` | 5 | refused, 335544361 | 1 |
+> | `SELECT * FROM t WHERE salary > 2` | 3 | 3 | 1 |
+> | `EXECUTE BLOCK RETURNS (n INT) AS BEGIN FOR SELECT salary FROM t FOR UPDATE INTO n DO SUSPEND; END` | 5 | 5 | 1 |
+>
+> So the empty answer belongs to a statement the server reports as a select for update, and that
+> is a statement that is itself a select carrying `FOR UPDATE`. A `FOR UPDATE` inside a PSQL block
+> is not: the block is a plain select to the server, and its rows are fetched.
+>
+> The fix refuses what cannot be answered truthfully. Firebird's reader now has a gate
+> (`FirebirdBackend.read_posture`, `_refuse_firebird_for_update`). Before a statement is sent, it
+> looks for a locking clause holding `FOR UPDATE` with #144's Firebird grammar, now widened to
+> `FOR UPDATE` without `WITH LOCK`, and only in a statement whose first word, after any comment,
+> is `SELECT` or `WITH`. Where it finds one, `query` answers with #144's wording and the reason
+> in place of the session's: the clause makes it a select the Firebird driver fetches no rows
+> for, read-only or not, so the empty answer would be false; the same SELECT without the clause
+> reads the same rows, followed by that statement. `WITH LOCK` alone is still refused by the
+> read-only transaction and explained as before. Through `query`, each `FOR UPDATE` row above was
+> refused, on a read-only and on a writable attach, and the rephrase it ended with answered 5 rows
+> (3 for the `WHERE salary > 2` one); the block answered its 5 rows.
+> `tests/test_firebird_for_update.py` holds both halves. With the gate's `raise` removed, 15 of
+> its tests failed: the 5 offline explainer cases and the 10 live refusals.
+>
+> The driver is unchanged and the defect is upstream's: `firebirdsql`'s `Cursor.execute` fetches
+> only for `isc_info_sql_stmt_select` (1). A statement this server sends on the write engine
+> (`create`, `update`, `drop`) is its own and holds no `FOR UPDATE`.
 
 ## §35 — SQL Server text lands as `NVARCHAR`, sized in UTF-16 code units (2026-11-03)
 

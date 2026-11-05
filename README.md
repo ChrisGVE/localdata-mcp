@@ -464,9 +464,10 @@ PostgreSQL family, on MySQL and MariaDB (`FOR UPDATE`) and on Firebird
 reader does not take, and gives the same statement without it, which reads the
 same rows ([#144](https://github.com/ChrisGVE/localdata-mcp/issues/144)). Oracle
 and SQL Server run their locking clauses, and the locks end with the read. On
-Firebird `FOR UPDATE` comes back with no rows at all, a driver defect
-([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)), so leave the
-clause out there. **One exception
+Firebird a `SELECT` carrying `FOR UPDATE` is refused as well, before it runs:
+its driver fetches no rows for one, so the answer would be empty whatever the
+table holds. That refusal names the clause too and ends with the same `SELECT`
+without it ([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)). **One exception
 remains.** Oracle commits DDL before anything can object and has no
 session-level read-only posture, so a `CREATE` sent to `query` there really does
 take effect; its DML still rolls back, and the refusal says the `CREATE` stands

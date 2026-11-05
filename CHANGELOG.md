@@ -938,13 +938,18 @@ And forty-five found in this release's own code before it shipped:
   arrives when the other transaction ends. Until then the server answers
   nothing, on any datasource.
 
-- **On Firebird, `SELECT … FOR UPDATE` answers `ok` with no rows**, whatever the
-  table holds ([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)).
-  Measured on Firebird 5.0.4 with `firebirdsql` 1.5.0, on a read-only and a
-  read-write connection alike: the driver fetches rows only for a plain select
-  statement, and the server reports a `FOR UPDATE` select as a different kind.
-  `query` cannot tell that empty answer from a real one. Leave the clause out:
-  `SELECT * FROM t` reads the rows. `WITH LOCK` alone is refused (#144).
+- **On Firebird, `query` refuses a `SELECT` carrying `FOR UPDATE`**
+  ([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)). Measured on
+  Firebird 5.0.4 with `firebirdsql` 1.5.0, on a read-only and a read-write
+  connection alike: the driver fetches rows only for a plain select statement,
+  and the server reports a `FOR UPDATE` select as a different kind, so the
+  answer was `ok` with no rows whatever the table held. It is now refused
+  before it runs, with or without `OF` or `WITH LOCK`. The refusal names the
+  clause, says why the empty answer would be false, and ends with the same
+  `SELECT` without it, which reads the rows. A `FOR UPDATE` inside an
+  `EXECUTE BLOCK` is not refused, because its rows are fetched. `WITH LOCK`
+  alone is refused by the read-only transaction (#144). The driver defect
+  itself is upstream's.
 
 - **A formula an `.xls` writer stored with an empty result loads as NULL
   without a warning.** Measured with xlwt 1.3.0: every formula it writes carries

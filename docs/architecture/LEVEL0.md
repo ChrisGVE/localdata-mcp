@@ -494,8 +494,13 @@ the same rows. Measured on 2026-11-04 (`docs/CONSTRAINTS.md` §34): the PostgreS
 `FOR UPDATE` and run `FOR SHARE` and `LOCK IN SHARE MODE`, taking shared locks for the length
 of the read; Firebird refuses `WITH LOCK`. Oracle's `FOR UPDATE` and SQL Server's lock hints
 are not refused: they run, and the read's locks end with it, since the reader never commits.
-Firebird answers `FOR UPDATE` with no rows at all, a driver defect tracked as
-[#145](https://github.com/ChrisGVE/localdata-mcp/issues/145).
+On Firebird, `query` refuses a `SELECT` carrying `FOR UPDATE` before it runs
+([#145](https://github.com/ChrisGVE/localdata-mcp/issues/145)): `firebirdsql` fetches no rows for
+a statement the server reports as a select for update, so the answer would be empty whatever the
+table holds. The reader's gate finds the clause with the same Firebird grammar, only in a
+statement whose first word is `SELECT` or `WITH`, and the refusal is worded as above, with that
+reason in place of the session's. A `FOR UPDATE` inside an `EXECUTE BLOCK` runs: the server
+reports the block as a plain select, and its rows are fetched.
 
 A database that was `save`d and is attached again later is, like any other external
 database, **read-only by default** until the caller says otherwise.

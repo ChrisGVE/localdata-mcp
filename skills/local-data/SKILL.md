@@ -270,9 +270,9 @@ A read never needs a row lock, so do not write `FOR UPDATE`, `FOR SHARE`,
 `LOCK IN SHARE MODE` or `WITH LOCK`. Where the read-only session refuses one
 (the PostgreSQL four, MySQL and MariaDB, Firebird), the refusal names the clause
 and ends with the same statement without it; send that, and it returns the same
-rows. On Firebird, `FOR UPDATE` is not refused but comes back with **no rows**
-whatever the table holds, so an empty answer to it means nothing: drop the
-clause and ask again.
+rows. On Firebird a `SELECT` with `FOR UPDATE` is refused too, because its
+driver would answer it with no rows whatever the table holds; the refusal ends
+the same way, with the statement to send instead.
 
 A `create`, `update` or `drop` refused because *another session's transaction
 collided with this one* (SQLSTATE 40001) changed nothing, and the refusal says
