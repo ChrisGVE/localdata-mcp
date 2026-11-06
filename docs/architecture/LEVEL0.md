@@ -837,6 +837,26 @@ the first resolved against the refusal). Both are now resolved:
 | Whether a JSON, YAML or XML document with two candidate tables should still be refused, given the premise that a file may hold more than one table | *The premise*, above | **Resolved (2026-11-04)**: every candidate lands, named from its key path |
 | Whether the refusal's wording — *"which one you want"* — should survive, since it is the pick-one model this design left behind | *The premise*, above | **Resolved (2026-11-04)**: the refusal is gone, so its wording is too |
 
+The live-client pass is measured, and repeated, because a single pass proved to be luck. A
+Codex agent with no repository and no shell, given only the server, its tool schemas and the
+shipped skill, is asked what went wrong in March across a `;`-separated `sales.csv`, a
+`products.json` and a `returns.tsv`. A run counts only if the agent reached the server. These
+are the rates over valid runs:
+
+| Separator contract | Valid runs that answered correctly | Issue |
+|---|---|---|
+| Required on every call, skill says "look or ask" | 1 of 4 (three stopped to ask for the separator) | [#151](https://github.com/ChrisGVE/localdata-mcp/issues/151) |
+| Required, skill says "attach at the likeliest and read the warning" | 1 of 1 | [#151](https://github.com/ChrisGVE/localdata-mcp/issues/151) |
+| **Standard by default** (`,` for `.csv`, a tab for `.tsv`; first principle 7) | **4 of 4** | [#153](https://github.com/ChrisGVE/localdata-mcp/issues/153) |
+
+All four default-contract runs went the same way. They attached at the default, read the
+single-column warning naming `;`, re-attached at `;`, and answered: West gamma 47 → 7, not
+explained by returns, and East beta revenue blank in every month. Four more runs across the
+last two rows are excluded because the server never registered with the client. That is a
+fault in the test rig, and its cause is not yet known. The warning these runs rely on misses
+one case, a file whose header contains the separator that was tried
+([#152](https://github.com/ChrisGVE/localdata-mcp/issues/152)), and that case is still open.
+
 The rest of this section is how the two catalogues went, and is history rather than plan.
 Both are **done**: the format catalogue first, then the backends — every entry that can be
 reached on this machine is landed, and the two that cannot, Db2 and OceanBase, were measured
