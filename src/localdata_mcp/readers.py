@@ -171,6 +171,12 @@ def _shortened(text: str) -> str:
     return repr(text[:_QUOTED_HEADER_LIMIT] + "…")
 
 
+#: How the JSON readers decode a file: UTF-8, with a byte-order mark at the very
+#: start skipped rather than refused (#154). ``utf-8-sig`` drops the mark only
+#: when it is the first thing in the stream and reads the rest as plain UTF-8.
+_UTF8_TEXT = "utf-8-sig"
+
+
 def read_json(path: Path) -> ReadResult:
     """Read a JSON document: the table in it, or every table in it.
 
@@ -189,9 +195,13 @@ def read_json(path: Path) -> ReadResult:
       of them unreachable would be the silent loss the workbook rule exists to
       prevent. Each is named from its key path (see :func:`_tables_within`).
     * **Anything else is refused**, naming what was found.
+
+    A UTF-8 byte-order mark at the start is skipped, as RFC 8259 §8.1 allows
+    and as the other text formats already do: Windows editors and Excel write
+    one, and nothing about the data changes by dropping it.
     """
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(path.read_text(encoding=_UTF8_TEXT))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise LoadError(f"Could not read {path.name}: {exc}") from exc
 
@@ -202,10 +212,12 @@ def read_jsonl(path: Path) -> ReadResult:
     """Read JSON Lines: one object per line, blank lines ignored.
 
     No shape ambiguity exists here — the format *is* a sequence of records — so
-    unlike ``.json`` this reader never has anything to report.
+    unlike ``.json`` this reader never has anything to report. A byte-order
+    mark is skipped at the start of the file only, as for ``.json``; one at the
+    start of a later line is a stray character in the data, and refused.
     """
     records = []
-    with path.open(encoding="utf-8") as handle:
+    with path.open(encoding=_UTF8_TEXT) as handle:
         for number, line in enumerate(handle, start=1):
             stripped = line.strip()
             if not stripped:

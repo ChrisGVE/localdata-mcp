@@ -965,6 +965,15 @@ And forty-five found in this release's own code before it shipped:
   index is not usable yet: CockroachDB keeps building it after the call, a
   second `create` is refused while it exists, and it is usable once the other
   transaction has ended. `directory` shows each of these.
+- **A `.json`, `.jsonl` or `.ndjson` file starting with a UTF-8 byte-order mark
+  attaches** ([#154](https://github.com/ChrisGVE/localdata-mcp/issues/154)).
+  Windows editors, Excel and PowerShell write one, and the JSON readers refused
+  the file with Python's codec message ("Unexpected UTF-8 BOM (decode using
+  utf-8-sig)"), which says nothing an agent can act on. The mark is now skipped,
+  as RFC 8259 §8.1 allows and as `.csv`, `.tsv`, `.yaml` and `.xml` already did,
+  and the first column's name carries no trace of it. Only a mark at the very
+  start of the file is skipped: one at the start of a later JSON Lines record is
+  stray data and is still refused by line number.
 
 ### Known limitations
 
