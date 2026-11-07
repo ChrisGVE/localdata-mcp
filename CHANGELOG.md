@@ -994,6 +994,14 @@ And forty-five found in this release's own code before it shipped:
   called `price, eur` stays quiet, because not every name holds a comma. Still
   missed, by design: a header where one field lacks the other separator, such
   as `x,y;z` read at `,`.
+- **A file read at a separator other than `;`, tab, `|` or `,` warns instead of
+  being refused** ([#156](https://github.com/ChrisGVE/localdata-mcp/issues/156)).
+  `attach(database="x.txt", delimiter=":")` on a file whose header reads
+  `a;b;c` answered "Could not read x.txt: ':'", because the wrong-separator
+  warning looked the separator used up among the four it may name and failed
+  on any other. The file now loads, and the warning names `';'` and spells the
+  separator used as `':'`. Both shapes of the warning, one column and a split
+  header, had the defect.
 
 ### Known limitations
 

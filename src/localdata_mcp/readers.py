@@ -94,6 +94,18 @@ Reader = Callable[[Path], ReadResult]
 _COMMON_DELIMITERS = {";": "';'", "\t": "a tab", "|": "'|'", ",": "','"}
 
 
+def _spelled(separator: str) -> str:
+    """How a warning names the separator a file was read at.
+
+    A common delimiter has its spelling above, which says "a tab" rather than
+    quoting an invisible character. Any other one the caller declared, ``:``
+    say, is quoted as its ``repr``, so it reads ``':'``. The map holds only the
+    candidates a note may name, so indexing it with the separator used would
+    fail on every other character (#156).
+    """
+    return _COMMON_DELIMITERS.get(separator, repr(separator))
+
+
 def delimited(separator: str) -> Reader:
     """A reader for character-separated text, at the separator it is given.
 
@@ -167,10 +179,10 @@ def _single_column_note(header: str, separator: str, name: str) -> tuple[str, ..
         return ()
 
     return (
-        f"{name} was read at {_COMMON_DELIMITERS[separator]} and loaded as a "
+        f"{name} was read at {_spelled(separator)} and loaded as a "
         f"single column, from a header line reading {_shortened(header)} — "
         f"which contains {' and '.join(found)}, what a file separated by one of "
-        f"those looks like when it is read at {_COMMON_DELIMITERS[separator]}. "
+        f"those looks like when it is read at {_spelled(separator)}. "
         f"The stored column name is that header sanitised, so it is not the "
         f"string quoted here. If that is the case, attach it again with "
         f"delimiter set to the right character. Nothing here guesses it.",
@@ -187,7 +199,7 @@ def _split_header_note(names: list[str], separator: str, name: str) -> tuple[str
     if not shared:
         return ()
 
-    used = _COMMON_DELIMITERS[separator]
+    used = _spelled(separator)
     which = "that character" if len(shared) == 1 else "one of those characters"
     return (
         f"{name} was read at {used} and loaded as {len(names)} columns, from a "
