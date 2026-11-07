@@ -850,12 +850,17 @@ are the rates over valid runs:
 | Required on every call, skill says "look or ask" | 1 of 4 (three stopped to ask for the separator) | [#151](https://github.com/ChrisGVE/localdata-mcp/issues/151) |
 | Required, skill says "attach at the likeliest and read the warning" | 1 of 1 | [#151](https://github.com/ChrisGVE/localdata-mcp/issues/151) |
 | **Standard by default** (`,` for `.csv`, a tab for `.tsv`; first principle 7) | **4 of 4** | [#153](https://github.com/ChrisGVE/localdata-mcp/issues/153) |
+| Standard by default, with the warning's multi-column signature, on the repaired rig | **8 of 8**, no run excluded | [#151](https://github.com/ChrisGVE/localdata-mcp/issues/151) |
 
-All four default-contract runs went the same way. They attached at the default, read the
+All twelve default-contract runs went the same way. They attached at the default, read the
 single-column warning naming `;`, re-attached at `;`, and answered: West gamma 47 → 7, not
-explained by returns, and East beta revenue blank in every month. Four more runs across the
-last two rows are excluded because the server never registered with the client. That is a
-fault in the test rig, and its cause is not yet known. The warning these runs rely on missed
+explained by returns, and East beta revenue blank in every month. Four earlier runs are
+excluded because the server never registered with the client. That was the test rig, not
+the server: Codex leaves an MCP server that is not marked required out of the tool catalog,
+without a word, when it is not ready within a short startup grace, and the agent then
+answers that it has no tools. The rig now marks the server required, so the client waits for
+it, or fails visibly if it never starts; with a 20-second start simulated, a run without the
+mark lost the server and a run with it did not. The last row was measured on that rig. The warning these runs rely on missed
 a file whose header contains the separator that was tried, which splits into several columns
 rather than one ([#152](https://github.com/ChrisGVE/localdata-mcp/issues/152)). It is fixed:
 the warning now also fires when every column name holds the same other separator. One edge
