@@ -64,9 +64,9 @@ def undeclared_separator(name: str, *, reading: bool) -> str:
             f"{gap} Pass delimiter. If you can see the file's first line, pass "
             f"the character between its fields. If you cannot, attach at the "
             f"likeliest one (',' ';' a tab or '|') and read warnings: read at "
-            f"the wrong one, the file loads as a single column and a warning "
-            f"names the separator its header holds — detach and attach again "
-            f"at that one."
+            f"the wrong one, the file loads as a single column, or as columns "
+            f"whose every name holds the same other separator, and a warning "
+            f"names that separator — detach and attach again at that one."
         )
     return (
         f"{gap} Pass delimiter to say what should separate it, or name the "

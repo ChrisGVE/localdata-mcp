@@ -532,11 +532,12 @@ attach(database="/path/sales.csv", delimiter=";")   # the file uses ';'
 
 A file written by a European tool is often semicolon-separated whatever it is
 called, and read at the default comma it loads as **a single column whose name
-is the whole header line, sanitised** — `a;b;c` becomes `a_b_c`. That does not
-pass quietly: a warning quotes the header it read and names the separator that
-header contains. `detach` it and attach again with `delimiter` set to that one.
+is the whole header line, sanitised** — `a;b;c` becomes `a_b_c`. If its header
+holds a comma, it splits there instead, and every column name holds a `;`. That
+does not pass quietly: a warning quotes the header it read and names the
+separator in it. `detach` it and attach again with `delimiter` set to that one.
 What you must not do is carry on: `ok: true` comes back, and every number you
-compute from that one column is wrong. Ask the user only when the columns that
+compute from those columns is wrong. Ask the user only when the columns that
 come back still do not look like the data and no warning says why.
 
 **A `.txt` needs a `delimiter`** — it has no standard separator, so an attach

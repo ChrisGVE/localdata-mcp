@@ -9,16 +9,17 @@ They live apart from ``loader`` so that ``formats`` — the one table naming wha
 reads and what writes each suffix — can reach them without importing the module
 that *calls* them. The same split put the writers in ``writers``.
 
-**A reader may refuse.** Reading at the wrong separator, or from a file whose
-shape is not a table, does not produce bad rows to be caught later — it produces
-a ``LoadError`` naming what was wrong with the file, because a wrong answer that
-looks like data is the failure nothing downstream can report.
+**A reader may refuse.** Reading from a file whose shape is not a table does
+not produce bad rows to be caught later — it produces a ``LoadError`` naming
+what was wrong with the file, because a wrong answer that looks like data is the
+failure nothing downstream can report.
 
 **A reader may also warn.** Several formats have a shape a table does not: a
 JSON object with arrays under its keys, a workbook with several sheets. Those
 come back as notes on the result rather than as refusals, because the data is
 readable and the caller is the one who can say whether it was read the way they
-meant.
+meant. Text read at the wrong separator is the same case: it is readable, only
+wrongly split, and ``fat_column_note`` says so when the header shows it.
 """
 
 from __future__ import annotations
@@ -118,27 +119,45 @@ def fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str
 
     This is the net under the standard default. A file named ``.csv`` is read at
     a comma unless the caller says otherwise, and one that is really separated
-    by ``;`` — common from European tools — then loads as one column. The same
-    holds for a separator the caller declared wrongly. Either way the character
-    used is known, so the note can name it and name the one the header holds.
-    One column whose header still contains a common delimiter is the signature
-    of the mistake and nothing else — the whole header line became the column.
+    by ``;`` — common from European tools — then loads wrongly. The same holds
+    for a separator the caller declared wrongly. Either way the character used
+    is known, so the note can name it and name the one the header holds. Two
+    shapes are the signature of the mistake:
+
+    - **One column whose header still contains a common delimiter.** The whole
+      header line became the column.
+    - **Two or more columns, every one of whose names contains the same other
+      common delimiter (#152).** The header happened to hold the separator
+      tried, so the file split, at the wrong places: ``region;price, eur;units``
+      read at ``,`` gives ``region;price`` and `` eur;units``. *Every* name, not
+      some or most: a correctly read ``;`` file with one column called
+      ``price, eur`` must stay quiet, and a threshold would be a guess.
+
+    The edge this leaves open, deliberately: a header where some field lacks
+    the other separator (``x,y;z`` read at ``,`` gives ``x`` and ``y;z``) is not
+    caught. Catching it means warning on names that merely hold such a
+    character, as ``price, eur`` does.
 
     This states what it found; it does not re-read the file at the character it
     spotted. Sniffing is the fail-open shape this project keeps being bitten by,
     and a guess that is usually right is the worst kind.
 
-    **What it quotes is the header line, not the column name the caller ends up
-    with.** Identifier sanitisation runs downstream of every reader, and it
-    replaces exactly the characters this note is about, so the stored name never
+    **What it quotes is the header line, not the column names the caller ends
+    up with.** Identifier sanitisation runs downstream of every reader, and it
+    replaces exactly the characters this note is about, so a stored name never
     contains the one being reported. Citing it named evidence the answer no
     longer held (#101); the header is the same evidence and the caller can check
-    it against the file.
+    it against the file. With several columns it is the names the reader split,
+    joined again at the separator used.
     """
-    if len(frame.columns) != 1:
-        return ()
+    names = [str(column) for column in frame.columns]
+    if len(names) == 1:
+        return _single_column_note(names[0], separator, name)
+    return _split_header_note(names, separator, name)
 
-    header = str(frame.columns[0])
+
+def _single_column_note(header: str, separator: str, name: str) -> tuple[str, ...]:
+    """The note for a header line that became one column."""
     found = [
         spelling
         for character, spelling in _COMMON_DELIMITERS.items()
@@ -154,6 +173,29 @@ def fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str
         f"those looks like when it is read at {_COMMON_DELIMITERS[separator]}. "
         f"The stored column name is that header sanitised, so it is not the "
         f"string quoted here. If that is the case, attach it again with "
+        f"delimiter set to the right character. Nothing here guesses it.",
+    )
+
+
+def _split_header_note(names: list[str], separator: str, name: str) -> tuple[str, ...]:
+    """The note for a header that split, every piece holding the same character."""
+    shared = [
+        spelling
+        for character, spelling in _COMMON_DELIMITERS.items()
+        if character != separator and all(character in each for each in names)
+    ]
+    if not shared:
+        return ()
+
+    used = _COMMON_DELIMITERS[separator]
+    which = "that character" if len(shared) == 1 else "one of those characters"
+    return (
+        f"{name} was read at {used} and loaded as {len(names)} columns, from a "
+        f"header line reading {_shortened(separator.join(names))} — every one of "
+        f"those column names contains {' and '.join(shared)}, what a file "
+        f"separated by {which} looks like when it is read at {used}. The "
+        f"stored column names are those pieces sanitised, so they are not the "
+        f"strings quoted here. If that is the case, attach it again with "
         f"delimiter set to the right character. Nothing here guesses it.",
     )
 

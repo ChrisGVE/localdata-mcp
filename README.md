@@ -603,9 +603,11 @@ answer belongs to whoever wrote the file, it reports and carries on.
   as one column at the default: the whole header line becomes that column and
   the warning quotes the header back at you and names the `;` in it — the stored
   column name is that header sanitised, so it is not the string the warning
-  shows. The same happens when a separator is declared wrongly. It reports what
-  it sees and does not re-read at a guessed separator, because a guess that is
-  usually right is the worst kind. The declaration is **one character**: an
+  shows. If the header holds a comma, the file splits there instead, and the
+  warning fires when every column name holds the `;`; a header with one name
+  free of it is not caught. The same happens when a separator is declared
+  wrongly. It reports what it sees and does not re-read at a guessed separator,
+  because a guess that is usually right is the worst kind. The declaration is **one character**: an
   empty string or a longer one such as `||` is refused, so a file separated by
   a multi-character string is not one this server reads.
 

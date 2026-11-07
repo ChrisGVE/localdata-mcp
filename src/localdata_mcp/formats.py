@@ -177,9 +177,9 @@ def resolve_separator(name: str, declared: str | None, *, reading: bool) -> str:
     2. Otherwise the format's ``standard_delimiter``: a comma for ``.csv``, a
        tab for ``.tsv``. Project first principle 7, in Chris's words: *"the
        standard is always the default, unless the LLM provides something
-       else"*. A file named ``.csv`` that is really separated by ``;`` loads as
-       one column at the default, and ``readers.fat_column_note`` says so and
-       names the ``;`` in its header.
+       else"*. A file named ``.csv`` that is really separated by ``;`` loads
+       wrongly at the default, and ``readers.fat_column_note`` warns, naming
+       the ``;``, in the two shapes its docstring describes.
     3. Otherwise refuse, because no standard exists to fall back on — ``.txt``.
        ``reading`` picks the error type: a ``LoadError`` for a source that is
        already there, an ``ExportError`` for a destination not yet written.

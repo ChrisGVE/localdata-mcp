@@ -598,7 +598,9 @@ what is unambiguous, say what was assumed, refuse an actual choice*:
   separator — a `;` file named `.csv` at the default, or a wrong declaration — the whole
   header line becomes one column and the warning quotes that header back and names the
   separator it holds; the stored column name is that header sanitised, so it is not the
-  string the warning shows. It reports what it sees; it does not re-read at a guessed separator,
+  string the warning shows. A header holding the separator tried splits into several
+  columns instead, and the warning fires when every one of their names holds the same
+  other separator ([#152](https://github.com/ChrisGVE/localdata-mcp/issues/152)). It reports what it sees; it does not re-read at a guessed separator,
   because a guess that is usually right is the worst kind. The declaration is one character;
   an empty or longer string is refused on both sides.
 
@@ -853,9 +855,12 @@ All four default-contract runs went the same way. They attached at the default, 
 single-column warning naming `;`, re-attached at `;`, and answered: West gamma 47 → 7, not
 explained by returns, and East beta revenue blank in every month. Four more runs across the
 last two rows are excluded because the server never registered with the client. That is a
-fault in the test rig, and its cause is not yet known. The warning these runs rely on misses
-one case, a file whose header contains the separator that was tried
-([#152](https://github.com/ChrisGVE/localdata-mcp/issues/152)), and that case is still open.
+fault in the test rig, and its cause is not yet known. The warning these runs rely on missed
+a file whose header contains the separator that was tried, which splits into several columns
+rather than one ([#152](https://github.com/ChrisGVE/localdata-mcp/issues/152)). It is fixed:
+the warning now also fires when every column name holds the same other separator. One edge
+remains, by design: a header where one field lacks it, such as `x,y;z` read at `,`, is still
+missed, because a looser rule would warn on a correct file with one name like `price, eur`.
 
 The rest of this section is how the two catalogues went, and is history rather than plan.
 Both are **done**: the format catalogue first, then the backends — every entry that can be

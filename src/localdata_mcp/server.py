@@ -93,8 +93,9 @@ mcp = FastMCP(
         "so it needs a delimiter on every call: read the file's first line if "
         "you can, otherwise attach at the likeliest separator and read the "
         "warnings. Read at the wrong separator, a file loads as a single "
-        "column and a warning names the separator its header contains — "
-        "detach and attach again with delimiter set to that one. "
+        "column, or as columns whose every name holds the same other "
+        "separator, and a warning names that separator — detach and attach "
+        "again with delimiter set to that one. "
         "Handed to a format that has no separator — "
         "a workbook, .parquet — it is refused by name on attach and create.\n\n"
         "**Each call names one datasource, and the SQL addresses tables inside it "
@@ -642,9 +643,10 @@ def attach(
             character; what you pass always wins. .txt has no standard, so it
             needs one: read the file's first line if you can, otherwise attach
             at the likeliest character and read ``warnings``. Read at the wrong
-            one, a file loads as a single column, and a warning quotes its
-            header and names the separator the header contains — ``detach`` and
-            attach again with ``delimiter`` set to that one. Ask the user only
+            one, a file loads as a single column, or as columns whose every
+            name holds the same other separator, and a warning quotes its
+            header and names that separator — ``detach`` and attach again with
+            ``delimiter`` set to that one. Ask the user only
             when the columns still do not look like the data and no warning
             says why. It is exactly one character: an empty string or a longer
             one such as ``'||'`` is refused, and a tab is the tab character

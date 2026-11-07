@@ -983,6 +983,17 @@ And forty-five found in this release's own code before it shipped:
   the same way. Every colon is now escaped before the statement is compiled, so
   the database receives the caller's text character for character, a backslash
   typed before a colon included, and PostgreSQL's `'1'::int` still casts.
+- **The wrong-separator warning also fires when the misread file splits into
+  several columns** ([#152](https://github.com/ChrisGVE/localdata-mcp/issues/152)).
+  It used to fire only when the file loaded as one column. A `;` file whose
+  header holds a comma, `region;price, eur;units`, read at the `.csv` default
+  loads as `region;price` and ` eur;units`, with `ok: true` and no warning, and
+  the sanitised names hide the `;`. The warning now also fires when every
+  column name holds the same other separator, and it quotes the header and
+  names that separator as before. A correctly read `;` file with one column
+  called `price, eur` stays quiet, because not every name holds a comma. Still
+  missed, by design: a header where one field lacks the other separator, such
+  as `x,y;z` read at `,`.
 
 ### Known limitations
 

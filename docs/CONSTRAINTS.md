@@ -975,6 +975,14 @@ correctly.
 > `;`, and that warning is the net for the default. What it does not catch is a file the wrong
 > separator still splits into several columns (#152, open). The 2026-10-29 amendment above
 > describes the contract that stood from 2026-08-14 until this date.
+>
+> **Amended 2026-11-07 — the split case now warns too (#152).** `region;price, eur;units` read at
+> `,` loads as two columns, `region;price` and ` eur;units`, and the answer now carries a warning
+> naming the `;` that every one of those names holds. The signature is strict: *every* column name
+> must hold the same other common separator, so the same file read correctly at `;`, with one
+> column called `price, eur`, stays quiet. Still a warning, still no re-read. Still missed: a header
+> where one field lacks the other separator — `x,y;z` read at `,` gives `x` and `y;z`, and nothing
+> warns.
 
 ### 8.3 A slot's table list was a snapshot, and three messages reported it after it went stale
 
