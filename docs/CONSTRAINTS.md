@@ -7565,6 +7565,27 @@ kept the row on MonetDB for both `RETURNING` strings, and
 > only for `isc_info_sql_stmt_select` (1). A statement this server sends on the write engine
 > (`create`, `update`, `drop`) is its own and holds no `FOR UPDATE`.
 
+> **Amended 2026-11-07 — a `:name` in the caller's SQL is sent as written
+> ([#149](https://github.com/ChrisGVE/localdata-mcp/issues/149)).** The SQL Server amendment above
+> says `query` runs the caller's SQL as `text(sql)`, "so a `:name` is refused by SQLAlchemy before
+> it is sent". That was true, and it refused reads: `SELECT 'a :b'` answered "A value is required
+> for bind parameter 'b'" on every backend, and Firebird's `EXECUTE BLOCK … INTO :n` the same.
+> `query` now wraps the statement with `loader.as_written`, which escapes every colon as `\:`, the
+> literal colon `text()` documents. The compiled statement is then the caller's string, and it
+> still carries no parameters, so the gate's premise holds and
+> `tests/test_query_sends_no_parameters.py` still pins it. A `?` is unchanged.
+>
+> Measured offline: compiled for the dialect behind each of the 17 `BACKENDS` keys, ten inputs
+> (`'a :b'`, `':b'`, `'10:30'`, `'x\:y'`, `'x\\:y'`, `'a::text'`, `-- :x`, `/* (:x) */`,
+> `':a:b :c'`, `INTO :n`) come back unchanged with no params, and so do all 19 531 strings of up to
+> six characters over `:`, `\`, `a`, space and `$`. Through `query`, SQLite and DuckDB answer
+> `a :b`, `:b` and `x\:y`. Live, one container at a time: PostgreSQL answers `SELECT 'a :b'` with
+> `a :b`, `SELECT '1'::int` with `1` and `SELECT 'x\:y'` with `x\:y` (3 passed); MySQL answers
+> `SELECT 'a :b'` and `SELECT '10:30' -- :x` (2 passed); Firebird answers
+> `SELECT 'a :b' FROM RDB$DATABASE` and runs
+> `EXECUTE BLOCK RETURNS (n INT) AS BEGIN FOR SELECT 1 FROM RDB$DATABASE INTO :n DO SUSPEND; END`
+> to one row, `1` (2 passed). `tests/test_query_sql_as_written.py` holds all of it.
+
 ## §35 — SQL Server text lands as `NVARCHAR`, sized in UTF-16 code units (2026-11-03)
 
 Refs [#128](https://github.com/ChrisGVE/localdata-mcp/issues/128). Measured on `new-v3` from

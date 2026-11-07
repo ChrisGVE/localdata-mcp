@@ -974,6 +974,15 @@ And forty-five found in this release's own code before it shipped:
   and the first column's name carries no trace of it. Only a mark at the very
   start of the file is skipped: one at the start of a later JSON Lines record is
   stray data and is still refused by line number.
+- **`query` sends the SQL exactly as written, so a colon in it is never a bind
+  parameter** ([#149](https://github.com/ChrisGVE/localdata-mcp/issues/149)).
+  `SELECT 'a :b' AS s FROM x` was refused with "A value is required for bind
+  parameter 'b'", because SQLAlchemy reads any ` :word` in a statement as one,
+  inside a string literal or a comment included, and `query` takes no
+  parameters to bind it with. Firebird's `EXECUTE BLOCK … INTO :n` was refused
+  the same way. Every colon is now escaped before the statement is compiled, so
+  the database receives the caller's text character for character, a backslash
+  typed before a colon included, and PostgreSQL's `'1'::int` still casts.
 
 ### Known limitations
 

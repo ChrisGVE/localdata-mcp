@@ -3781,9 +3781,10 @@ def _refuse_mssql_write(
     own.** ``SHOWPLAN_XML`` answers no plan at all for one (measured: pyodbc
     then reports "No results"), so asking would refuse SQLAlchemy's
     reflection. The caller's SQL cannot arrive with parameters:
-    :meth:`loader.Workspace.query_stream` runs it as ``text(sql)`` with no
-    values, so a ``:name`` in it is refused by SQLAlchemy before anything is
-    sent, and a ``?`` reaches the driver with no values and fails there. Every
+    :meth:`loader.Workspace.query_stream` runs it through
+    :func:`loader.as_written` with no values, so a ``:name`` in it is sent as
+    written rather than bound (#149), and a ``?`` reaches the driver with no
+    values and fails there. Every
     parameterised statement on the reader is one this server composed.
     ``tests/test_query_sends_no_parameters.py`` pins that, so the day
     ``query`` takes values from its caller this gate is reconsidered. Raises

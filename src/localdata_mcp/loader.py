@@ -71,6 +71,7 @@ from sqlalchemy import (
 from sqlalchemy import types as sqltypes
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import NoSuchTableError, SQLAlchemyError
+from sqlalchemy.sql.elements import TextClause
 
 from . import binding, temporal
 from .credentials import redacted_url
@@ -702,6 +703,34 @@ def _schema_of(entry: Tagged, table: str) -> Table:
         MetaData(),
         *(Column(column["name"], column["type"]) for column in described),
     )
+
+
+def as_written(sql: str) -> TextClause:
+    """The caller's SQL as a ``text()`` construct that compiles back to itself.
+
+    ``query`` takes no parameters, so no colon in the caller's SQL is a bind
+    parameter (#149). ``text()`` disagrees: it reads any ``:word`` not preceded
+    by a word character as one — inside a string literal, a comment, or an
+    engine's own syntax such as Firebird PSQL's ``INTO :n`` — and refuses the
+    statement because nothing binds it.
+
+    SQLAlchemy documents ``\\:`` as a literal colon in ``text()``, so every
+    colon is escaped. That is exact rather than a heuristic, because of how the
+    compiler reads the escaped string:
+
+    * every colon is now preceded by a backslash, and the bind-parameter pattern
+      never matches a colon after a backslash, so nothing is bound;
+    * the un-escape pattern then removes the backslash in front of each colon.
+      It removes one only where the colon's word run is not followed by another
+      colon or word character, and after escaping, what follows a run is always
+      the end, a non-word character, or the backslash of the next colon;
+    * a backslash the caller typed is never in front of a colon any more (ours
+      is), so it is never the one removed: ``x\\:y`` compiles to ``x\\:y``.
+
+    ``tests/test_query_sql_as_written.py`` compiles this for every registered
+    backend's dialect and asserts the string that comes out is the input.
+    """
+    return text(sql.replace(":", "\\:"))
 
 
 def _not_a_read(entry: Tagged) -> str:
@@ -2950,7 +2979,7 @@ class Workspace:
             with entry.engines.read.connect() as conn:
                 result = conn.execution_options(
                     stream_results=True, yield_per=_YIELD_PER
-                ).execute(text(sql))
+                ).execute(as_written(sql))
                 names = list(result.keys()) if result.returns_rows else []
                 if not names:
                     raise LoadError(_not_a_read(entry))
