@@ -1030,6 +1030,12 @@ And fifty-five found in this release's own code before it shipped:
   now prefixed like `TEXT`, charged against the same key budget. `TINYTEXT` is
   the exception, at 63 characters, since MySQL refuses anything longer on it
   (measured on 8.0.46: 63 accepted, 64 answered 1071).
+- **A MariaDB `INET4` or `INET6` column can share an index with a `TEXT` column
+  again** ([#161](https://github.com/ChrisGVE/localdata-mcp/issues/161)).
+  SQLAlchemy reflected both as an unknown type, so the key budget refused them.
+  They are now named on each attached engine and charged the 4 and 16 bytes the
+  engine charges. `directory` and `stats` report them as `INET4` and `INET6`,
+  where they used to say `NULL`.
 - **On CockroachDB, a write held up by another session's open transaction
   holds every other call for up to 30 seconds**
   ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)). The bound

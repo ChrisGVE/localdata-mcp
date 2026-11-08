@@ -3062,10 +3062,11 @@ _MYSQL_TINYTEXT_PREFIX_CHARS = 63
 #: name for its type (``__visit_name__`` upper-cased, so the generic ``Integer``
 #: and the reflected ``INTEGER`` read alike). The figures are the MySQL manual's
 #: "Data Type Storage Requirements" (section 13.7 of the 8.0 reference), and
-#: MariaDB's for ``UUID``, each confirmed live on MySQL 8.0.46 and MariaDB 11.8:
-#: the engine's 1071 boundary moved by exactly this much beside a BLOB prefix
-#: (localdata#93). A column's NULLability costs nothing here: the same boundary
-#: held for ``NULL`` and ``NOT NULL`` on every type measured.
+#: MariaDB's for ``UUID``, ``INET4`` and ``INET6``, each confirmed live on MySQL
+#: 8.0.46 and MariaDB 11.8: the engine's 1071 boundary moved by exactly this much
+#: beside a BLOB prefix (localdata#93, #161). A column's NULLability costs nothing
+#: here: the same boundary held for ``NULL`` and ``NOT NULL`` on every type
+#: measured.
 _MYSQL_FIXED_KEY_BYTES = {
     "TINYINT": 1,
     "BOOLEAN": 1,
@@ -3082,6 +3083,8 @@ _MYSQL_FIXED_KEY_BYTES = {
     "DATE": 3,
     "YEAR": 1,
     "UUID": 16,
+    "INET4": 4,
+    "INET6": 16,
 }
 
 #: The whole-seconds part of the temporal types that can carry fractional
@@ -3483,6 +3486,28 @@ def _mysql_named_refusal(sql: str, name: str, unsafe: set[str]) -> tuple[str, bo
     return _quoted_text_refusal(name, f"{name} is {why}", rephrase), True
 
 
+def _adapt_mariadb_type_reflection(dialect: Any) -> None:
+    """Let this one engine's reflection name MariaDB's ``INET4`` and ``INET6`` (#161).
+
+    SQLAlchemy 2.1.6 ships both types and leaves them out of ``ischema_names``,
+    so reflection reads them as ``NullType`` on either URL form and an index
+    beside a ``TEXT`` cannot size them. The names go on a copy that this dialect
+    instance holds, because the mapping on the class is shared by every engine
+    in the process. A type reflection still cannot name, ``GEOMETRY`` among
+    them, stays ``NullType`` and is still refused. MySQL has no column of either
+    type, so the two names are never looked up there.
+
+    The upstream fix is to remove this once SQLAlchemy reflects them itself.
+    """
+    from sqlalchemy.dialects.mysql.mariadb import INET4, INET6
+
+    dialect.ischema_names = {
+        **dialect.ischema_names,
+        "inet4": INET4,
+        "inet6": INET6,
+    }
+
+
 def _mysql_decimal_bytes(precision: int, scale: int) -> int:
     """Bytes of a ``DECIMAL``: nine digits pack into four, each side separately."""
     return sum(
@@ -3627,6 +3652,13 @@ class MySQLBackend(Backend):
     """
 
     name: str = "mysql"
+
+    def open(self, url: str | URL, *, writable: bool) -> Engines:
+        """The generic pair of engines, each able to name MariaDB's INET types."""
+        engines = super().open(url, writable=writable)
+        for engine in (engines.read, engines.write):
+            _adapt_mariadb_type_reflection(engine.dialect)
+        return engines
 
     def read_posture(self, engine: Engine, refusal: Refusal) -> None:
         @event.listens_for(engine, "connect")
