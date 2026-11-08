@@ -828,10 +828,11 @@ correct against each other.
 
 ## What is left, and what it took to get here
 
-**What is left before level 0 closes is no longer code**: a pass driving the live server
-through a real client, since every verb has changed since the last one, and a review of the
-issues that were fixed forward. Two design questions were open and are recorded where they
-arose, under an **Open, not decided** mark (they shared one, since the second was moot once
+**What was left before level 0 closes has been done**: the pass driving the live server
+through a real client is measured below, and the issues that were fixed forward have been
+reviewed again (below). Two design questions
+were open and are recorded where they arose, under an **Open, not decided** mark (they
+shared one, since the second was moot once
 the first resolved against the refusal). Both are now resolved:
 
 | Question | Where | Status |
@@ -851,8 +852,9 @@ are the rates over valid runs:
 | Required, skill says "attach at the likeliest and read the warning" | 1 of 1 | [#151](https://github.com/ChrisGVE/localdata-mcp/issues/151) |
 | **Standard by default** (`,` for `.csv`, a tab for `.tsv`; first principle 7) | **4 of 4** | [#153](https://github.com/ChrisGVE/localdata-mcp/issues/153) |
 | Standard by default, with the warning's multi-column signature, on the repaired rig | **8 of 8**, no run excluded | [#151](https://github.com/ChrisGVE/localdata-mcp/issues/151) |
+| The same contract and rig, at the last code commit (`c39f2b98`) | **8 of 8**, no run excluded | [#161](https://github.com/ChrisGVE/localdata-mcp/issues/161) is the last code change it measures |
 
-All twelve default-contract runs went the same way. They attached at the default, read the
+All twenty default-contract runs went the same way. They attached at the default, read the
 single-column warning naming `;`, re-attached at `;`, and answered: West gamma 47 → 7, not
 explained by returns, and East beta revenue blank in every month. Four earlier runs are
 excluded because the server never registered with the client. That was the test rig, not
@@ -866,6 +868,22 @@ rather than one ([#152](https://github.com/ChrisGVE/localdata-mcp/issues/152)). 
 the warning now also fires when every column name holds the same other separator. One edge
 remains, by design: a header where one field lacks it, such as `x,y;z` read at `,`, is still
 missed, because a looser rule would warn on a correct file with one name like `price, eur`.
+
+**The review of the fixed-forward issues.** All 114 issues closed as completed were re-checked at `8c59c7d7` (2026-11-08) against the code
+rather than the record of having closed them: 68 were confirmed by running the path, 34 by
+reading the code and a named test (mostly paths that need a container), and 9 were superseded.
+Three did not come back clean:
+
+- [#93](https://github.com/ChrisGVE/localdata-mcp/issues/93), partly fixed: the MySQL key budget
+  skipped fixed-width columns. Fixed since, and proved on live MySQL and MariaDB; what that fix
+  left behind on `INET4`, `INET6` and the `TEXT` and `BLOB` family is fixed too
+  ([#161](https://github.com/ChrisGVE/localdata-mcp/issues/161), which stays open only for
+  over-charging non-`utf8mb4` text, the safe direction).
+- [#78](https://github.com/ChrisGVE/localdata-mcp/issues/78), partly fixed: no CI gate checks
+  `server.json`. Open as [#160](https://github.com/ChrisGVE/localdata-mcp/issues/160).
+- [#136](https://github.com/ChrisGVE/localdata-mcp/issues/136), not verified as fixed: DuckDB
+  2.0.0 still prints nanobind's leak report at exit in a full suite run. It waits on an upstream
+  fix (CONSTRAINTS section 36.1).
 
 The rest of this section is how the two catalogues went, and is history rather than plan.
 Both are **done**: the format catalogue first, then the backends — every entry that can be
