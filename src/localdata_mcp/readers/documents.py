@@ -129,13 +129,8 @@ def _walk(document: dict) -> tuple[list[tuple[KeyPath, list[dict]]], list[KeyPat
     Only objects are walked into. An array of objects is a table and is not
     looked inside — a list of objects within one of its rows is that row's
     value, stored as JSON text like any other nested value — and anything else
-    is a value rather than a place a table can be.
-
-    A key is *left out* when it is neither a table nor an object holding one,
-    and it is reported at the level where it stops leading anywhere: a sibling
-    ``{"page": {"n": 1}}`` is reported as ``page``, not as ``page.n``. Keys
-    inside an object that holds no table are not walked for the report, which
-    keeps the one-table note exactly what it was before nesting was walked.
+    is a value rather than a place a table can be. Which keys count as left out
+    is set out at :func:`_left_out_keys`.
 
     Iterative rather than recursive, so a document nested as deep as the parser
     accepted is never deeper than this walk survives.
@@ -155,11 +150,22 @@ def _walk(document: dict) -> tuple[list[tuple[KeyPath, list[dict]]], list[KeyPat
                 ((*path, str(key)), child) for key, child in reversed(value.items())
             )
 
+    return tables, _left_out_keys(tables, visited)
+
+
+def _left_out_keys(
+    tables: list[tuple[KeyPath, list[dict]]], visited: list[tuple[KeyPath, object]]
+) -> list[KeyPath]:
+    """The visited keys that lead to no table.
+
+    A key is *left out* when it is neither a table nor an object holding one,
+    and it is reported at the level where it stops leading anywhere: a sibling
+    ``{"page": {"n": 1}}`` is reported as ``page``, not as ``page.n``. Keys
+    inside an object that holds no table are not walked for the report, which
+    keeps the one-table note exactly what it was before nesting was walked.
+    """
     leading = {path[:depth] for path, _ in tables for depth in range(len(path) + 1)}
-    left_out = [
-        path for path, _ in visited if path not in leading and path[:-1] in leading
-    ]
-    return tables, left_out
+    return [path for path, _ in visited if path not in leading and path[:-1] in leading]
 
 
 def _tables_within(
@@ -172,16 +178,7 @@ def _tables_within(
     always was — with its records, and the note saying what was assumed.
     """
     if isinstance(document, list):
-        offender = next(
-            (v for v in document if not isinstance(v, dict)),
-            None,
-        )
-        if offender is not None:
-            raise LoadError(
-                f"Could not read {name}: it is an array of "
-                f"{_json_kind(offender)}, and a table needs an array of objects "
-                f"— each one a row, its keys the columns."
-            )
+        _refuse_array_of_non_objects(document, name)
         return [(None, document)], ()
 
     if isinstance(document, dict):
@@ -189,35 +186,62 @@ def _tables_within(
         others = ", ".join(_shown(path) for path in left_out)
         if len(tables) == 1:
             path, records = tables[0]
-            return [(None, records)], (
-                f"{name} is an object rather than an array, and the array under "
-                f"{_shown(path)!r} was the only table in it — that is what was "
-                f"loaded. The other keys ({others}) are not part of this table.",
-            )
+            return [(None, records)], (_one_table_note(name, path, others),)
         if tables:
-            shown = [_shown(path) for path, _ in tables]
-            _, landing = table_names(shown, Path(name).stem)
-            where = ", ".join(
-                f"{given!r} as {table}" for given, table in zip(shown, landing)
-            )
-            rest = (
-                f" The other keys ({others}) are not part of any table."
-                if left_out
-                else ""
-            )
-            return list(tables), (
-                f"{name} holds {len(tables)} tables, each an array of objects "
-                f"under its own key, and every one of them landed as a table of "
-                f"its own, named from its key path — the keys from the top of "
-                f"the document down, joined by '.', then made safe for SQL the "
-                f"way a sheet name is: {where}. Each loaded entry names its key "
-                f"path as its sheet.{rest}",
-            )
+            note = _several_tables_note(name, tables, left_out, others)
+            return list(tables), (note,)
 
     raise LoadError(
         f"Could not read {name}: it holds no table. This reader takes an array "
         f"of objects, or an object with arrays of objects in it — at any depth, "
         f"each becoming a table of its own."
+    )
+
+
+def _refuse_array_of_non_objects(array: list, name: str) -> None:
+    """Refuse an array holding a non-object, naming what the first one is.
+
+    A ``null`` element is not refused here (#159).
+    """
+    offender = next(
+        (v for v in array if not isinstance(v, dict)),
+        None,
+    )
+    if offender is not None:
+        raise LoadError(
+            f"Could not read {name}: it is an array of "
+            f"{_json_kind(offender)}, and a table needs an array of objects "
+            f"— each one a row, its keys the columns."
+        )
+
+
+def _one_table_note(name: str, path: KeyPath, others: str) -> str:
+    """The note for an object holding exactly one table, at key path ``path``."""
+    return (
+        f"{name} is an object rather than an array, and the array under "
+        f"{_shown(path)!r} was the only table in it — that is what was "
+        f"loaded. The other keys ({others}) are not part of this table."
+    )
+
+
+def _several_tables_note(
+    name: str,
+    tables: list[tuple[KeyPath, list[dict]]],
+    left_out: list[KeyPath],
+    others: str,
+) -> str:
+    """The note for an object holding several tables: what each landed as."""
+    shown = [_shown(path) for path, _ in tables]
+    _, landing = table_names(shown, Path(name).stem)
+    where = ", ".join(f"{given!r} as {table}" for given, table in zip(shown, landing))
+    rest = f" The other keys ({others}) are not part of any table." if left_out else ""
+    return (
+        f"{name} holds {len(tables)} tables, each an array of objects "
+        f"under its own key, and every one of them landed as a table of "
+        f"its own, named from its key path — the keys from the top of "
+        f"the document down, joined by '.', then made safe for SQL the "
+        f"way a sheet name is: {where}. Each loaded entry names its key "
+        f"path as its sheet.{rest}"
     )
 
 
@@ -254,7 +278,21 @@ def frame_and_nested_note(
     notes reach every table the file holds, so each has to say which it is about.
     """
     frame = pd.DataFrame(records)
+    encoded = _encode_nested_columns(frame)
 
+    if not encoded:
+        return frame, ()
+    where = ", ".join(encoded) if table is None else f"{', '.join(encoded)} of {table}"
+    return frame, (
+        f"Nested values in {where} were stored as JSON text, "
+        f"because SQL has no nested type. Read into them with "
+        f"json_extract(column, '$.key'); the text is exactly what was in the "
+        f"file, so nothing was lost.",
+    )
+
+
+def _encode_nested_columns(frame: pd.DataFrame) -> list[str]:
+    """Replace nested values in ``frame`` with their JSON text; name those columns."""
     encoded = []
     for name in frame.columns:
         series = frame[name]
@@ -266,16 +304,7 @@ def frame_and_nested_note(
             )
         )
         encoded.append(str(name))
-
-    if not encoded:
-        return frame, ()
-    where = ", ".join(encoded) if table is None else f"{', '.join(encoded)} of {table}"
-    return frame, (
-        f"Nested values in {where} were stored as JSON text, "
-        f"because SQL has no nested type. Read into them with "
-        f"json_extract(column, '$.key'); the text is exactly what was in the "
-        f"file, so nothing was lost.",
-    )
+    return encoded
 
 
 def _json_kind(value: object) -> str:
