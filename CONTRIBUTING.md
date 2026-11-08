@@ -83,32 +83,43 @@ have installed with `uv tool list` or `pip show localdata-mcp`.
 
 ```
 localdata-mcp/
-├── src/localdata_mcp/            # The whole package — fifteen modules, no sub-packages,
-│                                 #   plus the package `__init__` and the typing marker
+├── src/localdata_mcp/            # The whole package — seventeen modules and one
+│                                 #   sub-package, `readers/`, plus the package
+│                                 #   `__init__` and the typing marker
 │   ├── __init__.py               # `__version__` — one of the six version sites below
 │   ├── server.py                 # The nine MCP tools, and nothing else
 │   ├── slots.py                  # The registry: nicknames, lifecycle, eviction, spill
 │   ├── loader.py                 # Reading a datasource in, and describing it
 │   ├── dialects.py               # What differs per backend, and only that
 │   ├── formats.py                # The one table of what a file suffix means
-│   ├── readers.py                # One function per input format
+│   ├── readers/                  # One function per input format, one module per kind
+│   │   ├── __init__.py           # What the rest of the package imports from `readers`
+│   │   ├── result.py             # ReadResult, NamedFrame, Reader — the shared contract
+│   │   ├── separator.py          # CSV, TSV, and the wrong-separator warning
+│   │   ├── documents.py          # JSON, JSON Lines and YAML
+│   │   ├── markup.py             # XML
+│   │   ├── workbooks.py          # Excel, OpenDocument and Apple Numbers
+│   │   └── columnar.py           # Parquet, Feather/Arrow and ORC
 │   ├── writers.py                # One function per output format
+│   ├── ooxml.py                  # Formula cells with no stored result, in .xlsx/.xlsm
+│   ├── opendocument.py           # The same, in an .ods
 │   ├── errors.py                 # LoadError and ExportError, below both sides
 │   ├── temporal.py               # Recognising and canonicalising date columns
 │   ├── binding.py                # Type adapters — see CONSTRAINTS §1
 │   ├── config.py                 # Configuration discovery and validation
 │   ├── paths.py                  # Path containment at the trust boundary
+│   ├── urls.py                   # Whether SQLAlchemy can carry a URL's database name
 │   ├── credentials.py            # Masking a password out of every refusal
 │   ├── names.py                  # How a name a file gives becomes one SQL can use
 │   ├── export.py                 # Writing a result out
 │   └── py.typed                  # PEP 561 marker — what `Typing :: Typed` rests on
-├── tests/                        # 18 test modules — `test_<module>.py` for eleven of the
-│                                 #   fifteen, plus test_concurrency, test_streaming,
-│                                 #   test_volume, test_endpoints, test_answer_shape,
-│                                 #   test_stats and test_plugin_manifests
+├── tests/                        # 69 test modules — `test_<module>.py` for eleven of
+│                                 #   the eighteen; the rest are each named after the
+│                                 #   behaviour or the fix they pin
 │   ├── assets/                   # Deliberately hostile test files
 │   ├── conftest.py               # Shared fixtures
 │   ├── foreign.py                # Cross-backend helpers
+│   ├── fake_docker.py            # A stand-in `docker` CLI, to test endpoint-run.sh
 │   └── endpoints.py              # The endpoint catalogue and its auth-mode axis
 ├── docs/
 │   ├── architecture/LEVEL0.md    # The specification: premise, three arcs, nine verbs
@@ -139,17 +150,24 @@ localdata-mcp/
 └── NOTICE                        # Attribution notice required by Apache 2.0
 ```
 
-**`export.py`, `readers.py`, `writers.py` and `errors.py` have no test module of
-their own.** They are exercised from `test_loader.py`, `test_server.py` and
-`test_volume.py`, which is where a reader or a writer is actually reached from —
-through a verb, against the hostile corpus, rather than called directly. A test
-for a new reader or writer goes in whichever of those matches how it is reached;
-do not add a `test_writers.py` for one writer alone. `formats.py` does have one,
+**`export.py`, `writers.py`, `errors.py` and the `readers/` package have no test
+module named after them.** They are exercised from `test_loader.py`,
+`test_server.py` and `test_volume.py`, which is where a reader or a writer is
+actually reached from — through a verb, against the hostile corpus, rather than
+called directly. A test for a new reader or writer goes in whichever of those
+matches how it is reached; do not add a `test_writers.py` for one writer alone.
+The one exception is the wrong-separator warning in `readers/separator.py`,
+which two modules pin on their own: `test_multi_column_separator_note.py`
+reaches it through `loader.read_file` and `attach`, and
+`test_uncommon_separator_note.py` also calls `readers._single_column_note` and
+`readers._split_header_note` directly. `formats.py` does have a test module,
 because what it asserts is about the table itself rather than about reading any
-particular file.
+particular file. `ooxml.py`, `opendocument.py` and `urls.py` have none named
+after them either; they are tested by `test_workbook_formulas.py`,
+`test_ods_formulas.py` and `test_database_name_carriage.py`.
 
-There are no sub-packages and no plugin registry: a new format is one entry in
-`formats.FORMATS` — the reader, the writer, whether a delimiter or chunked
+There is one sub-package, `readers/`, and no plugin registry: a new format is
+one entry in `formats.FORMATS` — the reader, the writer, whether a delimiter or chunked
 reading mean anything for it, and the separator its published standard gives it
 if any, all on the one `Format` — and a new backend is a
 `dialects.Backend` subclass **only if** the generic SQLAlchemy answer means

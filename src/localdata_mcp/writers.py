@@ -172,7 +172,7 @@ def write_xml(
 def _require(module: str, extra: str, doing: str):
     """Import an optional format library, or say how to install it.
 
-    The writing counterpart of ``loader._require``, and separate from it because
+    The writing counterpart of ``readers.result.require_library``, and separate from it because
     the failure is a different kind: this one refuses a *destination* the caller
     named, so it raises ``ExportError`` and the partial file is cleaned up.
     """
