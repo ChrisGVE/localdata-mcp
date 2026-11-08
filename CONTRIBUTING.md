@@ -453,7 +453,7 @@ more that are not obvious from the code:
 Update the one that owns what you changed, in the same commit as the change —
 documentation that lags is a defect, not a chore. (`non_factual/README.md` is
 tracked too, and is deliberately not on this list: it is a quarantine notice for the
-abandoned v2 documents, not a document kept current.)
+v2 documents, not a document kept current.)
 
 - **`README.md`** — what the server is and how to use it. Any change to the tool
   surface, the format registries or the backend catalogue lands here.

@@ -37,8 +37,9 @@ decides an index would help, or turns a mismatch into a sentence — those need 
 know what was actually asked, and the caller is the one holding that.
 
 > **This branch is 3.0.0 and it is not on PyPI yet.** The latest published
-> release is **2.0.0**, a different product — a data-science platform with
-> fifty-three tools, none of which survive here. (`main` carries an unreleased
+> release is **2.0.0**, an earlier attempt at a data-science platform, with
+> fifty-three tools, none of which survive here. The platform is still the goal,
+> rebuilt on this foundation level by level; none of it is in 3.0.0. (`main` carries an unreleased
 > 2.1.0 that grew that to seventy-one; the CHANGELOG counts from there, because
 > that is the surface this rewrite replaced.) Every PyPI and `uvx` command that
 > names `localdata-mcp` fetches 2.0.0 until 3.0.0 is tagged, so the Quick start
@@ -845,8 +846,8 @@ Those six and this file are the documents kept current;
 [`CONTRIBUTING.md`](CONTRIBUTING.md#documentation) is the single inventory and
 says which one owns what, so a change lands in exactly one of them.
 
-Everything else that used to live under `docs/` described a data-science platform
-that was never built, and now sits in
+Everything else that used to live under `docs/` described that earlier attempt at a
+data-science platform, which was never built as documented, and now sits in
 [`non_factual/`](https://github.com/ChrisGVE/localdata-mcp/blob/main/non_factual/README.md) —
 quarantined rather than deleted, and not to be cited or acted on until somebody
 has checked it against the code.

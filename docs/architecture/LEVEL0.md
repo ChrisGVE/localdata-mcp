@@ -45,6 +45,27 @@ its tests running in a container, and removes it before the next. A green line f
 engine says nothing about another, so the run ends by naming every target of the catalogue
 (`TARGETS` in `tests/endpoints.py`) that it did not reach, and why (issues #46, #139).
 
+## The levels above this one
+
+LocalData is being built into a data-science platform for LLM agents. An agent can do
+this work today by writing Python; the aim of the server is to do the same work for
+fewer tokens. That aim has not been measured yet. The 2.x releases advertised such a platform
+without delivering it, so it is being rebuilt on this foundation, each level closing
+before the next opens.
+
+| Level | What it is |
+| --- | --- |
+| 0 | Data in and out: this document |
+| 1 | The mechanical spine: composing arbitrary data pipelines, including splitting and merging them |
+| 2 | Mechanical data preparation and analysis through the scikit-learn API and its statistical tooling |
+| 3 | A cookbook of predefined use cases per domain, built from the levels below |
+
+Composition is the thread through every level, and a level may be divided (1.1, 1.2).
+Levels 1 to 3 stay within what the scikit-learn APIs offer, with room left for further
+extensions, which are a deliberate feature of the design. This section states direction,
+not capability: nothing above level 0 has been designed or built, and none of it is in
+3.0.0.
+
 ## The premise
 
 **A slot is a database.** Not a table, not a file — a database, addressed by a

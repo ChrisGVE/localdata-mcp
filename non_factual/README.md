@@ -25,6 +25,10 @@ product was not built. This branch is a database server with **eight verbs** —
 describe tools that do not exist, at paths that do not exist, with parameters that were
 never implemented.
 
+> **Corrected (2026-11-08).** "Abandoned", further down this file, applies to that
+> attempt and its documents. The data-science platform itself remains the goal of this
+> project, rebuilt level by level; `docs/architecture/LEVEL0.md` says what each level is.
+
 > **Corrected (2026-08-04).** This paragraph named seven verbs including `add_table` and
 > `drop_table`, which were renamed to `create` and `drop` before this file was last
 > touched, and `update` had been added. A quarantine notice that misdescribes the thing

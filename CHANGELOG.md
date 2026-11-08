@@ -38,17 +38,20 @@ longer exists**. The other five verbs are new in 3.0.0 and replace nothing.
 
 That table accounts for sixteen 2.x tools: 1 + 1 + 8 + 6.
 
-**Forty-six of the seventy-one have no replacement at all** — twenty analytical,
+**Forty-six of the seventy-one have no replacement in 3.0.0** — twenty analytical,
 ten geospatial, seven graph and nine tree. Statistics, regression, clustering,
 anomaly detection, time series, RFM, A/B testing, optimization, spatial analysis,
-graph traversal and key-value trees are not in this product and are not planned.
+graph traversal and key-value trees are not in this release.
 The remaining nine — `manage_memory_bounds`, `get_streaming_status`,
 `clear_streaming_buffer`, `cancel_query_operation`, `get_query_log`,
 `get_error_log`, `get_metrics`, `check_compatibility` and `transform_data` —
 managed machinery that no longer exists. Sixteen mapped, forty-six gone, nine
-retired: seventy-one, with nothing unaccounted for. That platform
-was abandoned, not deferred; its documentation is quarantined in `non_factual/`.
-What this server does is SQL, and an agent that can write SQL can compute a
+retired: seventy-one, with nothing unaccounted for. Those tools advertised a
+platform that 2.x did not deliver, so that attempt was dropped and its
+documentation is quarantined in `non_factual/`. The goal was not dropped: a
+data-science platform is still where this project is going, rebuilt level by
+level on this foundation (`docs/architecture/LEVEL0.md`). None of it is in 3.0.0.
+What this server does today is SQL, and an agent that can write SQL can compute a
 group-by, a correlation or an anti-join in the statement it was going to send
 anyway.
 
