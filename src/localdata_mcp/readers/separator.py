@@ -5,6 +5,39 @@ the file was read at the wrong separator, which is most of this module: it
 recognises the two shapes a wrong separator leaves in the header, and names the
 separator it used and the one the header holds. It is its own module because
 that warning is also used outside the readers, by the load path.
+
+That warning is the net under the standard default. A file named ``.csv`` is
+read at a comma unless the caller says otherwise, and one that is really
+separated by ``;`` — common from European tools — then loads wrongly. The same
+holds for a separator the caller declared wrongly. Either way the character used
+is known, so the note can name it and name the one the header holds. Two
+shapes are the signature of the mistake:
+
+- **One column whose header still contains a common delimiter.** The whole
+  header line became the column.
+- **Two or more columns, every one of whose names contains the same other
+  common delimiter (#152).** The header happened to hold the separator
+  tried, so the file split, at the wrong places: ``region;price, eur;units``
+  read at ``,`` gives ``region;price`` and `` eur;units``. *Every* name, not
+  some or most: a correctly read ``;`` file with one column called
+  ``price, eur`` must stay quiet, and a threshold would be a guess.
+
+The edge this leaves open, deliberately: a header where some field lacks
+the other separator (``x,y;z`` read at ``,`` gives ``x`` and ``y;z``) is not
+caught. Catching it means warning on names that merely hold such a
+character, as ``price, eur`` does.
+
+The warning states what it found; it does not re-read the file at the character
+it spotted. Sniffing is the fail-open shape this project keeps being bitten by,
+and a guess that is usually right is the worst kind.
+
+**What it quotes is the header line, not the column names the caller ends
+up with.** Identifier sanitisation runs downstream of every reader, and it
+replaces exactly the characters this note is about, so a stored name never
+contains the one being reported. Citing it named evidence the answer no
+longer held (#101); the header is the same evidence and the caller can check
+it against the file. With several columns it is the names the reader split,
+joined again at the separator used.
 """
 
 from __future__ import annotations
@@ -56,38 +89,8 @@ def delimited(separator: str) -> Reader:
 def fat_column_note(frame: pd.DataFrame, separator: str, name: str) -> tuple[str, ...]:
     """Say when a file was plainly read at the wrong separator.
 
-    This is the net under the standard default. A file named ``.csv`` is read at
-    a comma unless the caller says otherwise, and one that is really separated
-    by ``;`` — common from European tools — then loads wrongly. The same holds
-    for a separator the caller declared wrongly. Either way the character used
-    is known, so the note can name it and name the one the header holds. Two
-    shapes are the signature of the mistake:
-
-    - **One column whose header still contains a common delimiter.** The whole
-      header line became the column.
-    - **Two or more columns, every one of whose names contains the same other
-      common delimiter (#152).** The header happened to hold the separator
-      tried, so the file split, at the wrong places: ``region;price, eur;units``
-      read at ``,`` gives ``region;price`` and `` eur;units``. *Every* name, not
-      some or most: a correctly read ``;`` file with one column called
-      ``price, eur`` must stay quiet, and a threshold would be a guess.
-
-    The edge this leaves open, deliberately: a header where some field lacks
-    the other separator (``x,y;z`` read at ``,`` gives ``x`` and ``y;z``) is not
-    caught. Catching it means warning on names that merely hold such a
-    character, as ``price, eur`` does.
-
-    This states what it found; it does not re-read the file at the character it
-    spotted. Sniffing is the fail-open shape this project keeps being bitten by,
-    and a guess that is usually right is the worst kind.
-
-    **What it quotes is the header line, not the column names the caller ends
-    up with.** Identifier sanitisation runs downstream of every reader, and it
-    replaces exactly the characters this note is about, so a stored name never
-    contains the one being reported. Citing it named evidence the answer no
-    longer held (#101); the header is the same evidence and the caller can check
-    it against the file. With several columns it is the names the reader split,
-    joined again at the separator used.
+    Which shapes count as the mistake, the edge left open, and why the note
+    quotes the header line are set out in this module's docstring.
     """
     names = [str(column) for column in frame.columns]
     if len(names) == 1:
