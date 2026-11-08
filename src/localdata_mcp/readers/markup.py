@@ -44,26 +44,36 @@ def read_xml(path: Path) -> ReadResult:
 
     tables = []
     for tag, rows in found:
-        records = []
-        nested: dict[str, None] = {}  # insertion-ordered, and deduplicating
-        for element in rows:
-            record, held = _record_of(element, path.name)
-            records.append(record)
-            nested.update(dict.fromkeys(held))
-
+        records, nested = _row_records(rows, path.name)
         if nested:
-            where = (
-                ", ".join(nested) if tag is None else f"{', '.join(nested)} of <{tag}>"
-            )
-            notes = notes + (
-                f"Nested elements in {where} were kept as XML text, "
-                f"because SQL has no nested type. The text is the element as it "
-                f"stood in the file, so nothing was lost.",
-            )
+            notes = notes + (_nested_elements_note(nested, tag),)
 
         frame, _ = frame_and_nested_note(records, None)
         tables.append(NamedFrame(inferred_types(frame), tag))
     return ReadResult(tuple(tables), notes)
+
+
+def _row_records(
+    rows: list[ElementTree.Element], name: str
+) -> tuple[list[dict], dict[str, None]]:
+    """Every row's record, and the tags held nested in any row, each once."""
+    records = []
+    nested: dict[str, None] = {}  # insertion-ordered, and deduplicating
+    for element in rows:
+        record, held = _record_of(element, name)
+        records.append(record)
+        nested.update(dict.fromkeys(held))
+    return records, nested
+
+
+def _nested_elements_note(nested: dict[str, None], tag: str | None) -> str:
+    """The note naming the elements of one table that were kept as XML text."""
+    where = ", ".join(nested) if tag is None else f"{', '.join(nested)} of <{tag}>"
+    return (
+        f"Nested elements in {where} were kept as XML text, "
+        f"because SQL has no nested type. The text is the element as it "
+        f"stood in the file, so nothing was lost."
+    )
 
 
 def _rows_within(
@@ -76,45 +86,70 @@ def _rows_within(
     was left out. Several kinds that repeat are several tables, and every one
     lands, named after its tag the way a JSON table is named after its key
     path. A tag is ``None`` for the one table of a document holding one, which
-    is named after the file as it always was.
-
-    An XML text value carries no record of whether a child appeared once
-    because it is metadata or because the table it starts has one row, and
-    this rule reads it as metadata — as it did before several tables landed.
+    is named after the file as it always was. A child appearing once is read
+    as metadata, for the reason given at :func:`_repeated_tags`.
     """
-    groups: dict[str, list[ElementTree.Element]] = {}
-    for child in root:
-        groups.setdefault(child.tag, []).append(child)
-
+    groups = _children_by_tag(root)
     if not groups:
         raise LoadError(f"Could not read {name}: <{root.tag}> holds no elements.")
     if len(groups) == 1:
         return [(None, next(iter(groups.values())))], ()
 
-    repeated = [tag for tag, members in groups.items() if len(members) > 1]
+    repeated = _repeated_tags(groups)
     others = ", ".join(f"<{tag}>" for tag in groups if tag not in repeated)
     if len(repeated) == 1:
         tag = repeated[0]
-        return [(None, groups[tag])], (
-            f"{name} holds <{tag}> repeated among other elements, and <{tag}> "
-            f"was loaded as the table. The rest ({others}) are not part of it.",
-        )
+        return [(None, groups[tag])], (_one_repeated_note(name, tag, others),)
     if repeated:
-        _, landing = table_names(repeated, Path(name).stem)
-        where = ", ".join(
-            f"<{tag}> as {table}" for tag, table in zip(repeated, landing)
-        )
-        rest = f" The rest ({others}) are not part of any table." if others else ""
-        return [(tag, groups[tag]) for tag in repeated], (
-            f"{name} holds {len(repeated)} tables, each an element repeated "
-            f"under <{root.tag}>, and every one of them landed as a table of its "
-            f"own, named from its tag made safe for SQL the way a sheet name is: "
-            f"{where}. Each loaded entry names its tag as its sheet.{rest}",
-        )
+        note = _several_repeated_note(name, root, repeated, others)
+        return [(tag, groups[tag]) for tag in repeated], (note,)
     raise LoadError(
         f"Could not read {name}: <{root.tag}> holds one each of "
         f"{', '.join(f'<{tag}>' for tag in groups)}, so nothing in it repeats "
         f"as rows do."
+    )
+
+
+def _children_by_tag(
+    root: ElementTree.Element,
+) -> dict[str, list[ElementTree.Element]]:
+    """The root's children grouped by tag, tags in order of first appearance."""
+    groups: dict[str, list[ElementTree.Element]] = {}
+    for child in root:
+        groups.setdefault(child.tag, []).append(child)
+    return groups
+
+
+def _repeated_tags(groups: dict[str, list[ElementTree.Element]]) -> list[str]:
+    """The tags that appear more than once: the ones that can be tables.
+
+    An XML text value carries no record of whether a child appeared once
+    because it is metadata or because the table it starts has one row, and
+    this rule reads it as metadata — as it did before several tables landed.
+    """
+    return [tag for tag, members in groups.items() if len(members) > 1]
+
+
+def _one_repeated_note(name: str, tag: str, others: str) -> str:
+    """The note for one repeated element among others: it alone is the table."""
+    return (
+        f"{name} holds <{tag}> repeated among other elements, and <{tag}> "
+        f"was loaded as the table. The rest ({others}) are not part of it."
+    )
+
+
+def _several_repeated_note(
+    name: str, root: ElementTree.Element, repeated: list[str], others: str
+) -> str:
+    """The note for several repeated elements: what each one landed as."""
+    _, landing = table_names(repeated, Path(name).stem)
+    where = ", ".join(f"<{tag}> as {table}" for tag, table in zip(repeated, landing))
+    rest = f" The rest ({others}) are not part of any table." if others else ""
+    return (
+        f"{name} holds {len(repeated)} tables, each an element repeated "
+        f"under <{root.tag}>, and every one of them landed as a table of its "
+        f"own, named from its tag made safe for SQL the way a sheet name is: "
+        f"{where}. Each loaded entry names its tag as its sheet.{rest}"
     )
 
 
