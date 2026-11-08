@@ -156,11 +156,13 @@ module named after them.** They are exercised from `test_loader.py`,
 actually reached from — through a verb, against the hostile corpus, rather than
 called directly. A test for a new reader or writer goes in whichever of those
 matches how it is reached; do not add a `test_writers.py` for one writer alone.
-The one exception is the wrong-separator warning in `readers/separator.py`,
+One exception is the wrong-separator warning in `readers/separator.py`,
 which two modules pin on their own: `test_multi_column_separator_note.py`
 reaches it through `loader.read_file` and `attach`, and
 `test_uncommon_separator_note.py` also calls `readers._single_column_note` and
-`readers._split_header_note` directly. `formats.py` does have a test module,
+`readers._split_header_note` directly. `test_reader_refusals.py` is the other
+exception: it calls the readers directly for refusals and error guards no corpus
+file reaches. `formats.py` does have a test module,
 because what it asserts is about the table itself rather than about reading any
 particular file. `ooxml.py`, `opendocument.py` and `urls.py` have none named
 after them either; they are tested by `test_workbook_formulas.py`,
