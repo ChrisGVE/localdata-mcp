@@ -7784,6 +7784,13 @@ path found here. 1.5.5 prints nothing like it. Its cause is not established
 > held no overload naming a DuckDB type at the end of the run, so #732's trigger is not the one here.
 > #736's `Py_IncRef` reproducer, run in this venv, prints `leaked 27 instances!`. Nothing is filed
 > upstream from here: both issues are open, and the full-suite case reproduces only as a whole.
+>
+> **Amended 2026-11-08 — one of the two is closed.** [#736](https://github.com/duckdb/duckdb-python/issues/736)
+> was closed upstream on 2026-11-08 as a duplicate of [#732](https://github.com/duckdb/duckdb-python/issues/732),
+> which remains open, so "both issues are open" above no longer holds. DuckDB 2.0.0 is still the latest release on
+> PyPI and the report still prints: `-m "not slow"` at `c39f2b98` ended with *"nanobind: leaked 528
+> instances! … leaked 6 types! … leaked 84 functions!"*, exit 0. Nothing here has changed, and
+> [#136](https://github.com/ChrisGVE/localdata-mcp/issues/136) stays unverified as fixed.
 
 
 ### 36.2 The `.wal` write is unchanged
