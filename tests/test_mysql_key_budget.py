@@ -223,9 +223,9 @@ def test_a_column_that_cannot_be_sized_beside_a_text_column_is_refused(kind):
     """It must not count as free: the prefix would be derived from a wrong sum.
 
     Measured: MySQL refuses JSON in any key of this shape (3152) and reflection's
-    NullType covers GEOMETRY (1070 on MySQL). It also covers MariaDB's INET4 and
-    INET6, which the engine would accept at 4 and 16 bytes: an unrecognised type
-    is sized by nobody here, so the refusal costs that case and says what to do.
+    NullType covers GEOMETRY (1070 on MySQL). An unrecognised type is sized by
+    nobody here, so the refusal says what to do. MariaDB's INET4 and INET6 no
+    longer reflect as NullType (#161; tests/test_mariadb_inet_key_parts.py).
     """
     table = _table(payload=kind, some_text=Text())
 
