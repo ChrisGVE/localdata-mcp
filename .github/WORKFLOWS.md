@@ -1,21 +1,19 @@
 # GitHub workflows
 
-**No workflow currently gates the `new-v3` branch.** Three workflow files exist,
-and none of them runs on a push or a pull request to it. Read this before
-trusting a green check, and before adding a CI badge to a document.
-
-That state is a defect rather than a policy, and it is recorded here so nobody
-re-derives it from a workflow file that looks plausible.
+**One workflow gates the `new-v3` branch: `ci.yml`, the offline test suite.** It
+does not reach any database container, so a green check says nothing about a
+dialect. Read this before trusting one, and before adding a CI badge to a document.
 
 ## What is here, and what it actually does
 
 | File | Triggers on | State |
 |---|---|---|
+| `ci.yml` | push and PR to `new-v3` | Runs `pytest -m "not endpoint"` on Python 3.12, from `uv.lock` with every extra. Includes the slow tests and the manifest tests. |
 | `codeql.yml` | push and PR to `main`; Tuesdays 14:43 UTC | Works. Runs against `main`, which still carries 2.x. |
 | `publish-to-pypi.yml` | push to `main`; tags `v*.*.*`; manual | Works, and the registry it publishes to is decided by **the ref, not the trigger** — `main` goes to TestPyPI, a `v*.*.*` tag goes to PyPI, and a manual dispatch goes to whichever of the two the ref it is run from satisfies. See below. |
 | `docker-publish.yml` | tags `v*.*.*`; manual | Refuses a tag that disagrees with `project.version`, builds the image, smoke-tests it over stdio, then pushes it. `latest` moves only on a release tag. See below. |
 
-There is no `ci.yml`, no `release.yml` and no `security.yml` in this repository.
+There is no `release.yml` and no `security.yml` in this repository.
 A badge pointing at any of them renders as "no status".
 
 `dependabot.yml` is present and is not a workflow: it opens weekly pull requests
@@ -81,7 +79,8 @@ test suite uses. See CONTRIBUTING.md for how it is run.
 
 ## What running the tests actually looks like
 
-There is no CI to defer to, so run them locally before opening a pull request:
+CI runs only the offline tests, so run the rest locally before opening a pull
+request:
 
 ```bash
 uv sync --all-extras
@@ -165,11 +164,11 @@ and this server has never appeared in the MCP registry — a query for `localdat
 is a manual step somebody has to take, and `server.json` has to be valid first
 (see [Before the next release](#before-the-next-release)).
 
-**No workflow validates any manifest.** `tests/test_server_manifest.py` checks
+**One workflow validates the manifests.** `tests/test_server_manifest.py` checks
 `server.json` against the registry schema it declares and against
 `project.version`, and `tests/test_plugin_manifests.py` checks the plugin
-manifests — but both run only where the tests are run, which is locally (gap 1
-below). `twine check` is the only manifest gate a workflow applies.
+manifests. Both run in `ci.yml`, on every push to `new-v3`, but the publish
+workflows do not require that run to have passed.
 
 ## What a release does, end to end
 
@@ -177,8 +176,8 @@ Nothing walks a release for you, so this is the whole of it:
 
 1. Bring the version numbers into step — six values across five files, listed in
    `CONTRIBUTING.md` under *Versioning* — then re-run `uv lock`.
-2. Run the tests locally, including `scripts/endpoint-run.sh all`, since nothing gates
-   this branch.
+2. Run `scripts/endpoint-run.sh all` locally, since CI covers only the offline
+   tests, and confirm `ci.yml` is green on the commit you will tag.
 3. Push a `vX.Y.Z` tag. That is the only *push* that fires `publish-to-pypi.yml`'s
    PyPI job or `docker-publish.yml`, but it is not the only path to either: both
    declare `workflow_dispatch`, and a dispatch may name a tag. Both refuse a tag
@@ -199,21 +198,18 @@ Nothing walks a release for you, so this is the whole of it:
 
 **Branch protection** is not configured and is not described anywhere else. The
 previous version of this document listed required checks belonging to a `ci.yml`
-that does not exist, which was worse than saying nothing; the honest statement is
-that there is no protection posture today, and that setting one up has to wait on
-gap 1 below, since there is no passing check to require.
+that did not exist then, which was worse than saying nothing; the honest statement is
+that there is no protection posture today. `ci.yml` is now a check one could
+require.
 
 ## Before the next release
 
 These are the known gaps, stated so a release does not walk into them:
 
-1. **There is no test workflow at all, and no workflow triggers on `new-v3`.**
-   The two that claimed to were deleted on 2026-08-11 (above), which removed a
-   misleading file rather than a working gate. A release off this branch is
-   therefore gated by whatever was run locally and written into the pull request,
-   and by nothing else. Writing one is a matter of `uv sync --all-extras` and the
-   endpoint suite, which `scripts/endpoint-run.sh` already runs in containers —
-   not of restoring what was here.
+1. **No workflow runs the endpoint suite.** `ci.yml` covers the offline tests
+   ([#160](https://github.com/ChrisGVE/localdata-mcp/issues/160)). The dialects are
+   still gated by whatever was run locally with `scripts/endpoint-run.sh`, and by
+   nothing else.
 2. ~~The `Dockerfile` is 2.x's and `latest` moves on any dispatch.~~ Fixed
    2026-11-02 ([#76](https://github.com/ChrisGVE/localdata-mcp/issues/76)); see
    [The Docker image](#the-docker-image).

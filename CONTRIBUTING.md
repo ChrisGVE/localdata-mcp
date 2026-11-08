@@ -4,9 +4,9 @@ How to set up a development environment, run the tests, and submit a change.
 
 Two things are worth knowing before anything else. **Branch off `new-v3`, not
 `main`** — `main` still carries 2.x, a different product, and a patch against it
-is a patch against code that is being deleted. And **there is no CI gating this
-branch**, so the test run you describe in your pull request is the only evidence
-there is; `.github/WORKFLOWS.md` says why.
+is a patch against code that is being deleted. And **CI on this branch runs
+only the offline tests**, so for any dialect the test run you describe in your pull
+request is the only evidence there is; `.github/WORKFLOWS.md` has the detail.
 
 Security vulnerabilities do not go through an issue — see
 [Security vulnerabilities](#security-vulnerabilities).
@@ -436,8 +436,9 @@ more that are not obvious from the code:
   tested" for any of the other fourteen
 - Reference related issues with `#issue_number`
 - One feature, one bug fix, or one improvement per PR
-- **There is no CI gating this branch.** `.github/WORKFLOWS.md` explains why, so
-  the test run in your PR description is the only evidence there is
+- **CI runs only the offline tests.** For a change touching a dialect, the endpoint
+  run in your PR description is the only evidence there is; see
+  `.github/WORKFLOWS.md`
 
 ## Security vulnerabilities
 

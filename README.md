@@ -868,8 +868,8 @@ with the tests themselves in a container
 ([#46](https://github.com/ChrisGVE/localdata-mcp/issues/46),
 [#139](https://github.com/ChrisGVE/localdata-mcp/issues/139)).
 
-**No workflow gates this branch**, so that local run is the only evidence there
-is. `.github/WORKFLOWS.md` says which workflows exist, which of them work, and
+**CI runs only the offline tests**, so that local run is the only evidence there
+is for a dialect. `.github/WORKFLOWS.md` says which workflows exist, which of them work, and
 what has to be fixed before a release tag is pushed.
 
 The level-0 surface is built and its scope is closed; what is left before it

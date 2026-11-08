@@ -91,6 +91,9 @@ rebuild it.
 
 ### Added
 
+- A CI workflow runs the offline test suite on every push and pull request to
+  `new-v3`, which also makes the manifest tests a gate
+  ([#160](https://github.com/ChrisGVE/localdata-mcp/issues/160)).
 - Nine MCP tools — **verbs**, the word used for them throughout: `attach`,
   `detach`, `query`, `directory`, `create`, `update`, `drop`, `save`, `stats`. Few and
   multi-faceted rather than many and narrow — `directory` alone absorbs six 2.x tools
