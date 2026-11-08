@@ -1022,6 +1022,14 @@ And fifty-five found in this release's own code before it shipped:
 
 ### Known limitations
 
+- **`MEDIUMTEXT`, `LONGTEXT`, `TINYTEXT` and the matching BLOB types now take a
+  key prefix on MySQL and MariaDB** ([#161](https://github.com/ChrisGVE/localdata-mcp/issues/161)).
+  SQLAlchemy derives them from neither `Text` nor `LargeBinary`, so they were
+  read as columns that key whole: alone on MySQL the statement answered 1170,
+  and beside a `TEXT` they were refused as columns nobody could size. They are
+  now prefixed like `TEXT`, charged against the same key budget. `TINYTEXT` is
+  the exception, at 63 characters, since MySQL refuses anything longer on it
+  (measured on 8.0.46: 63 accepted, 64 answered 1071).
 - **On CockroachDB, a write held up by another session's open transaction
   holds every other call for up to 30 seconds**
   ([#148](https://github.com/ChrisGVE/localdata-mcp/issues/148)). The bound

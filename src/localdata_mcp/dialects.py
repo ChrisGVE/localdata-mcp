@@ -3042,6 +3042,22 @@ _INNODB_KEY_BYTES = 3072
 #: single column; several columns divide the limit between them instead.
 _TEXT_PREFIX_CHARS = 255
 
+#: The types that key only on a prefix but that SQLAlchemy derives from neither
+#: ``Text`` nor ``LargeBinary``, by ``__visit_name__``. Measured on MySQL 8.0.46:
+#: each one answers error 1170 when asked to key whole, exactly as ``TEXT`` does
+#: (localdata#161).
+_MYSQL_PREFIX_ONLY_TYPES = frozenset(
+    {"TINYTEXT", "MEDIUMTEXT", "LONGTEXT", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB"}
+)
+
+#: The most of a ``TINYTEXT`` every engine will key on, in ``utf8mb4`` characters.
+#: It holds 255 bytes: MySQL 8.0.46 accepted 63 characters and answered 1071 at
+#: 64, so the usual :data:`_TEXT_PREFIX_CHARS` cannot be sent. MariaDB 11.8
+#: accepts more, but a ``mysql+pymysql`` URL does not say which server answers.
+#: ``TINYBLOB`` needs no ceiling of its own: its limit is 255 bytes, which is
+#: the usual prefix.
+_MYSQL_TINYTEXT_PREFIX_CHARS = 63
+
 #: What one whole column costs InnoDB as a key part, in bytes, by SQLAlchemy's
 #: name for its type (``__visit_name__`` upper-cased, so the generic ``Integer``
 #: and the reflected ``INTEGER`` read alike). The figures are the MySQL manual's
@@ -3509,6 +3525,41 @@ def _mysql_key_part_bytes(kind: TypeEngine[Any]) -> int | None:
     return None
 
 
+def _mysql_needs_prefix(kind: TypeEngine[Any]) -> bool:
+    """Whether the engine will key on this type only through a prefix (error 1170)."""
+    return (
+        isinstance(kind, (Text, LargeBinary))
+        or kind.__visit_name__ in _MYSQL_PREFIX_ONLY_TYPES
+    )
+
+
+def _mysql_prefix_chars(kind: TypeEngine[Any], shared: int) -> int:
+    """This column's prefix: its share of the key, within what the type can hold."""
+    if kind.__visit_name__ == "TINYTEXT":
+        return min(shared, _MYSQL_TINYTEXT_PREFIX_CHARS)
+    return shared
+
+
+def _mysql_prefix_note(backend: str, prefixes: Mapping[str, int]) -> tuple[str, ...]:
+    """The words for what a prefix index costs, one extent or one per column."""
+    if len(set(prefixes.values())) == 1:
+        extent = (
+            f"{', '.join(prefixes)} "
+            f"{'are' if len(prefixes) > 1 else 'is'} indexed on the first "
+            f"{next(iter(prefixes.values()))} characters"
+        )
+    else:
+        extent = "the index takes " + ", ".join(
+            f"the first {prefix} characters of {column}"
+            for column, prefix in prefixes.items()
+        )
+    return (
+        f"{backend} cannot key on a whole TEXT or BLOB column, so {extent}. A "
+        f"lookup on the whole value still uses the index; two rows agreeing on "
+        f"that prefix simply do not narrow it any further.",
+    )
+
+
 def _mysql_key_part_costs(
     backend: str, table: Table, columns: Sequence[str], unbounded: Sequence[str]
 ) -> dict[str, int]:
@@ -3669,11 +3720,19 @@ class MySQLBackend(Backend):
         cost and what the prefix is derived from. A column that cannot be sized
         is refused rather than charged nothing, because a wrong sum yields a
         prefix that 1071s all the same.
+
+        **The whole family takes a prefix, not only the two types with the
+        family's name** (localdata#161). SQLAlchemy's ``MEDIUMTEXT``,
+        ``LONGTEXT``, ``TINYTEXT`` and the three other-sized BLOBs are neither
+        ``Text`` nor ``LargeBinary``, so they are named in
+        :data:`_MYSQL_PREFIX_ONLY_TYPES`. ``TINYTEXT`` gets the one exception:
+        :data:`_MYSQL_TINYTEXT_PREFIX_CHARS` rather than the usual 255, which
+        MySQL refuses on a column that small. A ``BLOB`` prefix is counted in
+        bytes by the engine and charged here as if in characters, as it always
+        was: the over-charge is in the safe direction.
         """
         unbounded = [
-            column
-            for column in columns
-            if isinstance(table.c[column].type, (Text, LargeBinary))
+            column for column in columns if _mysql_needs_prefix(table.c[column].type)
         ]
         if not unbounded:
             return super().build_index(name, table, columns)
@@ -3683,20 +3742,17 @@ class MySQLBackend(Backend):
         if budget < 4 * len(unbounded):
             raise _mysql_key_refusal(self.name, table, columns, costs, unbounded)
 
-        prefix = max(1, min(_TEXT_PREFIX_CHARS, budget // (4 * len(unbounded))))
+        shared = max(1, min(_TEXT_PREFIX_CHARS, budget // (4 * len(unbounded))))
+        prefixes = {
+            column: _mysql_prefix_chars(table.c[column].type, shared)
+            for column in unbounded
+        }
         index = Index(
             name,
             *[table.c[column] for column in columns],
-            **{f"{self.name}_length": dict.fromkeys(unbounded, prefix)},
+            **{f"{self.name}_length": prefixes},
         )
-        named = ", ".join(unbounded)
-        return index, (
-            f"{self.name} cannot key on a whole TEXT or BLOB column, so {named} "
-            f"{'are' if len(unbounded) > 1 else 'is'} indexed on the first "
-            f"{prefix} characters. A lookup on the whole value still uses the "
-            f"index; two rows agreeing on that prefix simply do not narrow it "
-            f"any further.",
-        )
+        return index, _mysql_prefix_note(self.name, prefixes)
 
 
 # ---------------------------------------------------------------------------
