@@ -872,9 +872,9 @@ with the tests themselves in a container
 is for a dialect. `.github/WORKFLOWS.md` says which workflows exist, which of them work, and
 what has to be fixed before a release tag is pushed.
 
-The level-0 surface is built and its scope is closed; what is left before it
-ships is documentation currency and a pass driving the live server through a real
-client. `docs/architecture/LEVEL0.md` ends with what remains.
+The level-0 surface is built and its scope is closed; the live-client
+pass and the review of fixed issues are done. `docs/architecture/LEVEL0.md` ends
+with the results.
 
 ## Contributing
 
