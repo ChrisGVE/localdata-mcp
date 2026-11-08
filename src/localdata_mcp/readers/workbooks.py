@@ -39,36 +39,11 @@ def workbook(module: str, extra: str) -> Reader:
     """
 
     def read_workbook(path: Path) -> ReadResult:
-        """Every sheet of a workbook, each as a table under its own sheet name.
-
-        The names are the file's, raw. Two that clean up to the same table name
-        are told apart downstream, where every multi-table file is named.
-
-        ``sheet_name=None`` rather than the default ``0``: the default reads the
-        first sheet and says nothing about the others, which leaves data that is
-        present in the file unreachable through the server. A workbook is a database
-        and its sheets are its tables, so all of them land.
-        """
+        """Every sheet of a workbook, each as a table under its own sheet name."""
         suffix = path.suffix.lower()
         require_library(module, extra, f"Reading {suffix}")
 
-        try:
-            sheets = pd.read_excel(path, sheet_name=None)
-        except LoadError:
-            raise
-        except Exception as exc:
-            raise LoadError(f"Could not read {path.name}: {exc}") from exc
-
-        # A workbook may carry a sheet that is entirely empty; it is a sheet with no
-        # table in it, and dropping it is not loss. Refusing the whole file over one
-        # would be, so only a workbook with nothing in any sheet is refused.
-        tables = tuple(
-            NamedFrame(frame, name)
-            for name, frame in sheets.items()
-            if not frame.empty or len(frame.columns)
-        )
-        if not tables:
-            raise LoadError(f"Could not read {path.name}: every sheet in it is empty.")
+        tables = _tables_of_sheets(_every_sheet(path), path)
         # The formats whose package says which formula cells have no stored
         # result. An `.xls` is not among them: xlrd hands back a formula's
         # result and not the formula, and the empty result a program like xlwt
@@ -79,6 +54,43 @@ def workbook(module: str, extra: str) -> Reader:
         return ReadResult(tables, notes)
 
     return read_workbook
+
+
+def _every_sheet(path: Path) -> dict[str, pd.DataFrame]:
+    """Read every sheet of a workbook, or refuse a file that cannot be read.
+
+    ``sheet_name=None`` rather than the default ``0``: the default reads the
+    first sheet and says nothing about the others, which leaves data that is
+    present in the file unreachable through the server. A workbook is a database
+    and its sheets are its tables, so all of them land.
+    """
+    try:
+        return pd.read_excel(path, sheet_name=None)
+    except LoadError:
+        raise
+    except Exception as exc:
+        raise LoadError(f"Could not read {path.name}: {exc}") from exc
+
+
+def _tables_of_sheets(
+    sheets: dict[str, pd.DataFrame], path: Path
+) -> tuple[NamedFrame, ...]:
+    """The sheets that hold a table, or refuse a workbook where none does.
+
+    The names are the file's, raw. Two that clean up to the same table name
+    are told apart downstream, where every multi-table file is named.
+    """
+    # A workbook may carry a sheet that is entirely empty; it is a sheet with no
+    # table in it, and dropping it is not loss. Refusing the whole file over one
+    # would be, so only a workbook with nothing in any sheet is refused.
+    tables = tuple(
+        NamedFrame(frame, name)
+        for name, frame in sheets.items()
+        if not frame.empty or len(frame.columns)
+    )
+    if not tables:
+        raise LoadError(f"Could not read {path.name}: every sheet in it is empty.")
+    return tables
 
 
 #: Which formula cells carry no stored result, per reading library: the
@@ -161,9 +173,25 @@ def read_numbers(path: Path) -> ReadResult:
     goes through.
     """
     parser = require_library("numbers_parser", "numbers", "Reading Apple Numbers")
+    found = _numbers_tables(parser, path)
+    counts = _cleaned_name_counts(found)
+
+    tables = []
+    for sheet_name, table_name, rows in found:
+        table = _numbers_table(sheet_name, table_name, rows, counts)
+        if table is not None:
+            tables.append(table)
+
+    if not tables:
+        raise LoadError(f"Could not read {path.name}: it holds no table with rows.")
+    return ReadResult(tuple(tables))
+
+
+def _numbers_tables(parser: Any, path: Path) -> list[tuple[str, str, Any]]:
+    """Every table in a Numbers file, as its sheet's name, its name, and its rows."""
     try:
         document = parser.Document(str(path))
-        found = [
+        return [
             (sheet.name, table.name, table.rows(values_only=True))
             for sheet in document.sheets
             for table in sheet.tables
@@ -173,25 +201,28 @@ def read_numbers(path: Path) -> ReadResult:
     except Exception as exc:
         raise LoadError(f"Could not read {path.name}: {exc}") from exc
 
+
+def _cleaned_name_counts(found: list[tuple[str, str, Any]]) -> dict[str, int]:
+    """How many tables in the file clean up to each SQL table name."""
     counts: dict[str, int] = {}
     for _, table_name, _ in found:
         cleaned = sanitize(table_name, "table")
         counts[cleaned] = counts.get(cleaned, 0) + 1
+    return counts
 
-    tables = []
-    for sheet_name, table_name, rows in found:
-        trimmed = _without_grid_padding(rows)
-        if trimmed is None:
-            continue
-        header, body = trimmed
-        frame = pd.DataFrame(body, columns=header)
-        alone = counts[sanitize(table_name, "table")] == 1
-        name = table_name if alone else f"{sheet_name}_{table_name}"
-        tables.append(NamedFrame(inferred_types(frame), name))
 
-    if not tables:
-        raise LoadError(f"Could not read {path.name}: it holds no table with rows.")
-    return ReadResult(tuple(tables))
+def _numbers_table(
+    sheet_name: str, table_name: str, rows: Any, counts: dict[str, int]
+) -> NamedFrame | None:
+    """One Numbers table, named as :func:`read_numbers` says; ``None`` if it is empty."""
+    trimmed = _without_grid_padding(rows)
+    if trimmed is None:
+        return None
+    header, body = trimmed
+    frame = pd.DataFrame(body, columns=header)
+    alone = counts[sanitize(table_name, "table")] == 1
+    name = table_name if alone else f"{sheet_name}_{table_name}"
+    return NamedFrame(inferred_types(frame), name)
 
 
 def _without_grid_padding(rows: Sequence[Sequence[Any]]):
