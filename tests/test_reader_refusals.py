@@ -173,3 +173,68 @@ def test_numbers_with_no_table_holding_rows_is_refused(tmp_path, monkeypatch):
     with pytest.raises(LoadError) as caught:
         _read_numbers(tmp_path, monkeypatch, sheets)
     assert str(caught.value) == "Could not read x.numbers: it holds no table with rows."
+
+
+def _array_refusal(name: str, kind: str) -> str:
+    return (
+        f"Could not read {name}: it is an array of {kind}, and a table needs an "
+        "array of objects — each one a row, its keys the columns."
+    )
+
+
+@pytest.mark.parametrize("text", ['[{"a": 1}, null]', '[null, {"a": 1}]', "[null]"])
+def test_json_null_in_a_top_level_array_is_refused_like_a_number(tmp_path, text):
+    """A null is a non-object, whatever position it holds (#159)."""
+    path = _written(tmp_path / "x.json", text)
+    with pytest.raises(LoadError) as caught:
+        readers_module.read_json(path)
+    assert str(caught.value) == _array_refusal("x.json", "null")
+
+
+@pytest.mark.parametrize("text", ["- a: 1\n- null\n", "- ~\n- a: 1\n", "-\n"])
+def test_yaml_null_in_a_top_level_list_is_refused_like_a_number(tmp_path, text):
+    """YAML has three spellings of null; all parse to the same refused value."""
+    pytest.importorskip("yaml")
+    path = _written(tmp_path / "x.yaml", text)
+    with pytest.raises(LoadError) as caught:
+        readers_module.read_yaml(path)
+    assert str(caught.value) == _array_refusal("x.yaml", "null")
+
+
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [
+        ('[1, {"a": 1}]', "a number"),
+        ("[null, 1]", "null"),
+        ("[1, null]", "a number"),
+        ('[{"a": 1}, "s", null]', "a string"),
+    ],
+)
+def test_json_array_refusal_names_the_first_non_object(tmp_path, text, kind):
+    path = _written(tmp_path / "x.json", text)
+    with pytest.raises(LoadError) as caught:
+        readers_module.read_json(path)
+    assert str(caught.value) == _array_refusal("x.json", kind)
+
+
+def test_json_empty_top_level_array_is_one_empty_table(tmp_path):
+    result = readers_module.read_json(_written(tmp_path / "x.json", "[]"))
+    assert [table.name for table in result.tables] == [None]
+    assert result.tables[0].frame.shape == (0, 0)
+    assert result.notes == ()
+
+
+def test_json_null_in_a_nested_array_is_still_no_table(tmp_path):
+    path = _written(tmp_path / "x.json", '{"t": [{"a": 1}, null]}')
+    with pytest.raises(LoadError) as caught:
+        readers_module.read_json(path)
+    assert str(caught.value).startswith("Could not read x.json: it holds no table.")
+
+
+def test_json_array_of_objects_still_loads(tmp_path):
+    path = _written(tmp_path / "x.json", '[{"a": 1}, {"a": null}]')
+    result = readers_module.read_json(path)
+    frame = result.tables[0].frame
+    assert frame.shape == (2, 1)
+    assert list(frame.columns) == ["a"]
+    assert frame["a"].isna().tolist() == [False, True]

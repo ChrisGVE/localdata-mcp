@@ -199,18 +199,12 @@ def _tables_within(
 
 
 def _refuse_array_of_non_objects(array: list, name: str) -> None:
-    """Refuse an array holding a non-object, naming what the first one is.
-
-    A ``null`` element is not refused here (#159).
-    """
-    offender = next(
-        (v for v in array if not isinstance(v, dict)),
-        None,
-    )
-    if offender is not None:
+    """Refuse an array holding a non-object, naming what the first one is."""
+    non_objects = [value for value in array if not isinstance(value, dict)]
+    if non_objects:
         raise LoadError(
             f"Could not read {name}: it is an array of "
-            f"{_json_kind(offender)}, and a table needs an array of objects "
+            f"{_json_kind(non_objects[0])}, and a table needs an array of objects "
             f"— each one a row, its keys the columns."
         )
 

@@ -434,7 +434,7 @@ each was reported against 2.x and none of the code carrying it survives:
   ([#40](https://github.com/ChrisGVE/localdata-mcp/issues/40)). Those tools no
   longer exist.
 
-And fifty-four found in this release's own code before it shipped:
+And fifty-five found in this release's own code before it shipped:
 
 - **Two sheets whose names cleaned up to the same table name lost one of them
   without a word** ([#91](https://github.com/ChrisGVE/localdata-mcp/issues/91)).
@@ -1002,6 +1002,13 @@ And fifty-four found in this release's own code before it shipped:
   on any other. The file now loads, and the warning names `';'` and spells the
   separator used as `':'`. Both shapes of the warning, one column and a split
   header, had the defect.
+- **A `null` in a top-level JSON array or YAML list is refused like any other
+  non-object** ([#159](https://github.com/ChrisGVE/localdata-mcp/issues/159)).
+  It was never seen as one, so `[{"a": 1}, null]` failed with a raw
+  `'NoneType' object is not iterable`, and `[null, {"a": 1}]` answered with a
+  wrong table: one column `0` holding a NULL and the text `{"a": 1}`. All of
+  these now refuse in the words a number gets, "it is an array of null, and a
+  table needs an array of objects".
 
 ### Known limitations
 
