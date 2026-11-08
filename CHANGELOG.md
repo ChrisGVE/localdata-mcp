@@ -1009,6 +1009,16 @@ And fifty-five found in this release's own code before it shipped:
   wrong table: one column `0` holding a NULL and the text `{"a": 1}`. All of
   these now refuse in the words a number gets, "it is an array of null, and a
   table needs an array of objects".
+- **A MySQL or MariaDB index mixing a `TEXT` column with a fixed-width column no
+  longer overruns InnoDB's key** ([#93](https://github.com/ChrisGVE/localdata-mcp/issues/93)).
+  The 3072-byte budget charged only columns declaring a length, so an `INT` or
+  `BIGINT` beside a `VARCHAR(600)` and a `TEXT` cost nothing and the statement
+  came back as error 1071. Every column is now sized from the storage MySQL
+  documents, measured on both engines: `some_text(168)` beside an `INT` became
+  `some_text(167)`, which is exactly 3072 bytes. A `BINARY` or `VARBINARY` is
+  charged its bytes instead of four per character. A column whose width cannot
+  be known, such as `JSON` beside `TEXT`, is refused by name rather than counted
+  free.
 
 ### Known limitations
 

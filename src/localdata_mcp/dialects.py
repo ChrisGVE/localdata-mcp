@@ -3042,6 +3042,43 @@ _INNODB_KEY_BYTES = 3072
 #: single column; several columns divide the limit between them instead.
 _TEXT_PREFIX_CHARS = 255
 
+#: What one whole column costs InnoDB as a key part, in bytes, by SQLAlchemy's
+#: name for its type (``__visit_name__`` upper-cased, so the generic ``Integer``
+#: and the reflected ``INTEGER`` read alike). The figures are the MySQL manual's
+#: "Data Type Storage Requirements" (section 13.7 of the 8.0 reference), and
+#: MariaDB's for ``UUID``, each confirmed live on MySQL 8.0.46 and MariaDB 11.8:
+#: the engine's 1071 boundary moved by exactly this much beside a BLOB prefix
+#: (localdata#93). A column's NULLability costs nothing here: the same boundary
+#: held for ``NULL`` and ``NOT NULL`` on every type measured.
+_MYSQL_FIXED_KEY_BYTES = {
+    "TINYINT": 1,
+    "BOOLEAN": 1,
+    "SMALLINT": 2,
+    "SMALL_INTEGER": 2,
+    "MEDIUMINT": 3,
+    "INTEGER": 4,
+    "BIGINT": 8,
+    "BIG_INTEGER": 8,
+    "FLOAT": 4,
+    "DOUBLE": 8,
+    "DOUBLE_PRECISION": 8,
+    "REAL": 8,
+    "DATE": 3,
+    "YEAR": 1,
+    "UUID": 16,
+}
+
+#: The whole-seconds part of the temporal types that can carry fractional
+#: seconds; the fraction is ``_MYSQL_FSP_BYTES`` on top. Same manual section.
+_MYSQL_TEMPORAL_KEY_BYTES = {"TIME": 3, "DATETIME": 5, "TIMESTAMP": 4}
+
+#: Bytes of fractional seconds, indexed by the declared precision 0 through 6.
+_MYSQL_FSP_BYTES = (0, 1, 1, 2, 2, 3, 3)
+
+#: Bytes of the digits left over once ``DECIMAL``'s nines are packed four bytes
+#: at a time, indexed by the leftover digit count. Same manual section.
+_MYSQL_DECIMAL_LEFTOVER_BYTES = (0, 1, 1, 2, 2, 3, 3, 4, 4)
+
 #: The first keywords a read begins with on MySQL and MariaDB. ``(`` opens a
 #: parenthesised ``SELECT``. ``EXPLAIN ANALYZE`` runs its statement, but only a
 #: ``SELECT`` or ``TABLE`` (a write is refused by the read-only transaction),
@@ -3430,6 +3467,94 @@ def _mysql_named_refusal(sql: str, name: str, unsafe: set[str]) -> tuple[str, bo
     return _quoted_text_refusal(name, f"{name} is {why}", rephrase), True
 
 
+def _mysql_decimal_bytes(precision: int, scale: int) -> int:
+    """Bytes of a ``DECIMAL``: nine digits pack into four, each side separately."""
+    return sum(
+        4 * (digits // 9) + _MYSQL_DECIMAL_LEFTOVER_BYTES[digits % 9]
+        for digits in (precision - scale, scale)
+    )
+
+
+def _mysql_key_part_bytes(kind: TypeEngine[Any]) -> int | None:
+    """What a whole column of this type costs an InnoDB key, or ``None`` if unknown.
+
+    ``None`` is the answer for a type with no width in the key, such as ``JSON``,
+    or one reflection could not name. Absent, not zero: the caller must not read
+    a column it cannot size as a column that costs nothing.
+    """
+    name = kind.__visit_name__.upper()
+    if name in _MYSQL_FIXED_KEY_BYTES:
+        return _MYSQL_FIXED_KEY_BYTES[name]
+    if name in _MYSQL_TEMPORAL_KEY_BYTES:
+        fractional = getattr(kind, "fsp", None) or 0
+        return _MYSQL_TEMPORAL_KEY_BYTES[name] + _MYSQL_FSP_BYTES[fractional]
+    if name in ("DECIMAL", "NUMERIC"):
+        return _mysql_decimal_bytes(
+            getattr(kind, "precision", None) or 10, getattr(kind, "scale", None) or 0
+        )
+    if name == "ENUM":
+        return 1 if len(getattr(kind, "enums")) <= 255 else 2
+    if name == "SET":
+        whole_bytes = (len(getattr(kind, "values")) + 7) // 8
+        return 8 if whole_bytes > 4 else whole_bytes
+    length = getattr(kind, "length", None)
+    if length is None:
+        return None
+    if name == "BIT":
+        return (length + 7) // 8
+    if name in ("BINARY", "VARBINARY"):
+        return length
+    if name in ("CHAR", "NCHAR", "VARCHAR", "NVARCHAR", "STRING", "UNICODE"):
+        return 4 * length
+    return None
+
+
+def _mysql_key_part_costs(
+    backend: str, table: Table, columns: Sequence[str], unbounded: Sequence[str]
+) -> dict[str, int]:
+    """Each whole column's share of the key, refusing a column it cannot size."""
+    costs: dict[str, int] = {}
+    for column in columns:
+        if column in unbounded:
+            continue
+        cost = _mysql_key_part_bytes(table.c[column].type)
+        if cost is None:
+            raise UnsupportedOperation(
+                f"Cannot index {', '.join(columns)} together on {backend}: "
+                f"{column} has a type this server cannot size as part of an "
+                f"index key, so no prefix for {', '.join(unbounded)} can be "
+                f"fitted to the {_INNODB_KEY_BYTES}-byte key. Drop {column} from "
+                f"the index, or index it on its own."
+            )
+        costs[column] = cost
+    return costs
+
+
+def _mysql_key_refusal(
+    backend: str,
+    table: Table,
+    columns: Sequence[str],
+    costs: Mapping[str, int],
+    unbounded: Sequence[str],
+) -> UnsupportedOperation:
+    """The refusal for a key with no room left, naming the column to drop."""
+    if not costs:
+        spender = (
+            f"{len(unbounded)} columns need a prefix, which is more than one "
+            f"character each"
+        )
+        drop = unbounded[-1]
+    else:
+        drop = max(costs, key=costs.__getitem__)
+        spender = f"{drop} ({table.c[drop].type}) alone takes {costs[drop]} bytes"
+    return UnsupportedOperation(
+        f"Cannot index {', '.join(columns)} together on {backend}: {spender}, "
+        f"which leaves nothing of the {_INNODB_KEY_BYTES}-byte key for "
+        f"{', '.join(unbounded)}. Drop {drop} from the index, or index it on its "
+        f"own."
+    )
+
+
 @dataclass(frozen=True)
 class MySQLBackend(Backend):
     """MySQL and MariaDB, where the transactional floor is not a floor.
@@ -3537,10 +3662,13 @@ class MySQLBackend(Backend):
         what it spends is subtracted before the rest is divided. Dividing the
         whole limit among the unbounded columns alone put a ``VARCHAR(600)``
         beside a ``TEXT`` at 3420 bytes and InnoDB refused the statement with
-        error 1071 — measured, localdata#93. Only columns that declare a length
-        can be charged for here; a fixed-width scalar is left at zero, which
-        keeps this an estimate that can still be a little low, and the estimate
-        is the one MySQL's own limit is written in.
+        error 1071 — measured, localdata#93. Every other column spends it too,
+        whether or not it declares a length — a ``BIGINT`` costs eight of those
+        bytes — so :func:`_mysql_key_part_bytes` sizes each by its type. Text is
+        charged at ``utf8mb4``'s four bytes a character, which is the most it can
+        cost and what the prefix is derived from. A column that cannot be sized
+        is refused rather than charged nothing, because a wrong sum yields a
+        prefix that 1071s all the same.
         """
         unbounded = [
             column
@@ -3550,22 +3678,10 @@ class MySQLBackend(Backend):
         if not unbounded:
             return super().build_index(name, table, columns)
 
-        bounded = {
-            column: length
-            for column in columns
-            if column not in unbounded
-            and (length := getattr(table.c[column].type, "length", None))
-        }
-        budget = _INNODB_KEY_BYTES - 4 * sum(bounded.values())
+        costs = _mysql_key_part_costs(self.name, table, columns, unbounded)
+        budget = _INNODB_KEY_BYTES - sum(costs.values())
         if budget < 4 * len(unbounded):
-            widest = max(bounded, key=bounded.__getitem__)
-            raise UnsupportedOperation(
-                f"Cannot index {', '.join(columns)} together on {self.name}: "
-                f"{widest} alone is declared {bounded[widest]} characters wide, "
-                f"which leaves nothing of the {_INNODB_KEY_BYTES}-byte key for "
-                f"{', '.join(unbounded)}. Drop {widest} from the index, or index "
-                f"it on its own."
-            )
+            raise _mysql_key_refusal(self.name, table, columns, costs, unbounded)
 
         prefix = max(1, min(_TEXT_PREFIX_CHARS, budget // (4 * len(unbounded))))
         index = Index(
